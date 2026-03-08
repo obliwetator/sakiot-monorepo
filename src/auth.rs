@@ -23,7 +23,8 @@ pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
 pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
 pub const ACCESS_SECRET: &str = "1708fd0a1828410128b1ed92ba688acd8a4b283e7c6d365c88e66b8fffe0cc0657dd77a2cd8142b7b41b9a54437e10bc1f8b25ef12b0d6109b1ac53fad5f73be";
 pub const REFRESH_SECRET: &str = "cd33b16763bc28372f6e21779daf23b6e3334e61e790b716f23126eb1c84194da7ce9f9ef1e56365d589fb45514ce4bcbc46549f5122706e3d167648bfe4f598";
-const JWT_ACCESS_EXPIRY: i64 = 7;
+const JWT_ACCESS_EXPIRY: i64 = 10;
+const JWT_REFRESH_EXPIRY: i64 = 7;
 
 // trait Token {
 //     fn encode(id: i64, access_token: String, key: &EncodingKey) -> String;
@@ -51,7 +52,7 @@ pub struct Token<T> {
 impl Token<Access> {
     pub fn encode(id: i64, access_token: String, key: &EncodingKey) -> String {
         let iat = OffsetDateTime::now_utc();
-        let exp = iat + Duration::days(JWT_ACCESS_EXPIRY);
+        let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY);
 
         let access = Self {
             exp,
@@ -61,17 +62,18 @@ impl Token<Access> {
         };
         encode(&Header::default(), &access, key).unwrap()
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Self {
-        decode::<Self>(token, &keys.access_decode, &Validation::default())
-            .unwrap()
-            .claims
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+        match decode::<Self>(token, &keys.access_decode, &Validation::default()) {
+            Ok(ok) => Ok(ok.claims),
+            Err(err) => Err(err),
+        }
     }
 }
 
 impl Token<Refresh> {
     pub fn encode(id: i64, refresh_token: String, key: &EncodingKey) -> String {
         let iat = OffsetDateTime::now_utc();
-        let exp = iat + Duration::days(JWT_ACCESS_EXPIRY);
+        let exp = iat + Duration::days(JWT_REFRESH_EXPIRY);
 
         let refresh = Self {
             exp,
@@ -81,10 +83,11 @@ impl Token<Refresh> {
         };
         encode(&Header::default(), &refresh, key).unwrap()
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Self {
-        decode::<Self>(token, &keys.refresh_decode, &Validation::default())
-            .unwrap()
-            .claims
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+        match decode::<Self>(token, &keys.refresh_decode, &Validation::default()) {
+            Ok(ok) => Ok(ok.claims),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -107,11 +110,11 @@ struct DiscordBotAuthDataRefresh {
     client_id: &'static str,
     client_secret: &'static str,
     grant_type: &'static str,
-    refresh_token: &'static str,
+    refresh_token: String,
 }
 
 impl DiscordBotAuthDataRefresh {
-    fn new(refresh_token: &'static str) -> Self {
+    fn new(refresh_token: String) -> Self {
         Self {
             client_id: CLIENT_ID,
             client_secret: CLIENT_SECRET,
@@ -162,7 +165,7 @@ pub async fn request_access_token(code: String, client: web::Data<Client>) -> Di
 }
 
 pub async fn request_refresh_token(
-    refresh_token: &'static str,
+    refresh_token: String,
     client: web::Data<Client>,
 ) -> DiscordTokenData {
     let data = DiscordBotAuthDataRefresh::new(refresh_token);
@@ -206,18 +209,75 @@ pub async fn discord_login(
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
         .secure(true)
+        .http_only(true)
         .finish();
 
     let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
         .secure(true)
+        .http_only(true)
         .finish();
 
     b.add_cookie(&access_token_cookie).unwrap();
     b.add_cookie(&refresh_token_cookie).unwrap();
 
     b
+}
+
+#[get("/refresh")]
+pub async fn refresh_jwt(
+    req: HttpRequest,
+    client: web::Data<Client>,
+    keys: web::Data<AccessKeys>,
+) -> impl Responder {
+    let headers = req.headers();
+    let cookie = match headers.get("cookie") {
+        Some(cookie) => cookie,
+        None => return HttpResponse::Unauthorized().finish(),
+    };
+
+    let (_, refresh_token) = get_access_and_refresh_tokens(cookie);
+
+    let decoded_refresh = match Token::<Refresh>::decode(refresh_token, &keys) {
+        Ok(token) => token,
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "error": "expired_or_invalid_token",
+                "message": "The refresh token is expired or invalid. Please login again."
+            }))
+        }
+    };
+
+    let data = request_refresh_token(decoded_refresh.token, client.clone()).await;
+
+    let (new_access_token, new_refresh_token) = create_jwt_tokens(
+        data.access_token,
+        data.refresh_token,
+        decoded_refresh.id,
+        &keys,
+    )
+    .await;
+
+    let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .domain(".patrykstyla.com")
+        .secure(true)
+        .http_only(true)
+        .finish();
+
+    let refresh_token_cookie = Cookie::build("refresh_token", new_refresh_token)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .domain(".patrykstyla.com")
+        .secure(true)
+        .http_only(true)
+        .finish();
+
+    let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
+    response.add_cookie(&access_token_cookie).unwrap();
+    response.add_cookie(&refresh_token_cookie).unwrap();
+
+    response
 }
 
 #[get("/token")]

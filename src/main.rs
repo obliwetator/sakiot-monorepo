@@ -1,6 +1,7 @@
 mod audio;
 mod auth;
 mod clips;
+mod dashboard;
 mod errors;
 mod grpc;
 mod permissions;
@@ -12,7 +13,7 @@ use actix_web::body::EitherBody;
 use actix_web::middleware::Logger;
 use actix_web::web::ReqData;
 use audio::{download_audio, find_similar, get_audio, get_waveform_data, remove_silence};
-use auth::{discord_login, get_token, ACCESS_SECRET, REFRESH_SECRET};
+use auth::{discord_login, get_token, refresh_jwt, ACCESS_SECRET, REFRESH_SECRET};
 use clips::{delete, get_clip, get_clips, play_clip};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use permissions::get_everyone_permission_for_guild;
@@ -386,6 +387,11 @@ async fn get_current_month_permission(
 // We go over every channel - role/user combination
 // TODO: return early if admin
 // TODO: check if we can return early between each check
+#[get("/download_the_clip")]
+async fn download_the_clip() -> Result<actix_files::NamedFile, Error> {
+    Ok(actix_files::NamedFile::open("/home/tulipan/clips.tar.gz")?)
+}
+
 pub async fn get_available_channels_for_user(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
@@ -597,6 +603,7 @@ async fn main() {
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
             .service(discord_login)
+            .service(refresh_jwt)
             .service(get_current_user)
             .service(get_current_user_guilds)
             .service(get_token)
@@ -604,7 +611,8 @@ async fn main() {
             .service(get_current_month_permission)
             .service(perm_calc)
             .service(remove_silence)
-            .service(delete);
+            .service(delete)
+            .service(dashboard::dashboard_stream);
         App::new()
             .wrap(logger)
             .app_data(web::Data::new(pool.clone()))
@@ -619,6 +627,7 @@ async fn main() {
             .service(get_clip)
             .service(play_clip)
             .service(get_waveform_data)
+            .service(download_the_clip)
             .default_service(web::route().to(not_found))
             .wrap(
                 Cors::permissive(), // Cors::default()
@@ -707,8 +716,8 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         info!("PATH: {:#?}", req.path());
-        if req.path() == "/api/discord_login" {
-            // Dont validate the token if user is trying to login
+        if req.path() == "/api/discord_login" || req.path() == "/api/refresh" {
+            // Dont validate the token if user is trying to login or refresh
             let res = self.service.call(req);
 
             Box::pin(async move {
@@ -731,7 +740,15 @@ where
 
             let (access_token, refresh_token) = get_access_and_refresh_tokens(cookie);
 
-            let decoded_access = Token::<Access>::decode(access_token, keys);
+            let decoded_access = match Token::<Access>::decode(access_token, keys) {
+                Ok(token) => token,
+                Err(_) => {
+                    let (request, _pl) = req.into_parts();
+                    let response = HttpResponse::Unauthorized().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
+            info!("Decoded access token: {:#?}", decoded_access.exp);
             let _decoded_refresh = Token::<Refresh>::decode(refresh_token, keys);
 
             req.extensions_mut().insert(decoded_access);

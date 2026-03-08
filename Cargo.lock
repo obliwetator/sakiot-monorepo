@@ -3252,6 +3252,7 @@ dependencies = [
  "bitflags 2.6.0",
  "bytes",
  "chrono",
+ "dotenvy",
  "env_logger",
  "futures-util",
  "jsonwebtoken",

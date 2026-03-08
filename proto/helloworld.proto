@@ -41,6 +41,40 @@ service Jammer {
 	rpc JamIt (JamData) returns (JamResponse);
 }
 
+service Dashboard {
+	rpc GetMetrics (Empty) returns (stream MetricsResponse);
+	rpc DisconnectVoice (GuildRequest) returns (ActionResponse);
+	rpc DashboardStream (stream ClientMessage) returns (stream DashboardEvent);
+}
+
+message ClientMessage {
+	string action = 1; // "subscribe" or "unsubscribe"
+	string topic = 2; // e.g., "global", "guild:123"
+}
+
+message DashboardEvent {
+	string event_type = 1; // e.g., "METRICS_UPDATE", "USER_JOINED"
+	string json_payload = 2; 
+}
+
+message Empty {}
+
+message GuildRequest {
+	int64 guild_id = 1;
+}
+
+message ActionResponse {
+	bool success = 1;
+	string message = 2;
+}
+
+message MetricsResponse {
+	int32 total_guilds = 1;
+	int32 active_voice_connections = 2;
+	int64 uptime_seconds = 3;
+	int32 commands_executed = 4;
+}
+
 message JamData {
 	string clip_name = 1;
 	int64 guild_id = 2;
