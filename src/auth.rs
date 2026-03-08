@@ -9,8 +9,8 @@ use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
+pub use crate::get_access_and_refresh_tokens;
 use crate::{
-    get_access_and_refresh_tokens,
     user::{get_user, get_user_guilds},
     AccessKeys,
 };
@@ -237,7 +237,7 @@ pub async fn refresh_jwt(
         Some(cookie) => cookie,
         None => {
             warn!(
-                "Unauthorized access attempt to {}: missing cookie",
+                "Unauthorized access attempt to refresh_jwt{}: missing cookie",
                 req.path()
             );
             return HttpResponse::Unauthorized().finish();
@@ -250,7 +250,7 @@ pub async fn refresh_jwt(
         Ok(token) => token,
         Err(_) => {
             warn!(
-                "Unauthorized access attempt to {}: expired or invalid refresh token",
+                "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
                 req.path()
             );
             return HttpResponse::Unauthorized().json(json!({

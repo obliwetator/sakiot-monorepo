@@ -716,8 +716,11 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         info!("PATH: {:#?}", req.path());
-        if req.path() == "/api/discord_login" || req.path() == "/api/refresh" {
-            // Dont validate the token if user is trying to login or refresh
+        if req.path() == "/api/discord_login"
+            || req.path() == "/api/refresh"
+            || req.path() == "/api/dashboard/stream"
+        {
+            // Dont validate the token if user is trying to login, refresh, or connecting to websocket
             let res = self.service.call(req);
 
             Box::pin(async move {
@@ -730,7 +733,7 @@ where
                 Some(cookie) => cookie,
                 None => {
                     warn!(
-                        "Unauthorized access attempt to {}: missing cookie",
+                        "Unauthorized access attempt to  middleware {}: missing cookie",
                         req.path()
                     );
                     let (request, _pl) = req.into_parts();
@@ -748,7 +751,7 @@ where
                 Ok(token) => token,
                 Err(_) => {
                     warn!(
-                        "Unauthorized access attempt to {}: invalid or expired token",
+                        "Unauthorized access attempt to middleware {}: invalid or expired token",
                         req.path()
                     );
                     let (request, _pl) = req.into_parts();
@@ -770,7 +773,7 @@ where
     }
 }
 
-fn get_access_and_refresh_tokens(cookie: &reqwest::header::HeaderValue) -> (&str, &str) {
+pub fn get_access_and_refresh_tokens(cookie: &reqwest::header::HeaderValue) -> (&str, &str) {
     let tokens = cookie.to_str().unwrap();
     let access_refresh: Vec<&str> = tokens.split(';').collect();
 
