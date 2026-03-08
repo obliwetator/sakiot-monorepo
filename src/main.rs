@@ -35,7 +35,7 @@ use actix_web::{get, web, App, HttpMessage, HttpResponse, HttpServer, Responder}
 use serde::{Deserialize, Serialize};
 use sqlx::pool::Pool;
 use sqlx::postgres::PgPoolOptions;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(Serialize, Debug)]
@@ -716,8 +716,11 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         info!("PATH: {:#?}", req.path());
-        if req.path() == "/api/discord_login" || req.path() == "/api/refresh" {
-            // Dont validate the token if user is trying to login or refresh
+        if req.path() == "/api/discord_login"
+            || req.path() == "/api/refresh"
+            || req.path() == "/api/dashboard/stream"
+        {
+            // Dont validate the token if user is trying to login, refresh, or connecting to websocket
             let res = self.service.call(req);
 
             Box::pin(async move {
@@ -729,6 +732,10 @@ where
             let cookie = match headers.get("cookie") {
                 Some(cookie) => cookie,
                 None => {
+                    warn!(
+                        "Unauthorized access attempt to  middleware {}: missing cookie",
+                        req.path()
+                    );
                     let (request, _pl) = req.into_parts();
 
                     let response = HttpResponse::Unauthorized().finish().map_into_right_body();
@@ -743,6 +750,10 @@ where
             let decoded_access = match Token::<Access>::decode(access_token, keys) {
                 Ok(token) => token,
                 Err(_) => {
+                    warn!(
+                        "Unauthorized access attempt to middleware {}: invalid or expired token",
+                        req.path()
+                    );
                     let (request, _pl) = req.into_parts();
                     let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                     return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
@@ -762,7 +773,7 @@ where
     }
 }
 
-fn get_access_and_refresh_tokens(cookie: &reqwest::header::HeaderValue) -> (&str, &str) {
+pub fn get_access_and_refresh_tokens(cookie: &reqwest::header::HeaderValue) -> (&str, &str) {
     let tokens = cookie.to_str().unwrap();
     let access_refresh: Vec<&str> = tokens.split(';').collect();
 

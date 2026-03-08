@@ -1,8 +1,8 @@
-use actix::{Actor, StreamHandler, AsyncContext, ActorContext};
+use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
 use actix_web::{get, web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use tracing::{error, info};
 use tokio_stream::StreamExt;
+use tracing::{error, info};
 
 pub mod hello_world {
     #![allow(non_snake_case)]
@@ -10,11 +10,9 @@ pub mod hello_world {
 }
 
 use hello_world::dashboard_client::DashboardClient;
-use hello_world::Empty;
-
+use hello_world::ClientMessage;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
-use hello_world::ClientMessage;
 
 struct DashboardWebSocket {
     topic_tx: watch::Sender<String>,
@@ -28,14 +26,17 @@ impl Actor for DashboardWebSocket {
 
         let addr = ctx.address();
         let topic_rx = self.topic_tx.subscribe();
-        
+
         tokio::spawn(async move {
             loop {
                 info!("Attempting to connect to Dashboard gRPC service...");
                 let mut client = match DashboardClient::connect("http://[::1]:50052").await {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("Failed to connect to Dashboard gRPC service: {}. Retrying in 3s...", e);
+                        error!(
+                            "Failed to connect to Dashboard gRPC service: {}. Retrying in 3s...",
+                            e
+                        );
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         continue;
                     }
@@ -44,11 +45,16 @@ impl Actor for DashboardWebSocket {
                 info!("Successfully connected to Dashboard gRPC service");
 
                 let (tx, rx) = mpsc::channel(100);
-                
+
                 // Send the initial topic immediately upon connection
                 let initial_topic = topic_rx.borrow().clone();
                 if !initial_topic.is_empty() {
-                    let _ = tx.send(ClientMessage { action: "subscribe".to_string(), topic: initial_topic }).await;
+                    let _ = tx
+                        .send(ClientMessage {
+                            action: "subscribe".to_string(),
+                            topic: initial_topic,
+                        })
+                        .await;
                 }
 
                 // Spawn a task to forward watch changes to the mpsc stream
@@ -57,8 +63,19 @@ impl Actor for DashboardWebSocket {
                 tokio::spawn(async move {
                     while task_rx.changed().await.is_ok() {
                         let t = task_rx.borrow().clone();
-                        let action = if t.is_empty() { "unsubscribe" } else { "subscribe" };
-                        if tx_clone.send(ClientMessage { action: action.to_string(), topic: t }).await.is_err() {
+                        let action = if t.is_empty() {
+                            "unsubscribe"
+                        } else {
+                            "subscribe"
+                        };
+                        if tx_clone
+                            .send(ClientMessage {
+                                action: action.to_string(),
+                                topic: t,
+                            })
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -66,7 +83,7 @@ impl Actor for DashboardWebSocket {
 
                 let req_stream = ReceiverStream::new(rx);
                 let request = tonic::Request::new(req_stream);
-                
+
                 let mut stream = match client.dashboard_stream(request).await {
                     Ok(response) => response.into_inner(),
                     Err(e) => {
@@ -83,7 +100,7 @@ impl Actor for DashboardWebSocket {
                                 "event_type": event.event_type,
                                 "payload": event.json_payload,
                             });
-                            
+
                             if addr.try_send(MetricsMessage(json.to_string())).is_err() {
                                 return; // Actor closed, terminate entirely
                             }
@@ -126,7 +143,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let (Some(action), Some(topic)) = (json["action"].as_str(), json["topic"].as_str()) {
+                    if let (Some(action), Some(topic)) =
+                        (json["action"].as_str(), json["topic"].as_str())
+                    {
                         if action == "subscribe" {
                             let _ = self.topic_tx.send(topic.to_string());
                         } else if action == "unsubscribe" {
@@ -134,7 +153,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
                         }
                     }
                 }
-            },
+            }
             Ok(ws::Message::Binary(_)) => (),
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
@@ -146,7 +165,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
 }
 
 #[get("/dashboard/stream")]
-pub async fn dashboard_stream(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
+pub async fn dashboard_stream(
+    req: HttpRequest,
+    stream: web::Payload,
+) -> Result<HttpResponse, actix_web::Error> {
     let (topic_tx, _) = watch::channel(String::new());
     ws::start(DashboardWebSocket { topic_tx }, &req, stream)
 }
