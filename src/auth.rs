@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
+use tracing::warn;
 
 use crate::{
     get_access_and_refresh_tokens,
@@ -234,7 +235,13 @@ pub async fn refresh_jwt(
     let headers = req.headers();
     let cookie = match headers.get("cookie") {
         Some(cookie) => cookie,
-        None => return HttpResponse::Unauthorized().finish(),
+        None => {
+            warn!(
+                "Unauthorized access attempt to {}: missing cookie",
+                req.path()
+            );
+            return HttpResponse::Unauthorized().finish();
+        }
     };
 
     let (_, refresh_token) = get_access_and_refresh_tokens(cookie);
@@ -242,10 +249,14 @@ pub async fn refresh_jwt(
     let decoded_refresh = match Token::<Refresh>::decode(refresh_token, &keys) {
         Ok(token) => token,
         Err(_) => {
+            warn!(
+                "Unauthorized access attempt to {}: expired or invalid refresh token",
+                req.path()
+            );
             return HttpResponse::Unauthorized().json(json!({
                 "error": "expired_or_invalid_token",
                 "message": "The refresh token is expired or invalid. Please login again."
-            }))
+            }));
         }
     };
 

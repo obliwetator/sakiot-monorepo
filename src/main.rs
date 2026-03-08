@@ -35,7 +35,7 @@ use actix_web::{get, web, App, HttpMessage, HttpResponse, HttpServer, Responder}
 use serde::{Deserialize, Serialize};
 use sqlx::pool::Pool;
 use sqlx::postgres::PgPoolOptions;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 #[derive(Serialize, Debug)]
@@ -729,6 +729,10 @@ where
             let cookie = match headers.get("cookie") {
                 Some(cookie) => cookie,
                 None => {
+                    warn!(
+                        "Unauthorized access attempt to {}: missing cookie",
+                        req.path()
+                    );
                     let (request, _pl) = req.into_parts();
 
                     let response = HttpResponse::Unauthorized().finish().map_into_right_body();
@@ -743,6 +747,10 @@ where
             let decoded_access = match Token::<Access>::decode(access_token, keys) {
                 Ok(token) => token,
                 Err(_) => {
+                    warn!(
+                        "Unauthorized access attempt to {}: invalid or expired token",
+                        req.path()
+                    );
                     let (request, _pl) = req.into_parts();
                     let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                     return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
