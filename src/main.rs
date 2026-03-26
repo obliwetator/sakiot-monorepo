@@ -5,6 +5,7 @@ mod dashboard;
 mod errors;
 mod grpc;
 mod permissions;
+mod secrets;
 mod user;
 mod waveform;
 mod websocket;
@@ -13,10 +14,11 @@ use actix_web::body::EitherBody;
 use actix_web::middleware::Logger;
 use actix_web::web::ReqData;
 use audio::{download_audio, find_similar, get_audio, get_waveform_data, remove_silence};
-use auth::{discord_login, get_token, refresh_jwt, ACCESS_SECRET, REFRESH_SECRET};
+use auth::{discord_login, get_token, refresh_jwt};
+use secrets::{ACCESS_SECRET, REFRESH_SECRET};
 use clips::{delete, get_clip, get_clips, play_clip};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use permissions::get_everyone_permission_for_guild;
+use permissions::get_available_channels_for_user;
 use sqlx::Postgres;
 
 use tokio::sync::broadcast::Sender;
@@ -392,133 +394,6 @@ async fn download_the_clip() -> Result<actix_files::NamedFile, Error> {
     Ok(actix_files::NamedFile::open("/home/tulipan/clips.tar.gz")?)
 }
 
-pub async fn get_available_channels_for_user(
-    pool: &web::Data<Pool<Postgres>>,
-    guild_id: i64,
-    user_id: i64,
-) -> HashSet<i64> {
-    // [0] = allow, [1] = deny
-    let mut perm_hash: HashMap<i64, [i64; 2]> = HashMap::new();
-    let mut allowed_channels: HashSet<i64> = HashSet::new();
-    let mut denied_channels: HashSet<i64> = HashSet::new();
-
-    let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await;
-    let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await;
-
-    // This is the highest non-specific permission for user
-    let total_permission = everyone_permission | combined_permission;
-
-    get_user_channel_overrides_for_user_id(user_id, guild_id, pool, &mut perm_hash).await;
-
-    // Is admin
-    if (total_permission & Permissions::ADMINISTRATOR.bits()) == Permissions::ADMINISTRATOR.bits() {
-        perm_hash.retain(|ch_id, _| {
-            allowed_channels.insert(*ch_id);
-
-            false
-        });
-    }
-
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
-
-        !allow && !deny
-    });
-
-    perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await;
-
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-
-        // If both allow and deny are true the allow value overrides the deny
-        if (allow == true) && (deny == true) {
-            allowed_channels.insert(*ch_id);
-            return !allow && !deny;
-        }
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
-
-        !allow && !deny
-    });
-
-    get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await;
-
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
-
-        !allow && !deny
-    });
-
-    // Final most general check. Check @everyone
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = ((perm_vec[0] | total_permission) & Permissions::CONNECT.bits())
-            == Permissions::CONNECT.bits();
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-
-        !allow
-    });
-
-    allowed_channels
-}
-
-async fn get_user_channel_overrides_for_user_id(
-    user_id: i64,
-    guild_id: i64,
-    pool: &web::Data<Pool<Postgres>>,
-    perm_hash: &mut HashMap<i64, [i64; 2]>,
-) {
-    let specfic_perm_for_channel = match sqlx::query!(
-        "SELECT allow, deny, channel_id as \"channel_id!\", name as 
-			\"name!\" FROM get_user_channel_overriders_for_user_id($1, $2)",
-        user_id,
-        guild_id
-    )
-    .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            // TODO:
-            panic!("Error ")
-        }
-    };
-
-    // member specific override
-    for specific_perm in specfic_perm_for_channel {
-        perm_hash.insert(
-            specific_perm.channel_id,
-            [
-                specific_perm.allow.unwrap_or(0),
-                specific_perm.deny.unwrap_or(0),
-            ],
-        );
-    }
-}
 
 #[get("/current/{guild_id}")]
 async fn perm_calc(
@@ -667,10 +542,6 @@ use futures_util::future::LocalBoxFuture;
 use crate::auth::{Access, Refresh, Token};
 use crate::grpc::hello_world::greeter_server::GreeterServer;
 use crate::grpc::MyGreeter;
-use crate::permissions::{
-    get_combined_perm_for_user, get_everyone_permission_for_each_channel,
-    perms_for_roles_for_channel, Permissions,
-};
 
 // There are two steps in middleware processing.
 // 1. Middleware initialization, middleware factory gets called with

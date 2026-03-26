@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use actix_web::web;
 use sqlx::{Pool, Postgres};
@@ -142,132 +142,6 @@ bitflags::bitflags! {
     }
 }
 
-pub struct PERM {}
-
-impl PERM {
-    /// Allows for the creation of [`RichInvite`]s.
-    ///
-    /// [`RichInvite`]: super::invite::RichInvite
-    pub const CREATE_INSTANT_INVITE: i64 = 1 << 0;
-    /// Allows for the kicking of guild [member]s.
-    ///
-    /// [member]: super::guild::Member
-    pub const KICK_MEMBERS: i64 = 1 << 1;
-    /// Allows the banning of guild [member]s.
-    ///
-    /// [member]: super::guild::Member
-    pub const BAN_MEMBERS: i64 = 1 << 2;
-    /// Allows all permissions, bypassing channel [permission overwrite]s.
-    ///
-    /// [permission overwrite]: super::channel::PermissionOverwrite
-    pub const ADMINISTRATOR: i64 = 1 << 3;
-    /// Allows management and editing of guild [channel]s.
-    ///
-    /// [channel]: super::channel::GuildChannel
-    pub const MANAGE_CHANNELS: i64 = 1 << 4;
-    /// Allows management and editing of the [guild].
-    ///
-    /// [guild]: super::guild::Guild
-    pub const MANAGE_GUILD: i64 = 1 << 5;
-    /// [`Member`]s with this permission can add new [`Reaction`]s to a
-    /// [`Message`]. Members can still react using reactions already added
-    /// to messages without this permission.
-    ///
-    /// [`Member`]: super::guild::Member
-    /// [`Message`]: super::channel::Message
-    /// [`Reaction`]: super::channel::Reaction
-    pub const ADD_REACTIONS: i64 = 1 << 6;
-    /// Allows viewing a guild's audit logs.
-    pub const VIEW_AUDIT_LOG: i64 = 1 << 7;
-    /// Allows the use of priority speaking in voice channels.
-    pub const PRIORITY_SPEAKER: i64 = 1 << 8;
-    // Allows the user to go live.
-    pub const STREAM: i64 = 1 << 9;
-    /// Allows guild members to view a channel, which includes reading
-    /// messages in text channels and joining voice channels.
-    pub const VIEW_CHANNEL: i64 = 1 << 10;
-    /// Allows sending messages in a guild channel.
-    pub const SEND_MESSAGES: i64 = 1 << 11;
-    /// Allows the sending of text-to-speech messages in a channel.
-    pub const SEND_TTS_MESSAGES: i64 = 1 << 12;
-    /// Allows the deleting of other messages in a guild channel.
-    ///
-    /// **Note**: This does not allow the editing of other messages.
-    pub const MANAGE_MESSAGES: i64 = 1 << 13;
-    /// Allows links from this user - or users of this role - to be
-    /// embedded, with potential data such as a thumbnail, description, and
-    /// page name.
-    pub const EMBED_LINKS: i64 = 1 << 14;
-    /// Allows uploading of files.
-    pub const ATTACH_FILES: i64 = 1 << 15;
-    /// Allows the reading of a channel's message history.
-    pub const READ_MESSAGE_HISTORY: i64 = 1 << 16;
-    /// Allows the usage of the `@everyone` mention, which will notify all
-    /// users in a channel. The `@here` mention will also be available, and
-    /// can be used to mention all non-offline users.
-    ///
-    /// **Note**: You probably want this to be disabled for most roles and
-    /// users.
-    pub const MENTION_EVERYONE: i64 = 1 << 17;
-    /// Allows the usage of custom emojis from other guilds.
-    ///
-    /// This does not dictate whether custom emojis in this guild can be
-    /// used in other guilds.
-    pub const USE_EXTERNAL_EMOJIS: i64 = 1 << 18;
-    /// Allows for viewing guild insights.
-    pub const VIEW_GUILD_INSIGHTS: i64 = 1 << 19;
-    /// Allows the joining of a voice channel.
-    pub const CONNECT: i64 = 1 << 20;
-    /// Allows the user to speak in a voice channel.
-    pub const SPEAK: i64 = 1 << 21;
-    /// Allows the muting of members in a voice channel.
-    pub const MUTE_MEMBERS: i64 = 1 << 22;
-    /// Allows the deafening of members in a voice channel.
-    pub const DEAFEN_MEMBERS: i64 = 1 << 23;
-    /// Allows the moving of members from one voice channel to another.
-    pub const MOVE_MEMBERS: i64 = 1 << 24;
-    /// Allows the usage of voice-activity-detection in a [voice] channel.
-    ///
-    /// If this is disabled, then [`Member`]s must use push-to-talk.
-    ///
-    /// [`Member`]: super::guild::Member
-    /// [voice]: super::channel::ChannelType::Voice
-    pub const USE_VAD: i64 = 1 << 25;
-    /// Allows members to change their own nickname in the guild.
-    pub const CHANGE_NICKNAME: i64 = 1 << 26;
-    /// Allows members to change other members' nicknames.
-    pub const MANAGE_NICKNAMES: i64 = 1 << 27;
-    /// Allows management and editing of roles below their own.
-    pub const MANAGE_ROLES: i64 = 1 << 28;
-    /// Allows management of webhooks.
-    pub const MANAGE_WEBHOOKS: i64 = 1 << 29;
-    /// Allows management of emojis and stickers created without the use of an
-    /// [`Integration`].
-    ///
-    /// [`Integration`]: super::guild::Integration
-    pub const MANAGE_EMOJIS_AND_STICKERS: i64 = 1 << 30;
-    /// Allows using slash commands.
-    pub const USE_SLASH_COMMANDS: i64 = 1 << 31;
-    /// Allows for requesting to speak in stage channels.
-    pub const REQUEST_TO_SPEAK: i64 = 1 << 32;
-    /// Allows for creating, editing, and deleting scheduled events
-    pub const MANAGE_EVENTS: i64 = 1 << 33;
-    /// Allows for deleting and archiving threads, and viewing all private threads.
-    pub const MANAGE_THREADS: i64 = 1 << 34;
-    /// Allows for creating threads.
-    pub const CREATE_PUBLIC_THREADS: i64 = 1 << 35;
-    /// Allows for creating private threads.
-    pub const CREATE_PRIVATE_THREADS: i64 = 1 << 36;
-    /// Allows the usage of custom stickers from other servers.
-    pub const USE_EXTERNAL_STICKERS: i64 = 1 << 37;
-    /// Allows for sending messages in threads
-    pub const SEND_MESSAGES_IN_THREADS: i64 = 1 << 38;
-    /// Allows for launching activities in a voice channel
-    pub const USE_EMBEDDED_ACTIVITIES: i64 = 1 << 39;
-    /// Allows for timing out users to prevent them from sending or reacting to messages in
-    /// chat and threads, and from speaking in voice and stage channels.
-    pub const MODERATE_MEMBERS: i64 = 1 << 40;
-}
 
 pub async fn get_everyone_permission_for_guild(
     pool: &web::Data<Pool<Postgres>>,
@@ -312,6 +186,9 @@ pub async fn get_combined_perm_for_user(
             panic!("Error ")
         }
     };
+    if res.owner {
+        return Permissions::all().bits();
+    }
     res.permissions
 }
 
@@ -346,9 +223,139 @@ pub async fn perms_for_roles_for_channel(
                     ok[0] = ok[0] | perm.allow;
                     ok[1] = ok[1] | perm.deny;
                 }
-                None => continue,
+                None => {
+                    perm_hash.insert(perm.channel_id, [perm.allow, perm.deny]);
+                }
             }
         }
+    }
+}
+
+pub async fn get_available_channels_for_user(
+    pool: &actix_web::web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    user_id: i64,
+) -> HashSet<i64> {
+    // [0] = allow, [1] = deny
+    let mut perm_hash: HashMap<i64, [i64; 2]> = HashMap::new();
+    let mut allowed_channels: HashSet<i64> = HashSet::new();
+    let mut denied_channels: HashSet<i64> = HashSet::new();
+
+    let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await;
+    let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await;
+
+    // This is the highest non-specific permission for user
+    let total_permission = everyone_permission | combined_permission;
+
+    get_user_channel_overrides_for_user_id(user_id, guild_id, pool, &mut perm_hash).await;
+
+    // Is admin
+    if (total_permission & Permissions::ADMINISTRATOR.bits()) == Permissions::ADMINISTRATOR.bits() {
+        perm_hash.retain(|ch_id, _| {
+            allowed_channels.insert(*ch_id);
+
+            false
+        });
+    }
+
+    perm_hash.retain(|ch_id, perm_vec| {
+        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+
+        if allow {
+            allowed_channels.insert(*ch_id);
+        }
+        if deny {
+            denied_channels.insert(*ch_id);
+        }
+
+        !allow && !deny
+    });
+
+    perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await;
+
+    perm_hash.retain(|ch_id, perm_vec| {
+        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+
+        // If both allow and deny are true the allow value overrides the deny
+        if (allow == true) && (deny == true) {
+            allowed_channels.insert(*ch_id);
+            return !allow && !deny;
+        }
+
+        if allow {
+            allowed_channels.insert(*ch_id);
+        }
+        if deny {
+            denied_channels.insert(*ch_id);
+        }
+
+        !allow && !deny
+    });
+
+    get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await;
+
+    perm_hash.retain(|ch_id, perm_vec| {
+        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+
+        if allow {
+            allowed_channels.insert(*ch_id);
+        }
+        if deny {
+            denied_channels.insert(*ch_id);
+        }
+
+        !allow && !deny
+    });
+
+    // Final most general check. Check @everyone
+    perm_hash.retain(|ch_id, perm_vec| {
+        let allow = ((perm_vec[0] | total_permission) & Permissions::CONNECT.bits())
+            == Permissions::CONNECT.bits();
+
+        if allow {
+            allowed_channels.insert(*ch_id);
+        }
+
+        !allow
+    });
+
+    allowed_channels
+}
+
+async fn get_user_channel_overrides_for_user_id(
+    user_id: i64,
+    guild_id: i64,
+    pool: &actix_web::web::Data<Pool<Postgres>>,
+    perm_hash: &mut HashMap<i64, [i64; 2]>,
+) {
+    let specfic_perm_for_channel = match sqlx::query!(
+        "SELECT allow, deny, channel_id as \"channel_id!\", name as
+			\"name!\" FROM get_user_channel_overriders_for_user_id($1, $2)",
+        user_id,
+        guild_id
+    )
+    .fetch_all(pool.get_ref())
+    .await
+    {
+        Ok(ok) => ok,
+        Err(_) => {
+            // TODO:
+            panic!("Error ")
+        }
+    };
+
+    // member specific override
+    for specific_perm in specfic_perm_for_channel {
+        perm_hash.insert(
+            specific_perm.channel_id,
+            [
+                specific_perm.allow.unwrap_or(0),
+                specific_perm.deny.unwrap_or(0),
+            ],
+        );
     }
 }
 
@@ -361,7 +368,7 @@ pub async fn get_everyone_permission_for_each_channel(
         "SELECT channel_permissions.allow as \"allow?\", channel_permissions.deny as \"deny?\",  channels.channel_id, channels.name 
 		FROM channels 
 		LEFT JOIN channel_permissions 
-		ON channels.channel_id=channel_permissions.channel_id OR channel_permissions.channel_id IS NULL
+		ON channels.channel_id=channel_permissions.channel_id
 		WHERE channels.type = 2
 		AND channels.guild_id=$1
 		AND (channel_permissions.target_id=$1 OR channel_permissions.target_id IS NULL)", guild_id
@@ -381,7 +388,12 @@ pub async fn get_everyone_permission_for_each_channel(
                 ok[0] = ok[0] | channel_perm.allow.unwrap_or(0);
                 ok[1] = ok[1] | channel_perm.deny.unwrap_or(0);
             }
-            None => continue,
+            None => {
+                perm_hash.insert(channel_perm.channel_id, [
+                    channel_perm.allow.unwrap_or(0),
+                    channel_perm.deny.unwrap_or(0),
+                ]);
+            }
         }
     }
 }
