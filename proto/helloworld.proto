@@ -73,6 +73,27 @@ message MetricsResponse {
 	int32 active_voice_connections = 2;
 	int64 uptime_seconds = 3;
 	int32 commands_executed = 4;
+	// Voice recording pipeline
+	int32 active_recordings = 5;
+	int32 ffmpeg_spawn_failures = 6;
+	int32 ffmpeg_process_crashes = 7;
+	int64 audio_packets_received = 8;
+	int64 audio_packets_dropped = 9;
+	// Discord gateway health
+	int32 gateway_reconnects = 10;
+	int32 driver_reconnects = 11;
+	int64 voice_state_updates_received = 12;
+	// Database health
+	int32 db_query_errors = 13;
+	int32 db_insert_failures = 14;
+	// gRPC server health
+	int32 grpc_active_streams = 15;
+	// Process health (sampled every 15s)
+	int64 process_rss_bytes = 16;
+	int32 process_open_fds = 17;
+	int32 tokio_active_tasks = 18;
+	// Bot activity
+	int32 messages_received = 19;
 }
 
 message JamData {
