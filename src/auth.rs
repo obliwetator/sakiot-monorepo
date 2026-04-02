@@ -11,19 +11,15 @@ use tracing::warn;
 
 pub use crate::get_access_and_refresh_tokens;
 use crate::{
+    secrets::{CLIENT_ID, CLIENT_SECRET},
     user::{get_user, get_user_guilds},
     AccessKeys,
 };
-
-pub const CLIENT_ID: &str = "877617434029350972";
-pub const CLIENT_SECRET: &str = "NisxjUCXUkB4Q6iJAFEfNVAos8_GiLNi";
 
 pub const BASE_URL: &str = "https://discord.com/api/v10/";
 
 pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
 pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
-pub const ACCESS_SECRET: &str = "1708fd0a1828410128b1ed92ba688acd8a4b283e7c6d365c88e66b8fffe0cc0657dd77a2cd8142b7b41b9a54437e10bc1f8b25ef12b0d6109b1ac53fad5f73be";
-pub const REFRESH_SECRET: &str = "cd33b16763bc28372f6e21779daf23b6e3334e61e790b716f23126eb1c84194da7ce9f9ef1e56365d589fb45514ce4bcbc46549f5122706e3d167648bfe4f598";
 const JWT_ACCESS_EXPIRY: i64 = 10;
 const JWT_REFRESH_EXPIRY: i64 = 7;
 
@@ -64,7 +60,9 @@ impl Token<Access> {
         encode(&Header::default(), &access, key).unwrap()
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
-        match decode::<Self>(token, &keys.access_decode, &Validation::default()) {
+        let mut val = Validation::default();
+        val.leeway = 0;
+        match decode::<Self>(token, &keys.access_decode, &val) {
             Ok(ok) => Ok(ok.claims),
             Err(err) => Err(err),
         }
@@ -85,7 +83,9 @@ impl Token<Refresh> {
         encode(&Header::default(), &refresh, key).unwrap()
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
-        match decode::<Self>(token, &keys.refresh_decode, &Validation::default()) {
+        let mut val = Validation::default();
+        val.leeway = 0;
+        match decode::<Self>(token, &keys.refresh_decode, &val) {
             Ok(ok) => Ok(ok.claims),
             Err(err) => Err(err),
         }

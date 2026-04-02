@@ -1,10 +1,10 @@
-use std::{fs, io::Write, path::Path, process::Stdio};
+use std::{fs, path::Path, process::Stdio};
 
 use actix_files::NamedFile;
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    web, Either, HttpRequest, HttpResponse, Responder,
+    web, HttpRequest, HttpResponse, Responder,
 };
 
 use serde::Deserialize;
@@ -21,8 +21,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     waveform::{stream_peaks, WaveformEvent},
-    DBErrors, HashMapContainer, StartEnd, CLIPS_PATH, NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH,
-    RECORDING_PATH, WAVEFORM_PATH,
+    HashMapContainer, NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH, WAVEFORM_PATH,
 };
 
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
@@ -378,212 +377,51 @@ async fn get_audio(
 
 #[get("/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 async fn download_audio(
-    pool: web::Data<Pool<Postgres>>,
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, String, String)>,
-    clip_duration: web::Query<StartEnd>,
     is_silence: web::Query<AudioQuery>,
-) -> Either<HttpResponse, actix_files::NamedFile> {
+) -> impl Responder {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
-
-    info!("{:#?}", clip_duration);
 
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
     let temp_file = format!(
         "{}/{}/{}{}",
         year, month, NO_SILENCE_PREFIX, file_name_from_url
     );
-    if clip_duration.end.is_some() && clip_duration.start.is_some() {
-        // Clip
-        let path = format!(
-            "{}{}/{}/{}.ogg",
+
+    // Download full file
+    info!(
+        "file_path: {:#?} is silence recording? {:#?}",
+        format!(
+            "{}{}/{}/{}",
             RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-        );
-        info!("is Clip path: {}", path);
-        let child = crop_ffmpeg(
-            clip_duration.start.unwrap(),
-            clip_duration.end.unwrap(),
-            path.as_str(),
+        ),
+        is_silence
+    );
+
+    let file = if is_silence.silence.is_some() {
+        actix_files::NamedFile::open(
+            format!(
+                "{}{}/{}/{}",
+                NO_SILENCE_RECORDING_PATH, guild_id, channel_id, &temp_file
+            )
+            .as_str(),
         )
-        .await;
-
-        // Check if the user provided a name. Otherwise use the file name
-        let clip_name = if clip_duration.name.is_some() {
-            clip_duration.name.as_ref().unwrap()
-        } else {
-            &file_name_from_url
-        };
-
-        let output = child.wait_with_output().unwrap();
-        // TODO: use the user id of the person who clipped it
-        // Needs to implement a login system first
-        let (_time_stamp, id_and_user) = file_name_from_url
-            .split_once('-')
-            .expect("expected valid string");
-
-        let (user_id, _user) = id_and_user.split_once('-').expect("expected valid string");
-
-        match save_bytes_to_file(
-            output.stdout.clone(),
-            pool,
-            user_id,
-            clip_name,
-            &file_name_without_guild_id,
-            &guild_id,
-            &clip_duration,
-        )
-        .await
-        {
-            Ok(_) => {}
-            Err(_) => return Either::Left(HttpResponse::BadRequest().body("duplicate")),
-        };
-
-        Either::Left(
-            HttpResponse::Ok()
-                // tell the browser what type of file it is
-                .content_type("audio/ogg")
-                // tell the browser to download the file
-                .append_header((
-                    "content-disposition",
-                    format!("attachment; filename=\"{clip_name}.ogg\""),
-                ))
-                // send the bytes
-                .body(output.stdout),
-        )
+        .unwrap()
     } else {
-        // Download full file
-        info!(
-            "file_path: {:#?} is silence recording? {:#?}",
+        actix_files::NamedFile::open(
             format!(
                 "{}{}/{}/{}",
                 RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-            ),
-            is_silence
-        );
-
-        let file = if is_silence.silence.is_some() {
-            actix_files::NamedFile::open(
-                format!(
-                    "{}{}/{}/{}",
-                    NO_SILENCE_RECORDING_PATH, guild_id, channel_id, &temp_file
-                )
-                .as_str(),
             )
-            .unwrap()
-        } else {
-            actix_files::NamedFile::open(
-                format!(
-                    "{}{}/{}/{}",
-                    RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-                )
-                .as_str(),
-            )
-            .unwrap()
-        };
-
-        Either::Right(
-            file.use_last_modified(true)
-                .set_content_disposition(ContentDisposition {
-                    disposition: DispositionType::Attachment,
-                    parameters: vec![],
-                }),
+            .as_str(),
         )
-    }
-}
-
-async fn save_bytes_to_file(
-    bytes: Vec<u8>,
-    pool: web::Data<Pool<Postgres>>,
-    user_id: &str,
-    clip_name: &str,
-    file_name: &str,
-    guild_id: &i64,
-    clip_duration: &web::Query<StartEnd>,
-) -> Result<(), DBErrors> {
-    let path = format!("{}{}.ogg", CLIPS_PATH, clip_name);
-    info!(path);
-    let mut command = match std::process::Command::new("ffmpeg")
-        // override file
-        .arg("-y")
-        // input
-        .args(["-i", "-"])
-        .args(["-c:a", "copy"])
-        // since we pipe the output we have to tell ffmpeg whats its gonna be
-        .args(["-f", "ogg"])
-        .arg(path)
-        // output to file
-        // .arg(&file_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(result) => result,
-        Err(err) => {
-            panic!("error: {}", err);
-        }
+        .unwrap()
     };
 
-    let stdin = command.stdin.as_mut().unwrap();
-    stdin.write_all(&bytes).expect("could not write to stdin");
-
-    let output = command.wait_with_output();
-
-    info!("output = {:?}", output);
-
-    let result = match sqlx::query!(
-			"INSERT INTO favorites (user_id, clip_name, file_name, clip_start, clip_end, guild_id) VALUES ($1, $2, $3, $4, $5, $6)",
-			user_id.parse::<i64>().unwrap(),
-			clip_name,
-			file_name,
-			clip_duration.start.unwrap(),
-			clip_duration.end.unwrap(),
-			guild_id
-		)
-		.execute(pool.get_ref())
-		.await {
-		Ok(_) => {Ok(())},
-		Err(err) => {
-			let db_error = err.as_database_error().unwrap().code().unwrap();
-			error!("TODO: send response back: {}", db_error);
-			match db_error.as_ref() {
-				"23505" => {Err(DBErrors::UniqueViolation)}
-				_ => {Err(DBErrors::Unknown)}
-			}
-
-		},
-	};
-
-    result
-}
-
-// TODO: save it to a file as well
-async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Child {
-    let command = match std::process::Command::new("ffmpeg")
-        // seek to
-        .args(["-ss", &start.to_string()])
-        // input
-        .args(["-i", file_path])
-        // length
-        .args(["-t", &end.to_string()])
-        // copy the codec
-        .args(["-c", "copy"])
-        // since we pipe the output we have to tell ffmpeg whats its gonna be
-        .args(["-f", "ogg"])
-        // output to pipe
-        .arg("-")
-        // output to file
-        // .arg(&file_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(result) => result,
-        Err(err) => {
-            panic!("error: {}", err);
-        }
-    };
-
-    command
+    file.use_last_modified(true)
+        .set_content_disposition(ContentDisposition {
+            disposition: DispositionType::Attachment,
+            parameters: vec![],
+        })
 }

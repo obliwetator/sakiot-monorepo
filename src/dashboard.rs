@@ -1,6 +1,7 @@
 use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
 use actix_web::{get, web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
+use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
 use tracing::{error, info};
 
@@ -14,8 +15,12 @@ use hello_world::ClientMessage;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
+
 struct DashboardWebSocket {
     topic_tx: watch::Sender<String>,
+    last_heartbeat: Instant,
 }
 
 impl Actor for DashboardWebSocket {
@@ -23,6 +28,7 @@ impl Actor for DashboardWebSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("Dashboard WebSocket connected");
+        self.start_heartbeat(ctx);
 
         let addr = ctx.address();
         let topic_rx = self.topic_tx.subscribe();
@@ -63,11 +69,7 @@ impl Actor for DashboardWebSocket {
                 tokio::spawn(async move {
                     while task_rx.changed().await.is_ok() {
                         let t = task_rx.borrow().clone();
-                        let action = if t.is_empty() {
-                            "unsubscribe"
-                        } else {
-                            "subscribe"
-                        };
+                        let action = if t.is_empty() { "unsubscribe" } else { "subscribe" };
                         if tx_clone
                             .send(ClientMessage {
                                 action: action.to_string(),
@@ -123,6 +125,19 @@ impl Actor for DashboardWebSocket {
     }
 }
 
+impl DashboardWebSocket {
+    fn start_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            if Instant::now().duration_since(act.last_heartbeat) > CLIENT_TIMEOUT {
+                info!("Dashboard WebSocket client timed out, stopping");
+                ctx.stop();
+                return;
+            }
+            ctx.ping(b"");
+        });
+    }
+}
+
 struct MetricsMessage(String);
 
 impl actix::Message for MetricsMessage {
@@ -140,7 +155,13 @@ impl actix::Handler<MetricsMessage> for DashboardWebSocket {
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocket {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
-            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Ping(msg)) => {
+                self.last_heartbeat = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.last_heartbeat = Instant::now();
+            }
             Ok(ws::Message::Text(text)) => {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
                     if let (Some(action), Some(topic)) =
@@ -170,5 +191,12 @@ pub async fn dashboard_stream(
     stream: web::Payload,
 ) -> Result<HttpResponse, actix_web::Error> {
     let (topic_tx, _) = watch::channel(String::new());
-    ws::start(DashboardWebSocket { topic_tx }, &req, stream)
+    ws::start(
+        DashboardWebSocket {
+            topic_tx,
+            last_heartbeat: Instant::now(),
+        },
+        &req,
+        stream,
+    )
 }
