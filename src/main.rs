@@ -15,10 +15,10 @@ use actix_web::middleware::Logger;
 use actix_web::web::ReqData;
 use audio::{download_audio, find_similar, get_audio, get_waveform_data, remove_silence};
 use auth::{discord_login, get_token, refresh_jwt};
-use secrets::{ACCESS_SECRET, REFRESH_SECRET};
-use clips::{delete, get_clip, get_clips, play_clip};
+use clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use permissions::get_available_channels_for_user;
+use secrets::{ACCESS_SECRET, REFRESH_SECRET};
 use sqlx::Postgres;
 
 use tokio::sync::broadcast::Sender;
@@ -394,7 +394,6 @@ async fn download_the_clip() -> Result<actix_files::NamedFile, Error> {
     Ok(actix_files::NamedFile::open("/home/tulipan/clips.tar.gz")?)
 }
 
-
 #[get("/current/{guild_id}")]
 async fn perm_calc(
     _path: web::Path<String>,
@@ -501,6 +500,7 @@ async fn main() {
             .service(get_clips)
             .service(get_clip)
             .service(play_clip)
+            .service(create_clip)
             .service(get_waveform_data)
             .service(download_the_clip)
             .default_service(web::route().to(not_found))

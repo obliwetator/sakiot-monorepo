@@ -3,7 +3,7 @@ use actix_files::NamedFile;
 use actix_web::{cookie::Cookie, get, web, HttpRequest, HttpResponse, Responder};
 use jsonwebtoken::{decode, encode, EncodingKey, Header, Validation};
 use reqwest::Client;
-use serde::{de::value, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
