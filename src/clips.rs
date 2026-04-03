@@ -148,16 +148,34 @@ pub struct A {
 // TODO: Get GRPC Client
 #[post("/jamit")]
 pub async fn play_clip(info: web::Json<JamItBody>) -> impl Responder {
-    let mut client = JammerClient::connect("http://[::1]:50052").await.unwrap();
+    info!("Received jamit request: {:?}", info);
+    
+    let client_conn = JammerClient::connect("http://[::1]:50052").await;
+    let mut client = match client_conn {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to connect to GRPC JammerClient: {}", e);
+            panic!("GRPC connection failed");
+        }
+    };
+
+    info!("Connected to GRPC server. Sending request for clip '{}' and guild '{}'", info.clip_name, info.guild_id);
 
     let request = tonic::Request::new(JamData {
         clip_name: info.clip_name.clone(),
         guild_id: info.guild_id,
     });
 
-    let response = client.jam_it(request).await.unwrap();
+    let response_result = client.jam_it(request).await;
+    let response = match response_result {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("Failed to jam_it via GRPC: {}", e);
+            panic!("GRPC jam_it failed");
+        }
+    };
 
-    info!("{:#?}", response);
+    info!("GRPC response: {:#?}", response);
 
     let jam_response = response.into_inner();
 
