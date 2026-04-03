@@ -27,7 +27,7 @@ use crate::{
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 async fn get_waveform_data(
     _req: HttpRequest,
-    path: web::Path<(i64, i64, i32, String, String)>,
+    path: web::Path<(i64, i64, i32, i32, String)>,
 ) -> impl Responder {
     let path = path.into_inner();
     let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
@@ -68,7 +68,7 @@ async fn get_waveform_data(
         .streaming(stream)
 }
 
-async fn _get_file(path: web::Path<(i64, i64, i32, String, String)>) -> NamedFile {
+async fn _get_file(path: web::Path<(i64, i64, i32, i32, String)>) -> NamedFile {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
 
     match NamedFile::open(format!(
@@ -82,7 +82,7 @@ async fn _get_file(path: web::Path<(i64, i64, i32, String, String)>) -> NamedFil
     }
 }
 
-fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, String, String)) -> String {
+fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
     let guild_id = &path.0;
     let channel_id = &path.1;
     let year = &path.2;
@@ -130,7 +130,7 @@ fn handle_idempotency_key(req: &HttpRequest) -> Result<String, ()> {
 #[get("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 async fn remove_silence(
     req: HttpRequest,
-    path: web::Path<(i64, i64, i32, String, String)>,
+    path: web::Path<(i64, i64, i32, i32, String)>,
     hashmap: web::Data<HashMapContainer>,
     pool: web::Data<Pool<Postgres>>,
 ) -> impl Responder {
@@ -276,7 +276,7 @@ async fn remove_silence(
 #[get("/find/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 async fn find_similar(
     _req: HttpRequest,
-    path: web::Path<(u64, String, i32, String, String)>,
+    path: web::Path<(u64, String, i32, i32, String)>,
 ) -> impl Responder {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
@@ -332,7 +332,7 @@ struct AudioQuery {
 #[get("/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 async fn get_audio(
     req: HttpRequest,
-    path: web::Path<(u64, String, i32, String, String)>,
+    path: web::Path<(u64, String, i32, i32, String)>,
     query_param: web::Query<AudioQuery>,
 ) -> impl Responder {
     use actix_files::NamedFile;
@@ -378,7 +378,7 @@ async fn get_audio(
 #[get("/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 async fn download_audio(
     _req: HttpRequest,
-    path: web::Path<(i64, i64, i32, String, String)>,
+    path: web::Path<(i64, i64, i32, i32, String)>,
     is_silence: web::Query<AudioQuery>,
 ) -> impl Responder {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();

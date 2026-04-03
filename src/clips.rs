@@ -209,12 +209,13 @@ async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Chi
     command
 }
 
-#[post("adio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn create_clip(
     pool: web::Data<Pool<Postgres>>,
-    path: web::Path<(i64, i64, i32, String, String)>,
+    path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> impl Responder {
+    info!("creating clip with duration: {:?}", clip_duration);
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
 
@@ -252,6 +253,7 @@ pub async fn create_clip(
     let target_dir = format!("{}{}/{:02}", CLIPS_PATH, c_year, c_month);
     let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_name);
     let full_save_path = format!("{}/{}.ogg", target_dir, clip_name);
+    info!("saving clip to: {}", full_save_path);
 
     std::fs::create_dir_all(&target_dir).unwrap();
 

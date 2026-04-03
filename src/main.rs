@@ -64,7 +64,7 @@ enum DBErrors {
     UniqueViolation,
 }
 
-type Months = HashMap<String, Option<Vec<File>>>;
+type Months = HashMap<i32, Option<Vec<File>>>;
 pub const RECORDING_PATH: &str = "/home/tulipan/projects/FBI-agent/voice_recordings/";
 pub const NO_SILENCE_RECORDING_PATH: &str =
     "/home/tulipan/projects/FBI-agent/no_silence_voice_recordings/";
@@ -73,7 +73,7 @@ pub const NO_SILENCE_PREFIX: &str = "_no_silence_";
 pub const WAVEFORM_PATH: &str = "/home/tulipan/projects/FBI-agent/waveform_data/";
 
 #[inline]
-async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_string: &str) {
+async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_int: i32) {
     for entry in entries {
         if let Ok(entry) = entry {
             let file_name = File {
@@ -83,7 +83,7 @@ async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, mont
             dirs.months
                 .as_mut()
                 .unwrap()
-                .get_mut(month_as_string)
+                .get_mut(&month_as_int)
                 .unwrap()
                 .as_mut()
                 .unwrap()
@@ -220,11 +220,12 @@ async fn for_months(
     for month in months {
         if let Ok(entry) = month {
             let month_as_string = entry.file_name().to_str().unwrap().to_owned();
+            let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
 
             dirs.months
                 .as_mut()
                 .unwrap()
-                .insert(month_as_string.to_owned(), Some(vec![]));
+                .insert(month_as_int, Some(vec![]));
 
             let entries = match std::fs::read_dir(format!(
                 "{}{}/{}/{}/{}",
@@ -238,7 +239,7 @@ async fn for_months(
                 }
             };
 
-            for_entry(entries, channel, dirs, &month_as_string).await;
+            for_entry(entries, channel, dirs, month_as_int).await;
         } else {
             info!("error for month")
         }
@@ -296,11 +297,12 @@ pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, Htt
             for month in months {
                 if let Ok(entry) = month {
                     let month_as_string = entry.file_name().to_str().unwrap().to_owned();
+                    let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
 
                     dirs.months
                         .as_mut()
                         .unwrap()
-                        .insert(month_as_string.to_owned(), Some(vec![]));
+                        .insert(month_as_int, Some(vec![]));
 
                     let entries = match std::fs::read_dir(format!(
                         "/home/tulipan/projects/FBI-agent/voice_recordings/{}/{}/{}",
@@ -323,7 +325,7 @@ pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, Htt
                             dirs.months
                                 .as_mut()
                                 .unwrap()
-                                .get_mut(&month_as_string)
+                                .get_mut(&month_as_int)
                                 .unwrap()
                                 .as_mut()
                                 .unwrap()
@@ -486,7 +488,14 @@ async fn main() {
             .service(perm_calc)
             .service(remove_silence)
             .service(delete)
-            .service(dashboard::dashboard_stream);
+            .service(dashboard::dashboard_stream)
+            .service(get_clips)
+            .service(get_clip)
+            .service(play_clip)
+            .service(create_clip)
+            .service(get_audio)
+            .service(get_waveform_data)
+            .service(download_audio);
         App::new()
             .wrap(logger)
             .app_data(web::Data::new(pool.clone()))
@@ -495,13 +504,6 @@ async fn main() {
             .app_data(web::Data::new(keys))
             .service(web_socket)
             .service(api_scope)
-            .service(get_audio)
-            .service(download_audio)
-            .service(get_clips)
-            .service(get_clip)
-            .service(play_clip)
-            .service(create_clip)
-            .service(get_waveform_data)
             .service(download_the_clip)
             .default_service(web::route().to(not_found))
             .wrap(
@@ -731,21 +733,8 @@ pub async fn test_endpoint(pool: Pool<Postgres>) {
                                 if let Ok(entry) = month {
                                     let month_as_string =
                                         entry.file_name().to_str().unwrap().to_owned();
-                                    let month_as_number = match month_as_string.as_str() {
-                                        "January" => 1,
-                                        "February" => 2,
-                                        "March" => 3,
-                                        "April" => 4,
-                                        "May" => 5,
-                                        "June" => 6,
-                                        "July" => 7,
-                                        "August" => 8,
-                                        "September" => 9,
-                                        "October" => 10,
-                                        "November" => 11,
-                                        "December" => 12,
-                                        _ => 13,
-                                    };
+                                    let month_as_number =
+                                        month_as_string.parse::<i32>().unwrap_or(0);
 
                                     let entries = match std::fs::read_dir(format!(
                                         "{}{}/{}/{}/{}",
