@@ -73,19 +73,19 @@ macro_rules! build_vararg_fn {
         pub fn $name() -> Self {
             Self {
                 code: $status,
-                message: stringify!($var).to_string(),
+                message: $msg.to_string(),
             }
         }
     };
 }
 
 impl ApiResponse {
-    build_vararg_fn!(OK, StatusCodes::OK, "");
-    // build_vararg_fn!(
-    //     FILE_NOT_FOUND,
-    //     StatusCodes::NotFound,
-    //     "This file cannot be found"
-    // );
+    build_vararg_fn!(OK, StatusCodes::OK, "success");
+    build_vararg_fn!(
+        FILE_NOT_FOUND,
+        StatusCodes::NotFound,
+        "This file cannot be found"
+    );
     build_vararg_fn!(
         FILE_ALREADY_DELETED,
         StatusCodes::NotFound,

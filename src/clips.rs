@@ -26,6 +26,7 @@ type DisplayFromstr = As<DisplayFromStr>;
 
 #[derive(Serialize, Debug)]
 struct ClipInfo {
+    clip_id: String,
     #[serde(with = "DisplayFromstr")]
     user_id: i64,
     name: Option<String>,
@@ -39,7 +40,7 @@ struct ClipInfo {
     channel_id: i64,
 }
 
-#[get("/audio/clips/{guild_id}/{clip_name}")]
+#[get("/audio/clips/{guild_id}/{clip_id:.*}")]
 pub async fn get_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
@@ -49,12 +50,12 @@ pub async fn get_clip(
 
     let path = path.into_inner();
     let guild_id = path.0;
-    let clip_name = path.1;
+    let clip_id = path.1;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND name = $2",
+        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2",
         guild_id,
-        clip_name
+        clip_id
     )
     .fetch_optional(pool.get_ref())
     .await
@@ -65,13 +66,20 @@ pub async fn get_clip(
         let full_path = format!("{}{}", CLIPS_PATH, saved_file_name);
         info!("clips path: {}", full_path);
         match NamedFile::open_async(&full_path).await {
-            Ok(ok) => ok
-                .use_last_modified(true)
-                .set_content_disposition(ContentDisposition {
-                    disposition: DispositionType::Attachment,
-                    parameters: vec![],
-                })
-                .into_response(&req),
+            Ok(ok) => {
+                let mut res = ok
+                    .use_last_modified(true)
+                    .set_content_disposition(ContentDisposition {
+                        disposition: DispositionType::Inline,
+                        parameters: vec![],
+                    })
+                    .into_response(&req);
+                res.headers_mut().insert(
+                    actix_web::http::header::CONTENT_TYPE,
+                    actix_web::http::header::HeaderValue::from_static("audio/ogg"),
+                );
+                res
+            }
             Err(_) => HttpResponse::NotFound().body("File not found"),
         }
     } else {
@@ -90,7 +98,8 @@ pub async fn get_clips(
     let result = match sqlx::query_as!(
         ClipInfo,
         r#"
-        SELECT user_id as "user_id!",
+        SELECT clip_id,
+        user_id as "user_id!",
         name,
         original_file_name,
         saved_file_name,
@@ -250,9 +259,11 @@ pub async fn create_clip(
     let c_year = now.year();
     let c_month = now.month();
 
+    let mut clip_id = uuid::Uuid::new_v4().to_string();
+
     let target_dir = format!("{}{}/{:02}", CLIPS_PATH, c_year, c_month);
-    let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_name);
-    let full_save_path = format!("{}/{}.ogg", target_dir, clip_name);
+    let mut saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
+    let mut full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
     info!("saving clip to: {}", full_save_path);
 
     std::fs::create_dir_all(&target_dir).unwrap();
@@ -278,35 +289,68 @@ pub async fn create_clip(
         .unwrap_or(0) as i64;
     let length = end - start;
 
-    let _ = sqlx::query!(
-        "INSERT INTO clips (length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-        length as f32,
-        size,
-        channel_id,
-        guild_id,
-        user_id,
-        file_name_from_url,
-        saved_file_name,
-        clip_name
-    )
-    .execute(pool.get_ref())
-    .await;
+    let mut retries = 3;
+    while retries > 0 {
+        match sqlx::query!(
+            "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            clip_id,
+            length as f32,
+            size,
+            channel_id,
+            guild_id,
+            user_id,
+            file_name_from_url,
+            saved_file_name,
+            clip_name
+        )
+        .execute(pool.get_ref())
+        .await
+        {
+            Ok(_) => break,
+            Err(e) => {
+                if let sqlx::Error::Database(ref db_err) = e {
+                    if db_err.code().as_deref() == Some("23505") { // unique violation
+                        retries -= 1;
+                        if retries == 0 {
+                            return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to generate unique clip ID"}));
+                        }
+                        
+                        let new_clip_id = uuid::Uuid::new_v4().to_string();
+                        let new_saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, new_clip_id);
+                        let new_full_save_path = format!("{}/{}.ogg", target_dir, new_clip_id);
+                        
+                        if let Err(err) = std::fs::rename(&full_save_path, &new_full_save_path) {
+                            error!("Failed to rename file after collision: {:?}", err);
+                            return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to rename clip"}));
+                        }
+                        
+                        clip_id = new_clip_id;
+                        saved_file_name = new_saved_file_name;
+                        full_save_path = new_full_save_path;
+                        continue;
+                    }
+                }
+                error!("Database error inserting clip: {:?}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Database error"}));
+            }
+        }
+    }
 
-    HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name}))
+    HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name}))
 }
 
 #[post("audio/clips/delete/{guild_id}")]
 pub async fn delete(
-    file_name: String,
+    clip_id: String,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
 ) -> impl Responder {
     let guild_id = path.into_inner();
 
     let row = sqlx::query!(
-        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND name = $2",
+        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2",
         guild_id,
-        file_name
+        clip_id
     )
     .fetch_optional(pool.get_ref())
     .await
@@ -315,16 +359,16 @@ pub async fn delete(
     let saved_file_name = if let Some(record) = row {
         record.saved_file_name
     } else {
-        return HttpResponse::NotFound().json(ApiResponse::OK());
+        return HttpResponse::NotFound().json(ApiResponse::FILE_NOT_FOUND());
     };
 
     let result = match sqlx::query!(
         r#"
         DELETE FROM clips
-        WHERE guild_id = $1 AND name = $2
+        WHERE guild_id = $1 AND clip_id = $2
         "#,
         guild_id,
-        file_name
+        clip_id
     )
     .execute(pool.get_ref())
     .await
@@ -351,6 +395,6 @@ pub async fn delete(
             HttpResponse::Ok().json(ApiResponse::OK())
         }
     } else {
-        HttpResponse::NotFound().json(ApiResponse::OK())
+        HttpResponse::NotFound().json(ApiResponse::FILE_NOT_FOUND())
     }
 }
