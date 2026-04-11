@@ -1,15 +1,11 @@
-use base64::prelude::*;
+use actix_web::web;
 use std::error::Error;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
 
-pub enum WaveformEvent {
-    Progress(u8),
-    Complete(String),
-    Error(String),
-}
+use crate::WaveformProgressContainer;
+
 use tracing::info;
 
 /// Generates an audiowaveform track.dat file for a given audio file with a specific target number of points (pixels).
@@ -103,12 +99,13 @@ pub async fn generate_peaks(
 }
 
 /// Generates an audiowaveform track.dat file for a given audio file with a specific target number of points (pixels).
-/// Yields progress events and the final Base64 encoded file via `mpsc::Sender`.
-pub async fn stream_peaks(
+/// Updates progress in a shared HashMap container.
+pub async fn generate_peaks_background(
     input_file: String,
     output_file: String,
+    file_name: String,
     target_points: Option<f64>,
-    tx: mpsc::Sender<WaveformEvent>,
+    progress_map: web::Data<WaveformProgressContainer>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 1. Get duration and sample rate using a single ffprobe call
     let ffprobe_output = Command::new("ffprobe")
@@ -131,11 +128,7 @@ pub async fn stream_peaks(
     let val1: f64 = match lines.next().and_then(|l| l.parse().ok()) {
         Some(v) => v,
         None => {
-            let _ = tx
-                .send(WaveformEvent::Error(
-                    "No sample rate or duration found".into(),
-                ))
-                .await;
+            progress_map.0.write().await.insert(file_name.clone(), -1);
             return Err("No sample rate or duration found".into());
         }
     };
@@ -143,11 +136,7 @@ pub async fn stream_peaks(
     let val2: f64 = match lines.next().and_then(|l| l.parse().ok()) {
         Some(v) => v,
         None => {
-            let _ = tx
-                .send(WaveformEvent::Error(
-                    "Expected both sample rate and duration".into(),
-                ))
-                .await;
+            progress_map.0.write().await.insert(file_name.clone(), -1);
             return Err("Expected both sample rate and duration".into());
         }
     };
@@ -156,11 +145,7 @@ pub async fn stream_peaks(
     let sample_rate = val2;
 
     if duration <= 0.0 || sample_rate <= 0.0 {
-        let _ = tx
-            .send(WaveformEvent::Error(
-                "Duration and Sample Rate must be strictly positive".into(),
-            ))
-            .await;
+        progress_map.0.write().await.insert(file_name.clone(), -1);
         return Err("Duration and Sample Rate must be strictly positive".into());
     }
 
@@ -200,8 +185,12 @@ pub async fn stream_peaks(
                     if trimmed.starts_with("Done: ") {
                         if let Some(pct_str) = trimmed.strip_prefix("Done: ") {
                             if let Some(pct) = pct_str.strip_suffix("%") {
-                                if let Ok(pct_val) = pct.parse::<u8>() {
-                                    let _ = tx.send(WaveformEvent::Progress(pct_val)).await;
+                                if let Ok(pct_val) = pct.parse::<i16>() {
+                                    progress_map
+                                        .0
+                                        .write()
+                                        .await
+                                        .insert(file_name.clone(), pct_val);
                                 }
                             }
                         }
@@ -214,20 +203,14 @@ pub async fn stream_peaks(
 
     let status = command.wait().await?;
     if !status.success() {
-        let _ = tx
-            .send(WaveformEvent::Error(
-                "audiowaveform exited with non-zero status".into(),
-            ))
-            .await;
+        progress_map.0.write().await.insert(file_name.clone(), -1);
         return Err("audiowaveform exited with non-zero status".into());
     }
 
-    info!("audiowaveform completed successfully, reading output file...");
+    info!("audiowaveform completed successfully.");
 
-    let file_content = tokio::fs::read(&output_file).await?;
-    let base64_content = BASE64_STANDARD.encode(file_content);
-
-    let _ = tx.send(WaveformEvent::Complete(base64_content)).await;
+    // Remove from the processing map now that the file is safely written to disk
+    progress_map.0.write().await.remove(&file_name);
 
     Ok(())
 }

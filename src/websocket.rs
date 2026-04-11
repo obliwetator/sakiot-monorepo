@@ -76,9 +76,10 @@ pub async fn web_socket(req: HttpRequest, stream: web::Payload) -> Result<HttpRe
 
     if let Some(cookie) = headers.get("cookie") {
         if let Some(keys) = req.app_data::<Data<AccessKeys>>() {
-            let (access_token, _) = get_access_and_refresh_tokens(cookie);
-            if Token::<Access>::decode(access_token, keys).is_ok() {
-                is_authorized = true;
+            if let Ok((access_token, _)) = get_access_and_refresh_tokens(cookie) {
+                if Token::<Access>::decode(access_token, keys).is_ok() {
+                    is_authorized = true;
+                }
             }
         }
     }

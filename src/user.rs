@@ -1,4 +1,5 @@
 use crate::auth::{Access, Token, BASE_URL};
+use crate::errors::AppError;
 use actix_web::{
     get,
     web::{self, ReqData},
@@ -47,24 +48,19 @@ pub async fn get_user(
     client: web::Data<Client>,
     access_token: &str,
     pool: &web::Data<Pool<Postgres>>,
-) -> User {
+) -> Result<User, AppError> {
     let result = client
         .get(format!("{}users/@me", BASE_URL))
         .bearer_auth(access_token)
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    // let data: serde_json::Value = result.json().await.unwrap();
-    // info!("DATA: {:#?}", data);
-    // panic!("lala");
-
-    let user = result.json::<User>().await.unwrap();
-    insert_user_db(&user, pool).await;
-    user
+    let user = result.json::<User>().await?;
+    insert_user_db(&user, pool).await?;
+    Ok(user)
 }
 
-pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) {
+pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Result<(), AppError> {
     // this thing will not format
     // TODO: Update logic
     sqlx::query!(
@@ -85,7 +81,8 @@ pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) {
 		user.premium_type,
 		user.public_flags
 	)
-	.execute(pool.get_ref()).await.unwrap();
+	.execute(pool.get_ref()).await?;
+    Ok(())
 }
 
 pub async fn insert_user_guilds_db(
@@ -93,7 +90,7 @@ pub async fn insert_user_guilds_db(
     pool: &web::Data<Pool<Postgres>>,
 
     user_id: i64,
-) {
+) -> Result<(), AppError> {
     // TODO: await all futures together
     for guild in user_guilds {
         // TODO: Update logic
@@ -109,9 +106,9 @@ pub async fn insert_user_guilds_db(
             &guild.features
         )
         .execute(pool.get_ref())
-        .await
-        .unwrap();
+        .await?;
     }
+    Ok(())
 }
 
 pub async fn get_user_guilds(
@@ -119,21 +116,16 @@ pub async fn get_user_guilds(
     access_token: &str,
     user_id: i64,
     pool: &web::Data<Pool<Postgres>>,
-) -> Vec<UserGuilds> {
+) -> Result<Vec<UserGuilds>, AppError> {
     let result = client
         .get(format!("{}users/@me/guilds", BASE_URL))
         .bearer_auth(access_token)
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    // let data: serde_json::Value = result.json().await.unwrap();
-    // info!("DATA: {:#?}", data);
-    // panic!("lala");
-
-    let user_guilds = result.json::<Vec<UserGuilds>>().await.unwrap();
-    insert_user_guilds_db(&user_guilds, pool, user_id).await;
-    user_guilds
+    let user_guilds = result.json::<Vec<UserGuilds>>().await?;
+    insert_user_guilds_db(&user_guilds, pool, user_id).await?;
+    Ok(user_guilds)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,8 +144,9 @@ pub async fn get_current_user(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     token: Option<ReqData<Token<Access>>>,
-) -> impl Responder {
-    let result = match sqlx::query_as!(
+) -> Result<impl Responder, AppError> {
+    let token_data = token.ok_or_else(|| AppError::Forbidden)?;
+    let result = sqlx::query_as!(
         UserDataForFrontEnd,
         "
     	SELECT id,
@@ -165,18 +158,12 @@ pub async fn get_current_user(
     	FROM discord_auth_user
     	WHERE id = $1
     	",
-        token.unwrap().id
+        token_data.id
     )
     .fetch_one(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            panic!("cannot select *")
-        }
-    };
+    .await?;
 
-    HttpResponse::Ok().json(result)
+    Ok(HttpResponse::Ok().json(result))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,8 +182,9 @@ pub async fn get_current_user_guilds(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     token: Option<ReqData<Token<Access>>>,
-) -> impl Responder {
-    let result = match sqlx::query_as!(
+) -> Result<impl Responder, AppError> {
+    let token_data = token.ok_or_else(|| AppError::Forbidden)?;
+    let result = sqlx::query_as!(
         GuildDataForFrontEnd,
         "
 		SELECT id,
@@ -208,16 +196,10 @@ pub async fn get_current_user_guilds(
 		JOIN user_guilds ON user_guilds.id = guilds_present.guild_id
 		AND user_guilds.user_id = $1;
     	",
-        token.unwrap().id
+        token_data.id
     )
     .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            panic!("cannot select *")
-        }
-    };
+    .await?;
 
-    HttpResponse::Ok().json(result)
+    Ok(HttpResponse::Ok().json(result))
 }

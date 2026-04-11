@@ -76,18 +76,19 @@ pub const WAVEFORM_PATH: &str = "/home/tulipan/projects/FBI-agent/waveform_data/
 async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_int: i32) {
     for entry in entries {
         if let Ok(entry) = entry {
+            let file_name_str = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             let file_name = File {
-                file: entry.file_name().to_str().unwrap().to_owned(),
+                file: file_name_str,
                 comment: None,
             };
-            dirs.months
-                .as_mut()
-                .unwrap()
-                .get_mut(&month_as_int)
-                .unwrap()
-                .as_mut()
-                .unwrap()
-                .push(file_name);
+            if let Some(months) = dirs.months.as_mut() {
+                if let Some(Some(files)) = months.get_mut(&month_as_int) {
+                    files.push(file_name);
+                }
+            }
         } else {
             info!("error for file");
         }
@@ -123,13 +124,13 @@ async fn for_channel_ids(
 
     for channel_id in channel_ids {
         if let Ok(entry) = channel_id {
-            let channel = entry
-                .file_name()
-                .to_str()
-                .unwrap()
-                .to_owned()
-                .parse::<i64>()
-                .unwrap();
+            let channel = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i64>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
 
             if channel_hashset.contains(&channel) {
                 // we have the channel is the hashset. User can access this channel
@@ -173,13 +174,13 @@ async fn for_years(
 ) -> Option<Result<Vec<Channels>, HttpResponse>> {
     for year in years {
         if let Ok(entry) = year {
-            let year_as_int = entry
-                .file_name()
-                .to_str()
-                .unwrap()
-                .to_owned()
-                .parse::<i32>()
-                .unwrap();
+            let year_as_int = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i32>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
 
             let mut dirs = Directories {
                 year: year_as_int,
@@ -219,13 +220,15 @@ async fn for_months(
 ) -> Option<Result<Vec<Channels>, HttpResponse>> {
     for month in months {
         if let Ok(entry) = month {
-            let month_as_string = entry.file_name().to_str().unwrap().to_owned();
+            let month_as_string = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
 
-            dirs.months
-                .as_mut()
-                .unwrap()
-                .insert(month_as_int, Some(vec![]));
+            if let Some(months_map) = dirs.months.as_mut() {
+                months_map.insert(month_as_int, Some(vec![]));
+            }
 
             let entries = match std::fs::read_dir(format!(
                 "{}{}/{}/{}/{}",
@@ -267,13 +270,13 @@ pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, Htt
     // Get all the year(s) for this guild
     for year in years {
         if let Ok(entry) = year {
-            let year_as_int = entry
-                .file_name()
-                .to_str()
-                .unwrap()
-                .to_owned()
-                .parse::<i32>()
-                .unwrap();
+            let year_as_int = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i32>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
 
             let mut dirs = Directories {
                 year: year_as_int,
@@ -296,13 +299,15 @@ pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, Htt
 
             for month in months {
                 if let Ok(entry) = month {
-                    let month_as_string = entry.file_name().to_str().unwrap().to_owned();
+                    let month_as_string = match entry.file_name().into_string() {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
                     let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
 
-                    dirs.months
-                        .as_mut()
-                        .unwrap()
-                        .insert(month_as_int, Some(vec![]));
+                    if let Some(months_map) = dirs.months.as_mut() {
+                        months_map.insert(month_as_int, Some(vec![]));
+                    }
 
                     let entries = match std::fs::read_dir(format!(
                         "/home/tulipan/projects/FBI-agent/voice_recordings/{}/{}/{}",
@@ -318,18 +323,19 @@ pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, Htt
 
                     for entry in entries {
                         if let Ok(entry) = entry {
+                            let file_name_str = match entry.file_name().into_string() {
+                                Ok(s) => s,
+                                Err(_) => continue,
+                            };
                             let file_name = File {
-                                file: entry.file_name().to_str().unwrap().to_owned(),
+                                file: file_name_str,
                                 comment: None,
                             };
-                            dirs.months
-                                .as_mut()
-                                .unwrap()
-                                .get_mut(&month_as_int)
-                                .unwrap()
-                                .as_mut()
-                                .unwrap()
-                                .push(file_name);
+                            if let Some(months_map) = dirs.months.as_mut() {
+                                if let Some(Some(files)) = months_map.get_mut(&month_as_int) {
+                                    files.push(file_name);
+                                }
+                            }
                         } else {
                             error!("error for file");
                         }
@@ -428,6 +434,9 @@ pub struct AccessKeys {
 
 struct HashMapContainer(pub RwLock<HashMap<String, Sender<i32>>>);
 
+#[derive(Debug)]
+pub struct WaveformProgressContainer(pub RwLock<HashMap<String, i16>>);
+
 #[actix_web::main]
 async fn main() {
     // std::env::set_var("RUST_LOG", "debug");
@@ -435,6 +444,7 @@ async fn main() {
     env_logger::init();
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
+    let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
     // Clone here, this one will be owned by the first closure = hashmap;
 
     let pool = PgPoolOptions::new()
@@ -501,6 +511,7 @@ async fn main() {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(reqwest::Client::new()))
             .app_data(hashmap.clone())
+            .app_data(waveform_progress.clone())
             .app_data(web::Data::new(keys))
             .service(web_socket)
             .service(api_scope)
@@ -616,9 +627,19 @@ where
                 }
             };
 
-            let keys = req.app_data::<web::Data<AccessKeys>>().unwrap();
+            let keys = req
+                .app_data::<web::Data<AccessKeys>>()
+                .expect("AccessKeys not in app_data");
 
-            let (access_token, refresh_token) = get_access_and_refresh_tokens(cookie);
+            let (access_token, refresh_token) = match get_access_and_refresh_tokens(cookie) {
+                Ok(tokens) => tokens,
+                Err(_) => {
+                    warn!("Invalid cookie format in middleware");
+                    let (request, _pl) = req.into_parts();
+                    let response = HttpResponse::Unauthorized().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
 
             let decoded_access = match Token::<Access>::decode(access_token, keys) {
                 Ok(token) => token,
@@ -646,17 +667,37 @@ where
     }
 }
 
-pub fn get_access_and_refresh_tokens(cookie: &reqwest::header::HeaderValue) -> (&str, &str) {
-    let tokens = cookie.to_str().unwrap();
+pub fn get_access_and_refresh_tokens(
+    cookie: &reqwest::header::HeaderValue,
+) -> Result<(&str, &str), crate::errors::AppError> {
+    let tokens = cookie
+        .to_str()
+        .map_err(|_| crate::errors::AppError::BadRequest("Invalid cookie format".to_string()))?;
     let access_refresh: Vec<&str> = tokens.split(';').collect();
 
+    if access_refresh.len() < 2 {
+        return Err(crate::errors::AppError::BadRequest(
+            "Missing access or refresh token".to_string(),
+        ));
+    }
+
     let access: Vec<&str> = access_refresh[0].split('=').collect();
+    if access.len() < 2 {
+        return Err(crate::errors::AppError::BadRequest(
+            "Invalid access token format".to_string(),
+        ));
+    }
     let access_token = access[1];
 
     let refresh: Vec<&str> = access_refresh[1].split('=').collect();
+    if refresh.len() < 2 {
+        return Err(crate::errors::AppError::BadRequest(
+            "Invalid refresh token format".to_string(),
+        ));
+    }
     let refresh_token = refresh[1];
 
-    (access_token, refresh_token)
+    Ok((access_token, refresh_token))
 }
 
 #[allow(dead_code)]
@@ -773,18 +814,18 @@ pub async fn test_endpoint(pool: Pool<Postgres>) {
                                                 month_as_string
                                             );
 
-                                            let command = std::process::Command::new("ffprobe")
+                                            let mut command =
+                                                tokio::process::Command::new("ffprobe");
+                                            command
                                                 .arg("-show_entries")
                                                 .arg("format=duration")
                                                 .args(["-of", "default=noprint_wrappers=1:nokey=1"])
                                                 .arg(format!("{}/{}", file_path, file_name))
                                                 .stderr(Stdio::null())
                                                 .stdin(Stdio::null())
-                                                .stdout(Stdio::piped())
-                                                .spawn()
-                                                .unwrap();
+                                                .stdout(Stdio::piped());
 
-                                            let output = command.wait_with_output().unwrap();
+                                            let output = command.output().await.unwrap();
                                             // let stderr = String::from_utf8(output.stderr).unwrap();
                                             let stdout = String::from_utf8(output.stdout).unwrap();
                                             // info!("STD ERR: {}", stderr);

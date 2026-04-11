@@ -94,6 +94,7 @@ message MetricsResponse {
 	int32 tokio_active_tasks = 18;
 	// Bot activity
 	int32 messages_received = 19;
+	int64 last_voice_packet_time = 20;
 }
 
 message JamData {

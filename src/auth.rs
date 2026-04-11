@@ -9,6 +9,7 @@ use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
+use crate::errors::AppError;
 pub use crate::get_access_and_refresh_tokens;
 use crate::{
     secrets::{CLIENT_ID, CLIENT_SECRET},
@@ -47,7 +48,7 @@ pub struct Token<T> {
 }
 
 impl Token<Access> {
-    pub fn encode(id: i64, access_token: String, key: &EncodingKey) -> String {
+    pub fn encode(id: i64, access_token: String, key: &EncodingKey) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY);
 
@@ -57,7 +58,7 @@ impl Token<Access> {
             token: access_token,
             state: std::marker::PhantomData::<Access>,
         };
-        encode(&Header::default(), &access, key).unwrap()
+        encode(&Header::default(), &access, key).map_err(|_| AppError::InternalError)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
         let mut val = Validation::default();
@@ -70,7 +71,7 @@ impl Token<Access> {
 }
 
 impl Token<Refresh> {
-    pub fn encode(id: i64, refresh_token: String, key: &EncodingKey) -> String {
+    pub fn encode(id: i64, refresh_token: String, key: &EncodingKey) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::days(JWT_REFRESH_EXPIRY);
 
@@ -80,7 +81,7 @@ impl Token<Refresh> {
             token: refresh_token,
             state: std::marker::PhantomData::<Refresh>,
         };
-        encode(&Header::default(), &refresh, key).unwrap()
+        encode(&Header::default(), &refresh, key).map_err(|_| AppError::InternalError)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
         let mut val = Validation::default();
@@ -146,7 +147,10 @@ impl Default for DiscordBotAuthData {
     }
 }
 
-pub async fn request_access_token(code: String, client: web::Data<Client>) -> DiscordTokenData {
+pub async fn request_access_token(
+    code: String,
+    client: web::Data<Client>,
+) -> Result<DiscordTokenData, AppError> {
     let data = DiscordBotAuthData {
         code,
         ..Default::default()
@@ -156,32 +160,28 @@ pub async fn request_access_token(code: String, client: web::Data<Client>) -> Di
         .post(format!("{}oauth2/token", BASE_URL))
         .form(&data)
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    // let text = result.text().await.unwrap();
-    let json = result.json::<DiscordTokenData>().await.unwrap();
+    let json = result.json::<DiscordTokenData>().await?;
 
-    json
+    Ok(json)
 }
 
 pub async fn request_refresh_token(
     refresh_token: String,
     client: web::Data<Client>,
-) -> DiscordTokenData {
+) -> Result<DiscordTokenData, AppError> {
     let data = DiscordBotAuthDataRefresh::new(refresh_token);
 
     let result = client
         .post(format!("{}oauth2/token", BASE_URL))
         .form(&data)
         .send()
-        .await
-        .unwrap();
+        .await?;
 
-    // let text = result.text().await.unwrap();
-    let json = result.json::<DiscordTokenData>().await.unwrap();
+    let json = result.json::<DiscordTokenData>().await?;
 
-    json
+    Ok(json)
 }
 
 #[get("/discord_login")]
@@ -191,19 +191,16 @@ pub async fn discord_login(
     pool: web::Data<Pool<Postgres>>,
     client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
-) -> impl Responder {
-    let data = request_access_token(query.code.to_owned(), client.clone()).await;
+) -> Result<impl Responder, AppError> {
+    let data = request_access_token(query.code.to_owned(), client.clone()).await?;
 
-    let user = get_user(client.clone(), &data.access_token, &pool).await;
-    let _guilds = get_user_guilds(client, &data.access_token, user.id, &pool).await;
-
-    // let guilds_id: Vec<i64> = guilds.iter().map(|a| a.id).collect();
+    let user = get_user(client.clone(), &data.access_token, &pool).await?;
+    let _guilds = get_user_guilds(client, &data.access_token, user.id, &pool).await?;
 
     let (access_token, refresh_token) =
-        create_jwt_tokens(data.access_token, data.refresh_token, user.id, &keys).await;
+        create_jwt_tokens(data.access_token, data.refresh_token, user.id, &keys).await?;
     let mut b = NamedFile::open_async("callback.html")
-        .await
-        .unwrap()
+        .await?
         .into_response(&req);
 
     let access_token_cookie = Cookie::build("access_token", access_token)
@@ -220,10 +217,12 @@ pub async fn discord_login(
         .http_only(true)
         .finish();
 
-    b.add_cookie(&access_token_cookie).unwrap();
-    b.add_cookie(&refresh_token_cookie).unwrap();
+    b.add_cookie(&access_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&refresh_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
 
-    b
+    Ok(b)
 }
 
 #[get("/refresh")]
@@ -231,7 +230,7 @@ pub async fn refresh_jwt(
     req: HttpRequest,
     client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
-) -> impl Responder {
+) -> Result<impl Responder, AppError> {
     let headers = req.headers();
     let cookie = match headers.get("cookie") {
         Some(cookie) => cookie,
@@ -240,11 +239,14 @@ pub async fn refresh_jwt(
                 "Unauthorized access attempt to refresh_jwt{}: missing cookie",
                 req.path()
             );
-            return HttpResponse::Unauthorized().finish();
+            return Ok(HttpResponse::Unauthorized().finish());
         }
     };
 
-    let (_, refresh_token) = get_access_and_refresh_tokens(cookie);
+    let (_, refresh_token) = match get_access_and_refresh_tokens(cookie) {
+        Ok(tokens) => tokens,
+        Err(_) => return Ok(HttpResponse::Unauthorized().finish()),
+    };
 
     let decoded_refresh = match Token::<Refresh>::decode(refresh_token, &keys) {
         Ok(token) => token,
@@ -253,14 +255,14 @@ pub async fn refresh_jwt(
                 "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
                 req.path()
             );
-            return HttpResponse::Unauthorized().json(json!({
+            return Ok(HttpResponse::Unauthorized().json(json!({
                 "error": "expired_or_invalid_token",
                 "message": "The refresh token is expired or invalid. Please login again."
-            }));
+            })));
         }
     };
 
-    let data = request_refresh_token(decoded_refresh.token, client.clone()).await;
+    let data = request_refresh_token(decoded_refresh.token, client.clone()).await?;
 
     let (new_access_token, new_refresh_token) = create_jwt_tokens(
         data.access_token,
@@ -268,7 +270,7 @@ pub async fn refresh_jwt(
         decoded_refresh.id,
         &keys,
     )
-    .await;
+    .await?;
 
     let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
         .max_age(actix_web::cookie::time::Duration::days(7))
@@ -285,27 +287,28 @@ pub async fn refresh_jwt(
         .finish();
 
     let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
-    response.add_cookie(&access_token_cookie).unwrap();
-    response.add_cookie(&refresh_token_cookie).unwrap();
-
     response
+        .add_cookie(&access_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+    response
+        .add_cookie(&refresh_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+
+    Ok(response)
 }
 
 #[get("/token")]
-pub async fn get_token(req: HttpRequest) -> impl Responder {
+pub async fn get_token(req: HttpRequest) -> Result<impl Responder, AppError> {
     let headers = req.headers();
-    let cookie = match headers.get("cookie") {
-        Some(cookie) => cookie,
-        None => {
-            panic!("");
-        }
-    };
+    let cookie = headers
+        .get("cookie")
+        .ok_or_else(|| AppError::BadRequest("Missing cookie".into()))?;
 
-    let (access_token, _) = get_access_and_refresh_tokens(cookie);
+    let (access_token, _) = get_access_and_refresh_tokens(cookie)?;
 
     let json = json!({ "token": access_token });
 
-    HttpResponse::Ok().json(json)
+    Ok(HttpResponse::Ok().json(json))
 }
 
 async fn create_jwt_tokens(
@@ -313,12 +316,12 @@ async fn create_jwt_tokens(
     refresh_token: String,
     id: i64,
     keys: &web::Data<AccessKeys>,
-) -> (String, String) {
-    let access_token = Token::<Access>::encode(id, access_token, &keys.access_encode);
+) -> Result<(String, String), AppError> {
+    let access_token = Token::<Access>::encode(id, access_token, &keys.access_encode)?;
 
-    let refresh_token = Token::<Refresh>::encode(id, refresh_token, &keys.refresh_encode);
+    let refresh_token = Token::<Refresh>::encode(id, refresh_token, &keys.refresh_encode)?;
 
-    (access_token, refresh_token)
+    Ok((access_token, refresh_token))
 }
 
 mod jwt_numeric_date {

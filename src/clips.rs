@@ -38,6 +38,7 @@ struct ClipInfo {
     guild_id: i64,
     #[serde(with = "DisplayFromstr")]
     channel_id: i64,
+    start_time: f32,
 }
 
 #[get("/audio/clips/{guild_id}/{clip_id:.*}")]
@@ -106,7 +107,8 @@ pub async fn get_clips(
         length,
         size,
         guild_id as "guild_id!",
-        channel_id as "channel_id!"
+        channel_id as "channel_id!",
+        start_time
         FROM clips
         WHERE guild_id = $1
         "#,
@@ -208,14 +210,16 @@ use chrono::Datelike;
 use std::io::Write;
 use std::process::Stdio;
 
-async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Child {
-    let command = match std::process::Command::new("ffmpeg")
+async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> tokio::process::Child {
+    let duration = end - start;
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         // seek to
         .args(["-ss", &start.to_string()])
         // input
         .args(["-i", file_path])
         // length
-        .args(["-t", &end.to_string()])
+        .args(["-t", &duration.to_string()])
         // copy the codec
         .args(["-c", "copy"])
         // since we pipe the output we have to tell ffmpeg whats its gonna be
@@ -224,16 +228,14 @@ async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Chi
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+
+    match command.spawn() {
         Ok(result) => result,
         Err(err) => {
             panic!("error: {}", err);
         }
-    };
-
-    command
+    }
 }
 
 #[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
@@ -257,8 +259,13 @@ pub async fn create_clip(
     let start = clip_duration.start.unwrap_or(0.0);
     let end = clip_duration.end.unwrap_or(0.0);
 
+    let length = end - start;
+    if length < 1.0 || length > 20.0 {
+        return HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"}));
+    }
+
     let child = crop_ffmpeg(start, end, src_path.as_str()).await;
-    let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output().await.unwrap();
     let bytes = output.stdout.clone();
 
     let clip_name = if let Some(ref name) = clip_duration.name {
@@ -286,7 +293,8 @@ pub async fn create_clip(
 
     std::fs::create_dir_all(&target_dir).unwrap();
 
-    let mut command = std::process::Command::new("ffmpeg")
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         .arg("-y")
         .args(["-i", "-"])
         .args(["-c:a", "copy"])
@@ -294,13 +302,18 @@ pub async fn create_clip(
         .arg(&full_save_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to run ffmpeg");
+        .stderr(Stdio::piped());
 
-    let stdin = command.stdin.as_mut().unwrap();
-    stdin.write_all(&bytes).expect("could not write to stdin");
-    command.wait_with_output().unwrap();
+    let mut child = command.spawn().expect("Failed to run ffmpeg");
+
+    // Need to use tokio::io::AsyncWriteExt for async write
+    use tokio::io::AsyncWriteExt;
+    let mut stdin = child.stdin.take().unwrap();
+    tokio::spawn(async move {
+        stdin.write_all(&bytes).await.expect("could not write to stdin");
+    });
+    
+    child.wait_with_output().await.unwrap();
 
     let size = std::fs::metadata(&full_save_path)
         .map(|m| m.len())
@@ -310,7 +323,7 @@ pub async fn create_clip(
     let mut retries = 3;
     while retries > 0 {
         match sqlx::query!(
-            "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             clip_id,
             length as f32,
             size,
@@ -319,7 +332,8 @@ pub async fn create_clip(
             user_id,
             file_name_from_url,
             saved_file_name,
-            clip_name
+            clip_name,
+            start as f32
         )
         .execute(pool.get_ref())
         .await

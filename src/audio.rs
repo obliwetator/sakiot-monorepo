@@ -11,61 +11,72 @@ use serde::Deserialize;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 
+use base64::prelude::*;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use bytes::Bytes;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::StreamExt;
-
 use crate::{
-    waveform::{stream_peaks, WaveformEvent},
-    HashMapContainer, NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH, WAVEFORM_PATH,
+    waveform::generate_peaks_background, HashMapContainer, WaveformProgressContainer,
+    NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH, WAVEFORM_PATH,
 };
 
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 async fn get_waveform_data(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
+    progress_map: web::Data<WaveformProgressContainer>,
 ) -> impl Responder {
     let path = path.into_inner();
     let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
-
-    info!("Received request for waveform data for file: {}", file_path);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
-    info!("Output path for waveform data: {}", output);
+    let file_name = path.4.clone();
 
-    let (tx, rx) = mpsc::channel::<WaveformEvent>(10);
+    info!("Received poll request for waveform data: {}", file_path);
 
-    // Spawn the generation task in the background
+    // 1. Check if the output file already exists on disk
+    if file_exists(&output) {
+        match tokio::fs::read(&output).await {
+            Ok(file_content) => {
+                let base64_content = BASE64_STANDARD.encode(file_content);
+                return HttpResponse::Ok().json(json!({
+                    "progress": 100,
+                    "data": base64_content
+                }));
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to read existing waveform file: {}", e)
+                }));
+            }
+        }
+    }
+
+    // 2. Check if it's currently generating in the hashmap
+    if let Some(&pct) = progress_map.0.read().await.get(&file_name) {
+        if pct == -1 {
+            // Remove the error state so user can retry
+            progress_map.0.write().await.remove(&file_name);
+            return HttpResponse::InternalServerError().json(json!({
+                "error": "Failed to generate waveform"
+            }));
+        }
+        return HttpResponse::Ok().json(json!({ "progress": pct }));
+    }
+
+    // 3. It's not on disk and not generating, so start generating!
+    progress_map.0.write().await.insert(file_name.clone(), 0);
+
+    let progress_map_clone = progress_map.clone();
     tokio::spawn(async move {
-        if let Err(e) = stream_peaks(file_path, output, None, tx).await {
-            error!("Error streaming peaks: {:?}", e);
+        if let Err(e) =
+            generate_peaks_background(file_path, output, file_name, None, progress_map_clone).await
+        {
+            error!("Error generating peaks: {:?}", e);
         }
     });
 
-    let stream = ReceiverStream::new(rx).map(|event| match event {
-        WaveformEvent::Progress(pct) => {
-            let msg = format!("event: progress\ndata: {}\n\n", pct);
-            Ok::<Bytes, actix_web::Error>(Bytes::from(msg))
-        }
-        WaveformEvent::Complete(base64_data) => {
-            let msg = format!("event: complete\ndata: {}\n\n", base64_data);
-            Ok::<Bytes, actix_web::Error>(Bytes::from(msg))
-        }
-        WaveformEvent::Error(err_msg) => {
-            let msg = format!("event: error\ndata: {}\n\n", err_msg);
-            Ok::<Bytes, actix_web::Error>(Bytes::from(msg))
-        }
-    });
-
-    HttpResponse::Ok()
-        .append_header(("Content-Type", "text/event-stream"))
-        .append_header(("Cache-Control", "no-cache"))
-        .append_header(("Connection", "keep-alive"))
-        .streaming(stream)
+    HttpResponse::Ok().json(json!({ "progress": 0 }))
 }
 
 async fn _get_file(path: web::Path<(i64, i64, i32, i32, String)>) -> NamedFile {
@@ -206,7 +217,8 @@ async fn remove_silence(
             let hashmap_clone = hashmap.clone();
             tokio::spawn(async move {
                 let file_name: String = path.4.clone();
-                let command = match std::process::Command::new("ffmpeg")
+                let mut command = tokio::process::Command::new("ffmpeg");
+                command
                     .args(["-i", &file])
                     .args([
                         "-af",
@@ -215,9 +227,9 @@ async fn remove_silence(
                     .arg(file_no_silence_clone)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
+                    .stderr(Stdio::piped());
+
+                let _output = match command.output().await {
                     Ok(result) => result,
                     Err(err) => {
                         // Something when very wrong when spawing the process
@@ -225,8 +237,6 @@ async fn remove_silence(
                         panic!("error: {}", err);
                     }
                 };
-
-                let _output = command.wait_with_output().unwrap();
                 // info!("Err: {}", String::from_utf8(output.stderr).unwrap());
                 // info!("Status: {}", output.status);
                 // info!("Out: {}", String::from_utf8(output.stdout).unwrap());
@@ -296,18 +306,17 @@ async fn find_similar(
         let file_n = file_name.to_string_lossy();
         // file_n.rsplit_once('/');
         let start = std::time::Instant::now();
-        let command = std::process::Command::new("ffprobe")
+        let mut command = tokio::process::Command::new("ffprobe");
+        command
             .arg("-show_entries")
             .arg("format=duration")
             .args(["-of", "default=noprint_wrappers=1:nokey=1"])
             .arg(format!("{}/{}", file_path, file_n))
             .stderr(Stdio::null())
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stdout(Stdio::piped());
 
-        let output = command.wait_with_output().unwrap();
+        let output = command.output().await.unwrap();
 
         let duration = start.elapsed();
 
