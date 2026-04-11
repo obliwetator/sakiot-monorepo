@@ -217,7 +217,8 @@ async fn remove_silence(
             let hashmap_clone = hashmap.clone();
             tokio::spawn(async move {
                 let file_name: String = path.4.clone();
-                let command = match std::process::Command::new("ffmpeg")
+                let mut command = tokio::process::Command::new("ffmpeg");
+                command
                     .args(["-i", &file])
                     .args([
                         "-af",
@@ -226,9 +227,9 @@ async fn remove_silence(
                     .arg(file_no_silence_clone)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                {
+                    .stderr(Stdio::piped());
+
+                let _output = match command.output().await {
                     Ok(result) => result,
                     Err(err) => {
                         // Something when very wrong when spawing the process
@@ -236,8 +237,6 @@ async fn remove_silence(
                         panic!("error: {}", err);
                     }
                 };
-
-                let _output = command.wait_with_output().unwrap();
                 // info!("Err: {}", String::from_utf8(output.stderr).unwrap());
                 // info!("Status: {}", output.status);
                 // info!("Out: {}", String::from_utf8(output.stdout).unwrap());
@@ -307,18 +306,17 @@ async fn find_similar(
         let file_n = file_name.to_string_lossy();
         // file_n.rsplit_once('/');
         let start = std::time::Instant::now();
-        let command = std::process::Command::new("ffprobe")
+        let mut command = tokio::process::Command::new("ffprobe");
+        command
             .arg("-show_entries")
             .arg("format=duration")
             .args(["-of", "default=noprint_wrappers=1:nokey=1"])
             .arg(format!("{}/{}", file_path, file_n))
             .stderr(Stdio::null())
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stdout(Stdio::piped());
 
-        let output = command.wait_with_output().unwrap();
+        let output = command.output().await.unwrap();
 
         let duration = start.elapsed();
 

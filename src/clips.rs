@@ -210,9 +210,10 @@ use chrono::Datelike;
 use std::io::Write;
 use std::process::Stdio;
 
-async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Child {
+async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> tokio::process::Child {
     let duration = end - start;
-    let command = match std::process::Command::new("ffmpeg")
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         // seek to
         .args(["-ss", &start.to_string()])
         // input
@@ -227,16 +228,14 @@ async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> std::process::Chi
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+
+    match command.spawn() {
         Ok(result) => result,
         Err(err) => {
             panic!("error: {}", err);
         }
-    };
-
-    command
+    }
 }
 
 #[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
@@ -266,7 +265,7 @@ pub async fn create_clip(
     }
 
     let child = crop_ffmpeg(start, end, src_path.as_str()).await;
-    let output = child.wait_with_output().unwrap();
+    let output = child.wait_with_output().await.unwrap();
     let bytes = output.stdout.clone();
 
     let clip_name = if let Some(ref name) = clip_duration.name {
@@ -294,7 +293,8 @@ pub async fn create_clip(
 
     std::fs::create_dir_all(&target_dir).unwrap();
 
-    let mut command = std::process::Command::new("ffmpeg")
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         .arg("-y")
         .args(["-i", "-"])
         .args(["-c:a", "copy"])
@@ -302,13 +302,18 @@ pub async fn create_clip(
         .arg(&full_save_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to run ffmpeg");
+        .stderr(Stdio::piped());
 
-    let stdin = command.stdin.as_mut().unwrap();
-    stdin.write_all(&bytes).expect("could not write to stdin");
-    command.wait_with_output().unwrap();
+    let mut child = command.spawn().expect("Failed to run ffmpeg");
+
+    // Need to use tokio::io::AsyncWriteExt for async write
+    use tokio::io::AsyncWriteExt;
+    let mut stdin = child.stdin.take().unwrap();
+    tokio::spawn(async move {
+        stdin.write_all(&bytes).await.expect("could not write to stdin");
+    });
+    
+    child.wait_with_output().await.unwrap();
 
     let size = std::fs::metadata(&full_save_path)
         .map(|m| m.len())

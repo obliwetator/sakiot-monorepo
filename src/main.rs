@@ -814,18 +814,18 @@ pub async fn test_endpoint(pool: Pool<Postgres>) {
                                                 month_as_string
                                             );
 
-                                            let command = std::process::Command::new("ffprobe")
+                                            let mut command =
+                                                tokio::process::Command::new("ffprobe");
+                                            command
                                                 .arg("-show_entries")
                                                 .arg("format=duration")
                                                 .args(["-of", "default=noprint_wrappers=1:nokey=1"])
                                                 .arg(format!("{}/{}", file_path, file_name))
                                                 .stderr(Stdio::null())
                                                 .stdin(Stdio::null())
-                                                .stdout(Stdio::piped())
-                                                .spawn()
-                                                .unwrap();
+                                                .stdout(Stdio::piped());
 
-                                            let output = command.wait_with_output().unwrap();
+                                            let output = command.output().await.unwrap();
                                             // let stderr = String::from_utf8(output.stderr).unwrap();
                                             let stdout = String::from_utf8(output.stdout).unwrap();
                                             // info!("STD ERR: {}", stderr);
