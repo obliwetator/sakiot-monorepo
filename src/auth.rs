@@ -1,7 +1,13 @@
 #![allow(dead_code)]
 use actix_files::NamedFile;
-use actix_web::{cookie::Cookie, get, web, HttpRequest, HttpResponse, Responder};
-use jsonwebtoken::{decode, encode, EncodingKey, Header, Validation};
+use actix_web::body::EitherBody;
+use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
+use actix_web::{
+    cookie::{Cookie, SameSite},
+    get, web, Error, HttpMessage, HttpRequest, HttpResponse, Responder,
+};
+use futures_util::future::{ready, LocalBoxFuture, Ready};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -10,18 +16,23 @@ use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
 use crate::errors::AppError;
-pub use crate::get_access_and_refresh_tokens;
 use crate::{
     secrets::{CLIENT_ID, CLIENT_SECRET},
     user::{get_user, get_user_guilds},
-    AccessKeys,
 };
+
+pub struct AccessKeys {
+    pub access_encode: EncodingKey,
+    pub refresh_encode: EncodingKey,
+    pub access_decode: DecodingKey,
+    pub refresh_decode: DecodingKey,
+}
 
 pub const BASE_URL: &str = "https://discord.com/api/v10/";
 
 pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
 pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
-const JWT_ACCESS_EXPIRY: i64 = 10;
+const JWT_ACCESS_EXPIRY: i64 = 100;
 const JWT_REFRESH_EXPIRY: i64 = 7;
 
 // trait Token {
@@ -206,6 +217,8 @@ pub async fn discord_login(
     let access_token_cookie = Cookie::build("access_token", access_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
         .secure(true)
         .http_only(true)
         .finish();
@@ -213,10 +226,30 @@ pub async fn discord_login(
     let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
         .secure(true)
         .http_only(true)
         .finish();
 
+    // Clear legacy cookies stored under Path=/api from pre-fix server versions.
+    // Same name + different Path = separate browser entries; without this the
+    // stale ones shadow the new Path=/ cookies on every /api/* request.
+    let clear_old_access = Cookie::build("access_token", "")
+        .domain(".patrykstyla.com")
+        .path("/api")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+    let clear_old_refresh = Cookie::build("refresh_token", "")
+        .domain(".patrykstyla.com")
+        .path("/api")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+
+    b.add_cookie(&clear_old_access)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&clear_old_refresh)
+        .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&access_token_cookie)
         .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&refresh_token_cookie)
@@ -231,24 +264,18 @@ pub async fn refresh_jwt(
     client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
 ) -> Result<impl Responder, AppError> {
-    let headers = req.headers();
-    let cookie = match headers.get("cookie") {
-        Some(cookie) => cookie,
+    let refresh_cookie = match req.cookie("refresh_token") {
+        Some(c) => c,
         None => {
             warn!(
-                "Unauthorized access attempt to refresh_jwt{}: missing cookie",
+                "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
                 req.path()
             );
             return Ok(HttpResponse::Unauthorized().finish());
         }
     };
 
-    let (_, refresh_token) = match get_access_and_refresh_tokens(cookie) {
-        Ok(tokens) => tokens,
-        Err(_) => return Ok(HttpResponse::Unauthorized().finish()),
-    };
-
-    let decoded_refresh = match Token::<Refresh>::decode(refresh_token, &keys) {
+    let decoded_refresh = match Token::<Refresh>::decode(refresh_cookie.value(), &keys) {
         Ok(token) => token,
         Err(_) => {
             warn!(
@@ -275,6 +302,8 @@ pub async fn refresh_jwt(
     let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
         .secure(true)
         .http_only(true)
         .finish();
@@ -282,6 +311,8 @@ pub async fn refresh_jwt(
     let refresh_token_cookie = Cookie::build("refresh_token", new_refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
         .secure(true)
         .http_only(true)
         .finish();
@@ -297,16 +328,40 @@ pub async fn refresh_jwt(
     Ok(response)
 }
 
+#[get("/logout")]
+pub async fn logout() -> Result<impl Responder, AppError> {
+    let clear_access = Cookie::build("access_token", "")
+        .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+    let clear_refresh = Cookie::build("refresh_token", "")
+        .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+
+    let mut resp = HttpResponse::Ok().finish();
+    resp.add_cookie(&clear_access)
+        .map_err(|_| AppError::InternalError)?;
+    resp.add_cookie(&clear_refresh)
+        .map_err(|_| AppError::InternalError)?;
+    Ok(resp)
+}
+
 #[get("/token")]
 pub async fn get_token(req: HttpRequest) -> Result<impl Responder, AppError> {
-    let headers = req.headers();
-    let cookie = headers
-        .get("cookie")
-        .ok_or_else(|| AppError::BadRequest("Missing cookie".into()))?;
+    let access_cookie = req
+        .cookie("access_token")
+        .ok_or_else(|| AppError::BadRequest("Missing access_token cookie".into()))?;
 
-    let (access_token, _) = get_access_and_refresh_tokens(cookie)?;
-
-    let json = json!({ "token": access_token });
+    let json = json!({ "token": access_cookie.value() });
 
     Ok(HttpResponse::Ok().json(json))
 }
@@ -322,6 +377,98 @@ async fn create_jwt_tokens(
     let refresh_token = Token::<Refresh>::encode(id, refresh_token, &keys.refresh_encode)?;
 
     Ok((access_token, refresh_token))
+}
+
+pub struct AuthMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = SayHiMiddleware<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(SayHiMiddleware { service }))
+    }
+}
+
+pub struct SayHiMiddleware<S> {
+    pub service: S,
+}
+
+impl<S, B> Service<ServiceRequest> for SayHiMiddleware<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    actix_web::dev::forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        tracing::info!("PATH: {:#?}", req.path());
+        if req.path() == "/api/discord_login"
+            || req.path() == "/api/refresh"
+            || req.path() == "/api/logout"
+            || req.path() == "/api/dashboard/stream"
+        {
+            // Dont validate the token if user is trying to login, refresh, or connecting to websocket
+            let res = self.service.call(req);
+
+            Box::pin(async move {
+                // forwarded responses map to "left" body
+                res.await.map(ServiceResponse::map_into_left_body)
+            })
+        } else {
+            let keys = req
+                .app_data::<web::Data<AccessKeys>>()
+                .expect("AccessKeys not in app_data");
+
+            let access_cookie = match req.cookie("access_token") {
+                Some(c) => c,
+                None => {
+                    warn!(
+                        "Unauthorized access attempt to middleware {}: missing access_token cookie",
+                        req.path()
+                    );
+                    let (request, _pl) = req.into_parts();
+                    let response = HttpResponse::Unauthorized().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
+
+            let decoded_access = match Token::<Access>::decode(access_cookie.value(), keys) {
+                Ok(token) => token,
+                Err(_) => {
+                    warn!(
+                        "Unauthorized access attempt to middleware {}: invalid or expired token",
+                        req.path()
+                    );
+                    let (request, _pl) = req.into_parts();
+                    let response = HttpResponse::Unauthorized().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
+            tracing::info!("Decoded access token: {:#?}", decoded_access.exp);
+
+            req.extensions_mut().insert(decoded_access);
+            let res = self.service.call(req);
+
+            Box::pin(async move {
+                // forwarded responses map to "left" body
+                res.await.map(ServiceResponse::map_into_left_body)
+            })
+        }
+    }
 }
 
 mod jwt_numeric_date {

@@ -67,19 +67,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
 
 #[get("/ws/")]
 pub async fn web_socket(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    use crate::auth::{get_access_and_refresh_tokens, Access, Token};
+    use crate::auth::{Access, Token};
     use crate::AccessKeys;
     use actix_web::web::Data;
 
-    let headers = req.headers();
     let mut is_authorized = false;
 
-    if let Some(cookie) = headers.get("cookie") {
+    if let Some(access_cookie) = req.cookie("access_token") {
         if let Some(keys) = req.app_data::<Data<AccessKeys>>() {
-            if let Ok((access_token, _)) = get_access_and_refresh_tokens(cookie) {
-                if Token::<Access>::decode(access_token, keys).is_ok() {
-                    is_authorized = true;
-                }
+            if Token::<Access>::decode(access_cookie.value(), keys).is_ok() {
+                is_authorized = true;
             }
         }
     }
