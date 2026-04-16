@@ -64,7 +64,9 @@ impl Broadcaster {
     pub async fn new_client(&self) -> Sse<ChannelStream> {
         let (tx, rx) = sse::channel(10);
 
-        tx.send(sse::Data::new("connected")).await.unwrap();
+        if let Err(e) = tx.send(sse::Data::new("connected")).await {
+            tracing::warn!("SSE initial send failed: {:?}", e);
+        }
 
         self.inner.lock().clients.insert("k".to_string(), tx);
 

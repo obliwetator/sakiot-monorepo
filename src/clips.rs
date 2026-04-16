@@ -19,7 +19,11 @@ pub mod hello_world {
     tonic::include_proto!("helloworld");
 }
 
-use crate::{clips::hello_world::jam_response::JamResponseEnum, errors::ApiResponse, CLIPS_PATH};
+use crate::{
+    clips::hello_world::jam_response::JamResponseEnum,
+    errors::{ApiResponse, AppError},
+    CLIPS_PATH,
+};
 use serde_json::json;
 
 type DisplayFromstr = As<DisplayFromStr>;
@@ -93,10 +97,10 @@ pub async fn get_clips(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
 
-    let result = match sqlx::query_as!(
+    let result = sqlx::query_as!(
         ClipInfo,
         r#"
         SELECT clip_id,
@@ -115,16 +119,9 @@ pub async fn get_clips(
         guild_id
     )
     .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(e) => {
-            error!("Error fetching clips: {:?}", e);
-            panic!("cannot select *")
-        }
-    };
+    .await?;
 
-    HttpResponse::Ok().json(result)
+    Ok(HttpResponse::Ok().json(result))
 }
 #[derive(Deserialize, PartialEq, Debug)]
 pub struct JamItBody {
@@ -149,68 +146,51 @@ pub struct A {
 
 // TODO: Get GRPC Client
 #[post("/jamit")]
-pub async fn play_clip(info: web::Json<JamItBody>) -> impl Responder {
+pub async fn play_clip(info: web::Json<JamItBody>) -> Result<HttpResponse, AppError> {
     info!("Received jamit request: {:?}", info);
-    
-    let client_conn = JammerClient::connect("http://[::1]:50052").await;
-    let mut client = match client_conn {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Failed to connect to GRPC JammerClient: {}", e);
-            panic!("GRPC connection failed");
-        }
-    };
 
-    info!("Connected to GRPC server. Sending request for clip '{}' and guild '{}'", info.clip_name, info.guild_id);
+    let mut client = JammerClient::connect("http://[::1]:50052")
+        .await
+        .map_err(|e| {
+            error!("Failed to connect to GRPC JammerClient: {}", e);
+            AppError::GrpcError(e.to_string())
+        })?;
+
+    info!(
+        "Connected to GRPC server. Sending request for clip '{}' and guild '{}'",
+        info.clip_name, info.guild_id
+    );
 
     let request = tonic::Request::new(JamData {
         clip_name: info.clip_name.clone(),
         guild_id: info.guild_id,
     });
 
-    let response_result = client.jam_it(request).await;
-    let response = match response_result {
-        Ok(resp) => resp,
-        Err(e) => {
-            error!("Failed to jam_it via GRPC: {}", e);
-            panic!("GRPC jam_it failed");
-        }
-    };
+    let response = client.jam_it(request).await.map_err(|e| {
+        error!("Failed to jam_it via GRPC: {}", e);
+        AppError::GrpcError(e.to_string())
+    })?;
 
     info!("GRPC response: {:#?}", response);
 
     let jam_response = response.into_inner();
 
-    // let response = client
-    //     .get(format!(
-    //         "{}?clip_name={}&guild_id={}",
-    //         "http://localhost:3000", info.clip_name, info.guild_id
-    //     ))
-    //     .send()
-    //     .await
-    //     .unwrap();
-
-    // let res = response.text().await.unwrap();
-    // info!("res: {}", res);
-
-    // let json = response.json::<A>().await;
-    // info!("??? : {:#?}", json);
-    // let res = json.unwrap();
-
-    // HttpResponse::Ok().body("ok")
-    match jam_response.resp() {
+    Ok(match jam_response.resp() {
         JamResponseEnum::Ok => HttpResponse::Ok().json(json!({"code" : "0"})),
         JamResponseEnum::NotPressent => HttpResponse::Ok().json(json!({"code" : 1})),
         JamResponseEnum::Unkown => HttpResponse::Ok().json(json!({"code" : 2})),
-    }
+    })
 }
 
 use crate::StartEnd;
 use chrono::Datelike;
-use std::io::Write;
 use std::process::Stdio;
 
-async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> tokio::process::Child {
+async fn crop_ffmpeg(
+    start: f32,
+    end: f32,
+    file_path: &str,
+) -> Result<tokio::process::Child, AppError> {
     let duration = end - start;
     let mut command = tokio::process::Command::new("ffmpeg");
     command
@@ -230,12 +210,9 @@ async fn crop_ffmpeg(start: f32, end: f32, file_path: &str) -> tokio::process::C
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    match command.spawn() {
-        Ok(result) => result,
-        Err(err) => {
-            panic!("error: {}", err);
-        }
-    }
+    command
+        .spawn()
+        .map_err(|e| AppError::FfmpegError(e.to_string()))
 }
 
 #[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
@@ -243,7 +220,7 @@ pub async fn create_clip(
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     info!("creating clip with duration: {:?}", clip_duration);
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
@@ -261,11 +238,14 @@ pub async fn create_clip(
 
     let length = end - start;
     if length < 1.0 || length > 20.0 {
-        return HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"}));
+        return Ok(HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"})));
     }
 
-    let child = crop_ffmpeg(start, end, src_path.as_str()).await;
-    let output = child.wait_with_output().await.unwrap();
+    let child = crop_ffmpeg(start, end, src_path.as_str()).await?;
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
     let bytes = output.stdout.clone();
 
     let clip_name = if let Some(ref name) = clip_duration.name {
@@ -276,8 +256,10 @@ pub async fn create_clip(
 
     let (_time_stamp, id_and_user) = file_name_from_url
         .split_once('-')
-        .expect("expected valid string");
-    let (user_id_str, _user) = id_and_user.split_once('-').expect("expected valid string");
+        .ok_or_else(|| AppError::InvalidParam("file_name".into()))?;
+    let (user_id_str, _user) = id_and_user
+        .split_once('-')
+        .ok_or_else(|| AppError::InvalidParam("file_name".into()))?;
     let user_id = user_id_str.parse::<i64>().unwrap_or(0);
 
     let now = chrono::Utc::now();
@@ -291,7 +273,7 @@ pub async fn create_clip(
     let mut full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
     info!("saving clip to: {}", full_save_path);
 
-    std::fs::create_dir_all(&target_dir).unwrap();
+    std::fs::create_dir_all(&target_dir)?;
 
     let mut command = tokio::process::Command::new("ffmpeg");
     command
@@ -304,16 +286,25 @@ pub async fn create_clip(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn().expect("Failed to run ffmpeg");
+    let mut child = command
+        .spawn()
+        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
 
-    // Need to use tokio::io::AsyncWriteExt for async write
     use tokio::io::AsyncWriteExt;
-    let mut stdin = child.stdin.take().unwrap();
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::FfmpegError("ffmpeg stdin missing".into()))?;
     tokio::spawn(async move {
-        stdin.write_all(&bytes).await.expect("could not write to stdin");
+        if let Err(e) = stdin.write_all(&bytes).await {
+            error!("ffmpeg stdin write failed: {}", e);
+        }
     });
-    
-    child.wait_with_output().await.unwrap();
+
+    child
+        .wait_with_output()
+        .await
+        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
 
     let size = std::fs::metadata(&full_save_path)
         .map(|m| m.len())
@@ -344,18 +335,18 @@ pub async fn create_clip(
                     if db_err.code().as_deref() == Some("23505") { // unique violation
                         retries -= 1;
                         if retries == 0 {
-                            return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to generate unique clip ID"}));
+                            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to generate unique clip ID"})));
                         }
-                        
+
                         let new_clip_id = uuid::Uuid::new_v4().to_string();
                         let new_saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, new_clip_id);
                         let new_full_save_path = format!("{}/{}.ogg", target_dir, new_clip_id);
-                        
+
                         if let Err(err) = std::fs::rename(&full_save_path, &new_full_save_path) {
                             error!("Failed to rename file after collision: {:?}", err);
-                            return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to rename clip"}));
+                            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to rename clip"})));
                         }
-                        
+
                         clip_id = new_clip_id;
                         saved_file_name = new_saved_file_name;
                         full_save_path = new_full_save_path;
@@ -363,12 +354,12 @@ pub async fn create_clip(
                     }
                 }
                 error!("Database error inserting clip: {:?}", e);
-                return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Database error"}));
+                return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Database error"})));
             }
         }
     }
 
-    HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name}))
+    Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
 }
 
 #[post("audio/clips/delete/{guild_id}")]

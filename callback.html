@@ -9,6 +9,9 @@
     TEST
 </body>
     <script>
-        window.opener.postMessage({success: 1}, "*")
+        if (window.opener) {
+            window.opener.postMessage({ success: 1 }, "*");
+        }
+        window.close();
     </script>
 </html>

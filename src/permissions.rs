@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use actix_web::web;
 use sqlx::{Pool, Postgres};
 
+use crate::errors::AppError;
+
 bitflags::bitflags! {
     /// A set of permissions that can be assigned to [`User`]s and [`Role`]s via
     /// [`PermissionOverwrite`]s, roles globally in a [`Guild`], and to
@@ -146,50 +148,36 @@ bitflags::bitflags! {
 pub async fn get_everyone_permission_for_guild(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
-) -> i64 {
-    // Get @everyone role
-    let res = match sqlx::query!(
-        "SELECT permission FROM roles 
+) -> Result<i64, AppError> {
+    let res = sqlx::query!(
+        "SELECT permission FROM roles
 			WHERE guild_id =$1 AND role_id =$1",
         guild_id
     )
     .fetch_one(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            panic!("Error ")
-        }
-    };
+    .await?;
 
-    res.permission
+    Ok(res.permission)
 }
 
 pub async fn get_combined_perm_for_user(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
     user_id: i64,
-) -> i64 {
-    let res = match sqlx::query!(
-        "SELECT permissions, owner FROM user_guilds 
-		WHERE user_id = $1 
+) -> Result<i64, AppError> {
+    let res = sqlx::query!(
+        "SELECT permissions, owner FROM user_guilds
+		WHERE user_id = $1
 		AND id = $2",
         user_id,
         guild_id
     )
     .fetch_one(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            // TODO:
-            panic!("Error ")
-        }
-    };
+    .await?;
     if res.owner {
-        return Permissions::all().bits();
+        return Ok(Permissions::all().bits());
     }
-    res.permissions
+    Ok(res.permissions)
 }
 
 pub async fn perms_for_roles_for_channel(
@@ -197,21 +185,15 @@ pub async fn perms_for_roles_for_channel(
     user_id: i64,
     guild_id: i64,
     perm_hash: &mut HashMap<i64, [i64; 2]>,
-) {
-    let perms_for_roles_for_channel = match sqlx::query!(
-        "SELECT  allow as \"allow!\", deny as \"deny!\", channel_id as \"channel_id!\", role_id as 
+) -> Result<(), AppError> {
+    let perms_for_roles_for_channel = sqlx::query!(
+        "SELECT  allow as \"allow!\", deny as \"deny!\", channel_id as \"channel_id!\", role_id as
 		\"role_id!\" FROM get_roles_overwrites_for_channels_from_user($1, $2)",
         user_id,
         guild_id
     )
     .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            panic!("Error ")
-        }
-    };
+    .await?;
 
     for perm in perms_for_roles_for_channel {
         if perm.channel_id == guild_id {
@@ -229,25 +211,26 @@ pub async fn perms_for_roles_for_channel(
             }
         }
     }
+    Ok(())
 }
 
 pub async fn get_available_channels_for_user(
     pool: &actix_web::web::Data<Pool<Postgres>>,
     guild_id: i64,
     user_id: i64,
-) -> HashSet<i64> {
+) -> Result<HashSet<i64>, AppError> {
     // [0] = allow, [1] = deny
     let mut perm_hash: HashMap<i64, [i64; 2]> = HashMap::new();
     let mut allowed_channels: HashSet<i64> = HashSet::new();
     let mut denied_channels: HashSet<i64> = HashSet::new();
 
-    let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await;
-    let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await;
+    let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await?;
+    let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await?;
 
     // This is the highest non-specific permission for user
     let total_permission = everyone_permission | combined_permission;
 
-    get_user_channel_overrides_for_user_id(user_id, guild_id, pool, &mut perm_hash).await;
+    get_user_channel_overrides_for_user_id(user_id, guild_id, pool, &mut perm_hash).await?;
 
     // Is admin
     if (total_permission & Permissions::ADMINISTRATOR.bits()) == Permissions::ADMINISTRATOR.bits() {
@@ -272,7 +255,7 @@ pub async fn get_available_channels_for_user(
         !allow && !deny
     });
 
-    perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await;
+    perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await?;
 
     perm_hash.retain(|ch_id, perm_vec| {
         let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
@@ -294,7 +277,7 @@ pub async fn get_available_channels_for_user(
         !allow && !deny
     });
 
-    get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await;
+    get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await?;
 
     perm_hash.retain(|ch_id, perm_vec| {
         let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
@@ -322,7 +305,7 @@ pub async fn get_available_channels_for_user(
         !allow
     });
 
-    allowed_channels
+    Ok(allowed_channels)
 }
 
 async fn get_user_channel_overrides_for_user_id(
@@ -330,22 +313,15 @@ async fn get_user_channel_overrides_for_user_id(
     guild_id: i64,
     pool: &actix_web::web::Data<Pool<Postgres>>,
     perm_hash: &mut HashMap<i64, [i64; 2]>,
-) {
-    let specfic_perm_for_channel = match sqlx::query!(
+) -> Result<(), AppError> {
+    let specfic_perm_for_channel = sqlx::query!(
         "SELECT allow, deny, channel_id as \"channel_id!\", name as
 			\"name!\" FROM get_user_channel_overriders_for_user_id($1, $2)",
         user_id,
         guild_id
     )
     .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            // TODO:
-            panic!("Error ")
-        }
-    };
+    .await?;
 
     // member specific override
     for specific_perm in specfic_perm_for_channel {
@@ -357,30 +333,25 @@ async fn get_user_channel_overrides_for_user_id(
             ],
         );
     }
+    Ok(())
 }
 
 pub async fn get_everyone_permission_for_each_channel(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
     perm_hash: &mut HashMap<i64, [i64; 2]>,
-) {
-    let everyone_permissions = match sqlx::query!(
-        "SELECT channel_permissions.allow as \"allow?\", channel_permissions.deny as \"deny?\",  channels.channel_id, channels.name 
-		FROM channels 
-		LEFT JOIN channel_permissions 
+) -> Result<(), AppError> {
+    let everyone_permissions = sqlx::query!(
+        "SELECT channel_permissions.allow as \"allow?\", channel_permissions.deny as \"deny?\",  channels.channel_id, channels.name
+		FROM channels
+		LEFT JOIN channel_permissions
 		ON channels.channel_id=channel_permissions.channel_id
 		WHERE channels.type = 2
 		AND channels.guild_id=$1
 		AND (channel_permissions.target_id=$1 OR channel_permissions.target_id IS NULL)", guild_id
     )
     .fetch_all(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => {
-            panic!("Error ")
-        }
-	};
+    .await?;
 
     for channel_perm in everyone_permissions {
         match perm_hash.get_mut(&channel_perm.channel_id) {
@@ -396,4 +367,5 @@ pub async fn get_everyone_permission_for_each_channel(
             }
         }
     }
+    Ok(())
 }

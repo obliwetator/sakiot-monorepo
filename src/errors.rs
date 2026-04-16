@@ -9,6 +9,8 @@ pub enum AppError {
     NotFound,
     #[error("Forbidden")]
     Forbidden,
+    #[error("Unauthorized")]
+    Unauthorized,
     #[error("Internal Server Error")]
     InternalError,
     #[error("Database Error: {0}")]
@@ -21,6 +23,12 @@ pub enum AppError {
     ParseError(#[from] std::num::ParseIntError),
     #[error("Bad Request: {0}")]
     BadRequest(String),
+    #[error("Invalid path param: {0}")]
+    InvalidParam(String),
+    #[error("FFmpeg failed: {0}")]
+    FfmpegError(String),
+    #[error("Upstream gRPC error: {0}")]
+    GrpcError(String),
 }
 
 impl ResponseError for AppError {
@@ -28,7 +36,9 @@ impl ResponseError for AppError {
         match self {
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

@@ -6,3 +6,4 @@
 src/secrets.rs
 cert.pem
 key.pem
+/waveform_data

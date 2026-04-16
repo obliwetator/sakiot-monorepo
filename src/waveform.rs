@@ -169,7 +169,10 @@ pub async fn generate_peaks_background(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let stderr = command.stderr.take().unwrap();
+    let stderr = command
+        .stderr
+        .take()
+        .ok_or("audiowaveform child missing stderr pipe")?;
     let mut reader = BufReader::new(stderr);
     let mut buf = Vec::new();
 

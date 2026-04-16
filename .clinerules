@@ -1,0 +1,28 @@
+# Project-Specific Instructions
+
+## General
+- Do not add this file .clinerules to git
+- Always write clean, concise, and well-documented code.
+- Prioritize the simplest solution that meets the requirements.
+- Before making significant architectural changes, discuss the approach first.
+
+## Rust Guidelines
+- Use idiomatic Rust patterns and take advantage of the type system.
+- Ensure proper error handling using `Result` and custom error types (e.g., keeping `src/errors.rs` updated).
+- Avoid `unwrap()` and `expect()` in production code unless it's absolutely guaranteed not to panic; prefer propagating errors with `?`.
+- Keep `cargo clippy` and `cargo fmt` rules in mind when writing or modifying code.
+
+## Protocol Buffers / gRPC
+- When modifying `.proto` files in the `proto/` directory, ensure backward compatibility whenever possible.
+- Remember to regenerate protobuf bindings (e.g., via `build.rs` or `build.sh`) when proto files are updated.
+
+## Testing
+- Include unit tests for new features and business logic where applicable.
+- Make sure to test edge cases, especially related to audio and websocket handling in this server.
+
+## Build
+- Use `cargo check` to check if the program can compile without errors
+- Use `./build.sh` to build the release binary and restart the service. 
+
+## Tools
+- Use ll(alias ll="exa -alh") in the root directory to list all files, hidden files and symlinks indicated by the ->

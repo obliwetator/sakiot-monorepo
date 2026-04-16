@@ -1,4 +1,7 @@
-use std::{fs, path::Path, process::Stdio};
+use std::collections::{HashMap, HashSet};
+use std::fs::{self, ReadDir};
+use std::path::Path;
+use std::process::Stdio;
 
 use actix_files::NamedFile;
 use actix_web::{
@@ -15,10 +18,353 @@ use base64::prelude::*;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use crate::{
-    waveform::generate_peaks_background, HashMapContainer, WaveformProgressContainer,
-    NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH, WAVEFORM_PATH,
-};
+use crate::auth::{Access, Token};
+use crate::errors::AppError;
+use crate::waveform::generate_peaks_background;
+
+pub const RECORDING_PATH: &str = "./voice_recordings/";
+pub const NO_SILENCE_RECORDING_PATH: &str = "./no_silence_voice_recordings/";
+pub const CLIPS_PATH: &str = "./clips/";
+pub const NO_SILENCE_PREFIX: &str = "_no_silence_";
+pub const WAVEFORM_PATH: &str = "./waveform_data/";
+
+#[derive(serde::Serialize, Debug)]
+pub struct Directories {
+    pub year: i32,
+    pub months: Option<Months>,
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct Channels {
+    pub channel_id: String,
+    pub dirs: Vec<Directories>,
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct File {
+    pub file: String,
+    pub comment: Option<String>,
+}
+
+pub type Months = HashMap<i32, Option<Vec<File>>>;
+
+#[derive(serde::Deserialize, Debug)]
+pub struct StartEnd {
+    pub start: Option<f32>,
+    pub end: Option<f32>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct HashMapContainer(
+    pub tokio::sync::RwLock<HashMap<String, tokio::sync::broadcast::Sender<i32>>>,
+);
+
+#[derive(Debug)]
+pub struct WaveformProgressContainer(pub tokio::sync::RwLock<HashMap<String, i16>>);
+
+#[inline]
+pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_int: i32) {
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let file_name_str = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let file_name = File {
+                file: file_name_str,
+                comment: None,
+            };
+            if let Some(months) = dirs.months.as_mut() {
+                if let Some(Some(files)) = months.get_mut(&month_as_int) {
+                    files.push(file_name);
+                }
+            }
+        } else {
+            info!("error for file");
+        }
+    }
+}
+
+pub async fn get_channels_dir(
+    guild_id: String,
+    channel_hashset: HashSet<i64>,
+) -> Result<Vec<Channels>, HttpResponse> {
+    let mut dirs_vec = Vec::new();
+
+    if let Some(value) = for_channel_ids(guild_id, &mut dirs_vec, channel_hashset).await {
+        return value;
+    }
+
+    Ok(dirs_vec)
+}
+
+pub async fn for_channel_ids(
+    guild_id: String,
+    dirs_vec: &mut Vec<Channels>,
+    channel_hashset: HashSet<i64>,
+) -> Option<Result<Vec<Channels>, HttpResponse>> {
+    let channel_ids = match std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)) {
+        Ok(ok) => ok,
+        Err(err) => {
+            tracing::error!("{}", err);
+            return Some(Err(HttpResponse::NotFound()
+                .body("files does not exist or are innacessible to you 1\n")));
+        }
+    };
+
+    for channel_id in channel_ids {
+        if let Ok(entry) = channel_id {
+            let channel = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i64>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
+
+            if channel_hashset.contains(&channel) {
+                // we have the channel is the hashset. User can access this channel
+                let years = match std::fs::read_dir(format!(
+                    "{}{}/{}",
+                    RECORDING_PATH, guild_id, channel
+                )) {
+                    Ok(ok) => ok,
+                    Err(err) => {
+                        tracing::error!("{}", err);
+                        return Some(Err(HttpResponse::NotFound()
+                            .body("files does not exist or are innacessible to you 2\n")));
+                    }
+                };
+
+                let mut channels = Channels {
+                    channel_id: channel.to_string(),
+                    dirs: Vec::new(),
+                };
+
+                if let Some(value) = for_years(years, &guild_id, channel, &mut channels).await {
+                    return Some(value);
+                }
+
+                dirs_vec.push(channels);
+            }
+        }
+    }
+
+    None
+}
+
+#[inline]
+pub async fn for_years(
+    years: ReadDir,
+    guild_id: &String,
+    channel: i64,
+    dirs_vec: &mut Channels,
+) -> Option<Result<Vec<Channels>, HttpResponse>> {
+    for year in years {
+        if let Ok(entry) = year {
+            let year_as_int = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i32>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
+
+            let mut dirs = Directories {
+                year: year_as_int,
+                months: Some(HashMap::new()),
+            };
+
+            let months = match std::fs::read_dir(format!(
+                "{}{}/{}/{}",
+                RECORDING_PATH, guild_id, channel, year_as_int
+            )) {
+                Ok(ok) => ok,
+                Err(err) => {
+                    tracing::error!("{}", err);
+                    return Some(Err(HttpResponse::NotFound()
+                        .body("files does not exist or are innacessible to you 2\n")));
+                }
+            };
+
+            if let Some(value) = for_months(months, &mut dirs, guild_id, channel, year_as_int).await
+            {
+                return Some(value);
+            }
+
+            dirs_vec.dirs.push(dirs);
+        }
+    }
+    None
+}
+
+#[inline]
+pub async fn for_months(
+    months: ReadDir,
+    dirs: &mut Directories,
+    guild_id: &String,
+    channel: i64,
+    year_as_int: i32,
+) -> Option<Result<Vec<Channels>, HttpResponse>> {
+    for month in months {
+        if let Ok(entry) = month {
+            let month_as_string = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
+
+            if let Some(months_map) = dirs.months.as_mut() {
+                months_map.insert(month_as_int, Some(vec![]));
+            }
+
+            let entries = match std::fs::read_dir(format!(
+                "{}{}/{}/{}/{}",
+                RECORDING_PATH, guild_id, channel, year_as_int, &month_as_string
+            )) {
+                Ok(ok) => ok,
+                Err(err) => {
+                    tracing::error!("{}", err);
+                    return Some(Err(HttpResponse::NotFound()
+                        .body("files does not exist or are innacessible to you 3\n")));
+                }
+            };
+
+            for_entry(entries, channel, dirs, month_as_int).await;
+        } else {
+            info!("error for month")
+        }
+    }
+    None
+}
+
+pub async fn get_months(path: web::Path<String>) -> Result<Vec<Directories>, HttpResponse> {
+    let guild_id = path.into_inner();
+
+    let years = match std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)) {
+        Ok(ok) => ok,
+        Err(err) => {
+            tracing::error!("{}", err);
+            return Err(HttpResponse::NotFound()
+                .body("files does not exist or are innacessible to you 1\n"));
+        }
+    };
+
+    let mut dirs_vec = Vec::new();
+
+    // Get all the year(s) for this guild
+    for year in years {
+        if let Ok(entry) = year {
+            let year_as_int = match entry.file_name().into_string() {
+                Ok(s) => match s.parse::<i32>() {
+                    Ok(num) => num,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            };
+
+            let mut dirs = Directories {
+                year: year_as_int,
+                months: Some(HashMap::new()),
+            };
+
+            info!("{}", year_as_int);
+
+            let months = match std::fs::read_dir(format!(
+                "{}{}/{}",
+                RECORDING_PATH, guild_id, year_as_int
+            )) {
+                Ok(ok) => ok,
+                Err(err) => {
+                    tracing::error!("{}", err);
+                    return Err(HttpResponse::NotFound()
+                        .body("files does not exist or are innacessible to you 2\n"));
+                }
+            };
+
+            for month in months {
+                if let Ok(entry) = month {
+                    let month_as_string = match entry.file_name().into_string() {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
+
+                    if let Some(months_map) = dirs.months.as_mut() {
+                        months_map.insert(month_as_int, Some(vec![]));
+                    }
+
+                    let entries = match std::fs::read_dir(format!(
+                        "{}{}/{}",
+                        RECORDING_PATH, guild_id, year_as_int
+                    )) {
+                        Ok(ok) => ok,
+                        Err(err) => {
+                            tracing::error!("{}", err);
+                            return Err(HttpResponse::NotFound()
+                                .body("files does not exist or are innacessible to you 3\n"));
+                        }
+                    };
+
+                    for entry in entries {
+                        if let Ok(entry) = entry {
+                            let file_name_str = match entry.file_name().into_string() {
+                                Ok(s) => s,
+                                Err(_) => continue,
+                            };
+                            let file_name = File {
+                                file: file_name_str,
+                                comment: None,
+                            };
+                            if let Some(months_map) = dirs.months.as_mut() {
+                                if let Some(Some(files)) = months_map.get_mut(&month_as_int) {
+                                    files.push(file_name);
+                                }
+                            }
+                        } else {
+                            tracing::error!("error for file");
+                        }
+                    }
+                } else {
+                    tracing::error!("error for month")
+                }
+            }
+            dirs_vec.push(dirs);
+        } else {
+            tracing::error!("error for year");
+        }
+    }
+
+    Ok(dirs_vec)
+}
+
+#[get("/current/{guild_id}")]
+pub async fn get_current_month_permission(
+    path: web::Path<String>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+
+    let guild_id = path.into_inner();
+    let guild_id_as_int = guild_id
+        .parse::<i64>()
+        .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
+
+    let permission_hashset =
+        crate::permissions::get_available_channels_for_user(&pool, guild_id_as_int, token.id)
+            .await?;
+
+    let result = get_channels_dir(guild_id, permission_hashset).await;
+
+    let resp = match result {
+        Ok(dirs_vec) => HttpResponse::Ok().json(dirs_vec),
+        Err(err) => err,
+    };
+
+    Ok(resp)
+}
 
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 async fn get_waveform_data(
@@ -30,6 +376,7 @@ async fn get_waveform_data(
     let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
+    info!("File path: {}", output);
     let file_name = path.4.clone();
 
     info!("Received poll request for waveform data: {}", file_path);
@@ -79,21 +426,7 @@ async fn get_waveform_data(
     HttpResponse::Ok().json(json!({ "progress": 0 }))
 }
 
-async fn _get_file(path: web::Path<(i64, i64, i32, i32, String)>) -> NamedFile {
-    let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
-
-    match NamedFile::open(format!(
-        "{}{}/{}/{}/{}/{}",
-        RECORDING_PATH, guild_id, channel_id, year, month, file_name_from_url
-    )) {
-        Ok(ok) => ok,
-        Err(err) => {
-            panic!("{err}")
-        }
-    }
-}
-
-fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
+pub fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
     let guild_id = &path.0;
     let channel_id = &path.1;
     let year = &path.2;
@@ -108,14 +441,7 @@ fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> S
 }
 
 fn file_exists(path: &str) -> bool {
-    let rs = match Path::new(path).try_exists() {
-        Ok(ok) => ok,
-        Err(err) => {
-            panic!("{err}")
-        }
-    };
-
-    rs
+    Path::new(path).try_exists().unwrap_or(false)
 }
 
 fn handle_idempotency_key(req: &HttpRequest) -> Result<String, ()> {
@@ -162,14 +488,27 @@ async fn remove_silence(
     // We have they key in the hashmap. We are processing the request
     if hashmap.0.read().await.contains_key(&path.4) {
         info!("Already processing");
-        let lock = hashmap.0.read().await;
-        let sender = lock.get(&path.4).unwrap();
-        let mut rec = sender.subscribe();
-        let value = rec.recv().await.unwrap();
-
-        if value == 0 {
-            info!("received value");
-            // placeholder
+        let mut rec = {
+            let lock = hashmap.0.read().await;
+            match lock.get(&path.4) {
+                Some(sender) => sender.subscribe(),
+                None => {
+                    // Race: entry removed between contains_key and get. Treat as fresh.
+                    return HttpResponse::ServiceUnavailable().json(json!({"message": "retry"}));
+                }
+            }
+        };
+        match rec.recv().await {
+            Ok(value) => {
+                if value == 0 {
+                    info!("received value");
+                }
+            }
+            Err(e) => {
+                error!("broadcast recv error: {:?}", e);
+                return HttpResponse::InternalServerError()
+                    .json(json!({"message": "worker terminated"}));
+            }
         }
 
         let json = json!({"url":file_no_silence,"message":" Success"});
@@ -195,17 +534,12 @@ async fn remove_silence(
                     .await
                     .insert(path.4.to_owned(), tx.clone());
             }
-            // Crate the directory for the file
-            let res = fs::create_dir_all(&no_silence_file_path);
-            {
-                match res {
-                    Ok(_) => (),
-                    Err(err) => {
-                        // Something went very wrong when making the dir
-                        hashmap.0.write().await.remove(&idemonpotency);
-                        panic!("{err}")
-                    }
-                }
+            // Create the directory for the file
+            if let Err(err) = fs::create_dir_all(&no_silence_file_path) {
+                error!("create_dir_all failed: {}", err);
+                hashmap.0.write().await.remove(&path.4);
+                return HttpResponse::InternalServerError()
+                    .json(json!({"message": "failed to create output dir"}));
             }
 
             let file: String = file_path.to_owned() + "/" + path.4.as_str() + ".ogg";
@@ -232,16 +566,13 @@ async fn remove_silence(
                 let _output = match command.output().await {
                     Ok(result) => result,
                     Err(err) => {
-                        // Something when very wrong when spawing the process
+                        error!("ffmpeg spawn failed: {}", err);
                         hashmap_clone.0.write().await.remove(&path.4);
-                        panic!("error: {}", err);
+                        return;
                     }
                 };
-                // info!("Err: {}", String::from_utf8(output.stderr).unwrap());
-                // info!("Status: {}", output.status);
-                // info!("Out: {}", String::from_utf8(output.stdout).unwrap());
 
-                sqlx::query!(
+                if let Err(e) = sqlx::query!(
                     "UPDATE public.audio_files
 				SET silence=true
 				WHERE file_name=$1;",
@@ -249,7 +580,11 @@ async fn remove_silence(
                 )
                 .execute(pool.get_ref())
                 .await
-                .unwrap();
+                {
+                    error!("audio_files UPDATE failed: {:?}", e);
+                    hashmap_clone.0.write().await.remove(&path.4);
+                    return;
+                }
 
                 match tx.send(0) {
                     Ok(_) => {
@@ -287,24 +622,25 @@ async fn remove_silence(
 async fn find_similar(
     _req: HttpRequest,
     path: web::Path<(u64, String, i32, i32, String)>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
     let file_path = format!(
         "{}{}/{}/{}/{}",
         RECORDING_PATH, guild_id, channel_id, year, month
     );
-    let files = match std::fs::read_dir(&file_path) {
-        Ok(ok) => ok,
-        Err(err) => {
-            panic!("cannot read files {}", err);
-        }
-    };
+    let files = std::fs::read_dir(&file_path)?;
 
     for file in files {
-        let file_name = file.unwrap().file_name();
-        let file_n = file_name.to_string_lossy();
-        // file_n.rsplit_once('/');
+        let entry = match file {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("read_dir entry error: {}", e);
+                continue;
+            }
+        };
+        let fname = entry.file_name();
+        let file_n = fname.to_string_lossy();
         let start = std::time::Instant::now();
         let mut command = tokio::process::Command::new("ffprobe");
         command
@@ -316,22 +652,26 @@ async fn find_similar(
             .stdin(Stdio::null())
             .stdout(Stdio::piped());
 
-        let output = command.output().await.unwrap();
+        let output = match command.output().await {
+            Ok(o) => o,
+            Err(e) => {
+                error!("ffprobe failed: {}", e);
+                continue;
+            }
+        };
 
         let duration = start.elapsed();
-
         info!("Time elapsed in ffprobe is: {:?}", duration);
-
-        info!("Out: {}", String::from_utf8(output.stdout).unwrap());
-        // info!("ERR: {}", String::from_utf8(output.stderr).unwrap());
+        info!("Out: {}", String::from_utf8_lossy(&output.stdout));
     }
 
-    let (_time, user_id) = file_name.split_once('-').expect("expected valid string");
+    let (_time, user_id) = file_name
+        .split_once('-')
+        .ok_or_else(|| AppError::InvalidParam("file_name".into()))?;
 
     info!("1: {}, 2: {}", user_id, _time);
 
-    // info!("{:#?}", files);
-    return "";
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[derive(Deserialize, Debug)]
@@ -389,7 +729,7 @@ async fn download_audio(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
     is_silence: web::Query<AudioQuery>,
-) -> impl Responder {
+) -> Result<NamedFile, AppError> {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
 
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
@@ -398,7 +738,6 @@ async fn download_audio(
         year, month, NO_SILENCE_PREFIX, file_name_from_url
     );
 
-    // Download full file
     info!(
         "file_path: {:#?} is silence recording? {:#?}",
         format!(
@@ -408,29 +747,24 @@ async fn download_audio(
         is_silence
     );
 
-    let file = if is_silence.silence.is_some() {
-        actix_files::NamedFile::open(
-            format!(
-                "{}{}/{}/{}",
-                NO_SILENCE_RECORDING_PATH, guild_id, channel_id, &temp_file
-            )
-            .as_str(),
+    let full_path = if is_silence.silence.is_some() {
+        format!(
+            "{}{}/{}/{}",
+            NO_SILENCE_RECORDING_PATH, guild_id, channel_id, &temp_file
         )
-        .unwrap()
     } else {
-        actix_files::NamedFile::open(
-            format!(
-                "{}{}/{}/{}",
-                RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-            )
-            .as_str(),
+        format!(
+            "{}{}/{}/{}",
+            RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
         )
-        .unwrap()
     };
 
-    file.use_last_modified(true)
+    let file = actix_files::NamedFile::open(&full_path).map_err(|_| AppError::NotFound)?;
+
+    Ok(file
+        .use_last_modified(true)
         .set_content_disposition(ContentDisposition {
             disposition: DispositionType::Attachment,
             parameters: vec![],
-        })
+        }))
 }
