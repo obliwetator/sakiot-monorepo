@@ -90,7 +90,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .default_service(web::route().to(not_found))
             .wrap(
                 Cors::default()
-                    .allowed_origin(CORS_ALLOWED_ORIGIN.as_str())
+                    .allowed_origin_fn(|origin, _req_head| {
+                        let allowed = CORS_ALLOWED_ORIGIN.as_str();
+                        if let Ok(origin_str) = origin.to_str() {
+                            if origin_str == allowed {
+                                return true;
+                            }
+                            if let Some(domain) = allowed.strip_prefix("https://") {
+                                if origin_str.starts_with("https://") && origin_str.ends_with(&format!(".{}", domain)) {
+                                    return true;
+                                }
+                            }
+                            if let Some(domain) = allowed.strip_prefix("http://") {
+                                if origin_str.starts_with("http://") && origin_str.ends_with(&format!(".{}", domain)) {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    })
                     .allow_any_method()
                     .allow_any_header()
                     .supports_credentials()
