@@ -46,3 +46,12 @@ uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 
 [build-dependencies]
 tonic-build = "0.12"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"

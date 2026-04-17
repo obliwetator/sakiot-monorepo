@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use std::env;
 
+#[allow(clippy::panic)]
 fn load(key: &str) -> String {
     env::var(key).unwrap_or_else(|_| panic!("missing env var: {key}"))
 }

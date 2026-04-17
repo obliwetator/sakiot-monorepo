@@ -1,7 +1,7 @@
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    post, web, HttpRequest, HttpResponse, Responder,
+    post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,9 +20,10 @@ pub mod hello_world {
 }
 
 use crate::{
+    audio::CLIPS_PATH,
+    auth::{Access, Token},
     clips::hello_world::jam_response::JamResponseEnum,
     errors::{ApiResponse, AppError},
-    CLIPS_PATH,
 };
 use serde_json::json;
 
@@ -182,7 +183,7 @@ pub async fn play_clip(info: web::Json<JamItBody>) -> Result<HttpResponse, AppEr
     })
 }
 
-use crate::StartEnd;
+use crate::audio::StartEnd;
 use chrono::Datelike;
 use std::process::Stdio;
 
@@ -217,17 +218,23 @@ async fn crop_ffmpeg(
 
 #[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn create_clip(
+    req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
     info!("creating clip with duration: {:?}", clip_duration);
+    let user_id = req
+        .extensions()
+        .get::<Token<Access>>()
+        .map(|t| t.id)
+        .ok_or(AppError::Unauthorized)?;
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
 
     let src_path = format!(
         "{}{}/{}/{}.ogg",
-        crate::RECORDING_PATH,
+        crate::audio::RECORDING_PATH,
         guild_id,
         channel_id,
         &file_name_without_guild_id
@@ -237,7 +244,7 @@ pub async fn create_clip(
     let end = clip_duration.end.unwrap_or(0.0);
 
     let length = end - start;
-    if length < 1.0 || length > 20.0 {
+    if !(1.0..=20.0).contains(&length) {
         return Ok(HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"})));
     }
 
@@ -253,14 +260,6 @@ pub async fn create_clip(
     } else {
         file_name_from_url.clone()
     };
-
-    let (_time_stamp, id_and_user) = file_name_from_url
-        .split_once('-')
-        .ok_or_else(|| AppError::InvalidParam("file_name".into()))?;
-    let (user_id_str, _user) = id_and_user
-        .split_once('-')
-        .ok_or_else(|| AppError::InvalidParam("file_name".into()))?;
-    let user_id = user_id_str.parse::<i64>().unwrap_or(0);
 
     let now = chrono::Utc::now();
     let c_year = now.year();
@@ -411,7 +410,7 @@ pub async fn delete(
                 Err(_err) => {
                     error!("file cannot be deleted");
                     error!("{:?}", _err.kind());
-                    HttpResponse::NotFound().json({})
+                    HttpResponse::NotFound().json(())
                 }
             }
         } else {

@@ -67,8 +67,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
 
 #[get("/ws/")]
 pub async fn web_socket(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    use crate::auth::{Access, Token};
-    use crate::AccessKeys;
+    use crate::auth::{Access, AccessKeys, Token};
     use actix_web::web::Data;
 
     let mut is_authorized = false;

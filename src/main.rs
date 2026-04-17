@@ -6,21 +6,18 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use web_server::audio::{
-    download_audio, find_similar, get_audio, get_waveform_data, remove_silence,
+    download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
+    remove_silence, HashMapContainer, WaveformProgressContainer,
 };
-use web_server::auth::{discord_login, get_token, logout, refresh_jwt};
+use web_server::auth::{discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware};
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
+use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
 use web_server::dashboard;
-use web_server::stamps::get_stamps;
 use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
-use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
+use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 use web_server::websocket::web_socket;
-use web_server::{
-    get_current_month_permission, AccessKeys, AuthMiddleware, HashMapContainer,
-    WaveformProgressContainer,
-};
 
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -29,7 +26,7 @@ use tonic::transport::Server;
 #[get("/current/{guild_id}")]
 async fn perm_calc(
     _path: web::Path<String>,
-    _token: Option<web::ReqData<web_server::Token<web_server::Access>>>,
+    _token: Option<web::ReqData<web_server::auth::Token<web_server::auth::Access>>>,
     _pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
 ) -> impl Responder {
     HttpResponse::Ok()
@@ -44,6 +41,7 @@ async fn download_the_clip() -> Result<actix_files::NamedFile, actix_web::Error>
     Ok(actix_files::NamedFile::open("./clips.tar.gz")?)
 }
 
+#[allow(clippy::expect_used)]
 #[actix_web::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -132,6 +130,6 @@ async fn main() {
             .await
     });
 
-    let _c = tokio::spawn(async move { server.await });
+    let _c = tokio::spawn(server);
     let _res = tokio::join!(_c, _tonic);
 }

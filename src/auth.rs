@@ -427,9 +427,16 @@ where
                 res.await.map(ServiceResponse::map_into_left_body)
             })
         } else {
-            let keys = req
-                .app_data::<web::Data<AccessKeys>>()
-                .expect("AccessKeys not in app_data");
+            let keys = match req.app_data::<web::Data<AccessKeys>>() {
+                Some(k) => k,
+                None => {
+                    tracing::error!("AccessKeys not in app_data — server misconfigured");
+                    let (request, _pl) = req.into_parts();
+                    let response =
+                        HttpResponse::InternalServerError().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
 
             let access_cookie = match req.cookie("access_token") {
                 Some(c) => c,

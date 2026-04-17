@@ -1,6 +1,6 @@
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use time::OffsetDateTime;
-use web_server::{Access, AccessKeys, Refresh, Token};
+use web_server::auth::{Access, AccessKeys, Refresh, Token};
 
 #[test]
 fn test_access_token_encode_decode() {
