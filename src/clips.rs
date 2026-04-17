@@ -141,18 +141,16 @@ pub struct A {
 
 // TODO: Get GRPC Client
 #[post("/jamit")]
-pub async fn play_clip(info: web::Json<JamItBody>) -> Result<HttpResponse, AppError> {
+pub async fn play_clip(
+    info: web::Json<JamItBody>,
+    client: web::Data<JammerClient<tonic::transport::Channel>>,
+) -> Result<HttpResponse, AppError> {
     info!("Received jamit request: {:?}", info);
 
-    let mut client = JammerClient::connect("http://[::1]:50052")
-        .await
-        .map_err(|e| {
-            error!("Failed to connect to GRPC JammerClient: {}", e);
-            AppError::GrpcError(e.to_string())
-        })?;
+    let mut client = client.get_ref().clone();
 
     info!(
-        "Connected to GRPC server. Sending request for clip '{}' and guild '{}'",
+        "Sending request for clip '{}' and guild '{}'",
         info.clip_name, info.guild_id
     );
 
@@ -185,10 +183,12 @@ async fn crop_ffmpeg(
     start: f32,
     end: f32,
     file_path: &str,
+    target_path: &str,
 ) -> Result<tokio::process::Child, AppError> {
     let duration = end - start;
     let mut command = tokio::process::Command::new("ffmpeg");
     command
+        .arg("-y")
         // seek to
         .args(["-ss", &start.to_string()])
         // input
@@ -196,13 +196,11 @@ async fn crop_ffmpeg(
         // length
         .args(["-t", &duration.to_string()])
         // copy the codec
-        .args(["-c", "copy"])
-        // since we pipe the output we have to tell ffmpeg whats its gonna be
-        .args(["-f", "ogg"])
-        // output to pipe
-        .arg("-")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .args(["-c:a", "copy"])
+        // output file
+        .arg(target_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
     command
@@ -242,13 +240,6 @@ pub async fn create_clip(
         return Ok(HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"})));
     }
 
-    let child = crop_ffmpeg(start, end, src_path.as_str()).await?;
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
-    let bytes = output.stdout.clone();
-
     let clip_name = if let Some(ref name) = clip_duration.name {
         name.clone()
     } else {
@@ -259,98 +250,51 @@ pub async fn create_clip(
     let c_year = now.year();
     let c_month = now.month();
 
-    let mut clip_id = uuid::Uuid::new_v4().to_string();
+    let clip_id = uuid::Uuid::new_v4().to_string();
 
     let target_dir = format!("{}{}/{:02}", CLIPS_PATH, c_year, c_month);
-    let mut saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
-    let mut full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
+    let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
+    let full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
     info!("saving clip to: {}", full_save_path);
 
     std::fs::create_dir_all(&target_dir)?;
 
-    let mut command = tokio::process::Command::new("ffmpeg");
-    command
-        .arg("-y")
-        .args(["-i", "-"])
-        .args(["-c:a", "copy"])
-        .args(["-f", "ogg"])
-        .arg(&full_save_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
-
-    use tokio::io::AsyncWriteExt;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| AppError::FfmpegError("ffmpeg stdin missing".into()))?;
-    tokio::spawn(async move {
-        if let Err(e) = stdin.write_all(&bytes).await {
-            error!("ffmpeg stdin write failed: {}", e);
-        }
-    });
-
-    child
+    let child = crop_ffmpeg(start, end, src_path.as_str(), &full_save_path).await?;
+    let output = child
         .wait_with_output()
         .await
         .map_err(|e| AppError::FfmpegError(e.to_string()))?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        error!("FFMPEG error: {}", err_msg);
+        return Err(AppError::FfmpegError(err_msg.to_string()));
+    }
 
     let size = std::fs::metadata(&full_save_path)
         .map(|m| m.len())
         .unwrap_or(0) as i64;
     let length = end - start;
 
-    let mut retries = 3;
-    while retries > 0 {
-        match sqlx::query!(
-            "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            clip_id,
-            length as f32,
-            size,
-            channel_id,
-            guild_id,
-            user_id,
-            file_name_from_url,
-            saved_file_name,
-            clip_name,
-            start as f32
-        )
-        .execute(pool.get_ref())
-        .await
-        {
-            Ok(_) => break,
-            Err(e) => {
-                if let sqlx::Error::Database(ref db_err) = e {
-                    if db_err.code().as_deref() == Some("23505") { // unique violation
-                        retries -= 1;
-                        if retries == 0 {
-                            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to generate unique clip ID"})));
-                        }
-
-                        let new_clip_id = uuid::Uuid::new_v4().to_string();
-                        let new_saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, new_clip_id);
-                        let new_full_save_path = format!("{}/{}.ogg", target_dir, new_clip_id);
-
-                        if let Err(err) = std::fs::rename(&full_save_path, &new_full_save_path) {
-                            error!("Failed to rename file after collision: {:?}", err);
-                            return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Failed to rename clip"})));
-                        }
-
-                        clip_id = new_clip_id;
-                        saved_file_name = new_saved_file_name;
-                        full_save_path = new_full_save_path;
-                        continue;
-                    }
-                }
-                error!("Database error inserting clip: {:?}", e);
-                return Ok(HttpResponse::InternalServerError().json(serde_json::json!({"status": "error", "message": "Database error"})));
-            }
-        }
-    }
+    sqlx::query!(
+        "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        clip_id,
+        length as f32,
+        size,
+        channel_id,
+        guild_id,
+        user_id,
+        file_name_from_url,
+        saved_file_name,
+        clip_name,
+        start as f32
+    )
+    .execute(pool.get_ref())
+    .await
+    .map_err(|e| {
+        error!("Database error inserting clip: {:?}", e);
+        AppError::InternalError
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
 }

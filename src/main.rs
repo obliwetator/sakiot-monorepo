@@ -18,11 +18,12 @@ use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
+use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::websocket::web_socket;
 
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tonic::transport::Server;
+use tonic::transport::{Channel, Server};
 
 async fn not_found() -> impl Responder {
     HttpResponse::NotFound().json("not found")
@@ -35,6 +36,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
+
+    let grpc_channel = Channel::from_static("http://[::1]:50052").connect_lazy();
+    let jammer_client = JammerClient::new(grpc_channel);
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -84,6 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(web::Data::new(reqwest::Client::new()))
             .app_data(hashmap.clone())
             .app_data(waveform_progress.clone())
+            .app_data(web::Data::new(jammer_client.clone()))
             .app_data(web::Data::new(keys))
             .service(web_socket)
             .service(api_scope)

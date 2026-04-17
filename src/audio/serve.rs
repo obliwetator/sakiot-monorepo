@@ -2,7 +2,7 @@ use actix_files::NamedFile;
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    web, HttpRequest, HttpResponse, Responder,
+    web, HttpRequest, HttpResponse,
 };
 use serde::Deserialize;
 use tracing::info;
@@ -21,8 +21,12 @@ pub async fn get_audio(
     req: HttpRequest,
     path: web::Path<(u64, String, i32, i32, String)>,
     query_param: web::Query<AudioQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
+
+    if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
+        return HttpResponse::BadRequest().finish();
+    }
 
     let path = {
         if let Some(value) = query_param.silence {
@@ -66,6 +70,10 @@ pub async fn download_audio(
     is_silence: web::Query<AudioQuery>,
 ) -> Result<NamedFile, AppError> {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
+
+    if file_name_from_url.contains("..") || file_name_from_url.contains('/') || file_name_from_url.contains('\\') {
+        return Err(AppError::BadRequest("Invalid file name".to_string()));
+    }
 
     let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
     let temp_file = format!(
