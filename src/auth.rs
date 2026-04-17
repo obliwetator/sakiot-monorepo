@@ -15,11 +15,9 @@ use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
+use crate::config::{CLIENT_ID, CLIENT_SECRET};
 use crate::errors::AppError;
-use crate::{
-    secrets::{CLIENT_ID, CLIENT_SECRET},
-    user::{get_user, get_user_guilds},
-};
+use crate::user::{get_user, get_user_guilds};
 
 pub struct AccessKeys {
     pub access_encode: EncodingKey,
@@ -129,8 +127,8 @@ struct DiscordBotAuthDataRefresh {
 impl DiscordBotAuthDataRefresh {
     fn new(refresh_token: String) -> Self {
         Self {
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET,
+            client_id: CLIENT_ID.as_str(),
+            client_secret: CLIENT_SECRET.as_str(),
             grant_type: "refresh_token",
             refresh_token,
         }
@@ -149,8 +147,8 @@ pub struct DiscordTokenData {
 impl Default for DiscordBotAuthData {
     fn default() -> Self {
         Self {
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET,
+            client_id: CLIENT_ID.as_str(),
+            client_secret: CLIENT_SECRET.as_str(),
             grant_type: "authorization_code",
             code: String::from(""),
             redirect_uri: "https://dev.patrykstyla.com/api/discord_login",

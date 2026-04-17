@@ -14,7 +14,7 @@ use web_server::dashboard;
 use web_server::stamps::get_stamps;
 use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
-use web_server::secrets::{ACCESS_SECRET, REFRESH_SECRET};
+use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
 use web_server::user::{get_current_user, get_current_user_guilds};
 use web_server::websocket::web_socket;
 use web_server::{
@@ -46,6 +46,7 @@ async fn download_the_clip() -> Result<actix_files::NamedFile, actix_web::Error>
 
 #[actix_web::main]
 async fn main() {
+    dotenvy::dotenv().ok();
     env_logger::init();
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
@@ -53,7 +54,7 @@ async fn main() {
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect("postgres://postgres:okcpli4t94@localhost/sakiot_rouvas")
+        .connect(DATABASE_URL.as_str())
         .await
         .expect("cannot connect to database");
 
@@ -106,7 +107,14 @@ async fn main() {
             .service(api_scope)
             .service(download_the_clip)
             .default_service(web::route().to(not_found))
-            .wrap(Cors::permissive())
+            .wrap(
+                Cors::default()
+                    .allowed_origin(CORS_ALLOWED_ORIGIN.as_str())
+                    .allow_any_method()
+                    .allow_any_header()
+                    .supports_credentials()
+                    .max_age(3600),
+            )
     })
     .bind(("127.0.0.1", 8900))
     .expect("bind 127.0.0.1:8900 failed")
