@@ -202,8 +202,8 @@ pub async fn perms_for_roles_for_channel(
         } else {
             match perm_hash.get_mut(&perm.channel_id) {
                 Some(ok) => {
-                    ok[0] = ok[0] | perm.allow;
-                    ok[1] = ok[1] | perm.deny;
+                    ok[0] |= perm.allow;
+                    ok[1] |= perm.deny;
                 }
                 None => {
                     perm_hash.insert(perm.channel_id, [perm.allow, perm.deny]);
@@ -262,7 +262,7 @@ pub async fn get_available_channels_for_user(
         let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
 
         // If both allow and deny are true the allow value overrides the deny
-        if (allow == true) && (deny == true) {
+        if (allow) && (deny) {
             allowed_channels.insert(*ch_id);
             return !allow && !deny;
         }
@@ -356,8 +356,8 @@ pub async fn get_everyone_permission_for_each_channel(
     for channel_perm in everyone_permissions {
         match perm_hash.get_mut(&channel_perm.channel_id) {
             Some(ok) => {
-                ok[0] = ok[0] | channel_perm.allow.unwrap_or(0);
-                ok[1] = ok[1] | channel_perm.deny.unwrap_or(0);
+                ok[0] |= channel_perm.allow.unwrap_or(0);
+                ok[1] |= channel_perm.deny.unwrap_or(0);
             }
             None => {
                 perm_hash.insert(channel_perm.channel_id, [

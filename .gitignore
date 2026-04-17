@@ -3,7 +3,5 @@
 /no_silence_voice_recordings
 /clips
 .env
-src/secrets.rs
-cert.pem
-key.pem
+*.pem
 /waveform_data

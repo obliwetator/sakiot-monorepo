@@ -15,11 +15,9 @@ use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
+use crate::config::{CLIENT_ID, CLIENT_SECRET};
 use crate::errors::AppError;
-use crate::{
-    secrets::{CLIENT_ID, CLIENT_SECRET},
-    user::{get_user, get_user_guilds},
-};
+use crate::user::{get_user, get_user_guilds};
 
 pub struct AccessKeys {
     pub access_encode: EncodingKey,
@@ -71,13 +69,12 @@ impl Token<Access> {
         };
         encode(&Header::default(), &access, key).map_err(|_| AppError::InternalError)
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
-        match decode::<Self>(token, &keys.access_decode, &val) {
-            Ok(ok) => Ok(ok.claims),
-            Err(err) => Err(err),
-        }
+        decode::<Self>(token, &keys.access_decode, &val)
+            .map(|ok| ok.claims)
+            .map_err(|_| AppError::InvalidToken)
     }
 }
 
@@ -94,13 +91,12 @@ impl Token<Refresh> {
         };
         encode(&Header::default(), &refresh, key).map_err(|_| AppError::InternalError)
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
-        match decode::<Self>(token, &keys.refresh_decode, &val) {
-            Ok(ok) => Ok(ok.claims),
-            Err(err) => Err(err),
-        }
+        decode::<Self>(token, &keys.refresh_decode, &val)
+            .map(|ok| ok.claims)
+            .map_err(|_| AppError::InvalidToken)
     }
 }
 
@@ -129,8 +125,8 @@ struct DiscordBotAuthDataRefresh {
 impl DiscordBotAuthDataRefresh {
     fn new(refresh_token: String) -> Self {
         Self {
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET,
+            client_id: CLIENT_ID.as_str(),
+            client_secret: CLIENT_SECRET.as_str(),
             grant_type: "refresh_token",
             refresh_token,
         }
@@ -149,8 +145,8 @@ pub struct DiscordTokenData {
 impl Default for DiscordBotAuthData {
     fn default() -> Self {
         Self {
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET,
+            client_id: CLIENT_ID.as_str(),
+            client_secret: CLIENT_SECRET.as_str(),
             grant_type: "authorization_code",
             code: String::from(""),
             redirect_uri: "https://dev.patrykstyla.com/api/discord_login",
@@ -429,9 +425,16 @@ where
                 res.await.map(ServiceResponse::map_into_left_body)
             })
         } else {
-            let keys = req
-                .app_data::<web::Data<AccessKeys>>()
-                .expect("AccessKeys not in app_data");
+            let keys = match req.app_data::<web::Data<AccessKeys>>() {
+                Some(k) => k,
+                None => {
+                    tracing::error!("AccessKeys not in app_data — server misconfigured");
+                    let (request, _pl) = req.into_parts();
+                    let response =
+                        HttpResponse::InternalServerError().finish().map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            };
 
             let access_cookie = match req.cookie("access_token") {
                 Some(c) => c,

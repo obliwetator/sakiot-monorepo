@@ -4,7 +4,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::WaveformProgressContainer;
+use crate::audio::WaveformProgressContainer;
 
 use tracing::info;
 

@@ -1,51 +1,36 @@
 use actix_cors::Cors;
 use actix_web::middleware::Logger;
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use sqlx::postgres::PgPoolOptions;
+use std::error::Error;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use web_server::audio::{
-    download_audio, find_similar, get_audio, get_waveform_data, remove_silence,
+    download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
+    remove_silence, HashMapContainer, WaveformProgressContainer,
 };
-use web_server::auth::{discord_login, get_token, logout, refresh_jwt};
+use web_server::auth::{discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware};
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
+use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
 use web_server::dashboard;
-use web_server::stamps::get_stamps;
 use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
-use web_server::secrets::{ACCESS_SECRET, REFRESH_SECRET};
+use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 use web_server::websocket::web_socket;
-use web_server::{
-    get_current_month_permission, AccessKeys, AuthMiddleware, HashMapContainer,
-    WaveformProgressContainer,
-};
 
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 
-#[get("/current/{guild_id}")]
-async fn perm_calc(
-    _path: web::Path<String>,
-    _token: Option<web::ReqData<web_server::Token<web_server::Access>>>,
-    _pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
-) -> impl Responder {
-    HttpResponse::Ok()
-}
-
 async fn not_found() -> impl Responder {
     HttpResponse::NotFound().json("not found")
 }
 
-#[get("/download_the_clip")]
-async fn download_the_clip() -> Result<actix_files::NamedFile, actix_web::Error> {
-    Ok(actix_files::NamedFile::open("./clips.tar.gz")?)
-}
-
 #[actix_web::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
+    dotenvy::dotenv().ok();
     env_logger::init();
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
@@ -53,16 +38,15 @@ async fn main() {
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect("postgres://postgres:okcpli4t94@localhost/sakiot_rouvas")
-        .await
-        .expect("cannot connect to database");
+        .connect(DATABASE_URL.as_str())
+        .await?;
 
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .pretty()
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber)?;
 
     let server: actix_web::dev::Server = HttpServer::new(move || {
         let logger = Logger::default();
@@ -83,7 +67,6 @@ async fn main() {
             .service(get_token)
             .service(find_similar)
             .service(get_current_month_permission)
-            .service(perm_calc)
             .service(remove_silence)
             .service(delete)
             .service(dashboard::dashboard_stream)
@@ -104,16 +87,21 @@ async fn main() {
             .app_data(web::Data::new(keys))
             .service(web_socket)
             .service(api_scope)
-            .service(download_the_clip)
             .default_service(web::route().to(not_found))
-            .wrap(Cors::permissive())
+            .wrap(
+                Cors::default()
+                    .allowed_origin(CORS_ALLOWED_ORIGIN.as_str())
+                    .allow_any_method()
+                    .allow_any_header()
+                    .supports_credentials()
+                    .max_age(3600),
+            )
     })
-    .bind(("127.0.0.1", 8900))
-    .expect("bind 127.0.0.1:8900 failed")
+    .bind(("127.0.0.1", 8900))?
     .run();
 
-    let _tonic = tokio::spawn(async move {
-        let addr = "[::1]:50051".parse().expect("valid gRPC listen addr");
+    let addr = "[::1]:50051".parse()?;
+    let tonic = tokio::spawn(async move {
         let greeter = MyGreeter::default();
 
         info!("GreeterServer listening on {}", addr);
@@ -124,6 +112,7 @@ async fn main() {
             .await
     });
 
-    let _c = tokio::spawn(async move { server.await });
-    let _res = tokio::join!(_c, _tonic);
+    let http = tokio::spawn(server);
+    let _ = tokio::join!(http, tonic);
+    Ok(())
 }
