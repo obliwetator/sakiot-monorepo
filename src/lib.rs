@@ -1,6 +1,5 @@
 pub mod audio;
 pub mod auth;
-pub mod broadcast;
 pub mod clips;
 pub mod dashboard;
 pub mod errors;
