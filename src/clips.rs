@@ -1,7 +1,7 @@
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    post, web, HttpMessage, HttpRequest, HttpResponse, Responder,
+    post, web, HttpMessage, HttpRequest, HttpResponse,
 };
 
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use crate::{
     audio::CLIPS_PATH,
     auth::{Access, Token},
     clips::hello_world::jam_response::JamResponseEnum,
-    errors::{ApiResponse, AppError},
+    errors::AppError,
 };
 use serde_json::json;
 
@@ -51,12 +51,10 @@ pub async fn get_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, String)>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     use actix_files::NamedFile;
 
-    let path = path.into_inner();
-    let guild_id = path.0;
-    let clip_id = path.1;
+    let (guild_id, clip_id) = path.into_inner();
 
     let row = sqlx::query!(
         "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2",
@@ -64,33 +62,29 @@ pub async fn get_clip(
         clip_id
     )
     .fetch_optional(pool.get_ref())
-    .await
-    .unwrap_or(None);
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
 
-    if let Some(record) = row {
-        let saved_file_name = record.saved_file_name.unwrap_or_default();
-        let full_path = format!("{}{}", CLIPS_PATH, saved_file_name);
-        info!("clips path: {}", full_path);
-        match NamedFile::open_async(&full_path).await {
-            Ok(ok) => {
-                let mut res = ok
-                    .use_last_modified(true)
-                    .set_content_disposition(ContentDisposition {
-                        disposition: DispositionType::Inline,
-                        parameters: vec![],
-                    })
-                    .into_response(&req);
-                res.headers_mut().insert(
-                    actix_web::http::header::CONTENT_TYPE,
-                    actix_web::http::header::HeaderValue::from_static("audio/ogg"),
-                );
-                res
-            }
-            Err(_) => HttpResponse::NotFound().body("File not found"),
-        }
-    } else {
-        HttpResponse::NotFound().body("File not found in database")
-    }
+    let saved_file_name = row.saved_file_name.unwrap_or_default();
+    let full_path = format!("{}{}", CLIPS_PATH, saved_file_name);
+    info!("clips path: {}", full_path);
+
+    let file = NamedFile::open_async(&full_path)
+        .await
+        .map_err(|_| AppError::FileNotFound)?;
+
+    let mut res = file
+        .use_last_modified(true)
+        .set_content_disposition(ContentDisposition {
+            disposition: DispositionType::Inline,
+            parameters: vec![],
+        })
+        .into_response(&req);
+    res.headers_mut().insert(
+        actix_web::http::header::CONTENT_TYPE,
+        actix_web::http::header::HeaderValue::from_static("audio/ogg"),
+    );
+    Ok(res)
 }
 
 #[get("/audio/clips/{guild_id}")]
@@ -366,7 +360,7 @@ pub async fn delete(
     clip_id: String,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
 
     let row = sqlx::query!(
@@ -375,16 +369,11 @@ pub async fn delete(
         clip_id
     )
     .fetch_optional(pool.get_ref())
-    .await
-    .unwrap_or(None);
+    .await?;
 
-    let saved_file_name = if let Some(record) = row {
-        record.saved_file_name
-    } else {
-        return HttpResponse::NotFound().json(ApiResponse::FILE_NOT_FOUND());
-    };
+    let saved_file_name = row.ok_or(AppError::ClipNotFound)?.saved_file_name;
 
-    let result = match sqlx::query!(
+    let result = sqlx::query!(
         r#"
         DELETE FROM clips
         WHERE guild_id = $1 AND clip_id = $2
@@ -393,30 +382,19 @@ pub async fn delete(
         clip_id
     )
     .execute(pool.get_ref())
-    .await
-    {
-        Ok(ok) => ok,
-        Err(_) => return HttpResponse::Ok().json(ApiResponse::FILE_ALREADY_DELETED()),
-    };
+    .await?;
 
-    if result.rows_affected() == 1 {
-        if let Some(sfn) = saved_file_name {
-            let res = std::fs::remove_file(format!("{}{}", CLIPS_PATH, sfn));
-            match res {
-                Ok(_) => {
-                    info!("file deleted");
-                    HttpResponse::Ok().json(ApiResponse::OK())
-                }
-                Err(_err) => {
-                    error!("file cannot be deleted");
-                    error!("{:?}", _err.kind());
-                    HttpResponse::NotFound().json(())
-                }
-            }
-        } else {
-            HttpResponse::Ok().json(ApiResponse::OK())
-        }
-    } else {
-        HttpResponse::NotFound().json(ApiResponse::FILE_NOT_FOUND())
+    if result.rows_affected() != 1 {
+        return Err(AppError::ClipNotFound);
     }
+
+    if let Some(sfn) = saved_file_name {
+        if let Err(e) = std::fs::remove_file(format!("{}{}", CLIPS_PATH, sfn)) {
+            error!("file cannot be deleted: {:?}", e.kind());
+            return Err(AppError::FileDeleteFailed);
+        }
+        info!("file deleted");
+    }
+
+    Ok(HttpResponse::Ok().finish())
 }

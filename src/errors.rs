@@ -1,12 +1,14 @@
 use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
-use serde::Serialize;
-use serde_repr::Serialize_repr;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("Not Found")]
-    NotFound,
+    #[error("Clip not found")]
+    ClipNotFound,
+    #[error("File not found on disk")]
+    FileNotFound,
+    #[error("File could not be deleted from disk")]
+    FileDeleteFailed,
     #[error("Forbidden")]
     Forbidden,
     #[error("Unauthorized")]
@@ -29,14 +31,19 @@ pub enum AppError {
     FfmpegError(String),
     #[error("Upstream gRPC error: {0}")]
     GrpcError(String),
+    #[error("Invalid or expired token")]
+    InvalidToken,
 }
 
 impl ResponseError for AppError {
     fn status_code(&self) -> StatusCode {
         match self {
-            AppError::NotFound => StatusCode::NOT_FOUND,
+            AppError::ClipNotFound => StatusCode::NOT_FOUND,
+            AppError::FileNotFound => StatusCode::NOT_FOUND,
+            AppError::FileDeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::InvalidToken => StatusCode::UNAUTHORIZED,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -53,42 +60,3 @@ impl ResponseError for AppError {
     }
 }
 
-#[derive(Serialize)]
-pub struct ApiResponse {
-    code: StatusCodes,
-    message: String,
-}
-
-macro_rules! build_vararg_fn {
-    ($name:tt, $status:expr, $msg:expr) => {
-        #[allow(non_snake_case)]
-        pub fn $name() -> Self {
-            Self {
-                code: $status,
-                message: $msg.to_string(),
-            }
-        }
-    };
-}
-
-impl ApiResponse {
-    build_vararg_fn!(OK, StatusCodes::OK, "success");
-    build_vararg_fn!(
-        FILE_NOT_FOUND,
-        StatusCodes::NotFound,
-        "This file cannot be found"
-    );
-    build_vararg_fn!(
-        FILE_ALREADY_DELETED,
-        StatusCodes::NotFound,
-        "This file has already been deleted"
-    );
-}
-
-#[derive(Serialize_repr)]
-#[repr(u32)]
-#[derive(Eq, Hash, PartialEq)]
-enum StatusCodes {
-    OK,
-    NotFound,
-}

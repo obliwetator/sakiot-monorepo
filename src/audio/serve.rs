@@ -94,7 +94,7 @@ pub async fn download_audio(
         )
     };
 
-    let file = actix_files::NamedFile::open(&full_path).map_err(|_| AppError::NotFound)?;
+    let file = actix_files::NamedFile::open(&full_path).map_err(|_| AppError::FileNotFound)?;
 
     Ok(file
         .use_last_modified(true)

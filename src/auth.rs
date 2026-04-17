@@ -69,13 +69,12 @@ impl Token<Access> {
         };
         encode(&Header::default(), &access, key).map_err(|_| AppError::InternalError)
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
-        match decode::<Self>(token, &keys.access_decode, &val) {
-            Ok(ok) => Ok(ok.claims),
-            Err(err) => Err(err),
-        }
+        decode::<Self>(token, &keys.access_decode, &val)
+            .map(|ok| ok.claims)
+            .map_err(|_| AppError::InvalidToken)
     }
 }
 
@@ -92,13 +91,12 @@ impl Token<Refresh> {
         };
         encode(&Header::default(), &refresh, key).map_err(|_| AppError::InternalError)
     }
-    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, jsonwebtoken::errors::Error> {
+    pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
-        match decode::<Self>(token, &keys.refresh_decode, &val) {
-            Ok(ok) => Ok(ok.claims),
-            Err(err) => Err(err),
-        }
+        decode::<Self>(token, &keys.refresh_decode, &val)
+            .map(|ok| ok.claims)
+            .map_err(|_| AppError::InvalidToken)
     }
 }
 
