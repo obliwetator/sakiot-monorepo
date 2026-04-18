@@ -142,21 +142,29 @@ pub struct A {
 // TODO: Get GRPC Client
 #[post("/jamit")]
 pub async fn play_clip(
+    req: HttpRequest,
     info: web::Json<JamItBody>,
     client: web::Data<JammerClient<tonic::transport::Channel>>,
 ) -> Result<HttpResponse, AppError> {
     info!("Received jamit request: {:?}", info);
 
+    let user_id = req
+        .extensions()
+        .get::<Token<Access>>()
+        .map(|t| t.id)
+        .ok_or(AppError::Unauthorized)?;
+
     let mut client = client.get_ref().clone();
 
     info!(
-        "Sending request for clip '{}' and guild '{}'",
-        info.clip_name, info.guild_id
+        "Sending request for clip '{}', guild '{}', user '{}'",
+        info.clip_name, info.guild_id, user_id
     );
 
     let request = tonic::Request::new(JamData {
         clip_name: info.clip_name.clone(),
         guild_id: info.guild_id,
+        user_id,
     });
 
     let response = client.jam_it(request).await.map_err(|e| {
@@ -167,11 +175,14 @@ pub async fn play_clip(
     info!("GRPC response: {:#?}", response);
 
     let jam_response = response.into_inner();
+    let remaining = jam_response.cooldown_remaining_seconds;
 
     Ok(match jam_response.resp() {
         JamResponseEnum::Ok => HttpResponse::Ok().json(json!({"code" : "0"})),
         JamResponseEnum::NotPressent => HttpResponse::Ok().json(json!({"code" : 1})),
         JamResponseEnum::Unkown => HttpResponse::Ok().json(json!({"code" : 2})),
+        JamResponseEnum::Cooldown => HttpResponse::TooManyRequests()
+            .json(json!({"code": 3, "cooldown_remaining_seconds": remaining})),
     })
 }
 
