@@ -137,6 +137,7 @@ struct UserDataForFrontEnd {
     pub email: Option<String>,
     pub flags: Option<i32>,
     pub public_flags: Option<i32>,
+    pub is_dev: bool,
 }
 
 #[get("/users/@me")]
@@ -146,8 +147,10 @@ pub async fn get_current_user(
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let result = sqlx::query_as!(
-        UserDataForFrontEnd,
+    let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+    let is_dev = token_data.id == dev_account_id && dev_account_id != 0;
+
+    let result = sqlx::query!(
         "
     	SELECT id,
         username,
@@ -163,7 +166,17 @@ pub async fn get_current_user(
     .fetch_one(pool.get_ref())
     .await?;
 
-    Ok(HttpResponse::Ok().json(result))
+    let user_data = UserDataForFrontEnd {
+        id: result.id,
+        username: result.username,
+        avatar: result.avatar,
+        email: result.email,
+        flags: result.flags,
+        public_flags: result.public_flags,
+        is_dev,
+    };
+
+    Ok(HttpResponse::Ok().json(user_data))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -184,22 +197,42 @@ pub async fn get_current_user_guilds(
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let result = sqlx::query_as!(
-        GuildDataForFrontEnd,
-        "
-		SELECT id,
-        name,
-    	icon,
-    	owner,
-    	permissions 
-		FROM guilds_present 
-		JOIN user_guilds ON user_guilds.id = guilds_present.guild_id
-		AND user_guilds.user_id = $1;
-    	",
-        token_data.id
-    )
-    .fetch_all(pool.get_ref())
-    .await?;
+    let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+
+    let result = if token_data.id == dev_account_id && dev_account_id != 0 {
+        sqlx::query_as!(
+            GuildDataForFrontEnd,
+            "
+            SELECT DISTINCT ON (guilds_present.guild_id)
+            user_guilds.id as \"id!\",
+            user_guilds.name as \"name!\",
+            user_guilds.icon as \"icon\",
+            true as \"owner!\",
+            user_guilds.permissions as \"permissions!\"
+            FROM guilds_present
+            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id;
+            "
+        )
+        .fetch_all(pool.get_ref())
+        .await?
+    } else {
+        sqlx::query_as!(
+            GuildDataForFrontEnd,
+            "
+            SELECT id,
+            name,
+            icon,
+            owner,
+            permissions 
+            FROM guilds_present 
+            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id
+            AND user_guilds.user_id = $1;
+            ",
+            token_data.id
+        )
+        .fetch_all(pool.get_ref())
+        .await?
+    };
 
     Ok(HttpResponse::Ok().json(result))
 }

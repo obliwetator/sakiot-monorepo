@@ -11,5 +11,7 @@ pub static CLIENT_ID: Lazy<String> = Lazy::new(|| load("DISCORD_CLIENT_ID"));
 pub static CLIENT_SECRET: Lazy<String> = Lazy::new(|| load("DISCORD_CLIENT_SECRET"));
 pub static ACCESS_SECRET: Lazy<String> = Lazy::new(|| load("JWT_ACCESS_SECRET"));
 pub static REFRESH_SECRET: Lazy<String> = Lazy::new(|| load("JWT_REFRESH_SECRET"));
+pub static DEV_ACCOUNT_ID: Lazy<String> =
+    Lazy::new(|| env::var("DEV_ACCOUNT_ID").unwrap_or_else(|_| "".into()));
 pub static CORS_ALLOWED_ORIGIN: Lazy<String> =
     Lazy::new(|| env::var("CORS_ALLOWED_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()));

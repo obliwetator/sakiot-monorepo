@@ -15,7 +15,7 @@ use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
-use crate::config::{CLIENT_ID, CLIENT_SECRET};
+use crate::config::{CLIENT_ID, CLIENT_SECRET, DEV_ACCOUNT_ID};
 use crate::errors::AppError;
 use crate::user::{get_user, get_user_guilds};
 
@@ -210,6 +210,11 @@ pub async fn discord_login(
         .await?
         .into_response(&req);
 
+    b.headers_mut().insert(
+        actix_web::http::header::CACHE_CONTROL,
+        actix_web::http::header::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+
     let access_token_cookie = Cookie::build("access_token", access_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
         .domain(".patrykstyla.com")
@@ -231,6 +236,63 @@ pub async fn discord_login(
     // Clear legacy cookies stored under Path=/api from pre-fix server versions.
     // Same name + different Path = separate browser entries; without this the
     // stale ones shadow the new Path=/ cookies on every /api/* request.
+    let clear_old_access = Cookie::build("access_token", "")
+        .domain(".patrykstyla.com")
+        .path("/api")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+    let clear_old_refresh = Cookie::build("refresh_token", "")
+        .domain(".patrykstyla.com")
+        .path("/api")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish();
+
+    b.add_cookie(&clear_old_access)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&clear_old_refresh)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&access_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&refresh_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+
+    Ok(b)
+}
+
+#[get("/dev_login")]
+pub async fn dev_login(
+    req: HttpRequest,
+    keys: web::Data<AccessKeys>,
+) -> Result<impl Responder, AppError> {
+    let dev_account_id = DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+    if dev_account_id == 0 {
+        return Err(AppError::Forbidden);
+    }
+
+    let (access_token, refresh_token) =
+        create_jwt_tokens("dev_access".into(), "dev_refresh".into(), dev_account_id, &keys).await?;
+    let mut b = NamedFile::open_async("callback.html")
+        .await?
+        .into_response(&req);
+
+    let access_token_cookie = Cookie::build("access_token", access_token)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .finish();
+
+    let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .domain(".patrykstyla.com")
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .finish();
+
     let clear_old_access = Cookie::build("access_token", "")
         .domain(".patrykstyla.com")
         .path("/api")
@@ -285,15 +347,25 @@ pub async fn refresh_jwt(
         }
     };
 
-    let data = request_refresh_token(decoded_refresh.token, client.clone()).await?;
+    let (new_access_token, new_refresh_token) = if decoded_refresh.token == "dev_refresh" {
+        create_jwt_tokens(
+            "dev_access".into(),
+            "dev_refresh".into(),
+            decoded_refresh.id,
+            &keys,
+        )
+        .await?
+    } else {
+        let data = request_refresh_token(decoded_refresh.token, client.clone()).await?;
 
-    let (new_access_token, new_refresh_token) = create_jwt_tokens(
-        data.access_token,
-        data.refresh_token,
-        decoded_refresh.id,
-        &keys,
-    )
-    .await?;
+        create_jwt_tokens(
+            data.access_token,
+            data.refresh_token,
+            decoded_refresh.id,
+            &keys,
+        )
+        .await?
+    };
 
     let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
         .max_age(actix_web::cookie::time::Duration::days(7))
@@ -413,6 +485,7 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         tracing::info!("PATH: {:#?}", req.path());
         if req.path() == "/api/discord_login"
+            || req.path() == "/api/dev_login"
             || req.path() == "/api/refresh"
             || req.path() == "/api/logout"
             || req.path() == "/api/dashboard/stream"
