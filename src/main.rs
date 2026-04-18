@@ -14,7 +14,7 @@ use web_server::audio::{
     download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
     remove_silence, HashMapContainer, WaveformProgressContainer,
 };
-use web_server::auth::{discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware};
+use web_server::auth::{dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware};
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
 use web_server::dashboard;
@@ -68,6 +68,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
             .service(discord_login)
+            .service(dev_login)
             .service(refresh_jwt)
             .service(logout)
             .service(get_current_user)
