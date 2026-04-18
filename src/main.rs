@@ -6,6 +6,10 @@ use std::error::Error;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+use web_server::admin::cooldowns::{
+    delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
+    set_user_override,
+};
 use web_server::audio::{
     download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
     remove_silence, HashMapContainer, WaveformProgressContainer,
@@ -81,7 +85,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(create_clip)
             .service(get_audio)
             .service(get_waveform_data)
-            .service(download_audio);
+            .service(download_audio)
+            .service(get_guild_cooldown)
+            .service(set_guild_cooldown)
+            .service(list_user_overrides)
+            .service(set_user_override)
+            .service(delete_user_override);
         App::new()
             .wrap(logger)
             .app_data(web::Data::new(pool.clone()))
