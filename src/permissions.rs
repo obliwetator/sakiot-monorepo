@@ -369,3 +369,24 @@ pub async fn get_everyone_permission_for_each_channel(
     }
     Ok(())
 }
+
+pub async fn require_guild_admin(
+    req: &actix_web::HttpRequest,
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+) -> Result<i64, crate::errors::AppError> {
+    use crate::auth::{Access, Token};
+    use actix_web::HttpMessage;
+    let user_id = req
+        .extensions()
+        .get::<Token<Access>>()
+        .map(|t| t.id)
+        .ok_or(crate::errors::AppError::Unauthorized)?;
+    let bits = get_combined_perm_for_user(pool, guild_id, user_id).await?;
+    let admin_mask = Permissions::ADMINISTRATOR.bits() | Permissions::MANAGE_GUILD.bits();
+    if bits & admin_mask != 0 {
+        Ok(user_id)
+    } else {
+        Err(crate::errors::AppError::Forbidden)
+    }
+}
