@@ -26,6 +26,10 @@ struct StampInfo {
     target_name: Option<String>,
     stamper_name: Option<String>,
     channel_name: Option<String>,
+    file_name: Option<String>,
+    year: Option<i32>,
+    month: Option<i32>,
+    start_ts: Option<i64>,
 }
 
 #[get("/stamps/{guild_id}")]
@@ -50,13 +54,18 @@ pub async fn get_stamps(
                s.created_at             as "created_at!",
                COALESCE(tn.nickname, tu.global_name, tu.username) as target_name,
                COALESCE(sn.nickname, su.global_name, su.username) as stamper_name,
-               c.name                   as channel_name
+               c.name                   as channel_name,
+               af.file_name             as file_name,
+               af.year                  as year,
+               af.month                 as month,
+               af.start_ts              as start_ts
         FROM stamps s
         LEFT JOIN user_names      tu ON tu.user_id = s.target_user_id
         LEFT JOIN user_nicknames  tn ON tn.user_id = s.target_user_id  AND tn.guild_id = s.guild_id
         LEFT JOIN user_names      su ON su.user_id = s.stamper_user_id
         LEFT JOIN user_nicknames  sn ON sn.user_id = s.stamper_user_id AND sn.guild_id = s.guild_id
         LEFT JOIN channels        c  ON c.channel_id = s.channel_id
+        LEFT JOIN audio_files     af ON af.id = s.audio_file_id
         WHERE s.guild_id = $1
         ORDER BY s.stamp_ts DESC
         LIMIT 500
