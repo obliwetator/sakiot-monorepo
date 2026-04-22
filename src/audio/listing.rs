@@ -20,7 +20,6 @@ pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, 
             };
             let file_name = File {
                 file: file_name_str,
-                comment: None,
             };
             if let Some(months) = dirs.months.as_mut() {
                 if let Some(Some(files)) = months.get_mut(&month_as_int) {
