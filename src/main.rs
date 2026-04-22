@@ -14,7 +14,10 @@ use web_server::audio::{
     download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
     remove_silence, HashMapContainer, WaveformProgressContainer,
 };
-use web_server::auth::{dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware};
+use web_server::auth::{
+    dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
+};
+use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
 use web_server::dashboard;
@@ -22,7 +25,6 @@ use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
-use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::websocket::web_socket;
 
 use std::collections::HashMap;
@@ -30,7 +32,11 @@ use tokio::sync::RwLock;
 use tonic::transport::{Channel, Server};
 
 async fn not_found() -> impl Responder {
-    HttpResponse::NotFound().json("not found")
+    let html = include_str!("../404.html");
+
+    HttpResponse::NotFound()
+        .content_type("text/html; charset=utf-8")
+        .body(html)
 }
 
 #[actix_web::main]
@@ -112,12 +118,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 return true;
                             }
                             if let Some(domain) = allowed.strip_prefix("https://") {
-                                if origin_str.starts_with("https://") && origin_str.ends_with(&format!(".{}", domain)) {
+                                if origin_str.starts_with("https://")
+                                    && origin_str.ends_with(&format!(".{}", domain))
+                                {
                                     return true;
                                 }
                             }
                             if let Some(domain) = allowed.strip_prefix("http://") {
-                                if origin_str.starts_with("http://") && origin_str.ends_with(&format!(".{}", domain)) {
+                                if origin_str.starts_with("http://")
+                                    && origin_str.ends_with(&format!(".{}", domain))
+                                {
                                     return true;
                                 }
                             }
