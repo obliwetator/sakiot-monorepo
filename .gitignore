@@ -5,3 +5,4 @@
 .env
 *.pem
 /waveform_data
+/docs
