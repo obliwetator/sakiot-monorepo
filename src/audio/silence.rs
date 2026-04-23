@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 
 use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
 use super::types::HashMapContainer;
-use super::util::{file_exists, get_file_path_root, handle_idempotency_key};
+use super::util::{file_exists, get_file_path_root, handle_idempotency_key, resolve_existing_dir};
 
 #[get("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn remove_silence(
@@ -20,7 +20,7 @@ pub async fn remove_silence(
 ) -> impl Responder {
     let path = path.into_inner();
 
-    let file_path: String = get_file_path_root(RECORDING_PATH, &path);
+    let file_path: String = resolve_existing_dir(RECORDING_PATH, &path);
     let no_silence_file_path = get_file_path_root(NO_SILENCE_RECORDING_PATH, &path);
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";

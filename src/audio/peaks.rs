@@ -7,7 +7,7 @@ use crate::waveform::generate_peaks_background;
 
 use super::paths::{RECORDING_PATH, WAVEFORM_PATH};
 use super::types::WaveformProgressContainer;
-use super::util::{file_exists, get_file_path_root};
+use super::util::{file_exists, resolve_existing_dir};
 
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 pub async fn get_waveform_data(
@@ -16,7 +16,7 @@ pub async fn get_waveform_data(
     progress_map: web::Data<WaveformProgressContainer>,
 ) -> impl Responder {
     let path = path.into_inner();
-    let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
+    let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
     info!("File path: {}", output);

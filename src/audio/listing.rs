@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::ReadDir;
 
 use actix_web::{get, web, HttpResponse};
+use sqlx::{Pool, Postgres};
 use tracing::info;
 
 use crate::auth::{Access, Token};
@@ -9,6 +10,13 @@ use crate::errors::AppError;
 
 use super::paths::RECORDING_PATH;
 use super::types::{Channels, Directories, File};
+
+/// Parse `user_id` segment from a file stem like `{ts}-{uid}` or legacy
+/// `{ts}-{uid}-{username}`. Strips `.ogg` if present.
+fn parse_user_id(file_name: &str) -> Option<i64> {
+    let stem = file_name.strip_suffix(".ogg").unwrap_or(file_name);
+    stem.split('-').nth(1)?.parse::<i64>().ok()
+}
 
 #[inline]
 pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_int: i32) {
@@ -18,8 +26,11 @@ pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, 
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            let user_id = parse_user_id(&file_name_str);
             let file_name = File {
                 file: file_name_str,
+                user_id: user_id.map(|u| u.to_string()),
+                display_name: None,
             };
             if let Some(months) = dirs.months.as_mut() {
                 if let Some(Some(files)) = months.get_mut(&month_as_int) {
@@ -30,6 +41,68 @@ pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, 
             info!("error for file");
         }
     }
+}
+
+async fn enrich_display_names(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    channels: &mut [Channels],
+) -> Result<(), sqlx::Error> {
+    let mut user_ids: HashSet<i64> = HashSet::new();
+    for ch in channels.iter() {
+        for dir in &ch.dirs {
+            if let Some(months) = &dir.months {
+                for files in months.values().flatten() {
+                    for f in files {
+                        if let Some(uid) = f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok()) {
+                            user_ids.insert(uid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if user_ids.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<i64> = user_ids.into_iter().collect();
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT un.user_id                                              as "user_id!",
+               COALESCE(nn.nickname, un.global_name, un.username)      as display_name
+        FROM   user_names un
+        LEFT JOIN user_nicknames nn
+          ON nn.user_id = un.user_id AND nn.guild_id = $2
+        WHERE un.user_id = ANY($1)
+        "#,
+        &ids,
+        guild_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let map: HashMap<i64, String> = rows
+        .into_iter()
+        .filter_map(|r| r.display_name.map(|n| (r.user_id, n)))
+        .collect();
+
+    for ch in channels.iter_mut() {
+        for dir in ch.dirs.iter_mut() {
+            if let Some(months) = dir.months.as_mut() {
+                for files in months.values_mut().flatten() {
+                    for f in files.iter_mut() {
+                        if let Some(uid) =
+                            f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok())
+                        {
+                            f.display_name = map.get(&uid).cloned();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn get_channels_dir(
@@ -204,7 +277,12 @@ pub async fn get_current_month_permission(
     let result = get_channels_dir(guild_id, permission_hashset).await;
 
     let resp = match result {
-        Ok(dirs_vec) => HttpResponse::Ok().json(dirs_vec),
+        Ok(mut dirs_vec) => {
+            if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
+                tracing::error!("enrich_display_names failed: {}", e);
+            }
+            HttpResponse::Ok().json(dirs_vec)
+        }
         Err(err) => err,
     };
 

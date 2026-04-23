@@ -1,4 +1,5 @@
 use actix_web::{get, web, HttpResponse, Responder};
+use sakiot_paths::RecordingKey;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
@@ -30,6 +31,8 @@ struct StampInfo {
     year: Option<i32>,
     month: Option<i32>,
     start_ts: Option<i64>,
+    audio_url: Option<String>,
+    waveform_url: Option<String>,
 }
 
 #[get("/stamps/{guild_id}")]
@@ -39,8 +42,29 @@ pub async fn get_stamps(
 ) -> Result<impl Responder, AppError> {
     let guild_id = path.into_inner();
 
+    #[derive(Debug)]
+    struct Row {
+        id: i64,
+        guild_id: i64,
+        channel_id: i64,
+        target_user_id: i64,
+        stamper_user_id: i64,
+        stamp_ts: i64,
+        offset_ms: i32,
+        audio_file_id: Option<i64>,
+        note: Option<String>,
+        created_at: chrono::DateTime<chrono::Utc>,
+        target_name: Option<String>,
+        stamper_name: Option<String>,
+        channel_name: Option<String>,
+        file_name: Option<String>,
+        year: Option<i32>,
+        month: Option<i32>,
+        start_ts: Option<i64>,
+    }
+
     let rows = sqlx::query_as!(
-        StampInfo,
+        Row,
         r#"
         SELECT s.id                     as "id!",
                s.guild_id               as "guild_id!",
@@ -75,5 +99,39 @@ pub async fn get_stamps(
     .fetch_all(pool.get_ref())
     .await?;
 
-    Ok(HttpResponse::Ok().json(rows))
+    let enriched: Vec<StampInfo> = rows
+        .into_iter()
+        .map(|r| {
+            let urls = match (&r.file_name, r.year, r.month) {
+                (Some(stem), Some(y), Some(m)) if (1..=12).contains(&m) => {
+                    let key = RecordingKey::new(r.guild_id, r.channel_id, y, m as u32, stem);
+                    (Some(key.audio_url()), Some(key.waveform_url()))
+                }
+                _ => (None, None),
+            };
+            StampInfo {
+                id: r.id,
+                guild_id: r.guild_id,
+                channel_id: r.channel_id,
+                target_user_id: r.target_user_id,
+                stamper_user_id: r.stamper_user_id,
+                stamp_ts: r.stamp_ts,
+                offset_ms: r.offset_ms,
+                audio_file_id: r.audio_file_id,
+                note: r.note,
+                created_at: r.created_at,
+                target_name: r.target_name,
+                stamper_name: r.stamper_name,
+                channel_name: r.channel_name,
+                file_name: r.file_name,
+                year: r.year,
+                month: r.month,
+                start_ts: r.start_ts,
+                audio_url: urls.0,
+                waveform_url: urls.1,
+            }
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(enriched))
 }
