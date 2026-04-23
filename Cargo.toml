@@ -47,7 +47,13 @@ bytes = "1.11.1"
 dotenvy = "0.15.7"
 uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sakiot-paths = { path = "../sakiot-paths" }
-
+opentelemetry = "0.31.0"
+opentelemetry_sdk = { version = "0.31.0", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.1", features = [
+	"grpc-tonic",
+	"metrics",
+] }
+tracing-opentelemetry = "0.32.1"
 
 [build-dependencies]
 tonic-build = "0.12"

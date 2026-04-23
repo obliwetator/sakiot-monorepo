@@ -3,8 +3,9 @@ use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
+use web_server::http_metrics::HttpMetrics;
+use web_server::telemetry::init_telemetry;
 
 use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
@@ -44,6 +45,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
+    init_telemetry();
+
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
 
@@ -54,13 +57,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .max_connections(5)
         .connect(DATABASE_URL.as_str())
         .await?;
-
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .pretty()
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber)?;
 
     let server: actix_web::dev::Server = HttpServer::new(move || {
         let logger = Logger::default();
@@ -99,6 +95,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(set_user_override)
             .service(delete_user_override);
         App::new()
+            .wrap(HttpMetrics)
             .wrap(logger)
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(reqwest::Client::new()))
