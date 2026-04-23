@@ -233,15 +233,13 @@ pub async fn create_clip(
         .map(|t| t.id)
         .ok_or(AppError::Unauthorized)?;
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
-    let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
-
-    let src_path = format!(
-        "{}{}/{}/{}.ogg",
-        crate::audio::RECORDING_PATH,
-        guild_id,
-        channel_id,
-        &file_name_without_guild_id
-    );
+    let src_path = {
+        let dir = crate::audio::util::resolve_existing_dir(
+            crate::audio::RECORDING_PATH,
+            &(guild_id, channel_id, year, month, file_name_from_url.clone()),
+        );
+        format!("{}/{}.ogg", dir, file_name_from_url)
+    };
 
     let start = clip_duration.start.unwrap_or(0.0);
     let end = clip_duration.end.unwrap_or(0.0);

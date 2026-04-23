@@ -15,6 +15,10 @@ pub struct Channels {
 #[derive(serde::Serialize, Debug)]
 pub struct File {
     pub file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 pub type Months = HashMap<i32, Option<Vec<File>>>;

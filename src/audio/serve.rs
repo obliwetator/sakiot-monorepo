@@ -9,7 +9,23 @@ use tracing::info;
 
 use crate::errors::AppError;
 
+use std::path::PathBuf;
+
+use sakiot_paths::RecordingKey;
+
 use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
+
+/// Legacy dirs use unpadded month (`2026/4`). New writes pad (`2026/04`).
+/// Return padded path first, then fall back to unpadded.
+fn candidates(root: &str, guild_id: i64, channel_id: i64, year: i32, month: u32, leaf: &str) -> [PathBuf; 2] {
+    let padded = RecordingKey::new(guild_id, channel_id, year, month, "")
+        .recording_dir(root)
+        .join(leaf);
+    let unpadded = PathBuf::from(root.trim_end_matches('/'))
+        .join(format!("{}/{}/{}/{}", guild_id, channel_id, year, month))
+        .join(leaf);
+    [padded, unpadded]
+}
 
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {
@@ -24,43 +40,28 @@ pub async fn get_audio(
 ) -> HttpResponse {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
+    let channel_id_i64 = match channel_id.parse::<i64>() {
+        Ok(n) => n,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+
     if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
         return HttpResponse::BadRequest().finish();
     }
 
-    let path = {
-        if let Some(value) = query_param.silence {
-            if value {
-                format!(
-                    "{}{}/{}/{}/{}/{}{}",
-                    NO_SILENCE_RECORDING_PATH,
-                    guild_id,
-                    channel_id,
-                    year,
-                    month,
-                    NO_SILENCE_PREFIX,
-                    file_name
-                )
-            } else {
-                format!(
-                    "{}{}/{}/{}/{}/{}",
-                    RECORDING_PATH, guild_id, channel_id, year, month, file_name
-                )
-            }
-        } else {
-            format!(
-                "{}{}/{}/{}/{}/{}",
-                RECORDING_PATH, guild_id, channel_id, year, month, file_name
-            )
-        }
+    let (root, leaf) = if query_param.silence.unwrap_or(false) {
+        (NO_SILENCE_RECORDING_PATH, format!("{}{}", NO_SILENCE_PREFIX, file_name))
+    } else {
+        (RECORDING_PATH, file_name.clone())
     };
 
-    info!("File path: {}", path);
-
-    match NamedFile::open_async(path).await {
-        Ok(ok) => ok.into_response(&req),
-        Err(_) => HttpResponse::NotFound().finish(),
+    for path in candidates(root, guild_id as i64, channel_id_i64, year, month as u32, &leaf) {
+        info!("try file path: {}", path.display());
+        if let Ok(f) = NamedFile::open_async(&path).await {
+            return f.into_response(&req);
+        }
     }
+    HttpResponse::NotFound().finish()
 }
 
 #[get("/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
@@ -75,34 +76,19 @@ pub async fn download_audio(
         return Err(AppError::BadRequest("Invalid file name".to_string()));
     }
 
-    let file_name_without_guild_id = format!("{}/{}/{}", year, month, file_name_from_url);
-    let temp_file = format!(
-        "{}/{}/{}{}",
-        year, month, NO_SILENCE_PREFIX, file_name_from_url
-    );
-
-    info!(
-        "file_path: {:#?} is silence recording? {:#?}",
-        format!(
-            "{}{}/{}/{}",
-            RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-        ),
-        is_silence
-    );
-
-    let full_path = if is_silence.silence.is_some() {
-        format!(
-            "{}{}/{}/{}",
-            NO_SILENCE_RECORDING_PATH, guild_id, channel_id, &temp_file
-        )
+    let (root, leaf) = if is_silence.silence.is_some() {
+        (NO_SILENCE_RECORDING_PATH, format!("{}{}", NO_SILENCE_PREFIX, file_name_from_url))
     } else {
-        format!(
-            "{}{}/{}/{}",
-            RECORDING_PATH, guild_id, channel_id, &file_name_without_guild_id
-        )
+        (RECORDING_PATH, file_name_from_url.clone())
     };
 
-    let file = actix_files::NamedFile::open(&full_path).map_err(|_| AppError::FileNotFound)?;
+    let file = candidates(root, guild_id, channel_id, year, month as u32, &leaf)
+        .into_iter()
+        .find_map(|p| {
+            info!("download try: {} is_silence: {:?}", p.display(), is_silence);
+            actix_files::NamedFile::open(&p).ok()
+        })
+        .ok_or(AppError::FileNotFound)?;
 
     Ok(file
         .use_last_modified(true)
