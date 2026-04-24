@@ -1,8 +1,9 @@
-use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, web, HttpRequest, HttpResponse};
 use base64::prelude::*;
 use serde_json::json;
 use tracing::{error, info};
 
+use crate::errors::AppError;
 use crate::waveform::generate_peaks_background;
 
 use super::paths::{RECORDING_PATH, WAVEFORM_PATH};
@@ -14,7 +15,7 @@ pub async fn get_waveform_data(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
     progress_map: web::Data<WaveformProgressContainer>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
@@ -28,15 +29,13 @@ pub async fn get_waveform_data(
         match tokio::fs::read(&output).await {
             Ok(file_content) => {
                 let base64_content = BASE64_STANDARD.encode(file_content);
-                return HttpResponse::Ok().json(json!({
+                return Ok(HttpResponse::Ok().json(json!({
                     "progress": 100,
                     "data": base64_content
-                }));
+                })));
             }
             Err(e) => {
-                return HttpResponse::InternalServerError().json(json!({
-                    "error": format!("Failed to read existing waveform file: {}", e)
-                }));
+                return Err(AppError::IoError(e));
             }
         }
     }
@@ -44,11 +43,9 @@ pub async fn get_waveform_data(
     if let Some(&pct) = progress_map.0.read().await.get(&file_name) {
         if pct == -1 {
             progress_map.0.write().await.remove(&file_name);
-            return HttpResponse::InternalServerError().json(json!({
-                "error": "Failed to generate waveform"
-            }));
+            return Err(AppError::InternalError);
         }
-        return HttpResponse::Ok().json(json!({ "progress": pct }));
+        return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
     }
 
     progress_map.0.write().await.insert(file_name.clone(), 0);
@@ -62,5 +59,5 @@ pub async fn get_waveform_data(
         }
     });
 
-    HttpResponse::Ok().json(json!({ "progress": 0 }))
+    Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
 }

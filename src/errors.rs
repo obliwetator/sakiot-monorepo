@@ -31,6 +31,8 @@ pub enum AppError {
     FfmpegError(String),
     #[error("Upstream gRPC error: {0}")]
     GrpcError(String),
+    #[error("Service Unavailable: {0}")]
+    ServiceUnavailable(String),
     #[error("Invalid or expired token")]
     InvalidToken,
 }
@@ -46,6 +48,7 @@ impl ResponseError for AppError {
             AppError::InvalidToken => StatusCode::UNAUTHORIZED,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
+            AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

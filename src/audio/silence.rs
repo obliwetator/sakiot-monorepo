@@ -1,11 +1,13 @@
 use std::fs;
 use std::process::Stdio;
 
-use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, web, HttpRequest, HttpResponse};
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
+
+use crate::errors::AppError;
 
 use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
 use super::types::HashMapContainer;
@@ -17,7 +19,7 @@ pub async fn remove_silence(
     path: web::Path<(i64, i64, i32, i32, String)>,
     hashmap: web::Data<HashMapContainer>,
     pool: web::Data<Pool<Postgres>>,
-) -> impl Responder {
+) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
 
     let file_path: String = resolve_existing_dir(RECORDING_PATH, &path);
@@ -25,9 +27,9 @@ pub async fn remove_silence(
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";
 
-    let _idemonpotency = match handle_idempotency_key(&req) {
+    let _idempotency_key = match handle_idempotency_key(&req) {
         Ok(ok) => ok,
-        Err(_) => return HttpResponse::BadRequest().finish(),
+        Err(_) => return Err(AppError::BadRequest("Missing idempotency key".into())),
     };
 
     info!("File name: {}", path.4);
@@ -39,7 +41,7 @@ pub async fn remove_silence(
             match lock.get(&path.4) {
                 Some(sender) => sender.subscribe(),
                 None => {
-                    return HttpResponse::ServiceUnavailable().json(json!({"message": "retry"}));
+                    return Err(AppError::ServiceUnavailable("retry".into()));
                 }
             }
         };
@@ -51,17 +53,16 @@ pub async fn remove_silence(
             }
             Err(e) => {
                 error!("broadcast recv error: {:?}", e);
-                return HttpResponse::InternalServerError()
-                    .json(json!({"message": "worker terminated"}));
+                return Err(AppError::InternalError);
             }
         }
 
         let json = json!({"url":file_no_silence,"message":" Success"});
-        return HttpResponse::Accepted().json(json);
+        return Ok(HttpResponse::Accepted().json(json));
     } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")) {
         info!("file already exists");
         let json = json!({"url":file_no_silence,"message":"File already exists"});
-        return HttpResponse::Ok().json(json);
+        return Ok(HttpResponse::Ok().json(json));
     } else {
         info!("Creating new file");
         let (tx, _) = broadcast::channel::<i32>(10);
@@ -75,8 +76,7 @@ pub async fn remove_silence(
         if let Err(err) = fs::create_dir_all(&no_silence_file_path) {
             error!("create_dir_all failed: {}", err);
             hashmap.0.write().await.remove(&path.4);
-            return HttpResponse::InternalServerError()
-                .json(json!({"message": "failed to create output dir"}));
+            return Err(AppError::IoError(err));
         }
 
         let file: String = file_path.to_owned() + "/" + path.4.as_str() + ".ogg";
@@ -136,6 +136,6 @@ pub async fn remove_silence(
         });
 
         let json = json!({"url": file_no_silence,"message":"Request Accepted"});
-        HttpResponse::Ok().json(json)
+        Ok(HttpResponse::Ok().json(json))
     }
 }

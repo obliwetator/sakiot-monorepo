@@ -2,7 +2,7 @@ use actix_files::NamedFile;
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    web, HttpRequest, HttpResponse,
+    web, HttpRequest, Responder,
 };
 use serde::Deserialize;
 use tracing::info;
@@ -37,16 +37,15 @@ pub async fn get_audio(
     req: HttpRequest,
     path: web::Path<(u64, String, i32, i32, String)>,
     query_param: web::Query<AudioQuery>,
-) -> HttpResponse {
+) -> Result<impl Responder, AppError> {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
-    let channel_id_i64 = match channel_id.parse::<i64>() {
-        Ok(n) => n,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
+    let channel_id_i64 = channel_id
+        .parse::<i64>()
+        .map_err(|_| AppError::BadRequest("Invalid channel_id".into()))?;
 
     if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
-        return HttpResponse::BadRequest().finish();
+        return Err(AppError::BadRequest("Invalid file name".into()));
     }
 
     let (root, leaf) = if query_param.silence.unwrap_or(false) {
@@ -58,10 +57,10 @@ pub async fn get_audio(
     for path in candidates(root, guild_id as i64, channel_id_i64, year, month as u32, &leaf) {
         info!("try file path: {}", path.display());
         if let Ok(f) = NamedFile::open_async(&path).await {
-            return f.into_response(&req);
+            return Ok(f.into_response(&req));
         }
     }
-    HttpResponse::NotFound().finish()
+    Err(AppError::FileNotFound)
 }
 
 #[get("/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
