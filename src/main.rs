@@ -3,7 +3,6 @@ use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
-use tracing::info;
 use web_server::http_metrics::HttpMetrics;
 use web_server::telemetry::init_telemetry;
 
@@ -20,17 +19,16 @@ use web_server::auth::{
 };
 use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
-use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, GRPC_ADDRESS, REFRESH_SECRET};
+use web_server::config::{
+    ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, GRPC_ADDRESS, REFRESH_SECRET,
+};
 use web_server::dashboard;
-use web_server::grpc::hello_world::greeter_server::GreeterServer;
-use web_server::grpc::MyGreeter;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
-use web_server::websocket::web_socket;
 
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tonic::transport::{Channel, Server};
+use tonic::transport::Channel;
 
 async fn not_found() -> impl Responder {
     let html = include_str!("../404.html");
@@ -50,9 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
 
-    let grpc_channel = Channel::from_shared(GRPC_ADDRESS.to_string())
-        .expect("Invalid gRPC address")
-        .connect_lazy();
+    let grpc_channel = Channel::from_shared(GRPC_ADDRESS.to_string())?.connect_lazy();
     let jammer_client = JammerClient::new(grpc_channel);
 
     let pool = PgPoolOptions::new()
@@ -104,7 +100,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(waveform_progress.clone())
             .app_data(web::Data::new(jammer_client.clone()))
             .app_data(web::Data::new(keys))
-            .service(web_socket)
             .service(api_scope)
             .default_service(web::route().to(not_found))
             .wrap(
@@ -141,19 +136,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .bind(("127.0.0.1", 8900))?
     .run();
 
-    let addr = "[::1]:50051".parse()?;
-    let tonic = tokio::spawn(async move {
-        let greeter = MyGreeter::default();
-
-        info!("GreeterServer listening on {}", addr);
-
-        Server::builder()
-            .add_service(GreeterServer::new(greeter))
-            .serve(addr)
-            .await
-    });
-
-    let http = tokio::spawn(server);
-    let _ = tokio::join!(http, tonic);
+    server.await?;
     Ok(())
 }

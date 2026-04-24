@@ -134,12 +134,6 @@ pub enum JamItResponse {
     Unknown,
 }
 
-#[derive(Deserialize, PartialEq, Debug)]
-pub struct A {
-    code: JamItResponse,
-}
-
-// TODO: Get GRPC Client
 #[post("/jamit")]
 pub async fn play_clip(
     req: HttpRequest,
