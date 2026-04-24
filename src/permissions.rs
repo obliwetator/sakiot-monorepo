@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::collections::{HashMap, HashSet};
 
 use actix_web::web;
@@ -143,7 +141,6 @@ bitflags::bitflags! {
         const MODERATE_MEMBERS = 1 << 40;
     }
 }
-
 
 pub async fn get_everyone_permission_for_guild(
     pool: &web::Data<Pool<Postgres>>,
@@ -360,10 +357,13 @@ pub async fn get_everyone_permission_for_each_channel(
                 ok[1] |= channel_perm.deny.unwrap_or(0);
             }
             None => {
-                perm_hash.insert(channel_perm.channel_id, [
-                    channel_perm.allow.unwrap_or(0),
-                    channel_perm.deny.unwrap_or(0),
-                ]);
+                perm_hash.insert(
+                    channel_perm.channel_id,
+                    [
+                        channel_perm.allow.unwrap_or(0),
+                        channel_perm.deny.unwrap_or(0),
+                    ],
+                );
             }
         }
     }
