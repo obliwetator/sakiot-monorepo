@@ -17,7 +17,14 @@ use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH}
 
 /// Legacy dirs use unpadded month (`2026/4`). New writes pad (`2026/04`).
 /// Return padded path first, then fall back to unpadded.
-fn candidates(root: &str, guild_id: i64, channel_id: i64, year: i32, month: u32, leaf: &str) -> [PathBuf; 2] {
+fn candidates(
+    root: &str,
+    guild_id: i64,
+    channel_id: i64,
+    year: i32,
+    month: u32,
+    leaf: &str,
+) -> [PathBuf; 2] {
     let padded = RecordingKey::new(guild_id, channel_id, year, month, "")
         .recording_dir(root)
         .join(leaf);
@@ -48,13 +55,23 @@ pub async fn get_audio(
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
 
-    let (root, leaf) = if query_param.silence.unwrap_or(false) {
-        (NO_SILENCE_RECORDING_PATH, format!("{}{}", NO_SILENCE_PREFIX, file_name))
+    let (root, leaf) = if query_param.silence.is_some() {
+        (
+            NO_SILENCE_RECORDING_PATH,
+            format!("{}{}", NO_SILENCE_PREFIX, file_name),
+        )
     } else {
         (RECORDING_PATH, file_name.clone())
     };
 
-    for path in candidates(root, guild_id as i64, channel_id_i64, year, month as u32, &leaf) {
+    for path in candidates(
+        root,
+        guild_id as i64,
+        channel_id_i64,
+        year,
+        month as u32,
+        &leaf,
+    ) {
         info!("try file path: {}", path.display());
         if let Ok(f) = NamedFile::open_async(&path).await {
             return Ok(f.into_response(&req));
@@ -71,12 +88,18 @@ pub async fn download_audio(
 ) -> Result<NamedFile, AppError> {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
 
-    if file_name_from_url.contains("..") || file_name_from_url.contains('/') || file_name_from_url.contains('\\') {
+    if file_name_from_url.contains("..")
+        || file_name_from_url.contains('/')
+        || file_name_from_url.contains('\\')
+    {
         return Err(AppError::BadRequest("Invalid file name".to_string()));
     }
 
     let (root, leaf) = if is_silence.silence.is_some() {
-        (NO_SILENCE_RECORDING_PATH, format!("{}{}", NO_SILENCE_PREFIX, file_name_from_url))
+        (
+            NO_SILENCE_RECORDING_PATH,
+            format!("{}{}", NO_SILENCE_PREFIX, file_name_from_url),
+        )
     } else {
         (RECORDING_PATH, file_name_from_url.clone())
     };
