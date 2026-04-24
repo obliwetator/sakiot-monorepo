@@ -1,10 +1,11 @@
-#![allow(dead_code)]
 use actix_files::NamedFile;
 use actix_web::body::EitherBody;
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::{
     cookie::{Cookie, SameSite},
-    get, web, Error, HttpMessage, HttpRequest, HttpResponse, Responder,
+    get,
+    http::Method,
+    web, Error, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
@@ -14,8 +15,11 @@ use serde_json::json;
 use sqlx::{Pool, Postgres};
 use time::{Duration, OffsetDateTime};
 use tracing::warn;
+use uuid::Uuid;
 
-use crate::config::{CLIENT_ID, CLIENT_SECRET, DEV_ACCOUNT_ID};
+use crate::config::{
+    CLIENT_ID, CLIENT_SECRET, COOKIE_DOMAIN, DEV_ACCOUNT_ID, DISCORD_REDIRECT_URI,
+};
 use crate::errors::AppError;
 use crate::user::{get_user, get_user_guilds};
 
@@ -44,20 +48,16 @@ pub struct Refresh;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token<T> {
-    // aud: String,         // Optional. Audience
     #[serde(with = "jwt_numeric_date")]
-    pub exp: OffsetDateTime, // Required (validate_exp defaults to true in validation). Expiration time (as UTC timestamp)
+    pub exp: OffsetDateTime,
     pub id: i64,
     pub token: String,
-    // iat: usize,          // Optional. Issued at (as UTC timestamp)
-    // iss: String,         // Optional. Issuer
-    // nbf: usize,          // Optional. Not Before (as UTC timestamp)
-    // sub: String,         // Optional. Subject (whom token refers to)
+    pub csrf: String,
     state: std::marker::PhantomData<T>,
 }
 
 impl Token<Access> {
-    pub fn encode(id: i64, access_token: String, key: &EncodingKey) -> Result<String, AppError> {
+    pub fn encode(id: i64, access_token: String, csrf: String, key: &EncodingKey) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY);
 
@@ -65,6 +65,7 @@ impl Token<Access> {
             exp,
             id,
             token: access_token,
+            csrf,
             state: std::marker::PhantomData::<Access>,
         };
         encode(&Header::default(), &access, key).map_err(|_| AppError::InternalError)
@@ -79,7 +80,7 @@ impl Token<Access> {
 }
 
 impl Token<Refresh> {
-    pub fn encode(id: i64, refresh_token: String, key: &EncodingKey) -> Result<String, AppError> {
+    pub fn encode(id: i64, refresh_token: String, csrf: String, key: &EncodingKey) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::days(JWT_REFRESH_EXPIRY);
 
@@ -87,6 +88,7 @@ impl Token<Refresh> {
             exp,
             id,
             token: refresh_token,
+            csrf,
             state: std::marker::PhantomData::<Refresh>,
         };
         encode(&Header::default(), &refresh, key).map_err(|_| AppError::InternalError)
@@ -98,6 +100,25 @@ impl Token<Refresh> {
             .map(|ok| ok.claims)
             .map_err(|_| AppError::InvalidToken)
     }
+}
+
+fn csrf_cookie(value: &str) -> Cookie<'static> {
+    Cookie::build("xsrf_token", value.to_string())
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(false)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .finish()
+}
+
+fn clear_csrf_cookie() -> Cookie<'static> {
+    Cookie::build("xsrf_token", "")
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
 }
 
 #[derive(Deserialize, Debug)]
@@ -149,7 +170,7 @@ impl Default for DiscordBotAuthData {
             client_secret: CLIENT_SECRET.as_str(),
             grant_type: "authorization_code",
             code: String::from(""),
-            redirect_uri: "https://dev.patrykstyla.com/api/discord_login",
+            redirect_uri: DISCORD_REDIRECT_URI.as_str(),
         }
     }
 }
@@ -204,20 +225,24 @@ pub async fn discord_login(
     let user = get_user(client.clone(), &data.access_token, &pool).await?;
     let _guilds = get_user_guilds(client, &data.access_token, user.id, &pool).await?;
 
+    let csrf_token = Uuid::new_v4().to_string();
+
     let (access_token, refresh_token) =
-        create_jwt_tokens(data.access_token, data.refresh_token, user.id, &keys).await?;
+        create_jwt_tokens(data.access_token, data.refresh_token, user.id, csrf_token.clone(), &keys).await?;
     let mut b = NamedFile::open_async("callback.html")
         .await?
         .into_response(&req);
 
     b.headers_mut().insert(
         actix_web::http::header::CACHE_CONTROL,
-        actix_web::http::header::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+        actix_web::http::header::HeaderValue::from_static(
+            "no-store, no-cache, must-revalidate, max-age=0",
+        ),
     );
 
     let access_token_cookie = Cookie::build("access_token", access_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -226,7 +251,7 @@ pub async fn discord_login(
 
     let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -237,12 +262,12 @@ pub async fn discord_login(
     // Same name + different Path = separate browser entries; without this the
     // stale ones shadow the new Path=/ cookies on every /api/* request.
     let clear_old_access = Cookie::build("access_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/api")
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish();
     let clear_old_refresh = Cookie::build("refresh_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/api")
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish();
@@ -254,6 +279,8 @@ pub async fn discord_login(
     b.add_cookie(&access_token_cookie)
         .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&refresh_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&csrf_cookie(&csrf_token))
         .map_err(|_| AppError::InternalError)?;
 
     Ok(b)
@@ -269,15 +296,23 @@ pub async fn dev_login(
         return Err(AppError::Forbidden);
     }
 
-    let (access_token, refresh_token) =
-        create_jwt_tokens("dev_access".into(), "dev_refresh".into(), dev_account_id, &keys).await?;
+    let csrf_token = Uuid::new_v4().to_string();
+
+    let (access_token, refresh_token) = create_jwt_tokens(
+        "dev_access".into(),
+        "dev_refresh".into(),
+        dev_account_id,
+        csrf_token.clone(),
+        &keys,
+    )
+    .await?;
     let mut b = NamedFile::open_async("callback.html")
         .await?
         .into_response(&req);
 
     let access_token_cookie = Cookie::build("access_token", access_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -286,7 +321,7 @@ pub async fn dev_login(
 
     let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -294,12 +329,12 @@ pub async fn dev_login(
         .finish();
 
     let clear_old_access = Cookie::build("access_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/api")
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish();
     let clear_old_refresh = Cookie::build("refresh_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/api")
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish();
@@ -311,6 +346,8 @@ pub async fn dev_login(
     b.add_cookie(&access_token_cookie)
         .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&refresh_token_cookie)
+        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&csrf_cookie(&csrf_token))
         .map_err(|_| AppError::InternalError)?;
 
     Ok(b)
@@ -347,11 +384,14 @@ pub async fn refresh_jwt(
         }
     };
 
+    let csrf_token = Uuid::new_v4().to_string();
+
     let (new_access_token, new_refresh_token) = if decoded_refresh.token == "dev_refresh" {
         create_jwt_tokens(
             "dev_access".into(),
             "dev_refresh".into(),
             decoded_refresh.id,
+            csrf_token.clone(),
             &keys,
         )
         .await?
@@ -362,6 +402,7 @@ pub async fn refresh_jwt(
             data.access_token,
             data.refresh_token,
             decoded_refresh.id,
+            csrf_token.clone(),
             &keys,
         )
         .await?
@@ -369,7 +410,7 @@ pub async fn refresh_jwt(
 
     let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -378,7 +419,7 @@ pub async fn refresh_jwt(
 
     let refresh_token_cookie = Cookie::build("refresh_token", new_refresh_token)
         .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -392,6 +433,9 @@ pub async fn refresh_jwt(
     response
         .add_cookie(&refresh_token_cookie)
         .map_err(|_| AppError::InternalError)?;
+    response
+        .add_cookie(&csrf_cookie(&csrf_token))
+        .map_err(|_| AppError::InternalError)?;
 
     Ok(response)
 }
@@ -399,7 +443,7 @@ pub async fn refresh_jwt(
 #[get("/logout")]
 pub async fn logout() -> Result<impl Responder, AppError> {
     let clear_access = Cookie::build("access_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -407,7 +451,7 @@ pub async fn logout() -> Result<impl Responder, AppError> {
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish();
     let clear_refresh = Cookie::build("refresh_token", "")
-        .domain(".patrykstyla.com")
+        .domain(COOKIE_DOMAIN.as_str())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
@@ -419,6 +463,8 @@ pub async fn logout() -> Result<impl Responder, AppError> {
     resp.add_cookie(&clear_access)
         .map_err(|_| AppError::InternalError)?;
     resp.add_cookie(&clear_refresh)
+        .map_err(|_| AppError::InternalError)?;
+    resp.add_cookie(&clear_csrf_cookie())
         .map_err(|_| AppError::InternalError)?;
     Ok(resp)
 }
@@ -438,11 +484,12 @@ async fn create_jwt_tokens(
     access_token: String,
     refresh_token: String,
     id: i64,
+    csrf: String,
     keys: &web::Data<AccessKeys>,
 ) -> Result<(String, String), AppError> {
-    let access_token = Token::<Access>::encode(id, access_token, &keys.access_encode)?;
+    let access_token = Token::<Access>::encode(id, access_token, csrf.clone(), &keys.access_encode)?;
 
-    let refresh_token = Token::<Refresh>::encode(id, refresh_token, &keys.refresh_encode)?;
+    let refresh_token = Token::<Refresh>::encode(id, refresh_token, csrf, &keys.refresh_encode)?;
 
     Ok((access_token, refresh_token))
 }
@@ -488,9 +535,8 @@ where
             || req.path() == "/api/dev_login"
             || req.path() == "/api/refresh"
             || req.path() == "/api/logout"
-            || req.path() == "/api/dashboard/stream"
         {
-            // Dont validate the token if user is trying to login, refresh, or connecting to websocket
+            // No auth required for login, refresh, logout
             let res = self.service.call(req);
 
             Box::pin(async move {
@@ -503,8 +549,9 @@ where
                 None => {
                     tracing::error!("AccessKeys not in app_data — server misconfigured");
                     let (request, _pl) = req.into_parts();
-                    let response =
-                        HttpResponse::InternalServerError().finish().map_into_right_body();
+                    let response = HttpResponse::InternalServerError()
+                        .finish()
+                        .map_into_right_body();
                     return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
                 }
             };
@@ -534,7 +581,23 @@ where
                     return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
                 }
             };
-            tracing::info!("Decoded access token: {:#?}", decoded_access.exp);
+
+            // CSRF check for state-changing methods
+            if req.method() != Method::GET && req.method() != Method::HEAD && req.method() != Method::OPTIONS {
+                let csrf_header = req.headers().get("X-CSRF-Token")
+                    .and_then(|v| v.to_str().ok());
+                if csrf_header != Some(&decoded_access.csrf) {
+                    warn!(
+                        "CSRF token mismatch for {} (expected present)",
+                        req.path()
+                    );
+                    let (request, _pl) = req.into_parts();
+                    let response = HttpResponse::Forbidden()
+                        .json(json!({"error": "invalid_csrf_token"}))
+                        .map_into_right_body();
+                    return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
+                }
+            }
 
             req.extensions_mut().insert(decoded_access);
             let res = self.service.call(req);
