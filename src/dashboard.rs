@@ -6,6 +6,7 @@ use tokio_stream::StreamExt;
 use tracing::{error, info};
 
 use crate::config::GRPC_ADDRESS;
+use crate::errors::AppError;
 
 pub mod hello_world {
     #![allow(non_snake_case)]
@@ -191,7 +192,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
 pub async fn dashboard_stream(
     req: HttpRequest,
     stream: web::Payload,
-) -> Result<HttpResponse, actix_web::Error> {
+) -> Result<HttpResponse, AppError> {
     let (topic_tx, _) = watch::channel(String::new());
     ws::start(
         DashboardWebSocket {
@@ -201,4 +202,5 @@ pub async fn dashboard_stream(
         &req,
         stream,
     )
+    .map_err(|_| AppError::InternalError)
 }
