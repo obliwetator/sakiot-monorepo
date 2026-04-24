@@ -202,5 +202,8 @@ pub async fn dashboard_stream(
         &req,
         stream,
     )
-    .map_err(|_| AppError::InternalError)
+    .map_err(|e| {
+        tracing::error!(?e, "websocket start failed");
+        AppError::InternalError
+    })
 }

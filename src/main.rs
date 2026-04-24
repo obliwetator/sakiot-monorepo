@@ -57,13 +57,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     let server: actix_web::dev::Server = HttpServer::new(move || {
-        let logger = Logger::default();
         let keys = AccessKeys {
             access_encode: jsonwebtoken::EncodingKey::from_secret(ACCESS_SECRET.as_bytes()),
             refresh_encode: jsonwebtoken::EncodingKey::from_secret(REFRESH_SECRET.as_bytes()),
             access_decode: jsonwebtoken::DecodingKey::from_secret(ACCESS_SECRET.as_bytes()),
             refresh_decode: jsonwebtoken::DecodingKey::from_secret(REFRESH_SECRET.as_bytes()),
         };
+
+        let cors = Cors::default()
+            .allowed_origin_fn(|origin, _req_head| {
+                let allowed = CORS_ALLOWED_ORIGIN.as_str();
+                if let Ok(origin_str) = origin.to_str() {
+                    if origin_str == allowed {
+                        return true;
+                    }
+                    if let Some(domain) = allowed.strip_prefix("https://") {
+                        if origin_str.starts_with("https://")
+                            && origin_str.ends_with(&format!(".{}", domain))
+                        {
+                            return true;
+                        }
+                    }
+                    if let Some(domain) = allowed.strip_prefix("http://") {
+                        if origin_str.starts_with("http://")
+                            && origin_str.ends_with(&format!(".{}", domain))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .allow_any_method()
+            .allow_any_header()
+            .supports_credentials()
+            .max_age(3600);
 
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
@@ -91,9 +119,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(list_user_overrides)
             .service(set_user_override)
             .service(delete_user_override);
+
         App::new()
-            .wrap(HttpMetrics)
-            .wrap(logger)
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(reqwest::Client::new()))
             .app_data(hashmap.clone())
@@ -102,36 +129,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(web::Data::new(keys))
             .service(api_scope)
             .default_service(web::route().to(not_found))
-            .wrap(
-                Cors::default()
-                    .allowed_origin_fn(|origin, _req_head| {
-                        let allowed = CORS_ALLOWED_ORIGIN.as_str();
-                        if let Ok(origin_str) = origin.to_str() {
-                            if origin_str == allowed {
-                                return true;
-                            }
-                            if let Some(domain) = allowed.strip_prefix("https://") {
-                                if origin_str.starts_with("https://")
-                                    && origin_str.ends_with(&format!(".{}", domain))
-                                {
-                                    return true;
-                                }
-                            }
-                            if let Some(domain) = allowed.strip_prefix("http://") {
-                                if origin_str.starts_with("http://")
-                                    && origin_str.ends_with(&format!(".{}", domain))
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        false
-                    })
-                    .allow_any_method()
-                    .allow_any_header()
-                    .supports_credentials()
-                    .max_age(3600),
-            )
+            // Wraps execute outermost-first on request (reverse registration order).
+            // Request flow:  Cors -> Logger -> HttpMetrics -> AuthMiddleware -> handler
+            // Response flow: handler -> AuthMiddleware -> HttpMetrics -> Logger -> Cors
+            // Cors outermost: short-circuits preflights before logging/metrics;
+            // applies headers to every response (including 404/5xx).
+            // Logger above metrics: records final status after all middleware runs.
+            // HttpMetrics innermost at app level: measures handler+auth latency only.
+            .wrap(HttpMetrics)
+            .wrap(Logger::default())
+            .wrap(cors)
     })
     .bind(("127.0.0.1", 8900))?
     .run();

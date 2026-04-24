@@ -1,5 +1,5 @@
 use actix_web::{
-    get,
+    delete, get,
     http::header::{ContentDisposition, DispositionType},
     post, web, HttpMessage, HttpRequest, HttpResponse,
 };
@@ -302,7 +302,7 @@ pub async fn create_clip(
     Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
 }
 
-#[post("audio/clips/delete/{guild_id}")]
+#[delete("audio/clips/delete/{guild_id}")]
 pub async fn delete(
     clip_id: String,
     pool: web::Data<Pool<Postgres>>,

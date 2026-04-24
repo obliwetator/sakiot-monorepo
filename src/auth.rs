@@ -37,10 +37,6 @@ pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
 const JWT_ACCESS_EXPIRY: i64 = 900;
 const JWT_REFRESH_EXPIRY: i64 = 7;
 
-// trait Token {
-//     fn encode(id: i64, access_token: String, key: &EncodingKey) -> String;
-// }
-
 #[derive(Clone)]
 pub struct Access;
 #[derive(Clone)]
@@ -57,7 +53,12 @@ pub struct Token<T> {
 }
 
 impl Token<Access> {
-    pub fn encode(id: i64, access_token: String, csrf: String, key: &EncodingKey) -> Result<String, AppError> {
+    pub fn encode(
+        id: i64,
+        access_token: String,
+        csrf: String,
+        key: &EncodingKey,
+    ) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY);
 
@@ -68,19 +69,27 @@ impl Token<Access> {
             csrf,
             state: std::marker::PhantomData::<Access>,
         };
-        encode(&Header::default(), &access, key).map_err(|_| AppError::InternalError)
+        Ok(encode(&Header::default(), &access, key)?)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
         decode::<Self>(token, &keys.access_decode, &val)
             .map(|ok| ok.claims)
-            .map_err(|_| AppError::InvalidToken)
+            .map_err(|e| {
+                tracing::debug!(?e, "access token decode failed");
+                AppError::InvalidToken
+            })
     }
 }
 
 impl Token<Refresh> {
-    pub fn encode(id: i64, refresh_token: String, csrf: String, key: &EncodingKey) -> Result<String, AppError> {
+    pub fn encode(
+        id: i64,
+        refresh_token: String,
+        csrf: String,
+        key: &EncodingKey,
+    ) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
         let exp = iat + Duration::days(JWT_REFRESH_EXPIRY);
 
@@ -91,14 +100,17 @@ impl Token<Refresh> {
             csrf,
             state: std::marker::PhantomData::<Refresh>,
         };
-        encode(&Header::default(), &refresh, key).map_err(|_| AppError::InternalError)
+        Ok(encode(&Header::default(), &refresh, key)?)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         let mut val = Validation::default();
         val.leeway = 0;
         decode::<Self>(token, &keys.refresh_decode, &val)
             .map(|ok| ok.claims)
-            .map_err(|_| AppError::InvalidToken)
+            .map_err(|e| {
+                tracing::debug!(?e, "refresh token decode failed");
+                AppError::InvalidToken
+            })
     }
 }
 
@@ -290,8 +302,14 @@ pub async fn discord_login(
 
     let csrf_token = Uuid::new_v4().to_string();
 
-    let (access_token, refresh_token) =
-        create_jwt_tokens(data.access_token, data.refresh_token, user.id, csrf_token.clone(), &keys).await?;
+    let (access_token, refresh_token) = create_jwt_tokens(
+        data.access_token,
+        data.refresh_token,
+        user.id,
+        csrf_token.clone(),
+        &keys,
+    )
+    .await?;
     let mut b = NamedFile::open_async("callback.html")
         .await?
         .into_response(&req);
@@ -303,16 +321,11 @@ pub async fn discord_login(
         ),
     );
 
-    b.add_cookie(&clear_legacy_access_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&clear_legacy_refresh_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&access_token_cookie(&access_token))
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&refresh_token_cookie(&refresh_token))
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&csrf_cookie(&csrf_token))
-        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&clear_legacy_access_cookie())?;
+    b.add_cookie(&clear_legacy_refresh_cookie())?;
+    b.add_cookie(&access_token_cookie(&access_token))?;
+    b.add_cookie(&refresh_token_cookie(&refresh_token))?;
+    b.add_cookie(&csrf_cookie(&csrf_token))?;
 
     Ok(b)
 }
@@ -322,6 +335,7 @@ pub async fn dev_login(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
 ) -> Result<impl Responder, AppError> {
+    // It's fine trust.
     let dev_account_id = DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
     if dev_account_id != 146638124288704513 {
         return Err(AppError::Forbidden);
@@ -341,16 +355,11 @@ pub async fn dev_login(
         .await?
         .into_response(&req);
 
-    b.add_cookie(&clear_legacy_access_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&clear_legacy_refresh_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&access_token_cookie(&access_token))
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&refresh_token_cookie(&refresh_token))
-        .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&csrf_cookie(&csrf_token))
-        .map_err(|_| AppError::InternalError)?;
+    b.add_cookie(&clear_legacy_access_cookie())?;
+    b.add_cookie(&clear_legacy_refresh_cookie())?;
+    b.add_cookie(&access_token_cookie(&access_token))?;
+    b.add_cookie(&refresh_token_cookie(&refresh_token))?;
+    b.add_cookie(&csrf_cookie(&csrf_token))?;
 
     Ok(b)
 }
@@ -411,15 +420,9 @@ pub async fn refresh_jwt(
     };
 
     let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
-    response
-        .add_cookie(&access_token_cookie(&new_access_token))
-        .map_err(|_| AppError::InternalError)?;
-    response
-        .add_cookie(&refresh_token_cookie(&new_refresh_token))
-        .map_err(|_| AppError::InternalError)?;
-    response
-        .add_cookie(&csrf_cookie(&csrf_token))
-        .map_err(|_| AppError::InternalError)?;
+    response.add_cookie(&access_token_cookie(&new_access_token))?;
+    response.add_cookie(&refresh_token_cookie(&new_refresh_token))?;
+    response.add_cookie(&csrf_cookie(&csrf_token))?;
 
     Ok(response)
 }
@@ -427,12 +430,9 @@ pub async fn refresh_jwt(
 #[get("/logout")]
 pub async fn logout() -> Result<impl Responder, AppError> {
     let mut resp = HttpResponse::Ok().finish();
-    resp.add_cookie(&clear_access_token_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    resp.add_cookie(&clear_refresh_token_cookie())
-        .map_err(|_| AppError::InternalError)?;
-    resp.add_cookie(&clear_csrf_cookie())
-        .map_err(|_| AppError::InternalError)?;
+    resp.add_cookie(&clear_access_token_cookie())?;
+    resp.add_cookie(&clear_refresh_token_cookie())?;
+    resp.add_cookie(&clear_csrf_cookie())?;
     Ok(resp)
 }
 
@@ -454,7 +454,8 @@ async fn create_jwt_tokens(
     csrf: String,
     keys: &web::Data<AccessKeys>,
 ) -> Result<(String, String), AppError> {
-    let access_token = Token::<Access>::encode(id, access_token, csrf.clone(), &keys.access_encode)?;
+    let access_token =
+        Token::<Access>::encode(id, access_token, csrf.clone(), &keys.access_encode)?;
 
     let refresh_token = Token::<Refresh>::encode(id, refresh_token, csrf, &keys.refresh_encode)?;
 
@@ -550,14 +551,16 @@ where
             };
 
             // CSRF check for state-changing methods
-            if req.method() != Method::GET && req.method() != Method::HEAD && req.method() != Method::OPTIONS {
-                let csrf_header = req.headers().get("X-CSRF-Token")
+            if req.method() != Method::GET
+                && req.method() != Method::HEAD
+                && req.method() != Method::OPTIONS
+            {
+                let csrf_header = req
+                    .headers()
+                    .get("X-CSRF-Token")
                     .and_then(|v| v.to_str().ok());
                 if csrf_header != Some(&decoded_access.csrf) {
-                    warn!(
-                        "CSRF token mismatch for {} (expected present)",
-                        req.path()
-                    );
+                    warn!("CSRF token mismatch for {} (expected present)", req.path());
                     let (request, _pl) = req.into_parts();
                     let response = HttpResponse::Forbidden()
                         .json(json!({"error": "invalid_csrf_token"}))

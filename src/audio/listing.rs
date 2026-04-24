@@ -108,13 +108,9 @@ async fn enrich_display_names(
 pub async fn get_channels_dir(
     guild_id: String,
     channel_hashset: HashSet<i64>,
-) -> Result<Vec<Channels>, HttpResponse> {
+) -> Result<Vec<Channels>, AppError> {
     let mut dirs_vec = Vec::new();
-
-    if let Some(value) = for_channel_ids(guild_id, &mut dirs_vec, channel_hashset).await {
-        return value;
-    }
-
+    for_channel_ids(guild_id, &mut dirs_vec, channel_hashset).await?;
     Ok(dirs_vec)
 }
 
@@ -122,15 +118,11 @@ pub async fn for_channel_ids(
     guild_id: String,
     dirs_vec: &mut Vec<Channels>,
     channel_hashset: HashSet<i64>,
-) -> Option<Result<Vec<Channels>, HttpResponse>> {
-    let channel_ids = match std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)) {
-        Ok(ok) => ok,
-        Err(err) => {
-            tracing::error!("{}", err);
-            return Some(Err(HttpResponse::NotFound()
-                .body("files does not exist or are inaccessible to you 1\n")));
-        }
-    };
+) -> Result<(), AppError> {
+    let channel_ids = std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)).map_err(|err| {
+        tracing::error!("{}", err);
+        AppError::FileNotFound
+    })?;
 
     for channel_id in channel_ids {
         if let Ok(entry) = channel_id {
@@ -143,33 +135,28 @@ pub async fn for_channel_ids(
             };
 
             if channel_hashset.contains(&channel) {
-                let years = match std::fs::read_dir(format!(
+                let years = std::fs::read_dir(format!(
                     "{}{}/{}",
                     RECORDING_PATH, guild_id, channel
-                )) {
-                    Ok(ok) => ok,
-                    Err(err) => {
-                        tracing::error!("{}", err);
-                        return Some(Err(HttpResponse::NotFound()
-                            .body("files does not exist or are inaccessible to you 2\n")));
-                    }
-                };
+                ))
+                .map_err(|err| {
+                    tracing::error!("{}", err);
+                    AppError::FileNotFound
+                })?;
 
                 let mut channels = Channels {
                     channel_id: channel.to_string(),
                     dirs: Vec::new(),
                 };
 
-                if let Some(value) = for_years(years, &guild_id, channel, &mut channels).await {
-                    return Some(value);
-                }
+                for_years(years, &guild_id, channel, &mut channels).await?;
 
                 dirs_vec.push(channels);
             }
         }
     }
 
-    None
+    Ok(())
 }
 
 #[inline]
@@ -178,7 +165,7 @@ pub async fn for_years(
     guild_id: &String,
     channel: i64,
     dirs_vec: &mut Channels,
-) -> Option<Result<Vec<Channels>, HttpResponse>> {
+) -> Result<(), AppError> {
     for year in years {
         if let Ok(entry) = year {
             let year_as_int = match entry.file_name().into_string() {
@@ -194,27 +181,21 @@ pub async fn for_years(
                 months: Some(HashMap::new()),
             };
 
-            let months = match std::fs::read_dir(format!(
+            let months = std::fs::read_dir(format!(
                 "{}{}/{}/{}",
                 RECORDING_PATH, guild_id, channel, year_as_int
-            )) {
-                Ok(ok) => ok,
-                Err(err) => {
-                    tracing::error!("{}", err);
-                    return Some(Err(HttpResponse::NotFound()
-                        .body("files does not exist or are inaccessible to you 2\n")));
-                }
-            };
+            ))
+            .map_err(|err| {
+                tracing::error!("{}", err);
+                AppError::FileNotFound
+            })?;
 
-            if let Some(value) = for_months(months, &mut dirs, guild_id, channel, year_as_int).await
-            {
-                return Some(value);
-            }
+            for_months(months, &mut dirs, guild_id, channel, year_as_int).await?;
 
             dirs_vec.dirs.push(dirs);
         }
     }
-    None
+    Ok(())
 }
 
 #[inline]
@@ -224,7 +205,7 @@ pub async fn for_months(
     guild_id: &String,
     channel: i64,
     year_as_int: i32,
-) -> Option<Result<Vec<Channels>, HttpResponse>> {
+) -> Result<(), AppError> {
     for month in months {
         if let Ok(entry) = month {
             let month_as_string = match entry.file_name().into_string() {
@@ -240,24 +221,21 @@ pub async fn for_months(
                 months_map.insert(month_as_int, Some(vec![]));
             }
 
-            let entries = match std::fs::read_dir(format!(
+            let entries = std::fs::read_dir(format!(
                 "{}{}/{}/{}/{}",
                 RECORDING_PATH, guild_id, channel, year_as_int, &month_as_string
-            )) {
-                Ok(ok) => ok,
-                Err(err) => {
-                    tracing::error!("{}", err);
-                    return Some(Err(HttpResponse::NotFound()
-                        .body("files does not exist or are inaccessible to you 3\n")));
-                }
-            };
+            ))
+            .map_err(|err| {
+                tracing::error!("{}", err);
+                AppError::FileNotFound
+            })?;
 
             for_entry(entries, channel, dirs, month_as_int).await;
         } else {
             info!("error for month")
         }
     }
-    None
+    Ok(())
 }
 
 #[get("/current/{guild_id}")]
@@ -277,17 +255,11 @@ pub async fn get_current_month_permission(
         crate::permissions::get_available_channels_for_user(&pool, guild_id_as_int, token.id)
             .await?;
 
-    let result = get_channels_dir(guild_id, permission_hashset).await;
+    let mut dirs_vec = get_channels_dir(guild_id, permission_hashset).await?;
 
-    let resp = match result {
-        Ok(mut dirs_vec) => {
-            if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
-                tracing::error!("enrich_display_names failed: {}", e);
-            }
-            HttpResponse::Ok().json(dirs_vec)
-        }
-        Err(err) => err,
-    };
+    if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
+        tracing::error!("enrich_display_names failed: {}", e);
+    }
 
-    Ok(resp)
+    Ok(HttpResponse::Ok().json(dirs_vec))
 }
