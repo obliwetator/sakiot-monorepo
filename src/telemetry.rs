@@ -1,18 +1,48 @@
+use std::io::Write;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::{layer::SubscriberExt, Layer, Registry};
 
 pub const SERVICE_NAME: &str = "web_server";
 
-pub fn init_telemetry() {
-    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .build()
-        .expect("Failed to create span exporter");
+fn warn_startup(msg: &str) {
+    #[allow(clippy::print_stderr)]
+    {
+        let _ = writeln!(std::io::stderr(), "Warning: {msg}");
+    }
+}
 
-    let metrics_exporter = opentelemetry_otlp::MetricExporter::builder()
+pub fn init_telemetry() {
+    let otlp_exporter = match opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .build()
-        .expect("Failed to create metric exporter");
+    {
+        Ok(e) => e,
+        Err(e) => {
+            warn_startup(&format!("failed to create OTLP span exporter, traces disabled: {e}"));
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
+            let subscriber = Registry::default().with(fmt_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            return;
+        }
+    };
+
+    let metrics_exporter = match opentelemetry_otlp::MetricExporter::builder()
+        .with_tonic()
+        .build()
+    {
+        Ok(e) => e,
+        Err(e) => {
+            warn_startup(&format!("failed to create OTLP metric exporter, metrics disabled: {e}"));
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
+            let subscriber = Registry::default().with(fmt_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            return;
+        }
+    };
 
     let resource = Resource::builder_empty()
         .with_attributes([opentelemetry::KeyValue::new("service.name", SERVICE_NAME)])
@@ -40,6 +70,7 @@ pub fn init_telemetry() {
 
     let subscriber = Registry::default().with(telemetry).with(fmt_layer);
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        warn_startup(&format!("failed to set global tracing subscriber: {e}"));
+    }
 }

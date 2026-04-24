@@ -131,7 +131,7 @@ pub struct JamItBody {
 pub enum JamItResponse {
     OK,
     NotPresentInChannel,
-    Unkown,
+    Unknown,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -179,8 +179,8 @@ pub async fn play_clip(
 
     Ok(match jam_response.resp() {
         JamResponseEnum::Ok => HttpResponse::Ok().json(json!({"code" : "0"})),
-        JamResponseEnum::NotPressent => HttpResponse::Ok().json(json!({"code" : 1})),
-        JamResponseEnum::Unkown => HttpResponse::Ok().json(json!({"code" : 2})),
+        JamResponseEnum::NotPresent => HttpResponse::Ok().json(json!({"code" : 1})),
+        JamResponseEnum::Unknown => HttpResponse::Ok().json(json!({"code" : 2})),
         JamResponseEnum::Cooldown => HttpResponse::TooManyRequests()
             .json(json!({"code": 3, "cooldown_remaining_seconds": remaining})),
     })

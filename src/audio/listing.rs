@@ -128,7 +128,7 @@ pub async fn for_channel_ids(
         Err(err) => {
             tracing::error!("{}", err);
             return Some(Err(HttpResponse::NotFound()
-                .body("files does not exist or are innacessible to you 1\n")));
+                .body("files does not exist or are inaccessible to you 1\n")));
         }
     };
 
@@ -151,7 +151,7 @@ pub async fn for_channel_ids(
                     Err(err) => {
                         tracing::error!("{}", err);
                         return Some(Err(HttpResponse::NotFound()
-                            .body("files does not exist or are innacessible to you 2\n")));
+                            .body("files does not exist or are inaccessible to you 2\n")));
                     }
                 };
 
@@ -202,7 +202,7 @@ pub async fn for_years(
                 Err(err) => {
                     tracing::error!("{}", err);
                     return Some(Err(HttpResponse::NotFound()
-                        .body("files does not exist or are innacessible to you 2\n")));
+                        .body("files does not exist or are inaccessible to you 2\n")));
                 }
             };
 
@@ -245,7 +245,7 @@ pub async fn for_months(
                 Err(err) => {
                     tracing::error!("{}", err);
                     return Some(Err(HttpResponse::NotFound()
-                        .body("files does not exist or are innacessible to you 3\n")));
+                        .body("files does not exist or are inaccessible to you 3\n")));
                 }
             };
 

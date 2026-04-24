@@ -107,8 +107,8 @@ message JamData {
 message JamResponse {
 	enum JamResponseEnum {
 		OK = 0;
-		NOT_PRESSENT = 1;
-		UNKOWN = 2;
+		NOT_PRESENT = 1;
+		UNKNOWN = 2;
 		COOLDOWN = 3;
 	}
 

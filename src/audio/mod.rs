@@ -3,7 +3,6 @@ pub mod paths;
 pub mod peaks;
 pub mod serve;
 pub mod silence;
-pub mod similar;
 pub mod types;
 pub mod util;
 
@@ -14,5 +13,4 @@ pub use paths::{
 pub use peaks::get_waveform_data;
 pub use serve::{download_audio, get_audio};
 pub use silence::remove_silence;
-pub use similar::find_similar;
 pub use types::{HashMapContainer, StartEnd, WaveformProgressContainer};

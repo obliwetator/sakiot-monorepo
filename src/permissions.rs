@@ -314,7 +314,7 @@ async fn get_user_channel_overrides_for_user_id(
     pool: &actix_web::web::Data<Pool<Postgres>>,
     perm_hash: &mut HashMap<i64, [i64; 2]>,
 ) -> Result<(), AppError> {
-    let specfic_perm_for_channel = sqlx::query!(
+    let specific_perm_for_channel = sqlx::query!(
         "SELECT allow, deny, channel_id as \"channel_id!\", name as
 			\"name!\" FROM get_user_channel_overriders_for_user_id($1, $2)",
         user_id,
@@ -324,7 +324,7 @@ async fn get_user_channel_overrides_for_user_id(
     .await?;
 
     // member specific override
-    for specific_perm in specfic_perm_for_channel {
+    for specific_perm in specific_perm_for_channel {
         perm_hash.insert(
             specific_perm.channel_id,
             [
