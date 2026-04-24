@@ -12,15 +12,15 @@ use web_server::admin::cooldowns::{
     set_user_override,
 };
 use web_server::audio::{
-    download_audio, find_similar, get_audio, get_current_month_permission, get_waveform_data,
-    remove_silence, HashMapContainer, WaveformProgressContainer,
+    download_audio, get_audio, get_current_month_permission, get_waveform_data, remove_silence,
+    HashMapContainer, WaveformProgressContainer,
 };
 use web_server::auth::{
     dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
 };
 use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
-use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, REFRESH_SECRET};
+use web_server::config::{ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, GRPC_ADDRESS, REFRESH_SECRET};
 use web_server::dashboard;
 use web_server::grpc::hello_world::greeter_server::GreeterServer;
 use web_server::grpc::MyGreeter;
@@ -50,7 +50,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
 
-    let grpc_channel = Channel::from_static("http://[::1]:50052").connect_lazy();
+    let grpc_channel = Channel::from_shared(GRPC_ADDRESS.to_string())
+        .expect("Invalid gRPC address")
+        .connect_lazy();
     let jammer_client = JammerClient::new(grpc_channel);
 
     let pool = PgPoolOptions::new()
@@ -76,7 +78,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_current_user)
             .service(get_current_user_guilds)
             .service(get_token)
-            .service(find_similar)
             .service(get_current_month_permission)
             .service(remove_silence)
             .service(delete)

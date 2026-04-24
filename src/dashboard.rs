@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
 use tracing::{error, info};
 
+use crate::config::GRPC_ADDRESS;
+
 pub mod hello_world {
     #![allow(non_snake_case)]
     tonic::include_proto!("helloworld");
@@ -36,7 +38,7 @@ impl Actor for DashboardWebSocket {
         tokio::spawn(async move {
             loop {
                 info!("Attempting to connect to Dashboard gRPC service...");
-                let mut client = match DashboardClient::connect("http://[::1]:50052").await {
+                let mut client = match DashboardClient::connect(GRPC_ADDRESS.as_str()).await {
                     Ok(c) => c,
                     Err(e) => {
                         error!(
