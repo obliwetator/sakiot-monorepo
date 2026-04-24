@@ -7,7 +7,7 @@ fn test_get_file_path_root() {
 
     let result = get_file_path_root(base_path, &path_data);
 
-    assert_eq!(result, "./voice_recordings/12345/67890/2024/5");
+    assert_eq!(result, "./voice_recordings/12345/67890/2024/05");
 }
 
 #[test]
