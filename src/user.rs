@@ -86,17 +86,15 @@ pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Re
 }
 
 pub async fn insert_user_guilds_db(
-    user_guilds: &Vec<UserGuilds>,
+    user_guilds: &[UserGuilds],
     pool: &web::Data<Pool<Postgres>>,
-
     user_id: i64,
 ) -> Result<(), AppError> {
-    // TODO: await all futures together
-    for guild in user_guilds {
-        // TODO: Update logic
+    // MAYBE: Better to do it in batch?
+    futures_util::future::join_all(user_guilds.iter().map(|guild| {
         sqlx::query!(
             "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) 
-				VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+            VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
             guild.id,
             user_id,
             guild.name,
@@ -106,8 +104,11 @@ pub async fn insert_user_guilds_db(
             &guild.features
         )
         .execute(pool.get_ref())
-        .await?;
-    }
+    }))
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
+
     Ok(())
 }
 
@@ -148,7 +149,8 @@ pub async fn get_current_user(
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
     let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
-    let is_dev = token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access";
+    let is_dev =
+        token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access";
 
     let result = sqlx::query!(
         "
@@ -199,7 +201,10 @@ pub async fn get_current_user_guilds(
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
     let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
 
-    let result = if token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access" {
+    let result = if token_data.id == dev_account_id
+        && dev_account_id != 0
+        && token_data.token == "dev_access"
+    {
         sqlx::query_as!(
             GuildDataForFrontEnd,
             "
