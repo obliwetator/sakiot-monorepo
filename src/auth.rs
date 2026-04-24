@@ -8,7 +8,7 @@ use actix_web::{
     web, Error, HttpMessage, HttpRequest, HttpResponse, Responder,
 };
 use futures_util::future::{ready, LocalBoxFuture, Ready};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -34,8 +34,8 @@ pub const BASE_URL: &str = "https://discord.com/api/v10/";
 
 pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
 pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
-const JWT_ACCESS_EXPIRY: i64 = 900;
-const JWT_REFRESH_EXPIRY: i64 = 7;
+const JWT_ACCESS_EXPIRY_SECS: i64 = 900;
+const JWT_REFRESH_EXPIRY_DAYS: i64 = 7;
 
 #[derive(Clone)]
 pub struct Access;
@@ -60,7 +60,7 @@ impl Token<Access> {
         key: &EncodingKey,
     ) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
-        let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY);
+        let exp = iat + Duration::seconds(JWT_ACCESS_EXPIRY_SECS);
 
         let access = Self {
             exp,
@@ -72,8 +72,9 @@ impl Token<Access> {
         Ok(encode(&Header::default(), &access, key)?)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
-        let mut val = Validation::default();
+        let mut val = Validation::new(Algorithm::HS256);
         val.leeway = 0;
+        val.set_required_spec_claims(&["exp"]);
         decode::<Self>(token, &keys.access_decode, &val)
             .map(|ok| ok.claims)
             .map_err(|e| {
@@ -91,7 +92,7 @@ impl Token<Refresh> {
         key: &EncodingKey,
     ) -> Result<String, AppError> {
         let iat = OffsetDateTime::now_utc();
-        let exp = iat + Duration::days(JWT_REFRESH_EXPIRY);
+        let exp = iat + Duration::days(JWT_REFRESH_EXPIRY_DAYS);
 
         let refresh = Self {
             exp,
@@ -103,8 +104,9 @@ impl Token<Refresh> {
         Ok(encode(&Header::default(), &refresh, key)?)
     }
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
-        let mut val = Validation::default();
+        let mut val = Validation::new(Algorithm::HS256);
         val.leeway = 0;
+        val.set_required_spec_claims(&["exp"]);
         decode::<Self>(token, &keys.refresh_decode, &val)
             .map(|ok| ok.claims)
             .map_err(|e| {
@@ -335,8 +337,7 @@ pub async fn dev_login(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
 ) -> Result<impl Responder, AppError> {
-    // It's fine trust.
-    let dev_account_id = DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+    let dev_account_id = *DEV_ACCOUNT_ID;
     if dev_account_id != 146638124288704513 {
         return Err(AppError::Forbidden);
     }
