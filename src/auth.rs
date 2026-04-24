@@ -34,7 +34,7 @@ pub const BASE_URL: &str = "https://discord.com/api/v10/";
 
 pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
 pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
-const JWT_ACCESS_EXPIRY: i64 = 100;
+const JWT_ACCESS_EXPIRY: i64 = 900;
 const JWT_REFRESH_EXPIRY: i64 = 7;
 
 // trait Token {
@@ -117,6 +117,69 @@ fn clear_csrf_cookie() -> Cookie<'static> {
     Cookie::build("xsrf_token", "")
         .domain(COOKIE_DOMAIN.as_str())
         .path("/")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
+}
+
+fn access_token_cookie(value: &str) -> Cookie<'static> {
+    Cookie::build("access_token", value.to_string())
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .finish()
+}
+
+fn refresh_token_cookie(value: &str) -> Cookie<'static> {
+    Cookie::build("refresh_token", value.to_string())
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::days(7))
+        .finish()
+}
+
+fn clear_access_token_cookie() -> Cookie<'static> {
+    Cookie::build("access_token", "")
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
+}
+
+fn clear_refresh_token_cookie() -> Cookie<'static> {
+    Cookie::build("refresh_token", "")
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/")
+        .same_site(SameSite::Lax)
+        .secure(true)
+        .http_only(true)
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
+}
+
+// Clear legacy cookies stored under Path=/api from pre-fix server versions.
+// Same name + different Path = separate browser entries; without this the
+// stale ones shadow the new Path=/ cookies on every /api/* request.
+fn clear_legacy_access_cookie() -> Cookie<'static> {
+    Cookie::build("access_token", "")
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/api")
+        .max_age(actix_web::cookie::time::Duration::seconds(0))
+        .finish()
+}
+
+fn clear_legacy_refresh_cookie() -> Cookie<'static> {
+    Cookie::build("refresh_token", "")
+        .domain(COOKIE_DOMAIN.as_str())
+        .path("/api")
         .max_age(actix_web::cookie::time::Duration::seconds(0))
         .finish()
 }
@@ -240,45 +303,13 @@ pub async fn discord_login(
         ),
     );
 
-    let access_token_cookie = Cookie::build("access_token", access_token)
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
-    let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
-    // Clear legacy cookies stored under Path=/api from pre-fix server versions.
-    // Same name + different Path = separate browser entries; without this the
-    // stale ones shadow the new Path=/ cookies on every /api/* request.
-    let clear_old_access = Cookie::build("access_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/api")
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-    let clear_old_refresh = Cookie::build("refresh_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/api")
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-
-    b.add_cookie(&clear_old_access)
+    b.add_cookie(&clear_legacy_access_cookie())
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&clear_old_refresh)
+    b.add_cookie(&clear_legacy_refresh_cookie())
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&access_token_cookie)
+    b.add_cookie(&access_token_cookie(&access_token))
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&refresh_token_cookie)
+    b.add_cookie(&refresh_token_cookie(&refresh_token))
         .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&csrf_cookie(&csrf_token))
         .map_err(|_| AppError::InternalError)?;
@@ -292,7 +323,7 @@ pub async fn dev_login(
     keys: web::Data<AccessKeys>,
 ) -> Result<impl Responder, AppError> {
     let dev_account_id = DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
-    if dev_account_id == 0 {
+    if dev_account_id != 146638124288704513 {
         return Err(AppError::Forbidden);
     }
 
@@ -310,42 +341,13 @@ pub async fn dev_login(
         .await?
         .into_response(&req);
 
-    let access_token_cookie = Cookie::build("access_token", access_token)
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
-    let refresh_token_cookie = Cookie::build("refresh_token", refresh_token)
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
-    let clear_old_access = Cookie::build("access_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/api")
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-    let clear_old_refresh = Cookie::build("refresh_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/api")
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-
-    b.add_cookie(&clear_old_access)
+    b.add_cookie(&clear_legacy_access_cookie())
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&clear_old_refresh)
+    b.add_cookie(&clear_legacy_refresh_cookie())
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&access_token_cookie)
+    b.add_cookie(&access_token_cookie(&access_token))
         .map_err(|_| AppError::InternalError)?;
-    b.add_cookie(&refresh_token_cookie)
+    b.add_cookie(&refresh_token_cookie(&refresh_token))
         .map_err(|_| AppError::InternalError)?;
     b.add_cookie(&csrf_cookie(&csrf_token))
         .map_err(|_| AppError::InternalError)?;
@@ -408,30 +410,12 @@ pub async fn refresh_jwt(
         .await?
     };
 
-    let access_token_cookie = Cookie::build("access_token", new_access_token.clone())
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
-    let refresh_token_cookie = Cookie::build("refresh_token", new_refresh_token)
-        .max_age(actix_web::cookie::time::Duration::days(7))
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .finish();
-
     let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
     response
-        .add_cookie(&access_token_cookie)
+        .add_cookie(&access_token_cookie(&new_access_token))
         .map_err(|_| AppError::InternalError)?;
     response
-        .add_cookie(&refresh_token_cookie)
+        .add_cookie(&refresh_token_cookie(&new_refresh_token))
         .map_err(|_| AppError::InternalError)?;
     response
         .add_cookie(&csrf_cookie(&csrf_token))
@@ -442,27 +426,10 @@ pub async fn refresh_jwt(
 
 #[get("/logout")]
 pub async fn logout() -> Result<impl Responder, AppError> {
-    let clear_access = Cookie::build("access_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-    let clear_refresh = Cookie::build("refresh_token", "")
-        .domain(COOKIE_DOMAIN.as_str())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(actix_web::cookie::time::Duration::seconds(0))
-        .finish();
-
     let mut resp = HttpResponse::Ok().finish();
-    resp.add_cookie(&clear_access)
+    resp.add_cookie(&clear_access_token_cookie())
         .map_err(|_| AppError::InternalError)?;
-    resp.add_cookie(&clear_refresh)
+    resp.add_cookie(&clear_refresh_token_cookie())
         .map_err(|_| AppError::InternalError)?;
     resp.add_cookie(&clear_csrf_cookie())
         .map_err(|_| AppError::InternalError)?;
