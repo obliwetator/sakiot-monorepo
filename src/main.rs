@@ -20,7 +20,8 @@ use web_server::auth::{
 use web_server::clips::hello_world::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use web_server::config::{
-    ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, GRPC_ADDRESS, REFRESH_SECRET,
+    ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, DB_MAX_CONNECTIONS, GRPC_ADDRESS, HOST, PORT,
+    REFRESH_SECRET,
 };
 use web_server::dashboard;
 use web_server::stamps::get_stamps;
@@ -38,6 +39,17 @@ async fn not_found() -> impl Responder {
         .body(html)
 }
 
+// (scheme_prefix, suffix-including-dot) for subdomain match, or None if exact-only.
+fn cors_subdomain_pattern() -> Option<(&'static str, String)> {
+    let allowed = CORS_ALLOWED_ORIGIN.as_str();
+    for scheme in ["https://", "http://"] {
+        if let Some(domain) = allowed.strip_prefix(scheme) {
+            return Some((scheme, format!(".{domain}")));
+        }
+    }
+    None
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
@@ -52,39 +64,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let jammer_client = JammerClient::new(grpc_channel);
 
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(*DB_MAX_CONNECTIONS)
         .connect(DATABASE_URL.as_str())
         .await?;
 
-    let server: actix_web::dev::Server = HttpServer::new(move || {
-        let keys = AccessKeys {
-            access_encode: jsonwebtoken::EncodingKey::from_secret(ACCESS_SECRET.as_bytes()),
-            refresh_encode: jsonwebtoken::EncodingKey::from_secret(REFRESH_SECRET.as_bytes()),
-            access_decode: jsonwebtoken::DecodingKey::from_secret(ACCESS_SECRET.as_bytes()),
-            refresh_decode: jsonwebtoken::DecodingKey::from_secret(REFRESH_SECRET.as_bytes()),
-        };
+    let keys = web::Data::new(AccessKeys {
+        access_encode: jsonwebtoken::EncodingKey::from_secret(ACCESS_SECRET.as_bytes()),
+        refresh_encode: jsonwebtoken::EncodingKey::from_secret(REFRESH_SECRET.as_bytes()),
+        access_decode: jsonwebtoken::DecodingKey::from_secret(ACCESS_SECRET.as_bytes()),
+        refresh_decode: jsonwebtoken::DecodingKey::from_secret(REFRESH_SECRET.as_bytes()),
+    });
 
+    let cors_subdomain = cors_subdomain_pattern();
+
+    let server = HttpServer::new(move || {
+        let cors_exact = CORS_ALLOWED_ORIGIN.as_str();
+        let cors_sub = cors_subdomain.clone();
         let cors = Cors::default()
-            .allowed_origin_fn(|origin, _req_head| {
-                let allowed = CORS_ALLOWED_ORIGIN.as_str();
-                if let Ok(origin_str) = origin.to_str() {
-                    if origin_str == allowed {
-                        return true;
-                    }
-                    if let Some(domain) = allowed.strip_prefix("https://") {
-                        if origin_str.starts_with("https://")
-                            && origin_str.ends_with(&format!(".{}", domain))
-                        {
-                            return true;
-                        }
-                    }
-                    if let Some(domain) = allowed.strip_prefix("http://") {
-                        if origin_str.starts_with("http://")
-                            && origin_str.ends_with(&format!(".{}", domain))
-                        {
-                            return true;
-                        }
-                    }
+            .allowed_origin_fn(move |origin, _req_head| {
+                let Ok(origin_str) = origin.to_str() else {
+                    return false;
+                };
+                if origin_str == cors_exact {
+                    return true;
+                }
+                if let Some((scheme, suffix)) = &cors_sub {
+                    return origin_str.starts_with(scheme) && origin_str.ends_with(suffix);
                 }
                 false
             })
@@ -126,7 +131,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(hashmap.clone())
             .app_data(waveform_progress.clone())
             .app_data(web::Data::new(jammer_client.clone()))
-            .app_data(web::Data::new(keys))
+            .app_data(keys.clone())
             .service(api_scope)
             .default_service(web::route().to(not_found))
             // Wraps execute outermost-first on request (reverse registration order).
@@ -140,7 +145,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .wrap(Logger::default())
             .wrap(cors)
     })
-    .bind(("127.0.0.1", 8900))?
+    .bind((HOST.as_str(), *PORT))?
     .run();
 
     server.await?;

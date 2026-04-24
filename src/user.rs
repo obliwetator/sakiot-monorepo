@@ -148,7 +148,7 @@ pub async fn get_current_user(
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+    let dev_account_id = *crate::config::DEV_ACCOUNT_ID;
     let is_dev =
         token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access";
 
@@ -199,7 +199,7 @@ pub async fn get_current_user_guilds(
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let dev_account_id = crate::config::DEV_ACCOUNT_ID.parse::<i64>().unwrap_or(0);
+    let dev_account_id = *crate::config::DEV_ACCOUNT_ID;
 
     let result = if token_data.id == dev_account_id
         && dev_account_id != 0
