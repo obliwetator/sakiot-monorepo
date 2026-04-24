@@ -231,7 +231,10 @@ pub async fn for_months(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let month_as_int = month_as_string.parse::<i32>().unwrap_or(0);
+            let month_as_int = match month_as_string.parse::<i32>() {
+                Ok(m) if (1..=12).contains(&m) => m,
+                _ => continue,
+            };
 
             if let Some(months_map) = dirs.months.as_mut() {
                 months_map.insert(month_as_int, Some(vec![]));
