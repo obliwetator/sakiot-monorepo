@@ -145,10 +145,11 @@ struct UserDataForFrontEnd {
 pub async fn get_current_user(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
+    cfg: web::Data<crate::config::Config>,
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let dev_account_id = *crate::config::DEV_ACCOUNT_ID;
+    let dev_account_id = cfg.dev_account_id;
     let is_dev =
         token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access";
 
@@ -196,10 +197,11 @@ struct GuildDataForFrontEnd {
 pub async fn get_current_user_guilds(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
+    cfg: web::Data<crate::config::Config>,
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let dev_account_id = *crate::config::DEV_ACCOUNT_ID;
+    let dev_account_id = cfg.dev_account_id;
 
     let result = if token_data.id == dev_account_id
         && dev_account_id != 0

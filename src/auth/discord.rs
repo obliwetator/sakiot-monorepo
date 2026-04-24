@@ -2,56 +2,31 @@ use actix_web::web;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{CLIENT_ID, CLIENT_SECRET, DISCORD_REDIRECT_URI};
+use crate::config::Config;
 use crate::errors::AppError;
 
 pub const BASE_URL: &str = "https://discord.com/api/v10/";
-pub const BASE_AUTH_URL: &str = "https://discord.com/oauth2/authorize/";
-pub const TOKEN_URL: &str = "https://discord.com/api/oauth2/token/";
 
 #[derive(Deserialize, Debug)]
 pub struct DiscordLoginCode {
     pub code: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 struct DiscordBotAuthData {
-    client_id: &'static str,
-    client_secret: &'static str,
+    client_id: String,
+    client_secret: String,
     grant_type: &'static str,
     code: String,
-    redirect_uri: &'static str,
+    redirect_uri: String,
 }
 
-impl Default for DiscordBotAuthData {
-    fn default() -> Self {
-        Self {
-            client_id: CLIENT_ID.as_str(),
-            client_secret: CLIENT_SECRET.as_str(),
-            grant_type: "authorization_code",
-            code: String::new(),
-            redirect_uri: DISCORD_REDIRECT_URI.as_str(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 struct DiscordBotAuthDataRefresh {
-    client_id: &'static str,
-    client_secret: &'static str,
+    client_id: String,
+    client_secret: String,
     grant_type: &'static str,
     refresh_token: String,
-}
-
-impl DiscordBotAuthDataRefresh {
-    fn new(refresh_token: String) -> Self {
-        Self {
-            client_id: CLIENT_ID.as_str(),
-            client_secret: CLIENT_SECRET.as_str(),
-            grant_type: "refresh_token",
-            refresh_token,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -64,12 +39,16 @@ pub struct DiscordTokenData {
 }
 
 pub async fn request_access_token(
+    cfg: &Config,
     code: String,
     client: web::Data<Client>,
 ) -> Result<DiscordTokenData, AppError> {
     let data = DiscordBotAuthData {
+        client_id: cfg.client_id.clone(),
+        client_secret: cfg.client_secret.clone(),
+        grant_type: "authorization_code",
         code,
-        ..Default::default()
+        redirect_uri: cfg.discord_redirect_uri.clone(),
     };
 
     let result = client
@@ -82,10 +61,16 @@ pub async fn request_access_token(
 }
 
 pub async fn request_refresh_token(
+    cfg: &Config,
     refresh_token: String,
     client: web::Data<Client>,
 ) -> Result<DiscordTokenData, AppError> {
-    let data = DiscordBotAuthDataRefresh::new(refresh_token);
+    let data = DiscordBotAuthDataRefresh {
+        client_id: cfg.client_id.clone(),
+        client_secret: cfg.client_secret.clone(),
+        grant_type: "refresh_token",
+        refresh_token,
+    };
 
     let result = client
         .post(format!("{}oauth2/token", BASE_URL))

@@ -6,7 +6,7 @@ use sqlx::{Pool, Postgres};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::DEV_ACCOUNT_ID;
+use crate::config::Config;
 use crate::errors::AppError;
 use crate::user::{get_user, get_user_guilds};
 
@@ -37,8 +37,9 @@ pub async fn discord_login(
     pool: web::Data<Pool<Postgres>>,
     client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
+    cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
-    let data = request_access_token(query.code.to_owned(), client.clone()).await?;
+    let data = request_access_token(&cfg, query.code.to_owned(), client.clone()).await?;
 
     let user = get_user(client.clone(), &data.access_token, &pool).await?;
     let _guilds = get_user_guilds(client, &data.access_token, user.id, &pool).await?;
@@ -64,11 +65,12 @@ pub async fn discord_login(
         ),
     );
 
-    b.add_cookie(&clear_legacy_access_cookie())?;
-    b.add_cookie(&clear_legacy_refresh_cookie())?;
-    b.add_cookie(&access_token_cookie(&access_token))?;
-    b.add_cookie(&refresh_token_cookie(&refresh_token))?;
-    b.add_cookie(&csrf_cookie(&csrf_token))?;
+    let d = cfg.cookie_domain.as_str();
+    b.add_cookie(&clear_legacy_access_cookie(d))?;
+    b.add_cookie(&clear_legacy_refresh_cookie(d))?;
+    b.add_cookie(&access_token_cookie(d, &access_token))?;
+    b.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
+    b.add_cookie(&csrf_cookie(d, &csrf_token))?;
 
     Ok(b)
 }
@@ -77,8 +79,9 @@ pub async fn discord_login(
 pub async fn dev_login(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
+    cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
-    let dev_account_id = *DEV_ACCOUNT_ID;
+    let dev_account_id = cfg.dev_account_id;
     if dev_account_id != 146638124288704513 {
         return Err(AppError::Forbidden);
     }
@@ -97,11 +100,12 @@ pub async fn dev_login(
         .await?
         .into_response(&req);
 
-    b.add_cookie(&clear_legacy_access_cookie())?;
-    b.add_cookie(&clear_legacy_refresh_cookie())?;
-    b.add_cookie(&access_token_cookie(&access_token))?;
-    b.add_cookie(&refresh_token_cookie(&refresh_token))?;
-    b.add_cookie(&csrf_cookie(&csrf_token))?;
+    let d = cfg.cookie_domain.as_str();
+    b.add_cookie(&clear_legacy_access_cookie(d))?;
+    b.add_cookie(&clear_legacy_refresh_cookie(d))?;
+    b.add_cookie(&access_token_cookie(d, &access_token))?;
+    b.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
+    b.add_cookie(&csrf_cookie(d, &csrf_token))?;
 
     Ok(b)
 }
@@ -111,6 +115,7 @@ pub async fn refresh_jwt(
     req: HttpRequest,
     client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
+    cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
     let refresh_cookie = match req.cookie("refresh_token") {
         Some(c) => c,
@@ -149,7 +154,7 @@ pub async fn refresh_jwt(
         )
         .await?
     } else {
-        let data = request_refresh_token(decoded_refresh.token, client.clone()).await?;
+        let data = request_refresh_token(&cfg, decoded_refresh.token, client.clone()).await?;
 
         create_jwt_tokens(
             data.access_token,
@@ -161,20 +166,22 @@ pub async fn refresh_jwt(
         .await?
     };
 
+    let d = cfg.cookie_domain.as_str();
     let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
-    response.add_cookie(&access_token_cookie(&new_access_token))?;
-    response.add_cookie(&refresh_token_cookie(&new_refresh_token))?;
-    response.add_cookie(&csrf_cookie(&csrf_token))?;
+    response.add_cookie(&access_token_cookie(d, &new_access_token))?;
+    response.add_cookie(&refresh_token_cookie(d, &new_refresh_token))?;
+    response.add_cookie(&csrf_cookie(d, &csrf_token))?;
 
     Ok(response)
 }
 
 #[get("/logout")]
-pub async fn logout() -> Result<impl Responder, AppError> {
+pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> {
+    let d = cfg.cookie_domain.as_str();
     let mut resp = HttpResponse::Ok().finish();
-    resp.add_cookie(&clear_access_token_cookie())?;
-    resp.add_cookie(&clear_refresh_token_cookie())?;
-    resp.add_cookie(&clear_csrf_cookie())?;
+    resp.add_cookie(&clear_access_token_cookie(d))?;
+    resp.add_cookie(&clear_refresh_token_cookie(d))?;
+    resp.add_cookie(&clear_csrf_cookie(d))?;
     Ok(resp)
 }
 

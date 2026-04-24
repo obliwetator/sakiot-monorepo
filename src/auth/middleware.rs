@@ -43,7 +43,6 @@ where
     actix_web::dev::forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        tracing::info!("PATH: {:#?}", req.path());
         if req.path() == "/api/discord_login"
             || req.path() == "/api/dev_login"
             || req.path() == "/api/refresh"

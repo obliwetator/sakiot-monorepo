@@ -11,20 +11,10 @@ use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
-use hello_world::jammer_client::JammerClient;
-use hello_world::JamData;
-
-pub mod hello_world {
-    #![allow(non_snake_case)]
-    tonic::include_proto!("helloworld");
-}
-
-use crate::{
-    audio::CLIPS_PATH,
-    auth::{Access, Token},
-    clips::hello_world::jam_response::JamResponseEnum,
-    errors::AppError,
-};
+use crate::proto::jammer::jam_response::JamResponseEnum;
+use crate::proto::jammer::jammer_client::JammerClient;
+use crate::proto::jammer::JamData;
+use crate::{audio::CLIPS_PATH, auth::{Access, Token}, errors::AppError};
 use serde_json::json;
 
 type DisplayFromstr = As<DisplayFromStr>;

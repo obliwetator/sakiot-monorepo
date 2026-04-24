@@ -1,43 +1,73 @@
-use once_cell::sync::Lazy;
 use std::env;
 use std::str::FromStr;
 
-fn load(key: &str) -> String {
-    #[allow(clippy::print_stderr)]
-    env::var(key).unwrap_or_else(|_| {
-        eprintln!("Fatal: missing required environment variable: {key}");
-        std::process::exit(1);
-    })
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("missing required environment variable: {0}")]
+    Missing(&'static str),
+    #[error("env {key} is not a valid {ty}: {value}")]
+    Parse {
+        key: &'static str,
+        ty: &'static str,
+        value: String,
+    },
 }
 
-fn load_parsed<T: FromStr>(key: &str, default: T) -> T {
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub database_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub access_secret: String,
+    pub refresh_secret: String,
+    pub dev_account_id: i64,
+    pub cors_allowed_origin: String,
+    pub cookie_domain: String,
+    pub discord_redirect_uri: String,
+    pub grpc_address: String,
+    pub host: String,
+    pub port: u16,
+    pub db_max_connections: u32,
+}
+
+fn require(key: &'static str) -> Result<String, ConfigError> {
+    env::var(key).map_err(|_| ConfigError::Missing(key))
+}
+
+fn optional(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.into())
+}
+
+fn parse<T: FromStr>(key: &'static str, default: T) -> Result<T, ConfigError> {
     match env::var(key) {
-        Ok(v) => v.parse().unwrap_or_else(|_| {
-            #[allow(clippy::print_stderr)]
-            {
-                eprintln!("Fatal: env {key} is not a valid {}", std::any::type_name::<T>());
-            }
-            std::process::exit(1);
+        Ok(v) => v.parse().map_err(|_| ConfigError::Parse {
+            key,
+            ty: std::any::type_name::<T>(),
+            value: v,
         }),
-        Err(_) => default,
+        Err(_) => Ok(default),
     }
 }
 
-pub static DATABASE_URL: Lazy<String> = Lazy::new(|| load("DATABASE_URL"));
-pub static CLIENT_ID: Lazy<String> = Lazy::new(|| load("DISCORD_CLIENT_ID"));
-pub static CLIENT_SECRET: Lazy<String> = Lazy::new(|| load("DISCORD_CLIENT_SECRET"));
-pub static ACCESS_SECRET: Lazy<String> = Lazy::new(|| load("JWT_ACCESS_SECRET"));
-pub static REFRESH_SECRET: Lazy<String> = Lazy::new(|| load("JWT_REFRESH_SECRET"));
-pub static DEV_ACCOUNT_ID: Lazy<i64> = Lazy::new(|| load_parsed("DEV_ACCOUNT_ID", 0));
-pub static CORS_ALLOWED_ORIGIN: Lazy<String> =
-    Lazy::new(|| env::var("CORS_ALLOWED_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()));
-pub static COOKIE_DOMAIN: Lazy<String> =
-    Lazy::new(|| env::var("COOKIE_DOMAIN").unwrap_or_else(|_| "localhost".into()));
-pub static DISCORD_REDIRECT_URI: Lazy<String> =
-    Lazy::new(|| env::var("DISCORD_REDIRECT_URI").unwrap_or_else(|_| "http://localhost:8900/api/discord_login".into()));
-pub static GRPC_ADDRESS: Lazy<String> =
-    Lazy::new(|| env::var("GRPC_ADDRESS").unwrap_or_else(|_| "http://[::1]:50052".into()));
-pub static HOST: Lazy<String> =
-    Lazy::new(|| env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into()));
-pub static PORT: Lazy<u16> = Lazy::new(|| load_parsed("PORT", 8900));
-pub static DB_MAX_CONNECTIONS: Lazy<u32> = Lazy::new(|| load_parsed("DB_MAX_CONNECTIONS", 20));
+impl Config {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        Ok(Self {
+            database_url: require("DATABASE_URL")?,
+            client_id: require("DISCORD_CLIENT_ID")?,
+            client_secret: require("DISCORD_CLIENT_SECRET")?,
+            access_secret: require("JWT_ACCESS_SECRET")?,
+            refresh_secret: require("JWT_REFRESH_SECRET")?,
+            dev_account_id: parse("DEV_ACCOUNT_ID", 0)?,
+            cors_allowed_origin: optional("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+            cookie_domain: optional("COOKIE_DOMAIN", "localhost"),
+            discord_redirect_uri: optional(
+                "DISCORD_REDIRECT_URI",
+                "http://localhost:8900/api/discord_login",
+            ),
+            grpc_address: optional("GRPC_ADDRESS", "http://[::1]:50052"),
+            host: optional("HOST", "127.0.0.1"),
+            port: parse("PORT", 8900u16)?,
+            db_max_connections: parse("DB_MAX_CONNECTIONS", 20u32)?,
+        })
+    }
+}

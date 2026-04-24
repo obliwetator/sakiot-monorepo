@@ -5,16 +5,11 @@ use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
 use tracing::{error, info};
 
-use crate::config::GRPC_ADDRESS;
+use crate::config::Config;
 use crate::errors::AppError;
 
-pub mod hello_world {
-    #![allow(non_snake_case)]
-    tonic::include_proto!("helloworld");
-}
-
-use hello_world::dashboard_client::DashboardClient;
-use hello_world::ClientMessage;
+use crate::proto::jammer::dashboard_client::DashboardClient;
+use crate::proto::jammer::ClientMessage;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -24,6 +19,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
 struct DashboardWebSocket {
     topic_tx: watch::Sender<String>,
     last_heartbeat: Instant,
+    grpc_address: String,
 }
 
 impl Actor for DashboardWebSocket {
@@ -35,11 +31,12 @@ impl Actor for DashboardWebSocket {
 
         let addr = ctx.address();
         let topic_rx = self.topic_tx.subscribe();
+        let grpc_address = self.grpc_address.clone();
 
         tokio::spawn(async move {
             loop {
                 info!("Attempting to connect to Dashboard gRPC service...");
-                let mut client = match DashboardClient::connect(GRPC_ADDRESS.as_str()).await {
+                let mut client = match DashboardClient::connect(grpc_address.clone()).await {
                     Ok(c) => c,
                     Err(e) => {
                         error!(
@@ -192,12 +189,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
 pub async fn dashboard_stream(
     req: HttpRequest,
     stream: web::Payload,
+    cfg: web::Data<Config>,
 ) -> Result<HttpResponse, AppError> {
     let (topic_tx, _) = watch::channel(String::new());
     ws::start(
         DashboardWebSocket {
             topic_tx,
             last_heartbeat: Instant::now(),
+            grpc_address: cfg.grpc_address.clone(),
         },
         &req,
         stream,

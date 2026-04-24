@@ -17,12 +17,9 @@ use web_server::audio::{
 use web_server::auth::{
     dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
 };
-use web_server::clips::hello_world::jammer_client::JammerClient;
+use web_server::proto::jammer::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
-use web_server::config::{
-    ACCESS_SECRET, CORS_ALLOWED_ORIGIN, DATABASE_URL, DB_MAX_CONNECTIONS, GRPC_ADDRESS, HOST, PORT,
-    REFRESH_SECRET,
-};
+use web_server::config::Config;
 use web_server::dashboard;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
@@ -40,8 +37,7 @@ async fn not_found() -> impl Responder {
 }
 
 // (scheme_prefix, suffix-including-dot) for subdomain match, or None if exact-only.
-fn cors_subdomain_pattern() -> Option<(&'static str, String)> {
-    let allowed = CORS_ALLOWED_ORIGIN.as_str();
+fn cors_subdomain_pattern(allowed: &str) -> Option<(&'static str, String)> {
     for scheme in ["https://", "http://"] {
         if let Some(domain) = allowed.strip_prefix(scheme) {
             return Some((scheme, format!(".{domain}")));
@@ -57,35 +53,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     init_telemetry();
 
+    let cfg = Config::from_env()?;
+
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
 
-    let grpc_channel = Channel::from_shared(GRPC_ADDRESS.to_string())?.connect_lazy();
+    let grpc_channel = Channel::from_shared(cfg.grpc_address.clone())?.connect_lazy();
     let jammer_client = JammerClient::new(grpc_channel);
 
     let pool = PgPoolOptions::new()
-        .max_connections(*DB_MAX_CONNECTIONS)
-        .connect(DATABASE_URL.as_str())
+        .max_connections(cfg.db_max_connections)
+        .connect(&cfg.database_url)
         .await?;
 
     let keys = web::Data::new(AccessKeys {
-        access_encode: jsonwebtoken::EncodingKey::from_secret(ACCESS_SECRET.as_bytes()),
-        refresh_encode: jsonwebtoken::EncodingKey::from_secret(REFRESH_SECRET.as_bytes()),
-        access_decode: jsonwebtoken::DecodingKey::from_secret(ACCESS_SECRET.as_bytes()),
-        refresh_decode: jsonwebtoken::DecodingKey::from_secret(REFRESH_SECRET.as_bytes()),
+        access_encode: jsonwebtoken::EncodingKey::from_secret(cfg.access_secret.as_bytes()),
+        refresh_encode: jsonwebtoken::EncodingKey::from_secret(cfg.refresh_secret.as_bytes()),
+        access_decode: jsonwebtoken::DecodingKey::from_secret(cfg.access_secret.as_bytes()),
+        refresh_decode: jsonwebtoken::DecodingKey::from_secret(cfg.refresh_secret.as_bytes()),
     });
 
-    let cors_subdomain = cors_subdomain_pattern();
+    let cors_subdomain = cors_subdomain_pattern(&cfg.cors_allowed_origin);
+    let cors_exact = cfg.cors_allowed_origin.clone();
+    let host = cfg.host.clone();
+    let port = cfg.port;
+    let cfg_data = web::Data::new(cfg);
 
     let server = HttpServer::new(move || {
-        let cors_exact = CORS_ALLOWED_ORIGIN.as_str();
+        let cors_exact = cors_exact.clone();
         let cors_sub = cors_subdomain.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let Ok(origin_str) = origin.to_str() else {
                     return false;
                 };
-                if origin_str == cors_exact {
+                if origin_str == cors_exact.as_str() {
                     return true;
                 }
                 if let Some((scheme, suffix)) = &cors_sub {
@@ -132,6 +134,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(waveform_progress.clone())
             .app_data(web::Data::new(jammer_client.clone()))
             .app_data(keys.clone())
+            .app_data(cfg_data.clone())
             .service(api_scope)
             .default_service(web::route().to(not_found))
             // Wraps execute outermost-first on request (reverse registration order).
@@ -145,7 +148,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .wrap(Logger::default())
             .wrap(cors)
     })
-    .bind((HOST.as_str(), *PORT))?
+    .bind((host.as_str(), port))?
     .run();
 
     server.await?;
