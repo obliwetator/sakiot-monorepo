@@ -19,6 +19,8 @@ pub struct File {
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(skip)]
+    pub start_ts_ms: Option<i64>,
 }
 
 pub type Months = HashMap<i32, Option<Vec<File>>>;
