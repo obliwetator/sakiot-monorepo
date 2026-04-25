@@ -6,6 +6,7 @@ pub mod config;
 pub mod dashboard;
 pub mod errors;
 pub mod http_metrics;
+pub mod openapi;
 pub mod permissions;
 pub mod proto;
 pub mod telemetry;
