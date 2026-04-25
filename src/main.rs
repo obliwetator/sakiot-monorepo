@@ -6,6 +6,10 @@ use std::error::Error;
 use web_server::http_metrics::HttpMetrics;
 use web_server::telemetry::init_telemetry;
 
+use utoipa::OpenApi;
+use utoipa_scalar::{Scalar, Servable};
+use web_server::openapi::ApiDoc;
+
 use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
@@ -136,6 +140,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
             .service(api_scope)
+            .service(Scalar::with_url("/scalar", ApiDoc::openapi()))
+            .route(
+                "/api-doc/openapi.json",
+                web::get().to(|| async { HttpResponse::Ok().json(ApiDoc::openapi()) }),
+            )
             .default_service(web::route().to(not_found))
             // Wraps execute outermost-first on request (reverse registration order).
             // Request flow:  Cors -> Logger -> HttpMetrics -> AuthMiddleware -> handler

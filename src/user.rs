@@ -129,9 +129,10 @@ pub async fn get_user_guilds(
     Ok(user_guilds)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct UserDataForFrontEnd {
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct UserDataForFrontEnd {
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     pub id: i64,
     pub username: String,
     pub avatar: String,
@@ -141,6 +142,17 @@ struct UserDataForFrontEnd {
     pub is_dev: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users/@me",
+    tag = "user",
+    responses(
+        (status = 200, description = "Current authenticated user", body = UserDataForFrontEnd),
+        (status = 401, description = "Missing or invalid access_token cookie"),
+        (status = 403, description = "Token not attached to request context"),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/users/@me")]
 pub async fn get_current_user(
     _req: HttpRequest,

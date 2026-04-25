@@ -53,6 +53,8 @@ opentelemetry-otlp = { version = "0.31.1", features = [
 	"metrics",
 ] }
 tracing-opentelemetry = "0.32.1"
+utoipa = { version = "5", features = ["actix_extras", "chrono"] }
+utoipa-scalar = { version = "0.3", features = ["actix-web"] }
 
 [build-dependencies]
 tonic-build = "0.12"

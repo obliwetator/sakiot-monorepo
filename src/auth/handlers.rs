@@ -175,6 +175,14 @@ pub async fn refresh_jwt(
     Ok(response)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/logout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Cookies cleared"),
+    ),
+)]
 #[get("/logout")]
 pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> {
     let d = cfg.cookie_domain.as_str();
@@ -185,6 +193,16 @@ pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> 
     Ok(resp)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/token",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Returns the current access_token cookie value as JSON", body = serde_json::Value),
+        (status = 400, description = "access_token cookie missing"),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/token")]
 pub async fn get_token(req: HttpRequest) -> Result<impl Responder, AppError> {
     let access_cookie = req
