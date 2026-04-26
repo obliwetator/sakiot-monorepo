@@ -386,6 +386,41 @@ pub async fn for_months(
     Ok(())
 }
 
+/// Live recordings for a guild (`audio_files.end_ts IS NULL`), filtered to
+/// the channels the caller has read access to. Frontend polls this to badge
+/// the recordings tree. Set is naturally tiny (only currently-active rows).
+#[get("/current/{guild_id}/live-stems")]
+pub async fn get_live_stems(
+    path: web::Path<String>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let guild_id = path
+        .into_inner()
+        .parse::<i64>()
+        .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
+
+    let permitted =
+        crate::permissions::get_available_channels_for_user(&pool, guild_id, token.id).await?;
+
+    let rows = sqlx::query!(
+        "SELECT file_name, channel_id FROM audio_files \
+         WHERE guild_id = $1 AND end_ts IS NULL",
+        guild_id
+    )
+    .fetch_all(pool.get_ref())
+    .await?;
+
+    let stems: Vec<String> = rows
+        .into_iter()
+        .filter(|r| permitted.contains(&r.channel_id))
+        .map(|r| r.file_name)
+        .collect();
+
+    Ok(HttpResponse::Ok().json(stems))
+}
+
 #[get("/current/{guild_id}")]
 pub async fn get_current_month_permission(
     path: web::Path<String>,
