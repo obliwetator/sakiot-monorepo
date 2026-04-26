@@ -221,7 +221,13 @@ async fn spawn_job(
             tokio::time::sleep(Duration::from_secs(2)).await;
             let mut g = state_c.lock().await;
             if let Some(mut child) = g.child.take() {
-                // Kill the whole process group (setsid created one).
+                // Kill the whole process group, not just the shell. The live
+                // pipeline is `setsid sh -c "tail -F … | ffmpeg …"`, so tail
+                // and ffmpeg run as siblings under the shell's pgid (setsid
+                // makes child.id() == pgid). tokio's Child::kill only signals
+                // the direct child (the shell), which would orphan tail +
+                // ffmpeg. `kill(-pgid, SIGTERM)` signals every process in the
+                // group — that's what `libc` is here for.
                 if let Some(pid) = child.id() {
                     unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
                 }
