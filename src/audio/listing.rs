@@ -36,6 +36,15 @@ pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, 
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            // Skip cache directories created by the live-HLS module
+            // (`hls-{stem}/`). They are not recordings.
+            if file_name_str.starts_with("hls-") || file_name_str.starts_with("mix-") {
+                continue;
+            }
+            // Only list real recording files.
+            if !file_name_str.ends_with(".ogg") {
+                continue;
+            }
             let parsed = parse_user_and_ts(&file_name_str);
             let file_name = File {
                 file: file_name_str,

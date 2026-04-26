@@ -15,8 +15,9 @@ use web_server::admin::cooldowns::{
     set_user_override,
 };
 use web_server::audio::{
-    download_audio, get_audio, get_current_month_permission, get_waveform_data, remove_silence,
-    HashMapContainer, WaveformProgressContainer,
+    download_audio, get_audio, get_current_month_permission, get_waveform_data, live_playlist,
+    live_segment, live_state, remove_silence, HashMapContainer, LiveContainer,
+    WaveformProgressContainer,
 };
 use web_server::auth::{
     dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
@@ -61,6 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
+    let live_container = web::Data::new(LiveContainer::default());
 
     let grpc_channel = Channel::from_shared(cfg.grpc_address.clone())?.connect_lazy();
     let jammer_client = JammerClient::new(grpc_channel);
@@ -122,6 +124,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_stamps)
             .service(play_clip)
             .service(create_clip)
+            // Live HLS routes — register before get_audio to avoid pattern fallback churn.
+            .service(live_playlist)
+            .service(live_state)
+            .service(live_segment)
             .service(get_audio)
             .service(get_waveform_data)
             .service(download_audio)
@@ -136,6 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(web::Data::new(reqwest::Client::new()))
             .app_data(hashmap.clone())
             .app_data(waveform_progress.clone())
+            .app_data(live_container.clone())
             .app_data(web::Data::new(jammer_client.clone()))
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
