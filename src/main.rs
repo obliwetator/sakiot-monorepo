@@ -15,8 +15,8 @@ use web_server::admin::cooldowns::{
     set_user_override,
 };
 use web_server::audio::{
-    download_audio, get_audio, get_current_month_permission, get_waveform_data, live_playlist,
-    live_segment, live_state, remove_silence, HashMapContainer, LiveContainer,
+    download_audio, get_audio, get_current_month_permission, get_live_stems, get_waveform_data,
+    live_playlist, live_segment, live_state, remove_silence, HashMapContainer, LiveContainer,
     WaveformProgressContainer,
 };
 use web_server::auth::{
@@ -115,6 +115,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_current_user)
             .service(get_current_user_guilds)
             .service(get_token)
+            .service(get_live_stems)
             .service(get_current_month_permission)
             .service(remove_silence)
             .service(delete)
