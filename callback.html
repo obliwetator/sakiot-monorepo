@@ -9,8 +9,11 @@
     TEST
 </body>
     <script>
+        // Frontend origin is hardcoded because opener.location.origin is
+        // not readable cross-origin (popup is on the backend domain, opener
+        // is on the frontend domain).
         if (window.opener) {
-            window.opener.postMessage({ success: 1 }, window.opener.location.origin);
+            window.opener.postMessage({ success: 1 }, "https://patrykstyla.com");
         }
         window.close();
     </script>
