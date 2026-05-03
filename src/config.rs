@@ -21,6 +21,7 @@ pub struct Config {
     pub access_secret: String,
     pub refresh_secret: String,
     pub dev_account_id: i64,
+    pub dev_login_secret: Option<String>,
     pub cors_allowed_origin: String,
     pub cookie_domain: String,
     pub discord_redirect_uri: String,
@@ -58,6 +59,7 @@ impl Config {
             access_secret: require("JWT_ACCESS_SECRET")?,
             refresh_secret: require("JWT_REFRESH_SECRET")?,
             dev_account_id: parse("DEV_ACCOUNT_ID", 0)?,
+            dev_login_secret: env::var("DEV_LOGIN_SECRET").ok().filter(|s| !s.is_empty()),
             cors_allowed_origin: optional("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
             cookie_domain: optional("COOKIE_DOMAIN", "localhost"),
             discord_redirect_uri: optional(

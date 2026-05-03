@@ -20,8 +20,10 @@ use web_server::audio::{
     WaveformProgressContainer,
 };
 use web_server::auth::{
-    dev_login, discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
+    discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
 };
+#[cfg(feature = "dev-login")]
+use web_server::auth::dev_login;
 use web_server::proto::jammer::jammer_client::JammerClient;
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use web_server::config::Config;
@@ -111,8 +113,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
-            .service(discord_login)
-            .service(dev_login)
+            .service(discord_login);
+        #[cfg(feature = "dev-login")]
+        let api_scope = api_scope.service(dev_login);
+        let api_scope = api_scope
             .service(refresh_jwt)
             .service(logout)
             .service(get_current_user)

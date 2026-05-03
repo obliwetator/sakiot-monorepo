@@ -1,3 +1,3 @@
 #! /bin/bash
 
-cargo build --release && sudo systemctl restart web_server.service 
+cargo build --release && systemctl --user restart web_server.service

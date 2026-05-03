@@ -4196,6 +4196,7 @@ dependencies = [
  "serde_repr",
  "serde_with",
  "sqlx",
+ "subtle",
  "thiserror 2.0.18",
  "time",
  "tokio",
