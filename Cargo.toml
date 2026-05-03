@@ -56,6 +56,11 @@ tracing-opentelemetry = "0.32.1"
 utoipa = { version = "5", features = ["actix_extras", "chrono"] }
 utoipa-scalar = { version = "0.3", features = ["actix-web"] }
 libc = "0.2.186"
+subtle = "2"
+
+[features]
+default = []
+dev-login = []
 
 [build-dependencies]
 tonic-build = "0.12"

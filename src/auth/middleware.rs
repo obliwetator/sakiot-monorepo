@@ -43,10 +43,12 @@ where
     actix_web::dev::forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        if req.path() == "/api/discord_login"
-            || req.path() == "/api/dev_login"
-            || req.path() == "/api/refresh"
-            || req.path() == "/api/logout"
+        let path = req.path();
+        let is_dev_login = cfg!(feature = "dev-login") && path == "/api/dev_login";
+        if path == "/api/discord_login"
+            || is_dev_login
+            || path == "/api/refresh"
+            || path == "/api/logout"
         {
             let res = self.service.call(req);
             return Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) });

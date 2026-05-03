@@ -85,14 +85,29 @@ pub async fn discord_login(
     Ok(html)
 }
 
+#[cfg(feature = "dev-login")]
 #[get("/dev_login")]
 pub async fn dev_login(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
+    use subtle::ConstantTimeEq;
+
+    // Constant time comparison to prevent timing attacks
+    let expected = cfg.dev_login_secret.as_deref().ok_or(AppError::Forbidden)?;
+    let provided = req
+        .headers()
+        .get("X-Dev-Login-Secret")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(AppError::Forbidden)?;
+    if expected.as_bytes().ct_eq(provided.as_bytes()).unwrap_u8() != 1 {
+        return Err(AppError::Forbidden);
+    }
+
+    // If config missing, forbid dev login
     let dev_account_id = cfg.dev_account_id;
-    if dev_account_id != 146638124288704513 {
+    if dev_account_id == 0 {
         return Err(AppError::Forbidden);
     }
 
