@@ -14,7 +14,11 @@ use tracing::{error, info};
 use crate::proto::jammer::jam_response::JamResponseEnum;
 use crate::proto::jammer::jammer_client::JammerClient;
 use crate::proto::jammer::JamData;
-use crate::{audio::CLIPS_PATH, auth::{Access, Token}, errors::AppError};
+use crate::{
+    audio::CLIPS_PATH,
+    auth::{Access, Token},
+    errors::AppError,
+};
 use serde_json::json;
 
 type DisplayFromstr = As<DisplayFromStr>;
@@ -135,7 +139,7 @@ pub async fn play_clip(
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
-        .map(|t| t.id)
+        .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
 
     let mut client = client.get_ref().clone();
@@ -214,13 +218,19 @@ pub async fn create_clip(
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
-        .map(|t| t.id)
+        .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
     let src_path = {
         let dir = crate::audio::util::resolve_existing_dir(
             crate::audio::RECORDING_PATH,
-            &(guild_id, channel_id, year, month, file_name_from_url.clone()),
+            &(
+                guild_id,
+                channel_id,
+                year,
+                month,
+                file_name_from_url.clone(),
+            ),
         );
         format!("{}/{}.ogg", dir, file_name_from_url)
     };

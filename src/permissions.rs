@@ -380,7 +380,7 @@ pub async fn require_guild_admin(
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
-        .map(|t| t.id)
+        .map(|t| t.user_id)
         .ok_or(crate::errors::AppError::Unauthorized)?;
     let bits = get_combined_perm_for_user(pool, guild_id, user_id).await?;
     let admin_mask = Permissions::ADMINISTRATOR.bits() | Permissions::MANAGE_GUILD.bits();

@@ -16,6 +16,7 @@ use super::cookies::{
 };
 use super::discord::{request_access_token, request_refresh_token, DiscordLoginCode};
 use super::jwt::{Access, AccessKeys, Refresh, Token};
+use actix_web::cookie::{Cookie, SameSite};
 
 async fn create_jwt_tokens(
     access_token: String,
@@ -54,11 +55,12 @@ pub async fn discord_login(
         &keys,
     )
     .await?;
-    let mut b = NamedFile::open_async("callback.html")
+
+    let mut html = NamedFile::open_async("callback.html")
         .await?
         .into_response(&req);
 
-    b.headers_mut().insert(
+    html.headers_mut().insert(
         actix_web::http::header::CACHE_CONTROL,
         actix_web::http::header::HeaderValue::from_static(
             "no-store, no-cache, must-revalidate, max-age=0",
@@ -66,13 +68,21 @@ pub async fn discord_login(
     );
 
     let d = cfg.cookie_domain.as_str();
-    b.add_cookie(&clear_legacy_access_cookie(d))?;
-    b.add_cookie(&clear_legacy_refresh_cookie(d))?;
-    b.add_cookie(&access_token_cookie(d, &access_token))?;
-    b.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
-    b.add_cookie(&csrf_cookie(d, &csrf_token))?;
+    html.add_cookie(&clear_legacy_access_cookie(d))?;
+    html.add_cookie(&clear_legacy_refresh_cookie(d))?;
+    html.add_cookie(&access_token_cookie(d, &access_token))?;
+    html.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
+    html.add_cookie(&csrf_cookie(d, &csrf_token))?;
 
-    Ok(b)
+    if let Some(state) = &query.state {
+        let origin_cookie = Cookie::build("opener_origin", state.clone())
+            .path("/")
+            .same_site(SameSite::Lax)
+            .finish();
+        html.add_cookie(&origin_cookie)?;
+    }
+
+    Ok(html)
 }
 
 #[get("/dev_login")]
@@ -148,7 +158,7 @@ pub async fn refresh_jwt(
         create_jwt_tokens(
             "dev_access".into(),
             "dev_refresh".into(),
-            decoded_refresh.id,
+            decoded_refresh.user_id,
             csrf_token.clone(),
             &keys,
         )
@@ -159,7 +169,7 @@ pub async fn refresh_jwt(
         create_jwt_tokens(
             data.access_token,
             data.refresh_token,
-            decoded_refresh.id,
+            decoded_refresh.user_id,
             csrf_token.clone(),
             &keys,
         )

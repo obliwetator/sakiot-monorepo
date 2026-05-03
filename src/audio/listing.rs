@@ -94,7 +94,8 @@ async fn enrich_display_names(
             if let Some(months) = &dir.months {
                 for files in months.values().flatten() {
                     for f in files {
-                        if let Some(uid) = f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok()) {
+                        if let Some(uid) = f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok())
+                        {
                             user_ids.insert(uid);
                         }
                     }
@@ -165,8 +166,7 @@ async fn enrich_display_names(
             if let Some(months) = dir.months.as_mut() {
                 for files in months.values_mut().flatten() {
                     for f in files.iter_mut() {
-                        let Some(uid) =
-                            f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok())
+                        let Some(uid) = f.user_id.as_deref().and_then(|s| s.parse::<i64>().ok())
                         else {
                             continue;
                         };
@@ -267,10 +267,11 @@ pub async fn for_channel_ids(
     dirs_vec: &mut Vec<Channels>,
     channel_hashset: HashSet<i64>,
 ) -> Result<(), AppError> {
-    let channel_ids = std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)).map_err(|err| {
-        tracing::error!("{}", err);
-        AppError::FileNotFound
-    })?;
+    let channel_ids =
+        std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)).map_err(|err| {
+            tracing::error!("{}", err);
+            AppError::FileNotFound
+        })?;
 
     for channel_id in channel_ids {
         if let Ok(entry) = channel_id {
@@ -283,14 +284,12 @@ pub async fn for_channel_ids(
             };
 
             if channel_hashset.contains(&channel) {
-                let years = std::fs::read_dir(format!(
-                    "{}{}/{}",
-                    RECORDING_PATH, guild_id, channel
-                ))
-                .map_err(|err| {
-                    tracing::error!("{}", err);
-                    AppError::FileNotFound
-                })?;
+                let years =
+                    std::fs::read_dir(format!("{}{}/{}", RECORDING_PATH, guild_id, channel))
+                        .map_err(|err| {
+                            tracing::error!("{}", err);
+                            AppError::FileNotFound
+                        })?;
 
                 let mut channels = Channels {
                     channel_id: channel.to_string(),
@@ -402,7 +401,7 @@ pub async fn get_live_stems(
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
     let permitted =
-        crate::permissions::get_available_channels_for_user(&pool, guild_id, token.id).await?;
+        crate::permissions::get_available_channels_for_user(&pool, guild_id, token.user_id).await?;
 
     let rows = sqlx::query!(
         "SELECT file_name, channel_id FROM audio_files \
@@ -435,7 +434,7 @@ pub async fn get_current_month_permission(
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
     let permission_hashset =
-        crate::permissions::get_available_channels_for_user(&pool, guild_id_as_int, token.id)
+        crate::permissions::get_available_channels_for_user(&pool, guild_id_as_int, token.user_id)
             .await?;
 
     let mut dirs_vec = get_channels_dir(guild_id, permission_hashset).await?;

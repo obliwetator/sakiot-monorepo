@@ -10,6 +10,7 @@ pub const BASE_URL: &str = "https://discord.com/api/v10/";
 #[derive(Deserialize, Debug)]
 pub struct DiscordLoginCode {
     pub code: String,
+    pub state: Option<String>,
 }
 
 #[derive(Serialize, Debug)]

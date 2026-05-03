@@ -162,8 +162,9 @@ pub async fn get_current_user(
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
     let dev_account_id = cfg.dev_account_id;
-    let is_dev =
-        token_data.id == dev_account_id && dev_account_id != 0 && token_data.token == "dev_access";
+    let is_dev = token_data.user_id == dev_account_id
+        && dev_account_id != 0
+        && token_data.token == "dev_access";
 
     let result = sqlx::query!(
         "
@@ -176,7 +177,7 @@ pub async fn get_current_user(
     	FROM discord_auth_user
     	WHERE id = $1
     	",
-        token_data.id
+        token_data.user_id
     )
     .fetch_one(pool.get_ref())
     .await?;
@@ -215,7 +216,7 @@ pub async fn get_current_user_guilds(
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
     let dev_account_id = cfg.dev_account_id;
 
-    let result = if token_data.id == dev_account_id
+    let result = if token_data.user_id == dev_account_id
         && dev_account_id != 0
         && token_data.token == "dev_access"
     {
@@ -247,7 +248,7 @@ pub async fn get_current_user_guilds(
             JOIN user_guilds ON user_guilds.id = guilds_present.guild_id
             AND user_guilds.user_id = $1;
             ",
-            token_data.id
+            token_data.user_id
         )
         .fetch_all(pool.get_ref())
         .await?

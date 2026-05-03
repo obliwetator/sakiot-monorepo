@@ -23,7 +23,7 @@ pub struct Refresh;
 pub struct Token<T> {
     #[serde(with = "jwt_numeric_date")]
     pub exp: OffsetDateTime,
-    pub id: i64,
+    pub user_id: i64,
     pub token: String,
     pub csrf: String,
     state: std::marker::PhantomData<T>,
@@ -48,7 +48,7 @@ impl Token<Access> {
 
         let access = Self {
             exp,
-            id,
+            user_id: id,
             token: access_token,
             csrf,
             state: std::marker::PhantomData::<Access>,
@@ -77,7 +77,7 @@ impl Token<Refresh> {
 
         let refresh = Self {
             exp,
-            id,
+            user_id: id,
             token: refresh_token,
             csrf,
             state: std::marker::PhantomData::<Refresh>,

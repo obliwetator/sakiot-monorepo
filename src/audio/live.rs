@@ -271,19 +271,11 @@ async fn ensure_job(
         return Ok(s);
     }
 
-    let out_dir = key.live_dir(RECORDING_PATH);
-    let playlist = out_dir.join("playlist.m3u8");
-    if playlist.exists() && playlist_finalized(&playlist).await {
-        let s = Arc::new(Mutex::new(JobState { finalized: true, child: None }));
-        container.0.write().await.insert(id, s.clone());
-        return Ok(s);
-    }
-
     let src = source_path(&key).ok_or(AppError::FileNotFound)?;
 
-    // Only opus inputs can be `-c:a copy`'d into fMP4 HLS. Reject others so
-    // the frontend's HLS error handler triggers blob fallback instead of
-    // letting ffmpeg silently fail and hls.js spin on broken segments.
+    // Probe BEFORE the on-disk cache shortcut: a stale `hls-*` dir from a
+    // pre-gate run can otherwise serve vorbis-in-fmp4 that MSE refuses,
+    // making hls.js spin on seg_00000.
     match probe_codec(&src).await {
         Ok(c) if c == "opus" => {}
         Ok(c) => {
@@ -294,6 +286,14 @@ async fn ensure_job(
             error!(stem = %key.stem, error = ?e, "ffprobe failed");
             return Err(AppError::FfmpegError("codec probe failed".into()));
         }
+    }
+
+    let out_dir = key.live_dir(RECORDING_PATH);
+    let playlist = out_dir.join("playlist.m3u8");
+    if playlist.exists() && playlist_finalized(&playlist).await {
+        let s = Arc::new(Mutex::new(JobState { finalized: true, child: None }));
+        container.0.write().await.insert(id, s.clone());
+        return Ok(s);
     }
 
     let (_, end_ts) = db_state(&pool, &key.stem).await?;
