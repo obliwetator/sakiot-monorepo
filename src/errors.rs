@@ -64,9 +64,14 @@ impl ResponseError for AppError {
         } else {
             tracing::debug!(error = ?self, "request rejected");
         }
+        let message = if status_code.is_server_error() {
+            status_code.canonical_reason().unwrap_or("Error").to_string()
+        } else {
+            self.to_string()
+        };
         let error_response = serde_json::json!({
             "code": status_code.as_u16(),
-            "message": status_code.canonical_reason().unwrap_or("Error"),
+            "message": message,
         });
         HttpResponse::build(status_code).json(error_response)
     }
