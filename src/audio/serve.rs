@@ -42,14 +42,10 @@ pub struct AudioQuery {
 #[get("/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn get_audio(
     req: HttpRequest,
-    path: web::Path<(u64, String, i32, i32, String)>,
+    path: web::Path<(u64, i64, i32, i32, String)>,
     query_param: web::Query<AudioQuery>,
 ) -> Result<impl Responder, AppError> {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
-
-    let channel_id_i64 = channel_id
-        .parse::<i64>()
-        .map_err(|_| AppError::BadRequest("Invalid channel_id".into()))?;
 
     if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
         return Err(AppError::BadRequest("Invalid file name".into()));
@@ -67,7 +63,7 @@ pub async fn get_audio(
     for path in candidates(
         root,
         guild_id as i64,
-        channel_id_i64,
+        channel_id,
         year,
         month as u32,
         &leaf,
