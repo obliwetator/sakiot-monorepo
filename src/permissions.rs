@@ -238,57 +238,36 @@ pub async fn get_available_channels_for_user(
         });
     }
 
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+    let mut apply_perms = |perm_hash: &mut HashMap<i64, [i64; 2]>, allow_overrides_deny: bool| {
+        perm_hash.retain(|ch_id, perm_vec| {
+            let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+            let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
 
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
+            if allow_overrides_deny && allow && deny {
+                allowed_channels.insert(*ch_id);
+                return false;
+            }
 
-        !allow && !deny
-    });
+            if allow {
+                allowed_channels.insert(*ch_id);
+            }
+            if deny {
+                denied_channels.insert(*ch_id);
+            }
+
+            !allow && !deny
+        });
+    };
+
+    apply_perms(&mut perm_hash, false);
 
     perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await?;
 
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-
-        // If both allow and deny are true the allow value overrides the deny
-        if (allow) && (deny) {
-            allowed_channels.insert(*ch_id);
-            return !allow && !deny;
-        }
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
-
-        !allow && !deny
-    });
+    apply_perms(&mut perm_hash, true);
 
     get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await?;
 
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-        let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-        if deny {
-            denied_channels.insert(*ch_id);
-        }
-
-        !allow && !deny
-    });
+    apply_perms(&mut perm_hash, false);
 
     // Final most general check. Check @everyone
     perm_hash.retain(|ch_id, perm_vec| {
