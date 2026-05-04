@@ -8,7 +8,7 @@ use actix_web::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_with::{As, DisplayFromStr};
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
 
 pub type DisplayFromstr = As<DisplayFromStr>;
 
@@ -90,24 +90,28 @@ pub async fn insert_user_guilds_db(
     pool: &web::Data<Pool<Postgres>>,
     user_id: i64,
 ) -> Result<(), AppError> {
-    // MAYBE: Better to do it in batch?
-    futures_util::future::join_all(user_guilds.iter().map(|guild| {
-        sqlx::query!(
-            "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
-            guild.id,
-            user_id,
-            guild.name,
-            guild.icon,
-            guild.owner,
-            guild.permissions,
-            &guild.features
-        )
-        .execute(pool.get_ref())
-    }))
-    .await
-    .into_iter()
-    .collect::<Result<Vec<_>, _>>()?;
+    if user_guilds.is_empty() {
+        return Ok(());
+    }
+
+    let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
+        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) "
+    );
+
+    query_builder.push_values(user_guilds, |mut b, guild| {
+        b.push_bind(guild.id)
+            .push_bind(user_id)
+            .push_bind(&guild.name)
+            .push_bind(&guild.icon)
+            .push_bind(guild.owner)
+            .push_bind(guild.permissions)
+            .push_bind(&guild.features);
+    });
+
+    query_builder.push(" ON CONFLICT DO NOTHING");
+
+    let query = query_builder.build();
+    query.execute(pool.get_ref()).await?;
 
     Ok(())
 }
