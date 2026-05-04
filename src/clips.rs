@@ -207,7 +207,7 @@ async fn crop_ffmpeg(
         .map_err(|e| AppError::FfmpegError(e.to_string()))
 }
 
-#[post("audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[post("/audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn create_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
@@ -302,7 +302,7 @@ pub async fn create_clip(
     Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
 }
 
-#[delete("audio/clips/{guild_id}/{clip_id}")]
+#[delete("/audio/clips/{guild_id}/{clip_id}")]
 pub async fn delete(
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, String)>,
