@@ -51,7 +51,7 @@ pub async fn get_clip(
     let (guild_id, clip_id) = path.into_inner();
 
     let row = sqlx::query!(
-        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2",
+        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
         clip_id
     )
@@ -103,7 +103,7 @@ pub async fn get_clips(
         channel_id as "channel_id!",
         start_time
         FROM clips
-        WHERE guild_id = $1
+        WHERE guild_id = $1 AND deleted_at IS NULL
         "#,
         guild_id
     )
@@ -240,7 +240,7 @@ pub async fn create_clip(
 
     let length = end - start;
     if !(1.0..=20.0).contains(&length) {
-        return Ok(HttpResponse::BadRequest().json(serde_json::json!({"status": "error", "message": "Clip duration must be between 1 and 20 seconds"})));
+        return Err(AppError::BadRequest("Clip duration must be between 1 and 20 seconds".into()));
     }
 
     let clip_name = if let Some(ref name) = clip_duration.name {
@@ -302,28 +302,18 @@ pub async fn create_clip(
     Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
 }
 
-#[delete("audio/clips/delete/{guild_id}")]
+#[delete("audio/clips/{guild_id}/{clip_id}")]
 pub async fn delete(
-    clip_id: String,
     pool: web::Data<Pool<Postgres>>,
-    path: web::Path<i64>,
+    path: web::Path<(i64, String)>,
 ) -> Result<HttpResponse, AppError> {
-    let guild_id = path.into_inner();
-
-    let row = sqlx::query!(
-        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2",
-        guild_id,
-        clip_id
-    )
-    .fetch_optional(pool.get_ref())
-    .await?;
-
-    let saved_file_name = row.ok_or(AppError::ClipNotFound)?.saved_file_name;
+    let (guild_id, clip_id) = path.into_inner();
 
     let result = sqlx::query!(
         r#"
-        DELETE FROM clips
-        WHERE guild_id = $1 AND clip_id = $2
+        UPDATE clips
+        SET deleted_at = NOW()
+        WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL
         "#,
         guild_id,
         clip_id
@@ -335,13 +325,7 @@ pub async fn delete(
         return Err(AppError::ClipNotFound);
     }
 
-    if let Some(sfn) = saved_file_name {
-        if let Err(e) = std::fs::remove_file(format!("{}{}", CLIPS_PATH, sfn)) {
-            error!("file cannot be deleted: {:?}", e.kind());
-            return Err(AppError::FileDeleteFailed);
-        }
-        info!("file deleted");
-    }
+    info!("clip soft-deleted: guild={} clip={}", guild_id, clip_id);
 
     Ok(HttpResponse::Ok().finish())
 }
