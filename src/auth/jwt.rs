@@ -5,7 +5,7 @@ use time::{Duration, OffsetDateTime};
 use crate::errors::AppError;
 
 const JWT_ACCESS_EXPIRY_SECS: i64 = 900;
-const JWT_REFRESH_EXPIRY_DAYS: i64 = 7;
+pub const JWT_REFRESH_EXPIRY_DAYS: i64 = 7;
 
 pub struct AccessKeys {
     pub access_encode: EncodingKey,

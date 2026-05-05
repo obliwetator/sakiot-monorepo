@@ -46,6 +46,7 @@ where
         let path = req.path();
         let is_dev_login = cfg!(feature = "dev-login") && path == "/api/dev_login";
         if path == "/api/discord_login"
+            || path == "/api/oauth/start"
             || is_dev_login
             || path == "/api/refresh"
             || path == "/api/logout"
