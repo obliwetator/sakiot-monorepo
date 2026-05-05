@@ -20,7 +20,7 @@ use web_server::audio::{
     WaveformProgressContainer,
 };
 use web_server::auth::{
-    discord_login, get_token, logout, refresh_jwt, AccessKeys, AuthMiddleware,
+    discord_login, logout, oauth_start, refresh_jwt, AccessKeys, AuthMiddleware,
 };
 #[cfg(feature = "dev-login")]
 use web_server::auth::dev_login;
@@ -113,7 +113,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
-            .service(discord_login);
+            .service(discord_login)
+            .service(oauth_start);
         #[cfg(feature = "dev-login")]
         let api_scope = api_scope.service(dev_login);
         let api_scope = api_scope
@@ -121,7 +122,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(logout)
             .service(get_current_user)
             .service(get_current_user_guilds)
-            .service(get_token)
             .service(get_live_stems)
             .service(get_current_month_permission)
             .service(remove_silence)

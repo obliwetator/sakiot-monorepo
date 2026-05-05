@@ -18,7 +18,6 @@ use utoipa::{
     ),
     paths(
         crate::auth::handlers::logout,
-        crate::auth::handlers::get_token,
         crate::user::get_current_user,
     ),
     components(schemas(crate::user::UserDataForFrontEnd)),

@@ -1,3 +1,4 @@
+#[cfg(feature = "dev-login")]
 use actix_files::NamedFile;
 use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
 use reqwest::Client;
@@ -12,11 +13,13 @@ use crate::user::{get_user, get_user_guilds};
 
 use super::cookies::{
     access_token_cookie, clear_access_token_cookie, clear_csrf_cookie, clear_legacy_access_cookie,
-    clear_legacy_refresh_cookie, clear_refresh_token_cookie, csrf_cookie, refresh_token_cookie,
+    clear_legacy_refresh_cookie, clear_logged_in_cookie, clear_oauth_state_cookie,
+    clear_opener_origin_cookie, clear_refresh_token_cookie, csrf_cookie, logged_in_cookie,
+    oauth_state_cookie, opener_origin_cookie, refresh_token_cookie,
 };
 use super::discord::{request_access_token, request_refresh_token, DiscordLoginCode};
 use super::jwt::{Access, AccessKeys, Refresh, Token};
-use actix_web::cookie::{Cookie, SameSite};
+use subtle::ConstantTimeEq;
 
 async fn create_jwt_tokens(
     access_token: String,
@@ -31,6 +34,34 @@ async fn create_jwt_tokens(
     Ok((access_token, refresh_token))
 }
 
+#[derive(serde::Deserialize)]
+pub struct OauthStartQuery {
+    pub origin: String,
+}
+
+#[get("/oauth/start")]
+pub async fn oauth_start(
+    query: web::Query<OauthStartQuery>,
+    cfg: web::Data<Config>,
+) -> Result<impl Responder, AppError> {
+    let state = Uuid::new_v4().to_string();
+    let url = format!(
+        "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
+        urlencoding::encode(&cfg.client_id),
+        urlencoding::encode(&cfg.discord_redirect_uri),
+        urlencoding::encode("email identify guilds"),
+        urlencoding::encode(&state),
+    );
+
+    let d = cfg.cookie_domain.as_str();
+    let mut resp = HttpResponse::Found()
+        .append_header((actix_web::http::header::LOCATION, url))
+        .finish();
+    resp.add_cookie(&oauth_state_cookie(d, &state))?;
+    resp.add_cookie(&opener_origin_cookie(d, &query.origin))?;
+    Ok(resp)
+}
+
 #[get("/discord_login")]
 pub async fn discord_login(
     req: HttpRequest,
@@ -40,6 +71,24 @@ pub async fn discord_login(
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
+    let cookie_state = req
+        .cookie("oauth_state")
+        .ok_or_else(|| AppError::BadRequest("Missing oauth_state cookie".into()))?;
+    let query_state = query
+        .state
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("Missing state parameter".into()))?;
+    if cookie_state
+        .value()
+        .as_bytes()
+        .ct_eq(query_state.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
+        warn!("OAuth state mismatch on /discord_login");
+        return Err(AppError::BadRequest("OAuth state mismatch".into()));
+    }
+
     let data = request_access_token(&cfg, query.code.to_owned(), client.clone()).await?;
 
     let user = get_user(client.clone(), &data.access_token, &pool).await?;
@@ -56,16 +105,36 @@ pub async fn discord_login(
     )
     .await?;
 
-    let mut html = NamedFile::open_async("callback.html")
-        .await?
-        .into_response(&req);
+    let opener_origin = req
+        .cookie("opener_origin")
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
+    let escaped_origin = opener_origin
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('<', "\\u003c");
 
-    html.headers_mut().insert(
-        actix_web::http::header::CACHE_CONTROL,
-        actix_web::http::header::HeaderValue::from_static(
-            "no-store, no-cache, must-revalidate, max-age=0",
-        ),
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Logging in...</title></head>
+<body><script>
+(function () {{
+    var target = "{escaped_origin}";
+    if (window.opener && target) {{
+        window.opener.postMessage({{ success: 1 }}, target);
+    }}
+    window.close();
+}})();
+</script></body></html>"#
     );
+
+    let mut html = HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header((
+            actix_web::http::header::CACHE_CONTROL,
+            "no-store, no-cache, must-revalidate, max-age=0",
+        ))
+        .body(body);
 
     let d = cfg.cookie_domain.as_str();
     html.add_cookie(&clear_legacy_access_cookie(d))?;
@@ -73,14 +142,9 @@ pub async fn discord_login(
     html.add_cookie(&access_token_cookie(d, &access_token))?;
     html.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
     html.add_cookie(&csrf_cookie(d, &csrf_token))?;
-
-    if let Some(state) = &query.state {
-        let origin_cookie = Cookie::build("opener_origin", state.clone())
-            .path("/")
-            .same_site(SameSite::Lax)
-            .finish();
-        html.add_cookie(&origin_cookie)?;
-    }
+    html.add_cookie(&logged_in_cookie(d))?;
+    html.add_cookie(&clear_oauth_state_cookie(d))?;
+    html.add_cookie(&clear_opener_origin_cookie(d))?;
 
     Ok(html)
 }
@@ -92,8 +156,6 @@ pub async fn dev_login(
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
-    use subtle::ConstantTimeEq;
-
     // Constant time comparison to prevent timing attacks
     let expected = cfg.dev_login_secret.as_deref().ok_or(AppError::Forbidden)?;
     let provided = req
@@ -131,6 +193,7 @@ pub async fn dev_login(
     b.add_cookie(&access_token_cookie(d, &access_token))?;
     b.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
     b.add_cookie(&csrf_cookie(d, &csrf_token))?;
+    b.add_cookie(&logged_in_cookie(d))?;
 
     Ok(b)
 }
@@ -142,6 +205,7 @@ pub async fn refresh_jwt(
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
+    let d = cfg.cookie_domain.as_str();
     let refresh_cookie = match req.cookie("refresh_token") {
         Some(c) => c,
         None => {
@@ -149,7 +213,12 @@ pub async fn refresh_jwt(
                 "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
                 req.path()
             );
-            return Ok(HttpResponse::Unauthorized().finish());
+            let mut resp = HttpResponse::Unauthorized().finish();
+            resp.add_cookie(&clear_access_token_cookie(d))?;
+            resp.add_cookie(&clear_refresh_token_cookie(d))?;
+            resp.add_cookie(&clear_csrf_cookie(d))?;
+            resp.add_cookie(&clear_logged_in_cookie(d))?;
+            return Ok(resp);
         }
     };
 
@@ -160,10 +229,15 @@ pub async fn refresh_jwt(
                 "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
                 req.path()
             );
-            return Ok(HttpResponse::Unauthorized().json(json!({
+            let mut resp = HttpResponse::Unauthorized().json(json!({
                 "error": "expired_or_invalid_token",
                 "message": "The refresh token is expired or invalid. Please login again."
-            })));
+            }));
+            resp.add_cookie(&clear_access_token_cookie(d))?;
+            resp.add_cookie(&clear_refresh_token_cookie(d))?;
+            resp.add_cookie(&clear_csrf_cookie(d))?;
+            resp.add_cookie(&clear_logged_in_cookie(d))?;
+            return Ok(resp);
         }
     };
 
@@ -191,11 +265,11 @@ pub async fn refresh_jwt(
         .await?
     };
 
-    let d = cfg.cookie_domain.as_str();
     let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
     response.add_cookie(&access_token_cookie(d, &new_access_token))?;
     response.add_cookie(&refresh_token_cookie(d, &new_refresh_token))?;
     response.add_cookie(&csrf_cookie(d, &csrf_token))?;
+    response.add_cookie(&logged_in_cookie(d))?;
 
     Ok(response)
 }
@@ -215,26 +289,6 @@ pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> 
     resp.add_cookie(&clear_access_token_cookie(d))?;
     resp.add_cookie(&clear_refresh_token_cookie(d))?;
     resp.add_cookie(&clear_csrf_cookie(d))?;
+    resp.add_cookie(&clear_logged_in_cookie(d))?;
     Ok(resp)
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/token",
-    tag = "auth",
-    responses(
-        (status = 200, description = "Returns the current access_token cookie value as JSON", body = serde_json::Value),
-        (status = 400, description = "access_token cookie missing"),
-    ),
-    security(("access_token" = [])),
-)]
-#[get("/token")]
-pub async fn get_token(req: HttpRequest) -> Result<impl Responder, AppError> {
-    let access_cookie = req
-        .cookie("access_token")
-        .ok_or_else(|| AppError::BadRequest("Missing access_token cookie".into()))?;
-
-    let json = json!({ "token": access_cookie.value() });
-
-    Ok(HttpResponse::Ok().json(json))
 }

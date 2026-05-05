@@ -137,7 +137,7 @@ pub async fn get_user_guilds(
 pub struct UserDataForFrontEnd {
     #[serde(with = "DisplayFromstr")]
     #[schema(value_type = String, example = "146638124288704513")]
-    pub id: i64,
+    pub user_id: i64,
     pub username: String,
     pub avatar: String,
     pub email: Option<String>,
@@ -148,7 +148,7 @@ pub struct UserDataForFrontEnd {
 
 #[utoipa::path(
     get,
-    path = "/api/users/@me",
+    path = "/api/users/current",
     tag = "user",
     responses(
         (status = 200, description = "Current authenticated user", body = UserDataForFrontEnd),
@@ -157,7 +157,7 @@ pub struct UserDataForFrontEnd {
     ),
     security(("access_token" = [])),
 )]
-#[get("/users/@me")]
+#[get("/users/current")]
 pub async fn get_current_user(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
@@ -187,7 +187,7 @@ pub async fn get_current_user(
     .await?;
 
     let user_data = UserDataForFrontEnd {
-        id: result.id,
+        user_id: result.id,
         username: result.username,
         avatar: result.avatar,
         email: result.email,
@@ -210,7 +210,7 @@ struct GuildDataForFrontEnd {
     pub permissions: i64,
 }
 
-#[get("/users/@me/guilds")]
+#[get("/users/current/guilds")]
 pub async fn get_current_user_guilds(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
