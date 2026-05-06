@@ -1,6 +1,7 @@
 use actix_web::{get, web, HttpRequest, HttpResponse};
 use base64::prelude::*;
 use serde_json::json;
+use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
 use crate::errors::AppError;
@@ -10,11 +11,24 @@ use super::paths::{RECORDING_PATH, WAVEFORM_PATH};
 use super::types::WaveformProgressContainer;
 use super::util::{file_exists, resolve_existing_dir};
 
+const LIVE_WAVEFORM_READY: i16 = 100;
+const FINAL_WAVEFORM_WRITTEN: i16 = 101;
+
+async fn waveform_response(output: &str) -> Result<HttpResponse, AppError> {
+    let file_content = tokio::fs::read(output).await?;
+    let base64_content = BASE64_STANDARD.encode(file_content);
+    Ok(HttpResponse::Ok().json(json!({
+        "progress": 100,
+        "data": base64_content
+    })))
+}
+
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 pub async fn get_waveform_data(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
     progress_map: web::Data<WaveformProgressContainer>,
+    pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path);
@@ -25,37 +39,135 @@ pub async fn get_waveform_data(
 
     info!("Received poll request for waveform data: {}", file_path);
 
-    if file_exists(&output) {
-        match tokio::fs::read(&output).await {
-            Ok(file_content) => {
-                let base64_content = BASE64_STANDARD.encode(file_content);
-                return Ok(HttpResponse::Ok().json(json!({
-                    "progress": 100,
-                    "data": base64_content
-                })));
-            }
-            Err(e) => {
-                return Err(AppError::IoError(e));
-            }
-        }
+    let row = sqlx::query!(
+        "SELECT end_ts, waveform_end_ts FROM audio_files WHERE file_name = $1",
+        file_name
+    )
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::FileNotFound)?;
+    let end_ts = row.end_ts;
+    let waveform_end_ts = row.waveform_end_ts;
+    let has_final_cache = end_ts.is_some() && waveform_end_ts == end_ts && file_exists(&output);
+
+    if has_final_cache {
+        return waveform_response(&output).await;
     }
 
-    if let Some(&pct) = progress_map.0.read().await.get(&file_name) {
+    let pct = {
+        let progress = progress_map.0.read().await;
+        progress.get(&file_name).copied()
+    };
+    if let Some(pct) = pct {
         if pct == -1 {
             progress_map.0.write().await.remove(&file_name);
             return Err(AppError::InternalError);
         }
-        return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
+        if pct == FINAL_WAVEFORM_WRITTEN {
+            return Ok(HttpResponse::Ok().json(json!({ "progress": 99 })));
+        }
+        if pct == LIVE_WAVEFORM_READY {
+            if file_exists(&output) {
+                if end_ts.is_none() {
+                    let response = waveform_response(&output).await;
+                    progress_map.0.write().await.remove(&file_name);
+                    return response;
+                }
+                progress_map.0.write().await.remove(&file_name);
+            } else {
+                progress_map.0.write().await.remove(&file_name);
+            }
+        } else {
+            return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
+        }
     }
 
-    progress_map.0.write().await.insert(file_name.clone(), 0);
+    {
+        let mut progress = progress_map.0.write().await;
+        if let Some(&pct) = progress.get(&file_name) {
+            if pct == -1 {
+                progress.remove(&file_name);
+                return Err(AppError::InternalError);
+            }
+            if pct == FINAL_WAVEFORM_WRITTEN {
+                return Ok(HttpResponse::Ok().json(json!({ "progress": 99 })));
+            }
+            if pct != LIVE_WAVEFORM_READY || end_ts.is_none() {
+                return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
+            }
+            progress.remove(&file_name);
+        }
+        progress.insert(file_name.clone(), 0);
+    }
 
     let progress_map_clone = progress_map.clone();
+    let pool_clone = pool.clone();
+    let generation_file_name = file_name.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            generate_peaks_background(file_path, output, file_name, None, progress_map_clone).await
+        if let Err(e) = generate_peaks_background(
+            file_path,
+            output,
+            file_name.clone(),
+            None,
+            progress_map_clone.clone(),
+            Some(FINAL_WAVEFORM_WRITTEN),
+        )
+        .await
         {
             error!("Error generating peaks: {:?}", e);
+            return;
+        }
+
+        let current_end_ts = match sqlx::query!(
+            "SELECT end_ts FROM audio_files WHERE file_name = $1",
+            generation_file_name
+        )
+        .fetch_optional(pool_clone.get_ref())
+        .await
+        {
+            Ok(Some(row)) => row.end_ts,
+            Ok(None) => {
+                progress_map_clone.0.write().await.insert(file_name, -1);
+                return;
+            }
+            Err(e) => {
+                error!("Error loading waveform cache state: {:?}", e);
+                progress_map_clone.0.write().await.insert(file_name, -1);
+                return;
+            }
+        };
+
+        let Some(current_end_ts) = current_end_ts else {
+            progress_map_clone
+                .0
+                .write()
+                .await
+                .insert(file_name, LIVE_WAVEFORM_READY);
+            return;
+        };
+
+        match sqlx::query!(
+            "UPDATE audio_files SET waveform_end_ts = $2 WHERE file_name = $1 AND end_ts = $2",
+            generation_file_name,
+            current_end_ts
+        )
+        .execute(pool_clone.get_ref())
+        .await
+        {
+            Ok(result) if result.rows_affected() > 0 => {
+                progress_map_clone.0.write().await.remove(&file_name);
+            }
+            Ok(_) => {
+                progress_map_clone.0.write().await.remove(&file_name);
+                info!(
+                    "Skipped waveform cache marker update because end_ts changed for {}",
+                    file_name
+                );
+            }
+            Err(e) => {
+                error!("Error updating waveform cache marker: {:?}", e);
+                progress_map_clone.0.write().await.insert(file_name, -1);
+            }
         }
     });
 

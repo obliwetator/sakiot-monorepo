@@ -3,6 +3,7 @@ use std::error::Error;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use uuid::Uuid;
 
 use crate::audio::WaveformProgressContainer;
 
@@ -16,6 +17,7 @@ pub async fn generate_peaks_background(
     file_name: String,
     target_points: Option<f64>,
     progress_map: web::Data<WaveformProgressContainer>,
+    completed_progress: Option<i16>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 1. Get duration and sample rate using a single ffprobe call
     let ffprobe_output = Command::new("ffprobe")
@@ -64,12 +66,13 @@ pub async fn generate_peaks_background(
     let zoom_val = std::cmp::max(1, zoom).to_string();
 
     // 3. Generate peaks using audiowaveform with streaming output
+    let temp_output_file = format!("{}.{}.tmp.dat", output_file, Uuid::new_v4());
     let mut command = Command::new("audiowaveform")
         .args([
             "-i",
             &input_file,
             "-o",
-            &output_file,
+            &temp_output_file,
             "-z",
             &zoom_val,
             "-b",
@@ -103,7 +106,7 @@ pub async fn generate_peaks_background(
                                         .0
                                         .write()
                                         .await
-                                        .insert(file_name.clone(), pct_val);
+                                        .insert(file_name.clone(), pct_val.min(99));
                                 }
                             }
                         }
@@ -116,14 +119,25 @@ pub async fn generate_peaks_background(
 
     let status = command.wait().await?;
     if !status.success() {
+        let _ = tokio::fs::remove_file(&temp_output_file).await;
         progress_map.0.write().await.insert(file_name.clone(), -1);
         return Err("audiowaveform exited with non-zero status".into());
     }
 
+    tokio::fs::rename(&temp_output_file, &output_file).await?;
+
     info!("audiowaveform completed successfully.");
 
-    // Remove from the processing map now that the file is safely written to disk
-    progress_map.0.write().await.remove(&file_name);
+    if let Some(completed_progress) = completed_progress {
+        progress_map
+            .0
+            .write()
+            .await
+            .insert(file_name.clone(), completed_progress);
+    } else {
+        // Remove from the processing map now that the file is safely written to disk
+        progress_map.0.write().await.remove(&file_name);
+    }
 
     Ok(())
 }
