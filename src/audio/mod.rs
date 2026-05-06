@@ -1,3 +1,4 @@
+pub mod events;
 pub mod listing;
 pub mod live;
 pub mod paths;
@@ -7,6 +8,7 @@ pub mod silence;
 pub mod types;
 pub mod util;
 
+pub use events::get_recording_events;
 pub use listing::{get_current_month_permission, get_live_stems};
 pub use live::{live_playlist, live_segment, live_state, LiveContainer};
 pub use paths::{
