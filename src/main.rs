@@ -15,9 +15,9 @@ use web_server::admin::cooldowns::{
     set_user_override,
 };
 use web_server::audio::{
-    download_audio, get_audio, get_current_month_permission, get_live_stems, get_waveform_data,
-    live_playlist, live_segment, live_state, remove_silence, HashMapContainer, LiveContainer,
-    WaveformProgressContainer,
+    download_audio, get_audio, get_current_month_permission, get_live_stems,
+    get_recording_events, get_waveform_data, live_playlist, live_segment, live_state,
+    remove_silence, HashMapContainer, LiveContainer, WaveformProgressContainer,
 };
 use web_server::auth::{
     discord_login, logout, oauth_start, refresh_jwt, AccessKeys, AuthMiddleware,
@@ -137,6 +137,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(live_state)
             .service(live_segment)
             .service(get_audio)
+            .service(get_recording_events)
             .service(get_waveform_data)
             .service(download_audio)
             .service(get_guild_cooldown)
