@@ -38,11 +38,11 @@ pub struct JobState {
     pub child: Option<Child>,
 }
 
-#[derive(Serialize)]
-struct StateResponse {
-    live: bool,
-    started_at: Option<i64>,
-    ended_at: Option<i64>,
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct StateResponse {
+    pub live: bool,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
 }
 
 fn key_id(k: &RecordingKey) -> String {
@@ -326,6 +326,24 @@ pub async fn live_playlist(
         .body(body))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/state",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("stem" = String, Path, description = "Recording file stem"),
+    ),
+    responses(
+        (status = 200, description = "Live recording state", body = StateResponse),
+        (status = 400, description = "Invalid stem", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/state")]
 pub async fn live_state(
     path: web::Path<(i64, i64, i32, u32, String)>,

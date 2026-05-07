@@ -1,5 +1,12 @@
 use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
+use serde::Serialize;
 use thiserror::Error;
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ApiError {
+    pub code: u16,
+    pub message: String,
+}
 
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -65,15 +72,17 @@ impl ResponseError for AppError {
             tracing::debug!(error = ?self, "request rejected");
         }
         let message = if status_code.is_server_error() {
-            status_code.canonical_reason().unwrap_or("Error").to_string()
+            status_code
+                .canonical_reason()
+                .unwrap_or("Error")
+                .to_string()
         } else {
             self.to_string()
         };
-        let error_response = serde_json::json!({
-            "code": status_code.as_u16(),
-            "message": message,
-        });
+        let error_response = ApiError {
+            code: status_code.as_u16(),
+            message,
+        };
         HttpResponse::build(status_code).json(error_response)
     }
 }
-

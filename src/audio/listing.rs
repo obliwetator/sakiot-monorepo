@@ -388,6 +388,19 @@ pub async fn for_months(
 /// Live recordings for a guild (`audio_files.end_ts IS NULL`), filtered to
 /// the channels the caller has read access to. Frontend polls this to badge
 /// the recordings tree. Set is naturally tiny (only currently-active rows).
+#[utoipa::path(
+    get,
+    path = "/api/current/{guild_id}/live-stems",
+    tag = "audio",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "Currently live recording stems", body = [String]),
+        (status = 400, description = "Invalid guild id", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/current/{guild_id}/live-stems")]
 pub async fn get_live_stems(
     path: web::Path<String>,
@@ -420,6 +433,20 @@ pub async fn get_live_stems(
     Ok(HttpResponse::Ok().json(stems))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/current/{guild_id}",
+    tag = "audio",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "Recording tree visible to current user", body = [Channels]),
+        (status = 400, description = "Invalid guild id", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Recording directory not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/current/{guild_id}")]
 pub async fn get_current_month_permission(
     path: web::Path<String>,

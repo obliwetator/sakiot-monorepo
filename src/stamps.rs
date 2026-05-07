@@ -8,16 +8,20 @@ use crate::errors::AppError;
 
 type DisplayFromstr = As<DisplayFromStr>;
 
-#[derive(Serialize, Debug)]
-struct StampInfo {
+#[derive(Serialize, Debug, utoipa::ToSchema)]
+pub struct StampInfo {
     id: i64,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     guild_id: i64,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     channel_id: i64,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     target_user_id: i64,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     stamper_user_id: i64,
     stamp_ts: i64,
     offset_ms: i32,
@@ -35,6 +39,18 @@ struct StampInfo {
     waveform_url: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stamps/{guild_id}",
+    tag = "stamps",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "Recent stamps for guild", body = [StampInfo]),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/stamps/{guild_id}")]
 pub async fn get_stamps(
     pool: web::Data<Pool<Postgres>>,

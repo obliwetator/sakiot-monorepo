@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, utoipa::ToSchema)]
 pub struct Directories {
     pub year: i32,
     pub months: Option<Months>,
 }
 
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, utoipa::ToSchema)]
 pub struct Channels {
     pub channel_id: String,
     pub dirs: Vec<Directories>,
 }
 
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, utoipa::ToSchema)]
 pub struct File {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -20,12 +20,13 @@ pub struct File {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(skip)]
+    #[schema(ignore)]
     pub start_ts_ms: Option<i64>,
 }
 
 pub type Months = HashMap<i32, Option<Vec<File>>>;
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug, utoipa::ToSchema)]
 pub struct StartEnd {
     pub start: Option<f32>,
     pub end: Option<f32>,

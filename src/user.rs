@@ -95,7 +95,7 @@ pub async fn insert_user_guilds_db(
     }
 
     let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) "
+        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) ",
     );
 
     query_builder.push_values(user_guilds, |mut b, guild| {
@@ -199,17 +199,30 @@ pub async fn get_current_user(
     Ok(HttpResponse::Ok().json(user_data))
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct GuildDataForFrontEnd {
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct GuildDataForFrontEnd {
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     pub id: i64,
     pub name: String,
     pub icon: Option<String>,
     pub owner: bool,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "268435456")]
     pub permissions: i64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users/current/guilds",
+    tag = "user",
+    responses(
+        (status = 200, description = "Guilds visible to current user", body = [GuildDataForFrontEnd]),
+        (status = 403, description = "Token not attached to request context", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/users/current/guilds")]
 pub async fn get_current_user_guilds(
     _req: HttpRequest,

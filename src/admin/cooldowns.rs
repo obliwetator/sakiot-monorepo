@@ -5,17 +5,17 @@ use sqlx::{Pool, Postgres};
 use crate::errors::AppError;
 use crate::permissions::require_guild_admin;
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct GuildCooldown {
     pub cooldown_seconds: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CooldownBody {
     pub cooldown_seconds: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct UserOverride {
     pub user_id: i64,
     pub cooldown_seconds: i32,
@@ -32,6 +32,19 @@ fn validate_seconds(secs: i32) -> Result<(), AppError> {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/admin/guilds/{guild_id}/cooldown",
+    tag = "admin",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "Guild cooldown", body = GuildCooldown),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
 #[get("/admin/guilds/{guild_id}/cooldown")]
 pub async fn get_guild_cooldown(
     req: HttpRequest,
@@ -53,6 +66,21 @@ pub async fn get_guild_cooldown(
     }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/admin/guilds/{guild_id}/cooldown",
+    tag = "admin",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    request_body = CooldownBody,
+    responses(
+        (status = 204, description = "Guild cooldown updated"),
+        (status = 400, description = "Invalid cooldown", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[put("/admin/guilds/{guild_id}/cooldown")]
 pub async fn set_guild_cooldown(
     req: HttpRequest,
@@ -78,6 +106,19 @@ pub async fn set_guild_cooldown(
     Ok(HttpResponse::NoContent().finish())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/admin/guilds/{guild_id}/cooldown/overrides",
+    tag = "admin",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "User cooldown overrides", body = [UserOverride]),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/admin/guilds/{guild_id}/cooldown/overrides")]
 pub async fn list_user_overrides(
     req: HttpRequest,
@@ -109,6 +150,24 @@ pub async fn list_user_overrides(
     Ok(HttpResponse::Ok().json(out))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/admin/guilds/{guild_id}/cooldown/overrides/{user_id}",
+    tag = "admin",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("user_id" = i64, Path, description = "Discord user id"),
+    ),
+    request_body = CooldownBody,
+    responses(
+        (status = 204, description = "User cooldown override updated"),
+        (status = 400, description = "Invalid cooldown", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
 #[put("/admin/guilds/{guild_id}/cooldown/overrides/{user_id}")]
 pub async fn set_user_override(
     req: HttpRequest,
@@ -135,6 +194,22 @@ pub async fn set_user_override(
     Ok(HttpResponse::NoContent().finish())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/admin/guilds/{guild_id}/cooldown/overrides/{user_id}",
+    tag = "admin",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("user_id" = i64, Path, description = "Discord user id"),
+    ),
+    responses(
+        (status = 204, description = "User cooldown override deleted"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
 #[delete("/admin/guilds/{guild_id}/cooldown/overrides/{user_id}")]
 pub async fn delete_user_override(
     req: HttpRequest,

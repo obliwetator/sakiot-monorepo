@@ -2,7 +2,6 @@ use std::fs;
 use std::process::Stdio;
 
 use actix_web::{get, web, HttpRequest, HttpResponse};
-use serde_json::json;
 use sqlx::{Pool, Postgres};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -13,6 +12,33 @@ use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH}
 use super::types::HashMapContainer;
 use super::util::{file_exists, get_file_path_root, handle_idempotency_key, resolve_existing_dir};
 
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct RemoveSilenceResponse {
+    pub url: String,
+    pub message: &'static str,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = i32, Path, description = "Recording month"),
+        ("file_name" = String, Path, description = "Recording file stem"),
+        ("Idempotency-Key" = String, Header, description = "Idempotency key for processing request"),
+    ),
+    responses(
+        (status = 200, description = "Silence removal file exists or processing started", body = RemoveSilenceResponse),
+        (status = 202, description = "Existing processing request completed", body = RemoveSilenceResponse),
+        (status = 400, description = "Missing idempotency key", body = crate::errors::ApiError),
+        (status = 503, description = "Concurrent processing state unavailable", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn remove_silence(
     req: HttpRequest,
@@ -57,12 +83,16 @@ pub async fn remove_silence(
             }
         }
 
-        let json = json!({"url":file_no_silence,"message":" Success"});
-        return Ok(HttpResponse::Accepted().json(json));
+        return Ok(HttpResponse::Accepted().json(RemoveSilenceResponse {
+            url: file_no_silence,
+            message: " Success",
+        }));
     } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")) {
         info!("file already exists");
-        let json = json!({"url":file_no_silence,"message":"File already exists"});
-        return Ok(HttpResponse::Ok().json(json));
+        return Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
+            url: file_no_silence,
+            message: "File already exists",
+        }));
     } else {
         info!("Creating new file");
         let (tx, _) = broadcast::channel::<i32>(10);
@@ -135,7 +165,9 @@ pub async fn remove_silence(
             }
         });
 
-        let json = json!({"url": file_no_silence,"message":"Request Accepted"});
-        Ok(HttpResponse::Ok().json(json))
+        Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
+            url: file_no_silence,
+            message: "Request Accepted",
+        }))
     }
 }

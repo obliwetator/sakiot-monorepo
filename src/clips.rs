@@ -23,10 +23,11 @@ use serde_json::json;
 
 type DisplayFromstr = As<DisplayFromStr>;
 
-#[derive(Serialize, Debug)]
-struct ClipInfo {
+#[derive(Serialize, Debug, utoipa::ToSchema)]
+pub struct ClipInfo {
     clip_id: String,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     user_id: i64,
     name: Option<String>,
     original_file_name: Option<String>,
@@ -34,8 +35,10 @@ struct ClipInfo {
     length: Option<f32>,
     size: Option<i64>,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     guild_id: i64,
     #[serde(with = "DisplayFromstr")]
+    #[schema(value_type = String, example = "146638124288704513")]
     channel_id: i64,
     start_time: f32,
 }
@@ -81,6 +84,18 @@ pub async fn get_clip(
     Ok(res)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/clips/{guild_id}",
+    tag = "clips",
+    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    responses(
+        (status = 200, description = "Guild clips", body = [ClipInfo]),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/clips/{guild_id}")]
 pub async fn get_clips(
     _req: HttpRequest,
@@ -178,6 +193,14 @@ use crate::audio::StartEnd;
 use chrono::Datelike;
 use std::process::Stdio;
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct CreateClipResponse {
+    pub status: &'static str,
+    pub file: String,
+    pub id: String,
+    pub name: String,
+}
+
 async fn crop_ffmpeg(
     start: f32,
     end: f32,
@@ -207,6 +230,26 @@ async fn crop_ffmpeg(
         .map_err(|e| AppError::FfmpegError(e.to_string()))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    tag = "clips",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = i32, Path, description = "Recording month"),
+        ("file_name" = String, Path, description = "Recording file stem"),
+    ),
+    request_body = StartEnd,
+    responses(
+        (status = 200, description = "Clip created", body = CreateClipResponse),
+        (status = 400, description = "Invalid clip request", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
 #[post("/audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn create_clip(
     req: HttpRequest,
@@ -240,7 +283,9 @@ pub async fn create_clip(
 
     let length = end - start;
     if !(1.0..=20.0).contains(&length) {
-        return Err(AppError::BadRequest("Clip duration must be between 1 and 20 seconds".into()));
+        return Err(AppError::BadRequest(
+            "Clip duration must be between 1 and 20 seconds".into(),
+        ));
     }
 
     let clip_name = if let Some(ref name) = clip_duration.name {
@@ -299,9 +344,30 @@ pub async fn create_clip(
         AppError::InternalError
     })?;
 
-    Ok(HttpResponse::Ok().json(serde_json::json!({"status": "success", "file": saved_file_name, "id": clip_id, "name": clip_name})))
+    Ok(HttpResponse::Ok().json(CreateClipResponse {
+        status: "success",
+        file: saved_file_name,
+        id: clip_id,
+        name: clip_name,
+    }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/audio/clips/{guild_id}/{clip_id}",
+    tag = "clips",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("clip_id" = String, Path, description = "Clip id"),
+    ),
+    responses(
+        (status = 200, description = "Clip deleted"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Clip not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
 #[delete("/audio/clips/{guild_id}/{clip_id}")]
 pub async fn delete(
     pool: web::Data<Pool<Postgres>>,

@@ -17,7 +17,7 @@ fn validate_stem(s: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct VoiceEventDto {
     pub offset_ms: i64,
     pub user_id: i64,
@@ -32,6 +32,27 @@ pub struct VoiceEventDto {
 /// Bounds: [start_ts, COALESCE(end_ts, now())]. start_ts/end_ts are stored as
 /// epoch-ms BIGINTs on `audio_files`; voice_state_events.occurred_at is
 /// TIMESTAMPTZ — converted via `to_timestamp(ms / 1000.0)` for the range scan.
+#[utoipa::path(
+    get,
+    path = "/api/audio/events/{guild_id}/{channel_id}/{year}/{month}/{stem}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("stem" = String, Path, description = "Recording file stem"),
+        ("user_id" = Option<i64>, Query, description = "Optional user id filter"),
+    ),
+    responses(
+        (status = 200, description = "Voice events for recording", body = [VoiceEventDto]),
+        (status = 400, description = "Invalid request", body = crate::errors::ApiError),
+        (status = 401, description = "Missing access or channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Recording not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/events/{guild_id}/{channel_id}/{year}/{month}/{stem}")]
 pub async fn get_recording_events(
     path: web::Path<(i64, i64, i32, u32, String)>,

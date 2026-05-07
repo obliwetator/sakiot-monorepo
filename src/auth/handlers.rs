@@ -2,7 +2,6 @@
 use actix_files::NamedFile;
 use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
 use reqwest::Client;
-use serde_json::json;
 use sqlx::{Pool, Postgres};
 use tracing::warn;
 use uuid::Uuid;
@@ -37,6 +36,17 @@ async fn create_jwt_tokens(
 #[derive(serde::Deserialize)]
 pub struct OauthStartQuery {
     pub origin: String,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct RefreshTokenResponse {
+    pub token: String,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct RefreshTokenError {
+    pub error: &'static str,
+    pub message: &'static str,
 }
 
 #[get("/oauth/start")]
@@ -198,6 +208,16 @@ pub async fn dev_login(
     Ok(b)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/refresh",
+    tag = "auth",
+    responses(
+        (status = 200, description = "New access token issued", body = RefreshTokenResponse),
+        (status = 401, description = "Missing, expired, or invalid refresh token"),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+)]
 #[get("/refresh")]
 pub async fn refresh_jwt(
     req: HttpRequest,
@@ -229,10 +249,10 @@ pub async fn refresh_jwt(
                 "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
                 req.path()
             );
-            let mut resp = HttpResponse::Unauthorized().json(json!({
-                "error": "expired_or_invalid_token",
-                "message": "The refresh token is expired or invalid. Please login again."
-            }));
+            let mut resp = HttpResponse::Unauthorized().json(RefreshTokenError {
+                error: "expired_or_invalid_token",
+                message: "The refresh token is expired or invalid. Please login again.",
+            });
             resp.add_cookie(&clear_access_token_cookie(d))?;
             resp.add_cookie(&clear_refresh_token_cookie(d))?;
             resp.add_cookie(&clear_csrf_cookie(d))?;
@@ -265,7 +285,9 @@ pub async fn refresh_jwt(
         .await?
     };
 
-    let mut response = HttpResponse::Ok().json(json!({ "token": new_access_token }));
+    let mut response = HttpResponse::Ok().json(RefreshTokenResponse {
+        token: new_access_token.clone(),
+    });
     response.add_cookie(&access_token_cookie(d, &new_access_token))?;
     response.add_cookie(&refresh_token_cookie(d, &new_refresh_token))?;
     response.add_cookie(&csrf_cookie(d, &csrf_token))?;
