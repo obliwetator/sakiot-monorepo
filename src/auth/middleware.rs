@@ -9,6 +9,13 @@ use super::jwt::{Access, AccessKeys, Token};
 
 pub struct AuthMiddleware;
 
+fn warn_unauthorized_middleware_access(path: &str, reason: &str) {
+    warn!(
+        "Unauthorized access attempt to middleware {}: {}",
+        path, reason
+    );
+}
+
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
@@ -70,10 +77,7 @@ where
         let access_cookie = match req.cookie("access_token") {
             Some(c) => c,
             None => {
-                warn!(
-                    "Unauthorized access attempt to middleware {}: missing access_token cookie",
-                    req.path()
-                );
+                warn_unauthorized_middleware_access(req.path(), "missing access_token cookie");
                 let (request, _pl) = req.into_parts();
                 let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
@@ -83,10 +87,7 @@ where
         let decoded_access = match Token::<Access>::decode(access_cookie.value(), keys) {
             Ok(token) => token,
             Err(_) => {
-                warn!(
-                    "Unauthorized access attempt to middleware {}: invalid or expired token",
-                    req.path()
-                );
+                warn_unauthorized_middleware_access(req.path(), "invalid or expired token");
                 let (request, _pl) = req.into_parts();
                 let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });

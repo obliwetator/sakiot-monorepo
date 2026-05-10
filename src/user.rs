@@ -108,7 +108,14 @@ pub async fn insert_user_guilds_db(
             .push_bind(&guild.features);
     });
 
-    query_builder.push(" ON CONFLICT DO NOTHING");
+    query_builder.push(
+        " ON CONFLICT (id, user_id) DO UPDATE SET
+          name = EXCLUDED.name,
+          icon = EXCLUDED.icon,
+          owner = EXCLUDED.owner,
+          permissions = EXCLUDED.permissions,
+          features = EXCLUDED.features",
+    );
 
     let query = query_builder.build();
     query.execute(pool.get_ref()).await?;

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
-use crate::permissions::require_guild_admin;
+use crate::permissions::require_guild_manager;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct GuildCooldown {
@@ -40,7 +40,7 @@ fn validate_seconds(secs: i32) -> Result<(), AppError> {
     responses(
         (status = 200, description = "Guild cooldown", body = GuildCooldown),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -52,7 +52,7 @@ pub async fn get_guild_cooldown(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_admin(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
 
     let row = sqlx::query!(
         "SELECT cooldown_seconds FROM guild_jam_cooldowns WHERE guild_id = $1",
@@ -76,7 +76,7 @@ pub async fn get_guild_cooldown(
         (status = 204, description = "Guild cooldown updated"),
         (status = 400, description = "Invalid cooldown", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -89,7 +89,7 @@ pub async fn set_guild_cooldown(
     body: web::Json<CooldownBody>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_admin(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
     validate_seconds(body.cooldown_seconds)?;
 
     sqlx::query!(
@@ -114,7 +114,7 @@ pub async fn set_guild_cooldown(
     responses(
         (status = 200, description = "User cooldown overrides", body = [UserOverride]),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -126,7 +126,7 @@ pub async fn list_user_overrides(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_admin(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
 
     let rows = sqlx::query!(
         "SELECT user_id, cooldown_seconds, updated_at
@@ -163,7 +163,7 @@ pub async fn list_user_overrides(
         (status = 204, description = "User cooldown override updated"),
         (status = 400, description = "Invalid cooldown", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -176,7 +176,7 @@ pub async fn set_user_override(
     body: web::Json<CooldownBody>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, user_id) = path.into_inner();
-    require_guild_admin(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
     validate_seconds(body.cooldown_seconds)?;
 
     sqlx::query!(
@@ -205,7 +205,7 @@ pub async fn set_user_override(
     responses(
         (status = 204, description = "User cooldown override deleted"),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User is not a guild admin", body = crate::errors::ApiError),
+        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -217,7 +217,7 @@ pub async fn delete_user_override(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, user_id) = path.into_inner();
-    require_guild_admin(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
 
     sqlx::query!(
         "DELETE FROM user_jam_cooldown_overrides WHERE guild_id = $1 AND user_id = $2",
