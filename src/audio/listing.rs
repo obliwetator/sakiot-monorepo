@@ -419,7 +419,7 @@ pub async fn get_live_stems(
 
     let rows = sqlx::query!(
         "SELECT file_name, channel_id FROM audio_files \
-         WHERE guild_id = $1 AND end_ts IS NULL",
+         WHERE guild_id = $1 AND end_ts IS NULL AND reaped IS FALSE",
         guild_id
     )
     .fetch_all(pool.get_ref())
