@@ -3,7 +3,7 @@ use actix_web::{get, web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
-use tracing::{error, info};
+use tracing::{error, warn};
 
 use crate::config::Config;
 use crate::errors::AppError;
@@ -26,7 +26,6 @@ impl Actor for DashboardWebSocket {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("Dashboard WebSocket connected");
         self.start_heartbeat(ctx);
 
         let addr = ctx.address();
@@ -35,7 +34,6 @@ impl Actor for DashboardWebSocket {
 
         tokio::spawn(async move {
             loop {
-                info!("Attempting to connect to Dashboard gRPC service...");
                 let mut client = match DashboardClient::connect(grpc_address.clone()).await {
                     Ok(c) => c,
                     Err(e) => {
@@ -47,8 +45,6 @@ impl Actor for DashboardWebSocket {
                         continue;
                     }
                 };
-
-                info!("Successfully connected to Dashboard gRPC service");
 
                 let (tx, rx) = mpsc::channel(100);
 
@@ -118,22 +114,19 @@ impl Actor for DashboardWebSocket {
                     }
                 }
 
-                info!("gRPC stream ended. Reconnecting in 3s...");
+                warn!("gRPC stream ended. Reconnecting in 3s...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
             }
         });
     }
 
-    fn stopped(&mut self, _: &mut Self::Context) {
-        info!("Dashboard WebSocket disconnected");
-    }
+    fn stopped(&mut self, _: &mut Self::Context) {}
 }
 
 impl DashboardWebSocket {
     fn start_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.last_heartbeat) > CLIENT_TIMEOUT {
-                info!("Dashboard WebSocket client timed out, stopping");
                 ctx.stop();
                 return;
             }

@@ -7,8 +7,6 @@ use uuid::Uuid;
 
 use crate::audio::WaveformProgressContainer;
 
-use tracing::info;
-
 /// Generates an audiowaveform track.dat file for a given audio file with a specific target number of points (pixels).
 /// Updates progress in a shared HashMap container.
 pub async fn generate_peaks_background(
@@ -124,8 +122,6 @@ pub async fn generate_peaks_background(
     }
 
     tokio::fs::rename(&temp_output_file, &output_file).await?;
-
-    info!("audiowaveform completed successfully.");
 
     if let Some(completed_progress) = completed_progress {
         progress_map

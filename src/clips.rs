@@ -64,7 +64,6 @@ pub async fn get_clip(
 
     let saved_file_name = row.saved_file_name.unwrap_or_default();
     let full_path = format!("{}{}", CLIPS_PATH, saved_file_name);
-    info!("clips path: {}", full_path);
 
     let file = NamedFile::open_async(&full_path)
         .await
@@ -149,8 +148,6 @@ pub async fn play_clip(
     info: web::Json<JamItBody>,
     client: web::Data<JammerClient<tonic::transport::Channel>>,
 ) -> Result<HttpResponse, AppError> {
-    info!("Received jamit request: {:?}", info);
-
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
@@ -158,11 +155,6 @@ pub async fn play_clip(
         .ok_or(AppError::Unauthorized)?;
 
     let mut client = client.get_ref().clone();
-
-    info!(
-        "Sending request for clip '{}', guild '{}', user '{}'",
-        info.clip_name, info.guild_id, user_id
-    );
 
     let request = tonic::Request::new(JamData {
         clip_name: info.clip_name.clone(),
@@ -257,7 +249,6 @@ pub async fn create_clip(
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
-    info!("creating clip with duration: {:?}", clip_duration);
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
@@ -303,7 +294,6 @@ pub async fn create_clip(
     let target_dir = format!("{}{}/{:02}", CLIPS_PATH, c_year, c_month);
     let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
     let full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
-    info!("saving clip to: {}", full_save_path);
 
     std::fs::create_dir_all(&target_dir)?;
 

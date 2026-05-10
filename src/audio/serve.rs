@@ -61,7 +61,6 @@ pub async fn get_audio(
     };
 
     for path in candidates(root, guild_id as i64, channel_id, year, month as u32, &leaf) {
-        info!("try file path: {}", path.display());
         if let Ok(f) = NamedFile::open_async(&path).await {
             return Ok(f.into_response(&req));
         }

@@ -9,11 +9,11 @@ use super::jwt::{Access, AccessKeys, Token};
 
 pub struct AuthMiddleware;
 
-fn warn_unauthorized_middleware_access(path: &str, reason: &str) {
-    warn!(
-        "Unauthorized access attempt to middleware {}: {}",
-        path, reason
-    );
+fn warn_unauthorized_middleware_access(_path: &str, _reason: &str) {
+    // warn!(
+    //     "Unauthorized access attempt to middleware {}: {}",
+    //     path, reason
+    // );
 }
 
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware

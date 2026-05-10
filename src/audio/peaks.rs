@@ -34,10 +34,7 @@ pub async fn get_waveform_data(
     let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
-    info!("File path: {}", output);
     let file_name = path.4.clone();
-
-    info!("Received poll request for waveform data: {}", file_path);
 
     let row = sqlx::query!(
         "SELECT end_ts, waveform_end_ts FROM audio_files WHERE file_name = $1",

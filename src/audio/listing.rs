@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
+
 use std::fs::ReadDir;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{get, web, HttpResponse};
 use sqlx::{Pool, Postgres};
-use tracing::info;
+use tracing::error;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -58,7 +59,7 @@ pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, 
                 }
             }
         } else {
-            info!("error for file");
+            error!("error for file");
         }
     }
 }
@@ -379,7 +380,7 @@ pub async fn for_months(
 
             for_entry(entries, channel, dirs, month_as_int).await;
         } else {
-            info!("error for month")
+            error!("error for month")
         }
     }
     Ok(())
