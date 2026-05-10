@@ -1,5 +1,5 @@
-use std::io::Write;
 use opentelemetry_sdk::Resource;
+use std::io::Write;
 use tracing_subscriber::{layer::SubscriberExt, Layer, Registry};
 
 pub const SERVICE_NAME: &str = "web_server";
@@ -18,7 +18,9 @@ pub fn init_telemetry() {
     {
         Ok(e) => e,
         Err(e) => {
-            warn_startup(&format!("failed to create OTLP span exporter, traces disabled: {e}"));
+            warn_startup(&format!(
+                "failed to create OTLP span exporter, traces disabled: {e}"
+            ));
             let fmt_layer = tracing_subscriber::fmt::layer()
                 .pretty()
                 .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
@@ -34,7 +36,9 @@ pub fn init_telemetry() {
     {
         Ok(e) => e,
         Err(e) => {
-            warn_startup(&format!("failed to create OTLP metric exporter, metrics disabled: {e}"));
+            warn_startup(&format!(
+                "failed to create OTLP metric exporter, metrics disabled: {e}"
+            ));
             let fmt_layer = tracing_subscriber::fmt::layer()
                 .pretty()
                 .with_filter(tracing_subscriber::filter::LevelFilter::INFO);

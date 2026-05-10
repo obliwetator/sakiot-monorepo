@@ -69,7 +69,11 @@ impl Actor for DashboardWebSocket {
                 tokio::spawn(async move {
                     while task_rx.changed().await.is_ok() {
                         let t = task_rx.borrow().clone();
-                        let action = if t.is_empty() { "unsubscribe" } else { "subscribe" };
+                        let action = if t.is_empty() {
+                            "unsubscribe"
+                        } else {
+                            "subscribe"
+                        };
                         if tx_clone
                             .send(ClientMessage {
                                 action: action.to_string(),

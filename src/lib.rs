@@ -9,7 +9,7 @@ pub mod http_metrics;
 pub mod openapi;
 pub mod permissions;
 pub mod proto;
-pub mod telemetry;
 pub mod stamps;
+pub mod telemetry;
 pub mod user;
 pub mod waveform;

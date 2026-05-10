@@ -46,7 +46,10 @@ pub struct StateResponse {
 }
 
 fn key_id(k: &RecordingKey) -> String {
-    format!("{}/{}/{:04}/{:02}/{}", k.guild_id, k.channel_id, k.year, k.month, k.stem)
+    format!(
+        "{}/{}/{:04}/{:02}/{}",
+        k.guild_id, k.channel_id, k.year, k.month, k.stem
+    )
 }
 
 fn validate_stem(s: &str) -> Result<(), AppError> {
@@ -65,12 +68,21 @@ fn validate_seg(s: &str) -> Result<(), AppError> {
 
 fn source_path(k: &RecordingKey) -> Option<PathBuf> {
     let padded = k.recording_path(RECORDING_PATH);
-    if padded.exists() { return Some(padded); }
+    if padded.exists() {
+        return Some(padded);
+    }
     let root = RECORDING_PATH.trim_end_matches('/');
     let unpadded = PathBuf::from(root)
-        .join(format!("{}/{}/{}/{}", k.guild_id, k.channel_id, k.year, k.month))
+        .join(format!(
+            "{}/{}/{}/{}",
+            k.guild_id, k.channel_id, k.year, k.month
+        ))
         .join(format!("{}.ogg", k.stem));
-    if unpadded.exists() { Some(unpadded) } else { None }
+    if unpadded.exists() {
+        Some(unpadded)
+    } else {
+        None
+    }
 }
 
 /// Probe the audio codec of `src`. Returns the lowercase codec name
@@ -78,10 +90,14 @@ fn source_path(k: &RecordingKey) -> Option<PathBuf> {
 async fn probe_codec(src: &Path) -> Result<String, AppError> {
     let out = Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-select_streams", "a:0",
-            "-show_entries", "stream=codec_name",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
         ])
         .arg(src)
         .stdin(Stdio::null())
@@ -93,10 +109,15 @@ async fn probe_codec(src: &Path) -> Result<String, AppError> {
     if !out.status.success() {
         return Err(AppError::FfmpegError("ffprobe failed".into()));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_ascii_lowercase())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .to_ascii_lowercase())
 }
 
-async fn db_state(pool: &Pool<Postgres>, stem: &str) -> Result<(Option<i64>, Option<i64>), AppError> {
+async fn db_state(
+    pool: &Pool<Postgres>,
+    stem: &str,
+) -> Result<(Option<i64>, Option<i64>), AppError> {
     let row = sqlx::query!(
         "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",
         stem
@@ -112,8 +133,12 @@ async fn playlist_finalized(p: &Path) -> bool {
 
 async fn append_endlist(p: &Path) -> std::io::Result<()> {
     let mut content = tokio::fs::read_to_string(p).await?;
-    if content.contains("#EXT-X-ENDLIST") { return Ok(()); }
-    if !content.ends_with('\n') { content.push('\n'); }
+    if content.contains("#EXT-X-ENDLIST") {
+        return Ok(());
+    }
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
     content.push_str("#EXT-X-ENDLIST\n");
     tokio::fs::write(p, content).await
 }
@@ -129,16 +154,26 @@ fn ffmpeg_output_args(out_dir: &Path, live: bool) -> Vec<String> {
     };
     let playlist_type = if live { "event" } else { "vod" };
     vec![
-        "-c:a".into(), "copy".into(),
-        "-map".into(), "0:a:0".into(),
-        "-f".into(), "hls".into(),
-        "-hls_time".into(), "2".into(),
-        "-hls_list_size".into(), "0".into(),
-        "-hls_flags".into(), flags.into(),
-        "-hls_playlist_type".into(), playlist_type.into(),
-        "-hls_segment_type".into(), "fmp4".into(),
-        "-hls_fmp4_init_filename".into(), "init.mp4".into(),
-        "-hls_segment_filename".into(), seg_pattern.to_string_lossy().into_owned(),
+        "-c:a".into(),
+        "copy".into(),
+        "-map".into(),
+        "0:a:0".into(),
+        "-f".into(),
+        "hls".into(),
+        "-hls_time".into(),
+        "2".into(),
+        "-hls_list_size".into(),
+        "0".into(),
+        "-hls_flags".into(),
+        flags.into(),
+        "-hls_playlist_type".into(),
+        playlist_type.into(),
+        "-hls_segment_type".into(),
+        "fmp4".into(),
+        "-hls_fmp4_init_filename".into(),
+        "init.mp4".into(),
+        "-hls_segment_filename".into(),
+        seg_pattern.to_string_lossy().into_owned(),
         playlist.to_string_lossy().into_owned(),
     ]
 }
@@ -151,7 +186,9 @@ async fn spawn_job(
     out_dir: PathBuf,
     is_live: bool,
 ) -> Result<Arc<Mutex<JobState>>, AppError> {
-    tokio::fs::create_dir_all(&out_dir).await.map_err(AppError::IoError)?;
+    tokio::fs::create_dir_all(&out_dir)
+        .await
+        .map_err(AppError::IoError)?;
 
     let child = if is_live {
         // Shell pipeline so we don't have to wire ChildStdout -> Stdio manually.
@@ -159,9 +196,15 @@ async fn spawn_job(
         // tail starts producing bytes — but tail still runs as a sibling under
         // the shell's process group. We kill the whole group via setsid below.
         let src_q = src.to_string_lossy().replace('\'', "'\\''");
-        let mut ff_args = vec!["-hide_banner".into(), "-loglevel".into(), "warning".into(),
-                                "-f".into(), "ogg".into(),
-                                "-i".into(), "pipe:0".into()];
+        let mut ff_args = vec![
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "warning".into(),
+            "-f".into(),
+            "ogg".into(),
+            "-i".into(),
+            "pipe:0".into(),
+        ];
         ff_args.extend(ffmpeg_output_args(&out_dir, true));
         // Shell-quote each ffmpeg arg.
         let ff_quoted = ff_args
@@ -182,8 +225,10 @@ async fn spawn_job(
             .map_err(AppError::IoError)?
     } else {
         let mut c = Command::new("ffmpeg");
-        c.arg("-hide_banner").args(["-loglevel", "warning"])
-            .arg("-i").arg(&src);
+        c.arg("-hide_banner")
+            .args(["-loglevel", "warning"])
+            .arg("-i")
+            .arg(&src);
         for a in ffmpeg_output_args(&out_dir, false) {
             c.arg(a);
         }
@@ -194,8 +239,15 @@ async fn spawn_job(
             .map_err(AppError::IoError)?
     };
 
-    let state = Arc::new(Mutex::new(JobState { finalized: false, child: Some(child) }));
-    container.0.write().await.insert(key_id(&key), state.clone());
+    let state = Arc::new(Mutex::new(JobState {
+        finalized: false,
+        child: Some(child),
+    }));
+    container
+        .0
+        .write()
+        .await
+        .insert(key_id(&key), state.clone());
 
     // Lifecycle task.
     let state_c = state.clone();
@@ -229,7 +281,9 @@ async fn spawn_job(
                 // ffmpeg. `kill(-pgid, SIGTERM)` signals every process in the
                 // group — that's what `libc` is here for.
                 if let Some(pid) = child.id() {
-                    unsafe { libc::kill(-(pid as i32), libc::SIGTERM); }
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGTERM);
+                    }
                 }
                 let _ = child.wait().await;
             }
@@ -255,7 +309,9 @@ async fn spawn_job(
     let pl = out_dir.join("playlist.m3u8");
     let init = out_dir.join("init.mp4");
     while std::time::Instant::now() < deadline {
-        if pl.exists() && init.exists() { break; }
+        if pl.exists() && init.exists() {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     Ok(state)
@@ -291,7 +347,10 @@ async fn ensure_job(
     let out_dir = key.live_dir(RECORDING_PATH);
     let playlist = out_dir.join("playlist.m3u8");
     if playlist.exists() && playlist_finalized(&playlist).await {
-        let s = Arc::new(Mutex::new(JobState { finalized: true, child: None }));
+        let s = Arc::new(Mutex::new(JobState {
+            finalized: true,
+            child: None,
+        }));
         container.0.write().await.insert(id, s.clone());
         return Ok(s);
     }
@@ -301,7 +360,9 @@ async fn ensure_job(
 
     {
         let r = container.0.read().await;
-        if let Some(s) = r.get(&id).cloned() { return Ok(s); }
+        if let Some(s) = r.get(&id).cloned() {
+            return Ok(s);
+        }
     }
     spawn_job(container, pool, key, src, out_dir, is_live).await
 }
@@ -317,9 +378,17 @@ pub async fn live_playlist(
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
     let pl = key.live_playlist_path(RECORDING_PATH);
-    let body = tokio::fs::read(&pl).await.map_err(|_| AppError::FileNotFound)?;
-    let final_ = std::str::from_utf8(&body).map(|s| s.contains("#EXT-X-ENDLIST")).unwrap_or(false);
-    let cache = if final_ { "public, max-age=300" } else { "no-cache" };
+    let body = tokio::fs::read(&pl)
+        .await
+        .map_err(|_| AppError::FileNotFound)?;
+    let final_ = std::str::from_utf8(&body)
+        .map(|s| s.contains("#EXT-X-ENDLIST"))
+        .unwrap_or(false);
+    let cache = if final_ {
+        "public, max-age=300"
+    } else {
+        "no-cache"
+    };
     Ok(HttpResponse::Ok()
         .content_type("application/vnd.apple.mpegurl")
         .insert_header((header::CACHE_CONTROL, cache))
@@ -372,7 +441,9 @@ pub async fn live_segment(
     }
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let path = key.live_segment_path(RECORDING_PATH, &seg);
-    let f = NamedFile::open_async(&path).await.map_err(|_| AppError::FileNotFound)?;
+    let f = NamedFile::open_async(&path)
+        .await
+        .map_err(|_| AppError::FileNotFound)?;
     let mut resp = f.into_response(&req);
     let cache = if seg.starts_with("seg_") {
         "public, max-age=31536000, immutable"

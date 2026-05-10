@@ -6,3 +6,4 @@
 *.pem
 /waveform_data
 /docs
+*.md

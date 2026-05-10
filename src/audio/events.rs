@@ -6,12 +6,7 @@ use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
 fn validate_stem(s: &str) -> Result<(), AppError> {
-    if s.is_empty()
-        || s.contains('/')
-        || s.contains("..")
-        || s.contains('\\')
-        || s.contains('\'')
-    {
+    if s.is_empty() || s.contains('/') || s.contains("..") || s.contains('\\') || s.contains('\'') {
         return Err(AppError::BadRequest("Invalid stem".into()));
     }
     Ok(())
