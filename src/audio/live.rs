@@ -23,7 +23,7 @@ use serde::Serialize;
 use sqlx::{Pool, Postgres};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::errors::AppError;
 
@@ -131,6 +131,29 @@ async fn playlist_finalized(p: &Path) -> bool {
     matches!(tokio::fs::read_to_string(p).await, Ok(s) if s.contains("#EXT-X-ENDLIST"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HlsCacheAction {
+    ReuseFinalized,
+    PurgeStaleLive,
+    BuildFresh,
+}
+
+async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
+    if !playlist.exists() {
+        return HlsCacheAction::BuildFresh;
+    }
+
+    if playlist_finalized(playlist).await {
+        return HlsCacheAction::ReuseFinalized;
+    }
+
+    if is_live {
+        return HlsCacheAction::PurgeStaleLive;
+    }
+
+    HlsCacheAction::BuildFresh
+}
+
 async fn append_endlist(p: &Path) -> std::io::Result<()> {
     let mut content = tokio::fs::read_to_string(p).await?;
     if content.contains("#EXT-X-ENDLIST") {
@@ -148,7 +171,7 @@ fn ffmpeg_output_args(out_dir: &Path, live: bool) -> Vec<String> {
     let seg_pattern = out_dir.join("seg_%05d.m4s");
     let playlist = out_dir.join("playlist.m3u8");
     let flags = if live {
-        "independent_segments+append_list+omit_endlist"
+        "independent_segments+omit_endlist"
     } else {
         "independent_segments"
     };
@@ -346,17 +369,30 @@ async fn ensure_job(
 
     let out_dir = key.live_dir(RECORDING_PATH);
     let playlist = out_dir.join("playlist.m3u8");
-    if playlist.exists() && playlist_finalized(&playlist).await {
-        let s = Arc::new(Mutex::new(JobState {
-            finalized: true,
-            child: None,
-        }));
-        container.0.write().await.insert(id, s.clone());
-        return Ok(s);
-    }
-
     let (_, end_ts) = db_state(&pool, &key.stem).await?;
     let is_live = end_ts.is_none();
+
+    match hls_cache_action(&playlist, is_live).await {
+        HlsCacheAction::ReuseFinalized => {
+            let s = Arc::new(Mutex::new(JobState {
+                finalized: true,
+                child: None,
+            }));
+            container.0.write().await.insert(id, s.clone());
+            return Ok(s);
+        }
+        HlsCacheAction::PurgeStaleLive => {
+            warn!(
+                stem = %key.stem,
+                path = %out_dir.display(),
+                "purging stale non-finalized live HLS cache before respawn"
+            );
+            tokio::fs::remove_dir_all(&out_dir)
+                .await
+                .map_err(AppError::IoError)?;
+        }
+        HlsCacheAction::BuildFresh => {}
+    }
 
     {
         let r = container.0.read().await;
@@ -452,7 +488,79 @@ pub async fn live_segment(
     };
     resp.headers_mut().insert(
         header::CACHE_CONTROL,
-        header::HeaderValue::from_str(cache).unwrap(),
+        header::HeaderValue::from_static(cache),
     );
     Ok(resp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn hls_cache_action_builds_when_playlist_missing() {
+        let dir =
+            std::env::temp_dir().join(format!("sakiot-live-test-missing-{}", uuid::Uuid::new_v4()));
+        let playlist = dir.join("playlist.m3u8");
+
+        assert_eq!(
+            hls_cache_action(&playlist, true).await,
+            HlsCacheAction::BuildFresh
+        );
+    }
+
+    #[tokio::test]
+    async fn hls_cache_action_reuses_finalized_playlist() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir =
+            std::env::temp_dir().join(format!("sakiot-live-test-final-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await?;
+        let playlist = dir.join("playlist.m3u8");
+        tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-ENDLIST\n").await?;
+
+        assert_eq!(
+            hls_cache_action(&playlist, true).await,
+            HlsCacheAction::ReuseFinalized
+        );
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hls_cache_action_purges_unfinalized_live_playlist(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("sakiot-live-test-stale-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await?;
+        let playlist = dir.join("playlist.m3u8");
+        tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n").await?;
+
+        assert_eq!(
+            hls_cache_action(&playlist, true).await,
+            HlsCacheAction::PurgeStaleLive
+        );
+        assert_eq!(
+            hls_cache_action(&playlist, false).await,
+            HlsCacheAction::BuildFresh
+        );
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        Ok(())
+    }
+
+    #[test]
+    fn live_ffmpeg_flags_do_not_append_existing_playlist() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let args = ffmpeg_output_args(Path::new("/tmp/live"), true);
+        let flags_pos = args
+            .iter()
+            .position(|arg| arg == "-hls_flags")
+            .ok_or_else(|| std::io::Error::other("hls flags option should exist"))?;
+        let flags = &args[flags_pos + 1];
+
+        assert!(flags.contains("omit_endlist"));
+        assert!(!flags.contains("append_list"));
+        Ok(())
+    }
 }
