@@ -95,7 +95,6 @@ pub async fn generate_peaks_background(
         match reader.read_until(b'\r', &mut buf).await {
             Ok(0) => break, // EOF
             Ok(_) => {
-                info!("audiowaveform output: {}", String::from_utf8_lossy(&buf));
                 if let Ok(line) = std::str::from_utf8(&buf) {
                     let trimmed = line.trim();
                     if trimmed.starts_with("Done: ") {

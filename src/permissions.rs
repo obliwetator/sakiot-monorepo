@@ -142,10 +142,65 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PermissionOverwriteBits {
+    allow: Permissions,
+    deny: Permissions,
+}
+
+impl Default for PermissionOverwriteBits {
+    fn default() -> Self {
+        Self {
+            allow: Permissions::empty(),
+            deny: Permissions::empty(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ChannelPermissionState {
+    channel_id: i64,
+    everyone: PermissionOverwriteBits,
+    roles: PermissionOverwriteBits,
+    member: PermissionOverwriteBits,
+}
+
+impl ChannelPermissionState {
+    fn new(channel_id: i64, everyone: PermissionOverwriteBits) -> Self {
+        Self {
+            channel_id,
+            everyone,
+            roles: PermissionOverwriteBits::default(),
+            member: PermissionOverwriteBits::default(),
+        }
+    }
+
+    fn can_connect(self, base_permissions: Permissions) -> bool {
+        let permissions = apply_overwrite(base_permissions, self.everyone);
+        let permissions = apply_overwrite(permissions, self.roles);
+        let permissions = apply_overwrite(permissions, self.member);
+
+        permissions.contains(Permissions::CONNECT)
+    }
+}
+
+fn permissions_from_bits(bits: i64) -> Permissions {
+    Permissions::from_bits_retain(bits)
+}
+
+fn apply_overwrite(
+    mut permissions: Permissions,
+    overwrite: PermissionOverwriteBits,
+) -> Permissions {
+    permissions.remove(overwrite.deny);
+    permissions.insert(overwrite.allow);
+    permissions
+}
+
 pub async fn get_everyone_permission_for_guild(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
-) -> Result<i64, AppError> {
+) -> Result<Permissions, AppError> {
     let res = sqlx::query!(
         "SELECT permission FROM roles
 			WHERE guild_id =$1 AND role_id =$1",
@@ -154,14 +209,14 @@ pub async fn get_everyone_permission_for_guild(
     .fetch_one(pool.get_ref())
     .await?;
 
-    Ok(res.permission)
+    Ok(permissions_from_bits(res.permission))
 }
 
 pub async fn get_combined_perm_for_user(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
     user_id: i64,
-) -> Result<i64, AppError> {
+) -> Result<Permissions, AppError> {
     let res = sqlx::query!(
         "SELECT permissions, owner FROM user_guilds
 		WHERE user_id = $1
@@ -172,18 +227,18 @@ pub async fn get_combined_perm_for_user(
     .fetch_one(pool.get_ref())
     .await?;
     if res.owner {
-        return Ok(Permissions::all().bits());
+        return Ok(Permissions::all());
     }
-    Ok(res.permissions)
+    Ok(permissions_from_bits(res.permissions))
 }
 
-pub async fn perms_for_roles_for_channel(
+async fn apply_role_overwrites(
     pool: &web::Data<Pool<Postgres>>,
     user_id: i64,
     guild_id: i64,
-    perm_hash: &mut HashMap<i64, [i64; 2]>,
+    channels: &mut HashMap<i64, ChannelPermissionState>,
 ) -> Result<(), AppError> {
-    let perms_for_roles_for_channel = sqlx::query!(
+    let role_overwrites = sqlx::query!(
         "SELECT  allow as \"allow!\", deny as \"deny!\", channel_id as \"channel_id!\", role_id as
 		\"role_id!\" FROM get_roles_overwrites_for_channels_from_user($1, $2)",
         user_id,
@@ -192,22 +247,18 @@ pub async fn perms_for_roles_for_channel(
     .fetch_all(pool.get_ref())
     .await?;
 
-    for perm in perms_for_roles_for_channel {
-        if perm.channel_id == guild_id {
-            // Dont include the generic @everyone
+    for overwrite in role_overwrites {
+        if overwrite.channel_id == guild_id {
+            // Generic @everyone is already included in the base guild permissions.
             continue;
-        } else {
-            match perm_hash.get_mut(&perm.channel_id) {
-                Some(ok) => {
-                    ok[0] |= perm.allow;
-                    ok[1] |= perm.deny;
-                }
-                None => {
-                    perm_hash.insert(perm.channel_id, [perm.allow, perm.deny]);
-                }
-            }
+        }
+
+        if let Some(channel) = channels.get_mut(&overwrite.channel_id) {
+            channel.roles.allow |= permissions_from_bits(overwrite.allow);
+            channel.roles.deny |= permissions_from_bits(overwrite.deny);
         }
     }
+
     Ok(())
 }
 
@@ -216,143 +267,109 @@ pub async fn get_available_channels_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, AppError> {
-    // [0] = allow, [1] = deny
-    let mut perm_hash: HashMap<i64, [i64; 2]> = HashMap::new();
-    let mut allowed_channels: HashSet<i64> = HashSet::new();
-    let mut denied_channels: HashSet<i64> = HashSet::new();
-
     let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await?;
     let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await?;
+    let base_permissions = everyone_permission | combined_permission;
 
-    // This is the highest non-specific permission for user
-    let total_permission = everyone_permission | combined_permission;
-
-    get_user_channel_overrides_for_user_id(user_id, guild_id, pool, &mut perm_hash).await?;
-
-    // Is admin
-    if (total_permission & Permissions::ADMINISTRATOR.bits()) == Permissions::ADMINISTRATOR.bits() {
-        perm_hash.retain(|ch_id, _| {
-            allowed_channels.insert(*ch_id);
-
-            false
-        });
+    let mut channels = get_voice_channel_permission_states(pool, guild_id).await?;
+    if base_permissions.contains(Permissions::ADMINISTRATOR) {
+        return Ok(channels.keys().copied().collect());
     }
 
-    let mut apply_perms = |perm_hash: &mut HashMap<i64, [i64; 2]>, allow_overrides_deny: bool| {
-        perm_hash.retain(|ch_id, perm_vec| {
-            let allow = (perm_vec[0] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
-            let deny = (perm_vec[1] & Permissions::CONNECT.bits()) == Permissions::CONNECT.bits();
+    apply_role_overwrites(pool, user_id, guild_id, &mut channels).await?;
+    apply_member_overwrites(pool, user_id, guild_id, &mut channels).await?;
 
-            if allow_overrides_deny && allow && deny {
-                allowed_channels.insert(*ch_id);
-                return false;
-            }
-
-            if allow {
-                allowed_channels.insert(*ch_id);
-            }
-            if deny {
-                denied_channels.insert(*ch_id);
-            }
-
-            !allow && !deny
-        });
-    };
-
-    apply_perms(&mut perm_hash, false);
-
-    perms_for_roles_for_channel(pool, user_id, guild_id, &mut perm_hash).await?;
-
-    apply_perms(&mut perm_hash, true);
-
-    get_everyone_permission_for_each_channel(pool, guild_id, &mut perm_hash).await?;
-
-    apply_perms(&mut perm_hash, false);
-
-    // Final most general check. Check @everyone
-    perm_hash.retain(|ch_id, perm_vec| {
-        let allow = ((perm_vec[0] | total_permission) & Permissions::CONNECT.bits())
-            == Permissions::CONNECT.bits();
-
-        if allow {
-            allowed_channels.insert(*ch_id);
-        }
-
-        !allow
-    });
-
-    Ok(allowed_channels)
+    Ok(channels
+        .into_values()
+        .filter(|channel| channel.can_connect(base_permissions))
+        .map(|channel| channel.channel_id)
+        .collect())
 }
 
-async fn get_user_channel_overrides_for_user_id(
+async fn apply_member_overwrites(
+    pool: &web::Data<Pool<Postgres>>,
     user_id: i64,
     guild_id: i64,
-    pool: &actix_web::web::Data<Pool<Postgres>>,
-    perm_hash: &mut HashMap<i64, [i64; 2]>,
+    channels: &mut HashMap<i64, ChannelPermissionState>,
 ) -> Result<(), AppError> {
-    let specific_perm_for_channel = sqlx::query!(
-        "SELECT allow, deny, channel_id as \"channel_id!\", name as
-			\"name!\" FROM get_user_channel_overriders_for_user_id($1, $2)",
+    let member_overwrites = sqlx::query!(
+        "SELECT allow as \"allow!\", deny as \"deny!\", channel_id as \"channel_id!\"
+        FROM get_user_channel_overriders_for_user_id($1, $2)",
         user_id,
         guild_id
     )
     .fetch_all(pool.get_ref())
     .await?;
 
-    // member specific override
-    for specific_perm in specific_perm_for_channel {
-        perm_hash.insert(
-            specific_perm.channel_id,
-            [
-                specific_perm.allow.unwrap_or(0),
-                specific_perm.deny.unwrap_or(0),
-            ],
-        );
+    for overwrite in member_overwrites {
+        if let Some(channel) = channels.get_mut(&overwrite.channel_id) {
+            channel.member.allow |= permissions_from_bits(overwrite.allow);
+            channel.member.deny |= permissions_from_bits(overwrite.deny);
+        }
     }
+
     Ok(())
 }
 
-pub async fn get_everyone_permission_for_each_channel(
+async fn get_voice_channel_permission_states(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
-    perm_hash: &mut HashMap<i64, [i64; 2]>,
-) -> Result<(), AppError> {
-    let everyone_permissions = sqlx::query!(
-        "SELECT channel_permissions.allow as \"allow?\", channel_permissions.deny as \"deny?\",  channels.channel_id, channels.name
-		FROM channels
-		LEFT JOIN channel_permissions
-		ON channels.channel_id=channel_permissions.channel_id
-		WHERE channels.type = 2
-		AND channels.guild_id=$1
-		AND (channel_permissions.target_id=$1 OR channel_permissions.target_id IS NULL)", guild_id
+) -> Result<HashMap<i64, ChannelPermissionState>, AppError> {
+    let channel_overwrites = sqlx::query!(
+        "SELECT
+            channels.channel_id as \"channel_id!\",
+            COALESCE(channel_permissions.allow, 0) as \"allow!\",
+            COALESCE(channel_permissions.deny, 0) as \"deny!\"
+        FROM channels
+        LEFT JOIN channel_permissions
+            ON channels.channel_id = channel_permissions.channel_id
+            AND channel_permissions.target_id = $1
+        WHERE channels.type = 2
+        AND channels.guild_id = $1",
+        guild_id
     )
     .fetch_all(pool.get_ref())
     .await?;
 
-    for channel_perm in everyone_permissions {
-        match perm_hash.get_mut(&channel_perm.channel_id) {
-            Some(ok) => {
-                ok[0] |= channel_perm.allow.unwrap_or(0);
-                ok[1] |= channel_perm.deny.unwrap_or(0);
-            }
-            None => {
-                perm_hash.insert(
-                    channel_perm.channel_id,
-                    [
-                        channel_perm.allow.unwrap_or(0),
-                        channel_perm.deny.unwrap_or(0),
-                    ],
-                );
-            }
-        }
-    }
-    Ok(())
+    Ok(channel_overwrites
+        .into_iter()
+        .map(|overwrite| {
+            (
+                overwrite.channel_id,
+                ChannelPermissionState::new(
+                    overwrite.channel_id,
+                    PermissionOverwriteBits {
+                        allow: permissions_from_bits(overwrite.allow),
+                        deny: permissions_from_bits(overwrite.deny),
+                    },
+                ),
+            )
+        })
+        .collect())
 }
 
 pub async fn require_guild_admin(
     req: &actix_web::HttpRequest,
     pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
     guild_id: i64,
+) -> Result<i64, crate::errors::AppError> {
+    require_guild_permission(req, pool, guild_id, Permissions::ADMINISTRATOR).await
+}
+
+pub async fn require_guild_manager(
+    req: &actix_web::HttpRequest,
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+) -> Result<i64, crate::errors::AppError> {
+    let manager_mask = Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD;
+    require_guild_permission(req, pool, guild_id, manager_mask).await
+}
+
+async fn require_guild_permission(
+    req: &actix_web::HttpRequest,
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+    required_mask: Permissions,
 ) -> Result<i64, crate::errors::AppError> {
     use crate::auth::{Access, Token};
     use actix_web::HttpMessage;
@@ -361,11 +378,103 @@ pub async fn require_guild_admin(
         .get::<Token<Access>>()
         .map(|t| t.user_id)
         .ok_or(crate::errors::AppError::Unauthorized)?;
-    let bits = get_combined_perm_for_user(pool, guild_id, user_id).await?;
-    let admin_mask = Permissions::ADMINISTRATOR.bits() | Permissions::MANAGE_GUILD.bits();
-    if bits & admin_mask != 0 {
+    let permissions = get_combined_perm_for_user(pool, guild_id, user_id).await?;
+    if permissions.intersects(required_mask) {
         Ok(user_id)
     } else {
         Err(crate::errors::AppError::Forbidden)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(
+        everyone: PermissionOverwriteBits,
+        roles: PermissionOverwriteBits,
+        member: PermissionOverwriteBits,
+    ) -> ChannelPermissionState {
+        ChannelPermissionState {
+            channel_id: 1,
+            everyone,
+            roles,
+            member,
+        }
+    }
+
+    #[test]
+    fn everyone_deny_blocks_base_connect() {
+        let channel = state(
+            PermissionOverwriteBits {
+                allow: Permissions::empty(),
+                deny: Permissions::CONNECT,
+            },
+            PermissionOverwriteBits::default(),
+            PermissionOverwriteBits::default(),
+        );
+
+        assert!(!channel.can_connect(Permissions::CONNECT));
+    }
+
+    #[test]
+    fn role_allow_restores_everyone_deny() {
+        let channel = state(
+            PermissionOverwriteBits {
+                allow: Permissions::empty(),
+                deny: Permissions::CONNECT,
+            },
+            PermissionOverwriteBits {
+                allow: Permissions::CONNECT,
+                deny: Permissions::empty(),
+            },
+            PermissionOverwriteBits::default(),
+        );
+
+        assert!(channel.can_connect(Permissions::empty()));
+    }
+
+    #[test]
+    fn member_deny_overrides_role_allow() {
+        let channel = state(
+            PermissionOverwriteBits::default(),
+            PermissionOverwriteBits {
+                allow: Permissions::CONNECT,
+                deny: Permissions::empty(),
+            },
+            PermissionOverwriteBits {
+                allow: Permissions::empty(),
+                deny: Permissions::CONNECT,
+            },
+        );
+
+        assert!(!channel.can_connect(Permissions::empty()));
+    }
+
+    #[test]
+    fn member_allow_overrides_role_deny() {
+        let channel = state(
+            PermissionOverwriteBits::default(),
+            PermissionOverwriteBits {
+                allow: Permissions::empty(),
+                deny: Permissions::CONNECT,
+            },
+            PermissionOverwriteBits {
+                allow: Permissions::CONNECT,
+                deny: Permissions::empty(),
+            },
+        );
+
+        assert!(channel.can_connect(Permissions::empty()));
+    }
+
+    #[test]
+    fn unknown_permission_bits_are_retained() {
+        let future_discord_permission = 1_i64 << 50;
+
+        assert_eq!(
+            permissions_from_bits(future_discord_permission).bits(),
+            future_discord_permission
+        );
     }
 }
