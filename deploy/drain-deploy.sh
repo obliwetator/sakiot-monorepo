@@ -10,6 +10,7 @@ release_bin="${release_dir}/fbi_agent"
 deploy_state_dir="${repo_dir}/releases/.deploy"
 current_grpc_file="${deploy_state_dir}/current-grpc-addr"
 old_grpc_addr="${FBI_AGENT_GRPC_ADDR:-$(cat "${current_grpc_file}" 2>/dev/null || printf '127.0.0.1:50052')}"
+web_server_url="${WEB_SERVER_URL:-http://127.0.0.1:8900}"
 new_service="fbi-agent@${release_id}.service"
 user_unit_dir="${HOME}/.config/systemd/user"
 user_unit="${user_unit_dir}/fbi-agent@.service"
@@ -19,6 +20,10 @@ if [[ -z "${grpcurl_bin}" ]]; then
 fi
 if [[ -z "${grpcurl_bin}" && -x "${HOME}/go/bin/grpcurl" ]]; then
   grpcurl_bin="${HOME}/go/bin/grpcurl"
+fi
+curl_bin="${CURL_BIN:-}"
+if [[ -z "${curl_bin}" ]]; then
+  curl_bin="$(command -v curl || true)"
 fi
 new_grpc_port="$(python3 - <<'PY'
 import socket
@@ -71,6 +76,16 @@ fi
 systemctl --user start "${new_service}"
 systemctl --user enable "${new_service}" >/dev/null
 printf '%s\n' "${new_grpc_addr}" > "${current_grpc_file}"
+
+if [[ -n "${curl_bin}" ]]; then
+  "${curl_bin}" -fsS \
+    -H 'Content-Type: application/json' \
+    -d '{"active":"'"${new_grpc_addr}"'","draining":["'"${old_grpc_addr}"'"]}' \
+    "${web_server_url}/internal/fbi-agent/grpc-endpoints" >/dev/null \
+    || echo "web server gRPC endpoint registration failed" >&2
+else
+  echo "curl not found; web server gRPC endpoint registration skipped" >&2
+fi
 
 if [[ -n "${grpcurl_bin}" ]]; then
   "${grpcurl_bin}" -plaintext \
