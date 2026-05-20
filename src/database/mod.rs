@@ -59,16 +59,22 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) {
 
 async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) {
     for guild in guild_cached {
+        let mut user_roles = Vec::new();
         for (user_id, user) in guild.members.iter() {
-            let perm = &user.roles;
-            if !perm.is_empty() {
+            for role in &user.roles {
+                user_roles.push((user_id.get() as i64, role.get() as i64));
+            }
+        }
+
+        if !user_roles.is_empty() {
+            for chunk in user_roles.chunks(BIND_LIMIT / 2) {
                 let mut query_builder: sqlx::QueryBuilder<Postgres> =
                     sqlx::QueryBuilder::new("INSERT INTO user_roles (user_id, role_id) ");
 
                 query_builder
-                    .push_values(perm.iter().take(BIND_LIMIT / 4), |mut b, role| {
-                        b.push_bind(user_id.get() as i64)
-                            .push_bind(role.get() as i64);
+                    .push_values(chunk, |mut b, pair| {
+                        b.push_bind(pair.0)
+                            .push_bind(pair.1);
                     })
                     .push(" ON CONFLICT (user_id, role_id) DO UPDATE SET role_id=EXCLUDED.role_id");
 
@@ -83,45 +89,45 @@ async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) {
 
 async fn update_permissions(guild_cached: &[Guild], handler: &Handler) {
     for guild in guild_cached {
-        let ch = &guild.channels;
-
-        for channel in ch.values() {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> = sqlx::QueryBuilder::new(
-                "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny) ",
-            );
-
-            let perm = &channel.permission_overwrites;
-            if !perm.is_empty() {
-                query_builder
-                        .push_values(perm.iter().take(BIND_LIMIT / 5), |mut b, p| {
-                            let kind = {
-                                match p.kind {
-                                    serenity::model::prelude::PermissionOverwriteType::Member(
-                                        channel,
-                                    ) => ("user", channel.get() as i64),
-                                    serenity::model::prelude::PermissionOverwriteType::Role(channel) => {
-                                        ("role", channel.get() as i64)
-                                    }
-                                    _ => {
-                                        error!(
-                                            channel_id = channel.id.get(),
-                                            "unknown permission overwrite type"
-                                        );
-                                        ("unknown", 0)
-                                    }
-                                }
-                            };
-
-
-                            b.push_bind(channel.id.get() as i64)
-                                .push_bind(kind.1)
-                                .push_bind(kind.0)
-                                .push_bind(p.allow.bits() as i64)
-                                .push_bind(p.deny.bits() as i64);
-                        })
-                        .push(
-                            " ON CONFLICT (channel_id, target_id) DO UPDATE SET allow = EXCLUDED.allow, deny = EXCLUDED.deny",
+        let mut overwrites = Vec::new();
+        for channel in guild.channels.values() {
+            for p in &channel.permission_overwrites {
+                let kind = match p.kind {
+                    serenity::model::prelude::PermissionOverwriteType::Member(target_id) => ("user", target_id.get() as i64),
+                    serenity::model::prelude::PermissionOverwriteType::Role(target_id) => ("role", target_id.get() as i64),
+                    _ => {
+                        error!(
+                            channel_id = channel.id.get(),
+                            "unknown permission overwrite type"
                         );
+                        ("unknown", 0)
+                    }
+                };
+                overwrites.push((
+                    channel.id.get() as i64,
+                    kind.1,
+                    kind.0,
+                    p.allow.bits() as i64,
+                    p.deny.bits() as i64,
+                ));
+            }
+        }
+
+        if !overwrites.is_empty() {
+            for chunk in overwrites.chunks(BIND_LIMIT / 5) {
+                let mut query_builder: sqlx::QueryBuilder<Postgres> = sqlx::QueryBuilder::new(
+                    "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny) ",
+                );
+
+                query_builder
+                    .push_values(chunk, |mut b, overwrite| {
+                        b.push_bind(overwrite.0)
+                            .push_bind(overwrite.1)
+                            .push_bind(overwrite.2)
+                            .push_bind(overwrite.3)
+                            .push_bind(overwrite.4);
+                    })
+                    .push(" ON CONFLICT (channel_id, target_id) DO UPDATE SET allow = EXCLUDED.allow, deny = EXCLUDED.deny");
 
                 let query = query_builder.build();
 

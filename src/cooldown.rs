@@ -75,24 +75,19 @@ async fn resolve_cooldown(
     guild_id: i64,
     user_id: i64,
 ) -> Result<i32, sqlx::Error> {
-    let override_row = sqlx::query!(
-        "SELECT cooldown_seconds FROM user_jam_cooldown_overrides WHERE guild_id = $1 AND user_id = $2",
+    let row = sqlx::query!(
+        r#"
+        SELECT COALESCE(
+            (SELECT cooldown_seconds FROM user_jam_cooldown_overrides WHERE guild_id = $1 AND user_id = $2),
+            (SELECT cooldown_seconds FROM guild_jam_cooldowns WHERE guild_id = $1),
+            0
+        ) AS "cooldown_seconds!"
+        "#,
         guild_id,
         user_id
     )
-    .fetch_optional(pool)
+    .fetch_one(pool)
     .await?;
 
-    if let Some(row) = override_row {
-        return Ok(row.cooldown_seconds);
-    }
-
-    let guild_row = sqlx::query!(
-        "SELECT cooldown_seconds FROM guild_jam_cooldowns WHERE guild_id = $1",
-        guild_id
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(guild_row.map(|r| r.cooldown_seconds).unwrap_or(0))
+    Ok(row.cooldown_seconds)
 }

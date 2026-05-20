@@ -8,7 +8,6 @@ pub async fn guild_ban_addition(
     _guild_id: serenity::model::id::GuildId,
     _banned_user: serenity::model::prelude::User,
 ) {
-    todo!()
 }
 
 pub async fn guild_ban_removal(
@@ -17,7 +16,6 @@ pub async fn guild_ban_removal(
     _guild_id: serenity::model::id::GuildId,
     _unbanned_user: serenity::model::prelude::User,
 ) {
-    todo!()
 }
 
 pub async fn guild_create(
@@ -36,7 +34,6 @@ pub async fn guild_delete(
     _incomplete: serenity::model::guild::UnavailableGuild,
     _full: Option<serenity::model::guild::Guild>,
 ) {
-    todo!()
 }
 
 pub async fn guild_member_removal(
@@ -46,7 +43,6 @@ pub async fn guild_member_removal(
     _user: serenity::model::prelude::User,
     _member_data_if_available: Option<serenity::model::guild::Member>,
 ) {
-    todo!()
 }
 
 pub async fn guild_member_addition(
@@ -109,5 +105,4 @@ pub async fn guild_update(
     _old_data_if_available: Option<serenity::model::guild::Guild>,
     _new_but_incomplete: serenity::model::guild::PartialGuild,
 ) {
-    todo!()
 }

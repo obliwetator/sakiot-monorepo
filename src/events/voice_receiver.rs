@@ -360,7 +360,7 @@ impl VoiceEventHandler for Receiver {
                                     error!("Failed to create file for ssrc {}: {}", ssrc, e);
                                     self.inner
                                         .metrics
-                                        .track_ffmpeg_spawn_failure(
+                                        .track_writer_setup_failure(
                                             &self.inner.guild_metrics,
                                             &self.inner.channel_metrics,
                                         );

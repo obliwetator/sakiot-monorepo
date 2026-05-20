@@ -16,8 +16,7 @@ pub(super) struct GlobalMetricsSnapshot {
     pub active_voice_connections: i32,
     pub uptime_seconds: i64,
     pub active_recordings: i32,
-    pub ffmpeg_spawn_failures: i32,
-    pub ffmpeg_process_crashes: i32,
+    pub writer_setup_failures: i32,
     pub audio_packets_received: i64,
     pub audio_packets_dropped: i64,
     pub gateway_reconnects: i32,
@@ -43,10 +42,8 @@ impl GlobalMetricsSnapshot {
                 metrics.active_voice_connections.load(Ordering::Relaxed) as i32;
             snap.uptime_seconds = metrics.start_time.elapsed().as_secs() as i64;
             snap.active_recordings = metrics.active_recordings.load(Ordering::Relaxed) as i32;
-            snap.ffmpeg_spawn_failures =
-                metrics.ffmpeg_spawn_failures.load(Ordering::Relaxed) as i32;
-            snap.ffmpeg_process_crashes =
-                metrics.ffmpeg_process_crashes.load(Ordering::Relaxed) as i32;
+            snap.writer_setup_failures =
+                metrics.writer_setup_failures.load(Ordering::Relaxed) as i32;
             snap.audio_packets_received =
                 metrics.audio_packets_received.load(Ordering::Relaxed) as i64;
             snap.audio_packets_dropped =
@@ -81,8 +78,7 @@ impl From<GlobalMetricsSnapshot> for MetricsResponse {
             uptime_seconds: s.uptime_seconds,
             commands_executed: s.commands_executed,
             active_recordings: s.active_recordings,
-            ffmpeg_spawn_failures: s.ffmpeg_spawn_failures,
-            ffmpeg_process_crashes: s.ffmpeg_process_crashes,
+            writer_setup_failures: s.writer_setup_failures,
             audio_packets_received: s.audio_packets_received,
             audio_packets_dropped: s.audio_packets_dropped,
             gateway_reconnects: s.gateway_reconnects,

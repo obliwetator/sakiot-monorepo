@@ -121,8 +121,7 @@ impl Dashboard for MyJammer {
                         "commands_executed": snap.commands_executed,
                         "guilds": guilds,
                         "active_recordings": snap.active_recordings,
-                        "ffmpeg_spawn_failures": snap.ffmpeg_spawn_failures,
-                        "ffmpeg_process_crashes": snap.ffmpeg_process_crashes,
+                        "writer_setup_failures": snap.writer_setup_failures,
                         "audio_packets_received": snap.audio_packets_received,
                         "audio_packets_dropped": snap.audio_packets_dropped,
                         "gateway_reconnects": snap.gateway_reconnects,
@@ -194,8 +193,7 @@ impl Dashboard for MyJammer {
                     let recording_metrics_json = guild_rec_metrics.map(|m| {
                             serde_json::json!({
                                 "active_recordings": m.active_recordings.load(Ordering::Relaxed),
-                                "ffmpeg_spawn_failures": m.ffmpeg_spawn_failures.load(Ordering::Relaxed),
-                                "ffmpeg_process_crashes": m.ffmpeg_process_crashes.load(Ordering::Relaxed),
+                                "writer_setup_failures": m.writer_setup_failures.load(Ordering::Relaxed),
                                 "audio_packets_received": m.audio_packets_received.load(Ordering::Relaxed),
                                 "audio_packets_dropped": m.audio_packets_dropped.load(Ordering::Relaxed),
                                 "last_voice_packet_time": m.last_voice_packet_time.load(Ordering::Relaxed),

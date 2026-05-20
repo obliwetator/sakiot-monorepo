@@ -8,8 +8,7 @@ use std::time::Instant;
 /// Per-guild recording health, mirroring the global counters on BotMetrics.
 pub struct GuildRecordingMetrics {
     pub active_recordings: AtomicU32,
-    pub ffmpeg_spawn_failures: AtomicU32,
-    pub ffmpeg_process_crashes: AtomicU32,
+    pub writer_setup_failures: AtomicU32,
     pub audio_packets_received: AtomicU64,
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
@@ -19,8 +18,7 @@ impl GuildRecordingMetrics {
     pub fn new() -> Self {
         Self {
             active_recordings: AtomicU32::new(0),
-            ffmpeg_spawn_failures: AtomicU32::new(0),
-            ffmpeg_process_crashes: AtomicU32::new(0),
+            writer_setup_failures: AtomicU32::new(0),
             audio_packets_received: AtomicU64::new(0),
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),
@@ -65,8 +63,7 @@ pub struct BotMetrics {
     pub recordings_started: AtomicU64,
     pub recordings_finished: AtomicU64,
     pub recording_finalize_errors: AtomicU64,
-    pub ffmpeg_spawn_failures: AtomicU32,
-    pub ffmpeg_process_crashes: AtomicU32,
+    pub writer_setup_failures: AtomicU32,
     pub audio_packets_received: AtomicU64,
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
@@ -668,14 +665,9 @@ impl BotMetrics {
             audio_packets_dropped
         );
         u32_counter!(
-            "ffmpeg_spawn_failures",
-            "Total ffmpeg/file writer spawn or setup failures",
-            ffmpeg_spawn_failures
-        );
-        u32_counter!(
-            "ffmpeg_process_crashes",
-            "Total ffmpeg process crashes",
-            ffmpeg_process_crashes
+            "writer_setup_failures",
+            "Total file writer setup failures",
+            writer_setup_failures
         );
         u32_counter!(
             "gateway_reconnects",
@@ -733,27 +725,15 @@ impl BotMetrics {
             std::convert::identity
         );
         guild_counter!(
-            "guild_ffmpeg_spawn_failures",
-            "Total ffmpeg/file writer spawn or setup failures per guild",
-            ffmpeg_spawn_failures,
+            "guild_writer_setup_failures",
+            "Total file writer setup failures per guild",
+            writer_setup_failures,
             |v| v as u64
         );
         channel_counter!(
-            "channel_ffmpeg_spawn_failures",
-            "Total ffmpeg/file writer spawn or setup failures per channel",
-            ffmpeg_spawn_failures,
-            |v| v as u64
-        );
-        guild_counter!(
-            "guild_ffmpeg_process_crashes",
-            "Total ffmpeg process crashes per guild",
-            ffmpeg_process_crashes,
-            |v| v as u64
-        );
-        channel_counter!(
-            "channel_ffmpeg_process_crashes",
-            "Total ffmpeg process crashes per channel",
-            ffmpeg_process_crashes,
+            "channel_writer_setup_failures",
+            "Total file writer setup failures per channel",
+            writer_setup_failures,
             |v| v as u64
         );
     }
@@ -830,18 +810,18 @@ impl BotMetrics {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    pub fn track_ffmpeg_spawn_failure(
+    pub fn track_writer_setup_failure(
         &self,
         guild_metrics: &GuildRecordingMetrics,
         channel_metrics: &GuildRecordingMetrics,
     ) {
-        self.ffmpeg_spawn_failures
+        self.writer_setup_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         guild_metrics
-            .ffmpeg_spawn_failures
+            .writer_setup_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         channel_metrics
-            .ffmpeg_spawn_failures
+            .writer_setup_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -944,8 +924,7 @@ impl Default for BotMetrics {
             recordings_started: AtomicU64::new(0),
             recordings_finished: AtomicU64::new(0),
             recording_finalize_errors: AtomicU64::new(0),
-            ffmpeg_spawn_failures: AtomicU32::new(0),
-            ffmpeg_process_crashes: AtomicU32::new(0),
+            writer_setup_failures: AtomicU32::new(0),
             audio_packets_received: AtomicU64::new(0),
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),
