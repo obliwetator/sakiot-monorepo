@@ -7,3 +7,4 @@
 /waveform_data
 /docs
 *.md
+!README.md
