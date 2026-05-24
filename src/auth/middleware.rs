@@ -9,6 +9,14 @@ use super::jwt::{Access, AccessKeys, Token};
 
 pub struct AuthMiddleware;
 
+fn is_public_api_path(path: &str) -> bool {
+    path == "/api/discord_login"
+        || path == "/api/oauth/start"
+        || (cfg!(feature = "dev-login") && path == "/api/dev_login")
+        || path == "/api/refresh"
+        || path == "/api/logout"
+}
+
 fn warn_unauthorized_middleware_access(_path: &str, _reason: &str) {
     // warn!(
     //     "Unauthorized access attempt to middleware {}: {}",
@@ -50,14 +58,7 @@ where
     actix_web::dev::forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let path = req.path();
-        let is_dev_login = cfg!(feature = "dev-login") && path == "/api/dev_login";
-        if path == "/api/discord_login"
-            || path == "/api/oauth/start"
-            || is_dev_login
-            || path == "/api/refresh"
-            || path == "/api/logout"
-        {
+        if is_public_api_path(req.path()) {
             let res = self.service.call(req);
             return Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) });
         }
@@ -116,5 +117,20 @@ where
         req.extensions_mut().insert(decoded_access);
         let res = self.service.call(req);
         Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_public_api_path;
+
+    #[test]
+    fn public_api_paths_are_explicit() {
+        assert!(is_public_api_path("/api/discord_login"));
+        assert!(is_public_api_path("/api/oauth/start"));
+        assert!(is_public_api_path("/api/refresh"));
+        assert!(is_public_api_path("/api/logout"));
+        assert!(!is_public_api_path("/api/users/current"));
+        assert!(!is_public_api_path("/api/refresh/extra"));
     }
 }

@@ -27,13 +27,14 @@ use web_server::auth::{
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
 use web_server::config::Config;
 use web_server::dashboard;
-use web_server::proto::jammer::jammer_client::JammerClient;
+use web_server::fbi_agent_registry::{
+    get_agent_grpc_endpoints, register_agent_grpc_endpoints, AgentGrpcRegistry,
+};
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tonic::transport::Channel;
 
 async fn not_found() -> impl Responder {
     let html = include_str!("../404.html");
@@ -58,16 +59,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
-    init_telemetry();
-
     let cfg = Config::from_env()?;
+    init_telemetry(cfg.port);
 
     let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
     let live_container = web::Data::new(LiveContainer::default());
-
-    let grpc_channel = Channel::from_shared(cfg.grpc_address.clone())?.connect_lazy();
-    let jammer_client = JammerClient::new(grpc_channel);
+    let agent_grpc_registry = web::Data::new(AgentGrpcRegistry::new(&cfg.grpc_address));
 
     let pool = PgPoolOptions::new()
         .max_connections(cfg.db_max_connections)
@@ -152,10 +150,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(hashmap.clone())
             .app_data(waveform_progress.clone())
             .app_data(live_container.clone())
-            .app_data(web::Data::new(jammer_client.clone()))
+            .app_data(agent_grpc_registry.clone())
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
             .service(api_scope)
+            .service(register_agent_grpc_endpoints)
+            .service(get_agent_grpc_endpoints)
             .service(Scalar::with_url("/scalar", ApiDoc::openapi()))
             .route(
                 "/api-doc/openapi.json",

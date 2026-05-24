@@ -5,10 +5,9 @@ use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;
 use tracing::{error, warn};
 
-use crate::config::Config;
 use crate::errors::AppError;
+use crate::{fbi_agent_registry::AgentGrpcRegistry, grpc_client};
 
-use crate::proto::jammer::dashboard_client::DashboardClient;
 use crate::proto::jammer::ClientMessage;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
@@ -19,7 +18,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
 struct DashboardWebSocket {
     topic_tx: watch::Sender<String>,
     last_heartbeat: Instant,
-    grpc_address: String,
+    registry: AgentGrpcRegistry,
 }
 
 impl Actor for DashboardWebSocket {
@@ -30,16 +29,23 @@ impl Actor for DashboardWebSocket {
 
         let addr = ctx.address();
         let topic_rx = self.topic_tx.subscribe();
-        let grpc_address = self.grpc_address.clone();
+        let registry = self.registry.clone();
 
         tokio::spawn(async move {
             loop {
-                let mut client = match DashboardClient::connect(grpc_address.clone()).await {
+                let active_address = registry.active_address();
+                let (grpc_address, mut client) = match grpc_client::connect_dashboard(
+                    active_address.clone(),
+                )
+                .await
+                {
                     Ok(c) => c,
                     Err(e) => {
+                        grpc_client::record_failure("dashboard_connect");
                         error!(
+                            grpc_address = %active_address,
                             "Failed to connect to Dashboard gRPC service: {}. Retrying in 3s...",
-                            e
+                            e,
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         continue;
@@ -89,7 +95,12 @@ impl Actor for DashboardWebSocket {
                 let mut stream = match client.dashboard_stream(request).await {
                     Ok(response) => response.into_inner(),
                     Err(e) => {
-                        error!("Failed to start dashboard stream: {}. Retrying in 3s...", e);
+                        grpc_client::record_failure("dashboard_stream_start");
+                        error!(
+                            grpc_address = %grpc_address,
+                            "Failed to start dashboard stream: {}. Retrying in 3s...",
+                            e,
+                        );
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                         continue;
                     }
@@ -108,7 +119,12 @@ impl Actor for DashboardWebSocket {
                             }
                         }
                         Err(e) => {
-                            error!("gRPC stream error: {}. Disconnected.", e);
+                            grpc_client::record_failure("dashboard_stream_read");
+                            error!(
+                                grpc_address = %grpc_address,
+                                "gRPC stream error: {}. Disconnected.",
+                                e,
+                            );
                             break; // Break inner loop to trigger reconnect
                         }
                     }
@@ -186,14 +202,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
 pub async fn dashboard_stream(
     req: HttpRequest,
     stream: web::Payload,
-    cfg: web::Data<Config>,
+    registry: web::Data<AgentGrpcRegistry>,
 ) -> Result<HttpResponse, AppError> {
     let (topic_tx, _) = watch::channel(String::new());
     ws::start(
         DashboardWebSocket {
             topic_tx,
             last_heartbeat: Instant::now(),
-            grpc_address: cfg.grpc_address.clone(),
+            registry: registry.get_ref().clone(),
         },
         &req,
         stream,

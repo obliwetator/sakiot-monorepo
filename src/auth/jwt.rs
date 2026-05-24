@@ -19,13 +19,28 @@ pub struct Access;
 #[derive(Clone)]
 pub struct Refresh;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthKind {
+    Discord,
+    Dev,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TokenPurpose {
+    Access,
+    Refresh,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token<T> {
     #[serde(with = "jwt_numeric_date")]
     pub exp: OffsetDateTime,
     pub user_id: i64,
-    pub token: String,
     pub csrf: String,
+    pub auth_kind: AuthKind,
+    purpose: TokenPurpose,
     state: std::marker::PhantomData<T>,
 }
 
@@ -39,7 +54,7 @@ fn validation() -> Validation {
 impl Token<Access> {
     pub fn encode(
         id: i64,
-        access_token: String,
+        auth_kind: AuthKind,
         csrf: String,
         key: &EncodingKey,
     ) -> Result<String, AppError> {
@@ -49,8 +64,9 @@ impl Token<Access> {
         let access = Self {
             exp,
             user_id: id,
-            token: access_token,
             csrf,
+            auth_kind,
+            purpose: TokenPurpose::Access,
             state: std::marker::PhantomData::<Access>,
         };
         Ok(encode(&Header::default(), &access, key)?)
@@ -58,6 +74,15 @@ impl Token<Access> {
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         decode::<Self>(token, &keys.access_decode, &validation())
             .map(|ok| ok.claims)
+            .and_then(|claims| {
+                if claims.purpose == TokenPurpose::Access {
+                    Ok(claims)
+                } else {
+                    Err(jsonwebtoken::errors::Error::from(
+                        jsonwebtoken::errors::ErrorKind::InvalidToken,
+                    ))
+                }
+            })
             .map_err(|e| {
                 tracing::debug!(?e, "access token decode failed");
                 AppError::InvalidToken
@@ -68,7 +93,7 @@ impl Token<Access> {
 impl Token<Refresh> {
     pub fn encode(
         id: i64,
-        refresh_token: String,
+        auth_kind: AuthKind,
         csrf: String,
         key: &EncodingKey,
     ) -> Result<String, AppError> {
@@ -78,8 +103,9 @@ impl Token<Refresh> {
         let refresh = Self {
             exp,
             user_id: id,
-            token: refresh_token,
             csrf,
+            auth_kind,
+            purpose: TokenPurpose::Refresh,
             state: std::marker::PhantomData::<Refresh>,
         };
         Ok(encode(&Header::default(), &refresh, key)?)
@@ -87,6 +113,15 @@ impl Token<Refresh> {
     pub fn decode(token: &str, keys: &AccessKeys) -> Result<Self, AppError> {
         decode::<Self>(token, &keys.refresh_decode, &validation())
             .map(|ok| ok.claims)
+            .and_then(|claims| {
+                if claims.purpose == TokenPurpose::Refresh {
+                    Ok(claims)
+                } else {
+                    Err(jsonwebtoken::errors::Error::from(
+                        jsonwebtoken::errors::ErrorKind::InvalidToken,
+                    ))
+                }
+            })
             .map_err(|e| {
                 tracing::debug!(?e, "refresh token decode failed");
                 AppError::InvalidToken

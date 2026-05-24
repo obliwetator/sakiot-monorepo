@@ -1,5 +1,6 @@
-use std::env;
-use std::str::FromStr;
+use std::{env, str::FromStr};
+
+const DEFAULT_GRPC_ADDRESS: &str = "http://[::1]:50052";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -26,6 +27,7 @@ pub struct Config {
     pub cookie_domain: String,
     pub discord_redirect_uri: String,
     pub grpc_address: String,
+    pub fbi_agent_registry_secret: Option<String>,
     pub host: String,
     pub port: u16,
     pub db_max_connections: u32,
@@ -37,6 +39,10 @@ fn require(key: &'static str) -> Result<String, ConfigError> {
 
 fn optional(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.into())
+}
+
+fn optional_nonempty(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|s| !s.trim().is_empty())
 }
 
 fn parse<T: FromStr>(key: &'static str, default: T) -> Result<T, ConfigError> {
@@ -66,7 +72,8 @@ impl Config {
                 "DISCORD_REDIRECT_URI",
                 "http://localhost:8900/api/discord_login",
             ),
-            grpc_address: optional("GRPC_ADDRESS", "http://[::1]:50052"),
+            grpc_address: optional("GRPC_ADDRESS", DEFAULT_GRPC_ADDRESS),
+            fbi_agent_registry_secret: optional_nonempty("FBI_AGENT_REGISTRY_SECRET"),
             host: optional("HOST", "127.0.0.1"),
             port: parse("PORT", 8900u16)?,
             db_max_connections: parse("DB_MAX_CONNECTIONS", 20u32)?,

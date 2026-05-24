@@ -16,20 +16,18 @@ use super::cookies::{
     clear_opener_origin_cookie, clear_refresh_token_cookie, csrf_cookie, logged_in_cookie,
     oauth_state_cookie, opener_origin_cookie, refresh_token_cookie,
 };
-use super::discord::{request_access_token, request_refresh_token, DiscordLoginCode};
-use super::jwt::{Access, AccessKeys, Refresh, Token};
+use super::discord::{request_access_token, DiscordLoginCode};
+use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
 use subtle::ConstantTimeEq;
 
 async fn create_jwt_tokens(
-    access_token: String,
-    refresh_token: String,
     id: i64,
+    auth_kind: AuthKind,
     csrf: String,
     keys: &web::Data<AccessKeys>,
 ) -> Result<(String, String), AppError> {
-    let access_token =
-        Token::<Access>::encode(id, access_token, csrf.clone(), &keys.access_encode)?;
-    let refresh_token = Token::<Refresh>::encode(id, refresh_token, csrf, &keys.refresh_encode)?;
+    let access_token = Token::<Access>::encode(id, auth_kind, csrf.clone(), &keys.access_encode)?;
+    let refresh_token = Token::<Refresh>::encode(id, auth_kind, csrf, &keys.refresh_encode)?;
     Ok((access_token, refresh_token))
 }
 
@@ -40,7 +38,7 @@ pub struct OauthStartQuery {
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct RefreshTokenResponse {
-    pub token: String,
+    pub status: &'static str,
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
@@ -49,11 +47,33 @@ pub struct RefreshTokenError {
     pub message: &'static str,
 }
 
+pub fn is_allowed_opener_origin(origin: &str, cfg: &Config) -> bool {
+    if origin == cfg.cors_allowed_origin {
+        return true;
+    }
+
+    let Some(host) = origin.strip_prefix("https://") else {
+        return false;
+    };
+    if host.contains('/') || host.contains('?') || host.contains('#') || host.is_empty() {
+        return false;
+    }
+    if host == "patrykstyla.com" {
+        return true;
+    }
+    host.strip_suffix(".patrykstyla.com")
+        .is_some_and(|subdomain| !subdomain.is_empty())
+}
+
 #[get("/oauth/start")]
 pub async fn oauth_start(
     query: web::Query<OauthStartQuery>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
+    if !is_allowed_opener_origin(&query.origin, &cfg) {
+        return Err(AppError::BadRequest("Invalid opener origin".into()));
+    }
+
     let state = Uuid::new_v4().to_string();
     let url = format!(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
@@ -106,14 +126,8 @@ pub async fn discord_login(
 
     let csrf_token = Uuid::new_v4().to_string();
 
-    let (access_token, refresh_token) = create_jwt_tokens(
-        data.access_token,
-        data.refresh_token,
-        user.id,
-        csrf_token.clone(),
-        &keys,
-    )
-    .await?;
+    let (access_token, refresh_token) =
+        create_jwt_tokens(user.id, AuthKind::Discord, csrf_token.clone(), &keys).await?;
 
     let opener_origin = req
         .cookie("opener_origin")
@@ -185,14 +199,8 @@ pub async fn dev_login(
 
     let csrf_token = Uuid::new_v4().to_string();
 
-    let (access_token, refresh_token) = create_jwt_tokens(
-        "dev_access".into(),
-        "dev_refresh".into(),
-        dev_account_id,
-        csrf_token.clone(),
-        &keys,
-    )
-    .await?;
+    let (access_token, refresh_token) =
+        create_jwt_tokens(dev_account_id, AuthKind::Dev, csrf_token.clone(), &keys).await?;
     let mut b = NamedFile::open_async("callback.html")
         .await?
         .into_response(&req);
@@ -221,7 +229,6 @@ pub async fn dev_login(
 #[get("/refresh")]
 pub async fn refresh_jwt(
     req: HttpRequest,
-    client: web::Data<Client>,
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
@@ -263,31 +270,15 @@ pub async fn refresh_jwt(
 
     let csrf_token = Uuid::new_v4().to_string();
 
-    let (new_access_token, new_refresh_token) = if decoded_refresh.token == "dev_refresh" {
-        create_jwt_tokens(
-            "dev_access".into(),
-            "dev_refresh".into(),
-            decoded_refresh.user_id,
-            csrf_token.clone(),
-            &keys,
-        )
-        .await?
-    } else {
-        let data = request_refresh_token(&cfg, decoded_refresh.token, client.clone()).await?;
+    let (new_access_token, new_refresh_token) = create_jwt_tokens(
+        decoded_refresh.user_id,
+        decoded_refresh.auth_kind,
+        csrf_token.clone(),
+        &keys,
+    )
+    .await?;
 
-        create_jwt_tokens(
-            data.access_token,
-            data.refresh_token,
-            decoded_refresh.user_id,
-            csrf_token.clone(),
-            &keys,
-        )
-        .await?
-    };
-
-    let mut response = HttpResponse::Ok().json(RefreshTokenResponse {
-        token: new_access_token.clone(),
-    });
+    let mut response = HttpResponse::Ok().json(RefreshTokenResponse { status: "ok" });
     response.add_cookie(&access_token_cookie(d, &new_access_token))?;
     response.add_cookie(&refresh_token_cookie(d, &new_refresh_token))?;
     response.add_cookie(&csrf_cookie(d, &csrf_token))?;
@@ -313,4 +304,67 @@ pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> 
     resp.add_cookie(&clear_csrf_cookie(d))?;
     resp.add_cookie(&clear_logged_in_cookie(d))?;
     Ok(resp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_allowed_opener_origin, RefreshTokenResponse};
+    use crate::config::Config;
+
+    fn cfg() -> Config {
+        Config {
+            database_url: "postgres://user:password@localhost/db".into(),
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+            access_secret: "access".into(),
+            refresh_secret: "refresh".into(),
+            dev_account_id: 1,
+            dev_login_secret: Some("dev".into()),
+            cors_allowed_origin: "http://localhost:3000".into(),
+            cookie_domain: "localhost".into(),
+            discord_redirect_uri: "http://localhost:8900/api/discord_login".into(),
+            grpc_address: "http://[::1]:50052".into(),
+            fbi_agent_registry_secret: None,
+            host: "127.0.0.1".into(),
+            port: 8900,
+            db_max_connections: 20,
+        }
+    }
+
+    #[test]
+    fn opener_origin_allows_production_and_local_dev() {
+        let cfg = cfg();
+
+        assert!(is_allowed_opener_origin("https://patrykstyla.com", &cfg));
+        assert!(is_allowed_opener_origin(
+            "https://app.patrykstyla.com",
+            &cfg
+        ));
+        assert!(is_allowed_opener_origin("http://localhost:3000", &cfg));
+    }
+
+    #[test]
+    fn opener_origin_rejects_unrelated_origins() {
+        let cfg = cfg();
+
+        assert!(!is_allowed_opener_origin("https://evil.com", &cfg));
+        assert!(!is_allowed_opener_origin("http://patrykstyla.com", &cfg));
+        assert!(!is_allowed_opener_origin(
+            "https://evilpatrykstyla.com",
+            &cfg
+        ));
+        assert!(!is_allowed_opener_origin(
+            "https://app.patrykstyla.com/callback",
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn refresh_response_has_no_token_field() -> Result<(), serde_json::Error> {
+        let json = serde_json::to_value(RefreshTokenResponse { status: "ok" })?;
+
+        assert_eq!(json["status"], "ok");
+        assert!(json.get("token").is_none());
+        Ok(())
+    }
 }

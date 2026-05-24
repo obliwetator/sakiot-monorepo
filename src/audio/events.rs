@@ -1,5 +1,6 @@
 use actix_web::{get, web, HttpResponse};
 use serde::Serialize;
+use serde_with::{serde_as, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
@@ -12,10 +13,15 @@ fn validate_stem(s: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+#[serde_as]
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct VoiceEventDto {
     pub offset_ms: i64,
+    #[serde_as(as = "DisplayFromStr")]
+    #[schema(value_type = String)]
     pub user_id: i64,
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[schema(value_type = Option<String>)]
     pub channel_id: Option<i64>,
     pub event_type: String,
 }

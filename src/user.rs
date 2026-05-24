@@ -1,4 +1,4 @@
-use crate::auth::{Access, Token, BASE_URL};
+use crate::auth::{Access, AuthKind, Token, BASE_URL};
 use crate::errors::AppError;
 use actix_web::{
     get,
@@ -175,7 +175,7 @@ pub async fn get_current_user(
     let dev_account_id = cfg.dev_account_id;
     let is_dev = token_data.user_id == dev_account_id
         && dev_account_id != 0
-        && token_data.token == "dev_access";
+        && token_data.auth_kind == AuthKind::Dev;
 
     let result = sqlx::query!(
         "
@@ -242,7 +242,7 @@ pub async fn get_current_user_guilds(
 
     let result = if token_data.user_id == dev_account_id
         && dev_account_id != 0
-        && token_data.token == "dev_access"
+        && token_data.auth_kind == AuthKind::Dev
     {
         sqlx::query_as!(
             GuildDataForFrontEnd,

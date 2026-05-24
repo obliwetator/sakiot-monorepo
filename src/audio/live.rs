@@ -5,10 +5,11 @@
 //! `{root}/{guild}/{ch}/{y}/{m}/hls-{stem}/`. Subsequent requests serve from
 //! disk.
 //!
-//! While the recording is still being written (DB row has `end_ts IS NULL`),
-//! ffmpeg consumes a `tail -F` of the source so the playlist grows in real
-//! time. A background task polls the DB; when `end_ts` lands it kills the
-//! shell pipeline (tail's parent), ffmpeg drains, then we append `ENDLIST`.
+//! While the recording is still being written (DB row has `end_ts IS NULL`
+//! and a fresh recording heartbeat), ffmpeg consumes a `tail -F` of the source
+//! so the playlist grows in real time. A background task polls the DB; when
+//! the row is no longer live it kills the shell pipeline (tail's parent),
+//! ffmpeg drains, then we append `ENDLIST`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -43,6 +44,12 @@ pub struct StateResponse {
     pub live: bool,
     pub started_at: Option<i64>,
     pub ended_at: Option<i64>,
+}
+
+struct DbRecordingState {
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+    live: bool,
 }
 
 fn key_id(k: &RecordingKey) -> String {
@@ -114,17 +121,39 @@ async fn probe_codec(src: &Path) -> Result<String, AppError> {
         .to_ascii_lowercase())
 }
 
-async fn db_state(
-    pool: &Pool<Postgres>,
-    stem: &str,
-) -> Result<(Option<i64>, Option<i64>), AppError> {
+async fn db_state(pool: &Pool<Postgres>, stem: &str) -> Result<DbRecordingState, AppError> {
     let row = sqlx::query!(
-        "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",
+        "SELECT af.start_ts,
+                af.end_ts,
+                (
+                    af.end_ts IS NULL
+                    AND af.reaped IS FALSE
+                    AND EXISTS (
+                        SELECT 1
+                          FROM bot_instances bi
+                         WHERE bi.instance_id = af.recording_owner_instance_id
+                           AND af.recording_heartbeat_at > now() - interval '120 seconds'
+                           AND bi.heartbeat_at > now() - interval '120 seconds'
+                           AND bi.state <> 'stopped'
+                    )
+                ) AS live
+           FROM audio_files af
+          WHERE af.file_name = $1",
         stem
     )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| (r.start_ts, r.end_ts)).unwrap_or((None, None)))
+    Ok(row
+        .map(|r| DbRecordingState {
+            start_ts: r.start_ts,
+            end_ts: r.end_ts,
+            live: r.live.unwrap_or(false),
+        })
+        .unwrap_or(DbRecordingState {
+            start_ts: None,
+            end_ts: None,
+            live: false,
+        }))
 }
 
 async fn playlist_finalized(p: &Path) -> bool {
@@ -280,15 +309,15 @@ async fn spawn_job(
     let out_dir_c = out_dir.clone();
     tokio::spawn(async move {
         if is_live {
-            // Poll DB until end_ts lands, then kill the pipeline.
+            // Poll DB until the row is no longer lease-backed live, then kill
+            // the pipeline.
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 match db_state(&pool_c, &stem).await {
-                    Ok((_, Some(_))) => break,
-                    Ok(_) => continue,
+                    Ok(state) if !state.live => break,
+                    Ok(_) => {}
                     Err(e) => {
                         error!(stem = %id, error = ?e, "db poll error");
-                        continue;
                     }
                 }
             }
@@ -369,8 +398,8 @@ async fn ensure_job(
 
     let out_dir = key.live_dir(RECORDING_PATH);
     let playlist = out_dir.join("playlist.m3u8");
-    let (_, end_ts) = db_state(&pool, &key.stem).await?;
-    let is_live = end_ts.is_none();
+    let db = db_state(&pool, &key.stem).await?;
+    let is_live = db.live;
 
     match hls_cache_action(&playlist, is_live).await {
         HlsCacheAction::ReuseFinalized => {
@@ -456,10 +485,13 @@ pub async fn live_state(
 ) -> Result<HttpResponse, AppError> {
     let (_g, _c, _y, _m, stem) = path.into_inner();
     validate_stem(&stem)?;
-    let (started_at, ended_at) = db_state(&pool, &stem).await?;
+    let db = db_state(&pool, &stem).await?;
+    let ended_at = db
+        .end_ts
+        .or_else(|| if db.live { None } else { db.start_ts });
     Ok(HttpResponse::Ok().json(StateResponse {
-        live: ended_at.is_none() && started_at.is_some(),
-        started_at,
+        live: db.live,
+        started_at: db.start_ts,
         ended_at,
     }))
 }

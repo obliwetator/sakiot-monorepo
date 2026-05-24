@@ -1,4 +1,5 @@
 use opentelemetry_sdk::Resource;
+use std::env;
 use std::io::Write;
 use tracing_subscriber::{layer::SubscriberExt, Layer, Registry};
 
@@ -11,7 +12,16 @@ fn warn_startup(msg: &str) {
     }
 }
 
-pub fn init_telemetry() {
+fn service_instance_id(port: u16) -> String {
+    env::var("OTEL_SERVICE_INSTANCE_ID")
+        .or_else(|_| env::var("SERVICE_INSTANCE_ID"))
+        .unwrap_or_else(|_| {
+            let host = env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
+            format!("{host}:{port}:{}", std::process::id())
+        })
+}
+
+pub fn init_telemetry(port: u16) {
     let otlp_exporter = match opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .build()
@@ -49,7 +59,11 @@ pub fn init_telemetry() {
     };
 
     let resource = Resource::builder_empty()
-        .with_attributes([opentelemetry::KeyValue::new("service.name", SERVICE_NAME)])
+        .with_attributes([
+            opentelemetry::KeyValue::new("service.name", SERVICE_NAME),
+            opentelemetry::KeyValue::new("service.instance.id", service_instance_id(port)),
+            opentelemetry::KeyValue::new("service.port", i64::from(port)),
+        ])
         .build();
 
     let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()

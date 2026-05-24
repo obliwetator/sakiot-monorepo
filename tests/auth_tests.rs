@@ -1,9 +1,9 @@
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use time::OffsetDateTime;
-use web_server::auth::{Access, AccessKeys, Refresh, Token};
+use web_server::auth::{Access, AccessKeys, AuthKind, Refresh, Token};
 
 #[test]
-fn test_access_token_encode_decode() {
+fn test_access_token_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
     let secret = "test_secret";
     let keys = AccessKeys {
         access_encode: EncodingKey::from_secret(secret.as_bytes()),
@@ -17,20 +17,21 @@ fn test_access_token_encode_decode() {
 
     let encoded = Token::<Access>::encode(
         user_id,
-        discord_token.clone(),
+        AuthKind::Discord,
         "csrf_test".into(),
         &keys.access_encode,
-    )
-    .unwrap();
-    let decoded = Token::<Access>::decode(&encoded, &keys).unwrap();
+    )?;
+    let decoded = Token::<Access>::decode(&encoded, &keys)?;
 
     assert_eq!(decoded.user_id, user_id);
-    assert_eq!(decoded.token, discord_token);
+    assert_eq!(decoded.auth_kind, AuthKind::Discord);
     assert!(decoded.exp > OffsetDateTime::now_utc());
+    assert_token_payload_does_not_contain(&encoded, &discord_token)?;
+    Ok(())
 }
 
 #[test]
-fn test_refresh_token_encode_decode() {
+fn test_refresh_token_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
     let secret = "test_secret";
     let keys = AccessKeys {
         access_encode: EncodingKey::from_secret(secret.as_bytes()),
@@ -44,20 +45,21 @@ fn test_refresh_token_encode_decode() {
 
     let encoded = Token::<Refresh>::encode(
         user_id,
-        discord_refresh_token.clone(),
+        AuthKind::Discord,
         "csrf_test".into(),
         &keys.refresh_encode,
-    )
-    .unwrap();
-    let decoded = Token::<Refresh>::decode(&encoded, &keys).unwrap();
+    )?;
+    let decoded = Token::<Refresh>::decode(&encoded, &keys)?;
 
     assert_eq!(decoded.user_id, user_id);
-    assert_eq!(decoded.token, discord_refresh_token);
+    assert_eq!(decoded.auth_kind, AuthKind::Discord);
     assert!(decoded.exp > OffsetDateTime::now_utc());
+    assert_token_payload_does_not_contain(&encoded, &discord_refresh_token)?;
+    Ok(())
 }
 
 #[test]
-fn test_token_type_mismatch() {
+fn test_token_type_mismatch() -> Result<(), Box<dyn std::error::Error>> {
     let secret = "test_secret";
     let keys = AccessKeys {
         access_encode: EncodingKey::from_secret(secret.as_bytes()),
@@ -66,13 +68,34 @@ fn test_token_type_mismatch() {
         refresh_decode: DecodingKey::from_secret(secret.as_bytes()),
     };
 
-    let encoded_access =
-        Token::<Access>::encode(1, "t".into(), "csrf_test".into(), &keys.access_encode).unwrap();
+    let encoded_access = Token::<Access>::encode(
+        1,
+        AuthKind::Discord,
+        "csrf_test".into(),
+        &keys.access_encode,
+    )?;
 
-    // Attempting to decode an access token as a refresh token should still technically "work"
-    // at the JSON level if the fields match, but in a real scenario we might have different
-    // validation or fields. Here they have the same fields, so it will decode, but we've
-    // successfully separated them via PhantomData in the API.
     let decoded_as_refresh = Token::<Refresh>::decode(&encoded_access, &keys);
-    assert!(decoded_as_refresh.is_ok());
+    assert!(decoded_as_refresh.is_err());
+    Ok(())
+}
+
+fn assert_token_payload_does_not_contain(
+    token: &str,
+    needle: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    let payload = token
+        .split('.')
+        .nth(1)
+        .ok_or("jwt payload segment missing")?;
+    let decoded = URL_SAFE_NO_PAD.decode(payload)?;
+    let payload = String::from_utf8(decoded)?;
+
+    assert!(
+        !payload.contains(needle),
+        "JWT payload should not contain legacy Discord token"
+    );
+    Ok(())
 }
