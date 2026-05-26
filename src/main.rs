@@ -293,7 +293,6 @@ async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeS
                 }
             }
         }
-        return;
     }
 
     #[cfg(not(unix))]
