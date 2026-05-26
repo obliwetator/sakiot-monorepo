@@ -8,7 +8,8 @@ the stack.
 This project is functional, but it is not packaged as a supported application.
 No support is provided for running, deploying, configuring, or operating it. For
 now, you have to figure that out yourself from the code, environment variables,
-deployment scripts, and local setup.
+deployment scripts, local setup, and the shared database migrations in
+`../sakiot-db`.
 
 ## Role In The System
 
@@ -34,5 +35,17 @@ Sakiot application:
 ## Status
 
 This is personal/project code, not a turnkey product. It may require specific
-Discord application settings, database migrations, secrets, filesystem paths,
-systemd units, and matching versions of the sibling projects.
+Discord application settings, shared database migrations, secrets, filesystem
+paths, systemd units, and matching versions of the sibling projects.
+
+## Database Migrations
+
+Database migrations are owned by the shared `../sakiot-db` project. This
+service does not keep service-local migrations and does not run migrations on
+startup.
+
+```sh
+cd ../sakiot-db
+sqlx migrate info --source migrations
+sqlx migrate run --source migrations
+```
