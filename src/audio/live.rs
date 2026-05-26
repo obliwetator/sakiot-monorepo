@@ -490,7 +490,7 @@ pub async fn live_state(
     let db = db_state(&pool, &stem).await?;
     let ended_at = db
         .end_ts
-        .or_else(|| if db.live { None } else { db.start_ts });
+        .or(if db.live { None } else { db.start_ts });
     Ok(HttpResponse::Ok().json(StateResponse {
         live: db.live,
         started_at: db.start_ts,

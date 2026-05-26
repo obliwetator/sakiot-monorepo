@@ -286,7 +286,7 @@ pub async fn create_clip(
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
     let src_path = {
-        let dir = crate::audio::util::resolve_existing_dir(
+        let dir = crate::audio::util::get_file_path_root(
             crate::audio::RECORDING_PATH,
             &(
                 guild_id,
@@ -295,8 +295,7 @@ pub async fn create_clip(
                 month,
                 file_name_from_url.clone(),
             ),
-        )
-        .await;
+        );
         format!("{}/{}.ogg", dir, file_name_from_url)
     };
 

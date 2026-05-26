@@ -9,7 +9,7 @@ use crate::errors::AppError;
 
 use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
 use super::types::HashMapContainer;
-use super::util::{file_exists, get_file_path_root, handle_idempotency_key, resolve_existing_dir};
+use super::util::{file_exists, get_file_path_root, handle_idempotency_key};
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct RemoveSilenceResponse {
@@ -47,15 +47,12 @@ pub async fn remove_silence(
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
 
-    let file_path: String = resolve_existing_dir(RECORDING_PATH, &path).await;
+    let file_path: String = get_file_path_root(RECORDING_PATH, &path);
     let no_silence_file_path = get_file_path_root(NO_SILENCE_RECORDING_PATH, &path);
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";
 
-    let _idempotency_key = match handle_idempotency_key(&req) {
-        Ok(ok) => ok,
-        Err(_) => return Err(AppError::BadRequest("Missing idempotency key".into())),
-    };
+    let _idempotency_key = handle_idempotency_key(&req)?;
 
     info!("File name: {}", path.4);
 
@@ -82,16 +79,16 @@ pub async fn remove_silence(
             }
         }
 
-        return Ok(HttpResponse::Accepted().json(RemoveSilenceResponse {
+        Ok(HttpResponse::Accepted().json(RemoveSilenceResponse {
             url: file_no_silence,
             message: " Success",
-        }));
+        }))
     } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")).await {
         info!("file already exists");
-        return Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
+        Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
             url: file_no_silence,
             message: "File already exists",
-        }));
+        }))
     } else {
         info!("Creating new file");
         let (tx, _) = broadcast::channel::<i32>(10);

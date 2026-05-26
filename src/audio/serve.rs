@@ -9,30 +9,10 @@ use tracing::info;
 
 use crate::errors::AppError;
 
-use std::path::PathBuf;
 
 use sakiot_paths::RecordingKey;
 
 use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
-
-/// Legacy dirs use unpadded month (`2026/4`). New writes pad (`2026/04`).
-/// Return padded path first, then fall back to unpadded.
-fn candidates(
-    root: &str,
-    guild_id: i64,
-    channel_id: i64,
-    year: i32,
-    month: u32,
-    leaf: &str,
-) -> [PathBuf; 2] {
-    let padded = RecordingKey::new(guild_id, channel_id, year, month, "")
-        .recording_dir(root)
-        .join(leaf);
-    let unpadded = PathBuf::from(root.trim_end_matches('/'))
-        .join(format!("{}/{}/{}/{}", guild_id, channel_id, year, month))
-        .join(leaf);
-    [padded, unpadded]
-}
 
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {
@@ -60,10 +40,12 @@ pub async fn get_audio(
         (RECORDING_PATH, file_name.clone())
     };
 
-    for path in candidates(root, guild_id as i64, channel_id, year, month as u32, &leaf) {
-        if let Ok(f) = NamedFile::open_async(&path).await {
-            return Ok(f.into_response(&req));
-        }
+    let path = RecordingKey::new(guild_id as i64, channel_id, year, month as u32, "")
+        .recording_dir(root)
+        .join(leaf);
+
+    if let Ok(f) = NamedFile::open_async(&path).await {
+        return Ok(f.into_response(&req));
     }
     Err(AppError::FileNotFound)
 }
@@ -92,15 +74,14 @@ pub async fn download_audio(
         (RECORDING_PATH, file_name_from_url.clone())
     };
 
-    let mut file = None;
-    for p in candidates(root, guild_id, channel_id, year, month as u32, &leaf) {
-        info!("download try: {} is_silence: {:?}", p.display(), is_silence);
-        if let Ok(opened) = actix_files::NamedFile::open_async(&p).await {
-            file = Some(opened);
-            break;
-        }
-    }
-    let file = file.ok_or(AppError::FileNotFound)?;
+    let path = RecordingKey::new(guild_id, channel_id, year, month as u32, "")
+        .recording_dir(root)
+        .join(leaf);
+        
+    info!("download try: {} is_silence: {:?}", path.display(), is_silence);
+    let file = actix_files::NamedFile::open_async(&path)
+        .await
+        .map_err(|_| AppError::FileNotFound)?;
 
     Ok(file
         .use_last_modified(true)

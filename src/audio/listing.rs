@@ -201,7 +201,7 @@ async fn enrich_display_names(
                             guild_id = guild_id,
                             "no history predates start_ts; using current value"
                         );
-                        if n % 1000 == 0 {
+                        if n.is_multiple_of(1000) {
                             tracing::info!(
                                 target: "display_name_fallback",
                                 count = n,

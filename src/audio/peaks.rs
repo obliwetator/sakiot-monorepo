@@ -9,7 +9,7 @@ use crate::waveform::generate_peaks_background;
 
 use super::paths::{RECORDING_PATH, WAVEFORM_PATH};
 use super::types::WaveformProgressContainer;
-use super::util::{file_exists, resolve_existing_dir};
+use super::util::{file_exists, get_file_path_root};
 
 const LIVE_WAVEFORM_READY: i16 = 100;
 const FINAL_WAVEFORM_WRITTEN: i16 = 101;
@@ -31,7 +31,7 @@ pub async fn get_waveform_data(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
-    let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path).await;
+    let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
     let file_name = path.4.clone();
