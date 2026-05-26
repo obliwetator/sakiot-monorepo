@@ -8,7 +8,7 @@ connections to FBI Agent instances.
 This project is functional, but it is not packaged as a supported application.
 No support is provided for running, deploying, configuring, or operating it. For
 now, you have to figure that out yourself from the code, environment variables,
-migrations, and local setup.
+the shared database migrations in `../sakiot-db`, and local setup.
 
 ## Role In The System
 
@@ -38,3 +38,15 @@ Sakiot application:
 This is personal/project code, not a turnkey product. It assumes a matching
 database schema, Discord configuration, filesystem layout, secrets, and sibling
 project versions.
+
+## Database Migrations
+
+Database migrations are owned by the shared `../sakiot-db` project. This
+service does not keep service-local migrations and does not run migrations on
+startup.
+
+```sh
+cd ../sakiot-db
+sqlx migrate info --source migrations
+sqlx migrate run --source migrations
+```
