@@ -92,13 +92,15 @@ pub async fn download_audio(
         (RECORDING_PATH, file_name_from_url.clone())
     };
 
-    let file = candidates(root, guild_id, channel_id, year, month as u32, &leaf)
-        .into_iter()
-        .find_map(|p| {
-            info!("download try: {} is_silence: {:?}", p.display(), is_silence);
-            actix_files::NamedFile::open(&p).ok()
-        })
-        .ok_or(AppError::FileNotFound)?;
+    let mut file = None;
+    for p in candidates(root, guild_id, channel_id, year, month as u32, &leaf) {
+        info!("download try: {} is_silence: {:?}", p.display(), is_silence);
+        if let Ok(opened) = actix_files::NamedFile::open_async(&p).await {
+            file = Some(opened);
+            break;
+        }
+    }
+    let file = file.ok_or(AppError::FileNotFound)?;
 
     Ok(file
         .use_last_modified(true)

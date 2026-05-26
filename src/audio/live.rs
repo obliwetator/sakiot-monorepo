@@ -73,9 +73,9 @@ fn validate_seg(s: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn source_path(k: &RecordingKey) -> Option<PathBuf> {
+async fn source_path(k: &RecordingKey) -> Option<PathBuf> {
     let padded = k.recording_path(RECORDING_PATH);
-    if padded.exists() {
+    if tokio::fs::try_exists(&padded).await.unwrap_or(false) {
         return Some(padded);
     }
     let root = RECORDING_PATH.trim_end_matches('/');
@@ -85,7 +85,7 @@ fn source_path(k: &RecordingKey) -> Option<PathBuf> {
             k.guild_id, k.channel_id, k.year, k.month
         ))
         .join(format!("{}.ogg", k.stem));
-    if unpadded.exists() {
+    if tokio::fs::try_exists(&unpadded).await.unwrap_or(false) {
         Some(unpadded)
     } else {
         None
@@ -168,7 +168,7 @@ enum HlsCacheAction {
 }
 
 async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
-    if !playlist.exists() {
+    if !tokio::fs::try_exists(playlist).await.unwrap_or(false) {
         return HlsCacheAction::BuildFresh;
     }
 
@@ -361,7 +361,9 @@ async fn spawn_job(
     let pl = out_dir.join("playlist.m3u8");
     let init = out_dir.join("init.mp4");
     while std::time::Instant::now() < deadline {
-        if pl.exists() && init.exists() {
+        if tokio::fs::try_exists(&pl).await.unwrap_or(false)
+            && tokio::fs::try_exists(&init).await.unwrap_or(false)
+        {
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -379,7 +381,7 @@ async fn ensure_job(
         return Ok(s);
     }
 
-    let src = source_path(&key).ok_or(AppError::FileNotFound)?;
+    let src = source_path(&key).await.ok_or(AppError::FileNotFound)?;
 
     // Probe BEFORE the on-disk cache shortcut: a stale `hls-*` dir from a
     // pre-gate run can otherwise serve vorbis-in-fmp4 that MSE refuses,

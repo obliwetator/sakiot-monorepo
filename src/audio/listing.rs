@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use std::fs::ReadDir;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{get, web, HttpResponse};
@@ -30,36 +29,45 @@ fn parse_user_and_ts(file_name: &str) -> Option<(i64, i64)> {
 }
 
 #[inline]
-pub async fn for_entry(entries: ReadDir, _channel: i64, dirs: &mut Directories, month_as_int: i32) {
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let file_name_str = match entry.file_name().into_string() {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            // Skip cache directories created by the live-HLS module
-            // (`hls-{stem}/`). They are not recordings.
-            if file_name_str.starts_with("hls-") || file_name_str.starts_with("mix-") {
+pub async fn for_entry(
+    mut entries: tokio::fs::ReadDir,
+    _channel: i64,
+    dirs: &mut Directories,
+    month_as_int: i32,
+) {
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(err) => {
+                error!("error for file: {}", err);
                 continue;
             }
-            // Only list real recording files.
-            if !file_name_str.ends_with(".ogg") {
-                continue;
+        };
+        let file_name_str = match entry.file_name().into_string() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // Skip cache directories created by the live-HLS module
+        // (`hls-{stem}/`). They are not recordings.
+        if file_name_str.starts_with("hls-") || file_name_str.starts_with("mix-") {
+            continue;
+        }
+        // Only list real recording files.
+        if !file_name_str.ends_with(".ogg") {
+            continue;
+        }
+        let parsed = parse_user_and_ts(&file_name_str);
+        let file_name = File {
+            file: file_name_str,
+            user_id: parsed.map(|(_, u)| u.to_string()),
+            display_name: None,
+            start_ts_ms: parsed.map(|(ts, _)| ts),
+        };
+        if let Some(months) = dirs.months.as_mut() {
+            if let Some(Some(files)) = months.get_mut(&month_as_int) {
+                files.push(file_name);
             }
-            let parsed = parse_user_and_ts(&file_name_str);
-            let file_name = File {
-                file: file_name_str,
-                user_id: parsed.map(|(_, u)| u.to_string()),
-                display_name: None,
-                start_ts_ms: parsed.map(|(ts, _)| ts),
-            };
-            if let Some(months) = dirs.months.as_mut() {
-                if let Some(Some(files)) = months.get_mut(&month_as_int) {
-                    files.push(file_name);
-                }
-            }
-        } else {
-            error!("error for file");
         }
     }
 }
@@ -268,39 +276,46 @@ pub async fn for_channel_ids(
     dirs_vec: &mut Vec<Channels>,
     channel_hashset: HashSet<i64>,
 ) -> Result<(), AppError> {
-    let channel_ids =
-        std::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id)).map_err(|err| {
+    let mut channel_ids = tokio::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id))
+        .await
+        .map_err(|err| {
             tracing::error!("{}", err);
             AppError::FileNotFound
         })?;
 
-    for channel_id in channel_ids {
-        if let Ok(entry) = channel_id {
-            let channel = match entry.file_name().into_string() {
-                Ok(s) => match s.parse::<i64>() {
-                    Ok(num) => num,
-                    Err(_) => continue,
-                },
+    loop {
+        let entry = match channel_ids.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(err) => {
+                tracing::error!("{}", err);
+                continue;
+            }
+        };
+        let channel = match entry.file_name().into_string() {
+            Ok(s) => match s.parse::<i64>() {
+                Ok(num) => num,
                 Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+
+        if channel_hashset.contains(&channel) {
+            let years = tokio::fs::read_dir(format!("{}{}/{}", RECORDING_PATH, guild_id, channel))
+                .await
+                .map_err(|err| {
+                    tracing::error!("{}", err);
+                    AppError::FileNotFound
+                })?;
+
+            let mut channels = Channels {
+                channel_id: channel.to_string(),
+                dirs: Vec::new(),
             };
 
-            if channel_hashset.contains(&channel) {
-                let years =
-                    std::fs::read_dir(format!("{}{}/{}", RECORDING_PATH, guild_id, channel))
-                        .map_err(|err| {
-                            tracing::error!("{}", err);
-                            AppError::FileNotFound
-                        })?;
+            for_years(years, &guild_id, channel, &mut channels).await?;
 
-                let mut channels = Channels {
-                    channel_id: channel.to_string(),
-                    dirs: Vec::new(),
-                };
-
-                for_years(years, &guild_id, channel, &mut channels).await?;
-
-                dirs_vec.push(channels);
-            }
+            dirs_vec.push(channels);
         }
     }
 
@@ -309,79 +324,91 @@ pub async fn for_channel_ids(
 
 #[inline]
 pub async fn for_years(
-    years: ReadDir,
+    mut years: tokio::fs::ReadDir,
     guild_id: &String,
     channel: i64,
     dirs_vec: &mut Channels,
 ) -> Result<(), AppError> {
-    for year in years {
-        if let Ok(entry) = year {
-            let year_as_int = match entry.file_name().into_string() {
-                Ok(s) => match s.parse::<i32>() {
-                    Ok(num) => num,
-                    Err(_) => continue,
-                },
-                Err(_) => continue,
-            };
-
-            let mut dirs = Directories {
-                year: year_as_int,
-                months: Some(HashMap::new()),
-            };
-
-            let months = std::fs::read_dir(format!(
-                "{}{}/{}/{}",
-                RECORDING_PATH, guild_id, channel, year_as_int
-            ))
-            .map_err(|err| {
+    loop {
+        let entry = match years.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(err) => {
                 tracing::error!("{}", err);
-                AppError::FileNotFound
-            })?;
+                continue;
+            }
+        };
+        let year_as_int = match entry.file_name().into_string() {
+            Ok(s) => match s.parse::<i32>() {
+                Ok(num) => num,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
 
-            for_months(months, &mut dirs, guild_id, channel, year_as_int).await?;
+        let mut dirs = Directories {
+            year: year_as_int,
+            months: Some(HashMap::new()),
+        };
 
-            dirs_vec.dirs.push(dirs);
-        }
+        let months = tokio::fs::read_dir(format!(
+            "{}{}/{}/{}",
+            RECORDING_PATH, guild_id, channel, year_as_int
+        ))
+        .await
+        .map_err(|err| {
+            tracing::error!("{}", err);
+            AppError::FileNotFound
+        })?;
+
+        for_months(months, &mut dirs, guild_id, channel, year_as_int).await?;
+
+        dirs_vec.dirs.push(dirs);
     }
     Ok(())
 }
 
 #[inline]
 pub async fn for_months(
-    months: ReadDir,
+    mut months: tokio::fs::ReadDir,
     dirs: &mut Directories,
     guild_id: &String,
     channel: i64,
     year_as_int: i32,
 ) -> Result<(), AppError> {
-    for month in months {
-        if let Ok(entry) = month {
-            let month_as_string = match entry.file_name().into_string() {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let month_as_int = match month_as_string.parse::<i32>() {
-                Ok(m) if (1..=12).contains(&m) => m,
-                _ => continue,
-            };
-
-            if let Some(months_map) = dirs.months.as_mut() {
-                months_map.insert(month_as_int, Some(vec![]));
+    loop {
+        let entry = match months.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(err) => {
+                error!("error for month: {}", err);
+                continue;
             }
+        };
+        let month_as_string = match entry.file_name().into_string() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let month_as_int = match month_as_string.parse::<i32>() {
+            Ok(m) if (1..=12).contains(&m) => m,
+            _ => continue,
+        };
 
-            let entries = std::fs::read_dir(format!(
-                "{}{}/{}/{}/{}",
-                RECORDING_PATH, guild_id, channel, year_as_int, &month_as_string
-            ))
-            .map_err(|err| {
-                tracing::error!("{}", err);
-                AppError::FileNotFound
-            })?;
-
-            for_entry(entries, channel, dirs, month_as_int).await;
-        } else {
-            error!("error for month")
+        if let Some(months_map) = dirs.months.as_mut() {
+            months_map.insert(month_as_int, Some(vec![]));
         }
+
+        let entries = tokio::fs::read_dir(format!(
+            "{}{}/{}/{}/{}",
+            RECORDING_PATH, guild_id, channel, year_as_int, &month_as_string
+        ))
+        .await
+        .map_err(|err| {
+            tracing::error!("{}", err);
+            AppError::FileNotFound
+        })?;
+
+        for_entry(entries, channel, dirs, month_as_int).await;
     }
     Ok(())
 }

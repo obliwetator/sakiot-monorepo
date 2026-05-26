@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use actix_web::HttpRequest;
 use tracing::error;
 
@@ -19,18 +17,18 @@ pub fn get_file_path_root_candidates(
     [padded, unpadded]
 }
 
-pub fn resolve_existing_dir(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
+pub async fn resolve_existing_dir(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
     let cands = get_file_path_root_candidates(base_path, path);
     for c in &cands {
-        if Path::new(c).exists() {
+        if tokio::fs::try_exists(c).await.unwrap_or(false) {
             return c.clone();
         }
     }
     cands.into_iter().next().unwrap_or_default()
 }
 
-pub fn file_exists(path: &str) -> bool {
-    Path::new(path).try_exists().unwrap_or(false)
+pub async fn file_exists(path: &str) -> bool {
+    tokio::fs::try_exists(path).await.unwrap_or(false)
 }
 
 pub fn handle_idempotency_key(req: &HttpRequest) -> Result<String, ()> {

@@ -31,7 +31,7 @@ pub async fn get_waveform_data(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
-    let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path);
+    let base_path_recording: String = resolve_existing_dir(RECORDING_PATH, &path).await;
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
     let file_name = path.4.clone();
@@ -45,7 +45,8 @@ pub async fn get_waveform_data(
     .ok_or(AppError::FileNotFound)?;
     let end_ts = row.end_ts;
     let waveform_end_ts = row.waveform_end_ts;
-    let has_final_cache = end_ts.is_some() && waveform_end_ts == end_ts && file_exists(&output);
+    let has_final_cache =
+        end_ts.is_some() && waveform_end_ts == end_ts && file_exists(&output).await;
 
     if has_final_cache {
         return waveform_response(&output).await;
@@ -64,7 +65,7 @@ pub async fn get_waveform_data(
             return Ok(HttpResponse::Ok().json(json!({ "progress": 99 })));
         }
         if pct == LIVE_WAVEFORM_READY {
-            if file_exists(&output) {
+            if file_exists(&output).await {
                 if end_ts.is_none() {
                     let response = waveform_response(&output).await;
                     progress_map.0.write().await.remove(&file_name);

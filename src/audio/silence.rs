@@ -1,4 +1,3 @@
-use std::fs;
 use std::process::Stdio;
 
 use actix_web::{get, web, HttpRequest, HttpResponse};
@@ -48,7 +47,7 @@ pub async fn remove_silence(
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
 
-    let file_path: String = resolve_existing_dir(RECORDING_PATH, &path);
+    let file_path: String = resolve_existing_dir(RECORDING_PATH, &path).await;
     let no_silence_file_path = get_file_path_root(NO_SILENCE_RECORDING_PATH, &path);
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";
@@ -87,7 +86,7 @@ pub async fn remove_silence(
             url: file_no_silence,
             message: " Success",
         }));
-    } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")) {
+    } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")).await {
         info!("file already exists");
         return Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
             url: file_no_silence,
@@ -103,7 +102,7 @@ pub async fn remove_silence(
                 .await
                 .insert(path.4.to_owned(), tx.clone());
         }
-        if let Err(err) = fs::create_dir_all(&no_silence_file_path) {
+        if let Err(err) = tokio::fs::create_dir_all(&no_silence_file_path).await {
             error!("create_dir_all failed: {}", err);
             hashmap.0.write().await.remove(&path.4);
             return Err(AppError::IoError(err));

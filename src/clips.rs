@@ -295,7 +295,8 @@ pub async fn create_clip(
                 month,
                 file_name_from_url.clone(),
             ),
-        );
+        )
+        .await;
         format!("{}/{}.ogg", dir, file_name_from_url)
     };
 
@@ -325,7 +326,7 @@ pub async fn create_clip(
     let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
     let full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
 
-    std::fs::create_dir_all(&target_dir)?;
+    tokio::fs::create_dir_all(&target_dir).await?;
 
     let child = crop_ffmpeg(start, end, src_path.as_str(), &full_save_path).await?;
     let output = child
@@ -339,7 +340,8 @@ pub async fn create_clip(
         return Err(AppError::FfmpegError(err_msg.to_string()));
     }
 
-    let size = std::fs::metadata(&full_save_path)
+    let size = tokio::fs::metadata(&full_save_path)
+        .await
         .map(|m| m.len())
         .unwrap_or(0) as i64;
     let length = end - start;
