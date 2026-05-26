@@ -115,6 +115,23 @@ fn deployment_labels(runtime: &crate::runtime::RuntimeState, release_id: &str) -
 }
 
 impl BotMetrics {
+    pub fn record_gateway_resume(&self) {
+        self.gateway_reconnects
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.update_tx.send(());
+    }
+
+    pub fn record_voice_state_update(&self) {
+        self.voice_state_updates_received
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn record_command_executed(&self) {
+        self.commands_executed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.update_tx.send(());
+    }
+
     /// Returns the metrics entry for `guild_id`, creating it on first access.
     pub fn guild_metrics(&self, guild_id: u64) -> Arc<GuildRecordingMetrics> {
         self.guild_recording_metrics

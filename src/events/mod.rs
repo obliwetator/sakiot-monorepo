@@ -1,5 +1,6 @@
 // #![allow(dead_code, unused_variables)]
 
+pub mod cache_ready;
 pub mod channels;
 pub mod emojis;
 pub mod guilds;
