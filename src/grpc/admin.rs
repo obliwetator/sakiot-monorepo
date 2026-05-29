@@ -3,12 +3,12 @@ use std::sync::atomic::Ordering;
 use tonic::{Request, Response, Status};
 use tracing::info;
 
-use super::MyJammer;
-use super::hello_world::admin_server::Admin;
-use super::hello_world::{DrainRequest, DrainStatus, Empty};
+use super::FbiAgentGrpc;
+use super::proto::admin_server::Admin;
+use super::proto::{DrainRequest, DrainStatus, Empty};
 
 #[tonic::async_trait]
-impl Admin for MyJammer {
+impl Admin for FbiAgentGrpc {
     async fn start_drain(
         &self,
         request: Request<DrainRequest>,
@@ -64,7 +64,7 @@ impl Admin for MyJammer {
     }
 }
 
-impl MyJammer {
+impl FbiAgentGrpc {
     async fn status(&self, message: &str) -> DrainStatus {
         let active_voice_connections = {
             let data = self.data_cache.data.read().await;

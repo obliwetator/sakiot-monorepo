@@ -7,7 +7,7 @@ use songbird::SongbirdKey;
 
 use crate::{BotMetrics, BotMetricsKey};
 
-use super::hello_world::MetricsResponse;
+use super::proto::MetricsResponse;
 
 #[derive(Default)]
 pub(super) struct GlobalMetricsSnapshot {
