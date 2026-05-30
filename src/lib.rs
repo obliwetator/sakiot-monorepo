@@ -3,13 +3,65 @@
 //! One source of truth shared by FBI-agent (writer) and web_server (reader).
 //! Change the scheme here and both ends stay in sync.
 
-use std::path::PathBuf;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
-pub const RECORDING_ROOT: &str = "./voice_recordings";
-pub const NO_SILENCE_ROOT: &str = "./no_silence_voice_recordings";
-pub const WAVEFORM_ROOT: &str = "./waveform_data";
-pub const CLIPS_ROOT: &str = "./clips";
+pub const DATA_DIR_ENV: &str = "SAKIOT_DATA_DIR";
+pub const DEFAULT_DATA_DIR: &str = "../data";
+pub const RECORDING_DIR_NAME: &str = "voice_recordings";
+pub const NO_SILENCE_DIR_NAME: &str = "no_silence_voice_recordings";
+pub const WAVEFORM_DIR_NAME: &str = "waveform_data";
+pub const CLIPS_DIR_NAME: &str = "clips";
 pub const NO_SILENCE_PREFIX: &str = "_no_silence_";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataRoots {
+    pub base: PathBuf,
+    pub recordings: PathBuf,
+    pub no_silence: PathBuf,
+    pub waveforms: PathBuf,
+    pub clips: PathBuf,
+}
+
+impl DataRoots {
+    pub fn new(base: impl Into<PathBuf>) -> Self {
+        let base = base.into();
+        Self {
+            recordings: base.join(RECORDING_DIR_NAME),
+            no_silence: base.join(NO_SILENCE_DIR_NAME),
+            waveforms: base.join(WAVEFORM_DIR_NAME),
+            clips: base.join(CLIPS_DIR_NAME),
+            base,
+        }
+    }
+
+    pub fn from_env() -> Self {
+        let base = env::var(DATA_DIR_ENV).unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string());
+        Self::new(base)
+    }
+
+    pub fn recordings_str(&self) -> String {
+        path_string(&self.recordings)
+    }
+
+    pub fn no_silence_str(&self) -> String {
+        path_string(&self.no_silence)
+    }
+
+    pub fn waveforms_str(&self) -> String {
+        path_string(&self.waveforms)
+    }
+
+    pub fn clips_str(&self) -> String {
+        path_string(&self.clips)
+    }
+}
+
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
 
 /// Logical identity of one recording. `stem` is the DB PK (`audio_files.file_name`).
 #[derive(Debug, Clone)]
@@ -29,7 +81,13 @@ impl RecordingKey {
         month: u32,
         stem: impl Into<String>,
     ) -> Self {
-        Self { guild_id, channel_id, year, month, stem: stem.into() }
+        Self {
+            guild_id,
+            channel_id,
+            year,
+            month,
+            stem: stem.into(),
+        }
     }
 
     /// Canonical file_name PK — timestamp_ms and user_id. No username.
@@ -107,14 +165,14 @@ pub struct SessionKey {
 }
 
 impl SessionKey {
-    pub fn new(
-        guild_id: i64,
-        channel_id: i64,
-        year: i32,
-        month: u32,
-        session_ts_ms: i64,
-    ) -> Self {
-        Self { guild_id, channel_id, year, month, session_ts_ms }
+    pub fn new(guild_id: i64, channel_id: i64, year: i32, month: u32, session_ts_ms: i64) -> Self {
+        Self {
+            guild_id,
+            channel_id,
+            year,
+            month,
+            session_ts_ms,
+        }
     }
 
     /// `{guild}/{channel}/{YYYY}/{MM}` — same as RecordingKey.
@@ -172,8 +230,23 @@ mod tests {
     }
 
     #[test]
+    fn data_roots_default_to_shared_data_dir() {
+        let roots = DataRoots::new(DEFAULT_DATA_DIR);
+        assert_eq!(roots.recordings, PathBuf::from("../data/voice_recordings"));
+        assert_eq!(
+            roots.no_silence,
+            PathBuf::from("../data/no_silence_voice_recordings")
+        );
+        assert_eq!(roots.waveforms, PathBuf::from("../data/waveform_data"));
+        assert_eq!(roots.clips, PathBuf::from("../data/clips"));
+    }
+
+    #[test]
     fn stem_has_no_username() {
-        assert_eq!(RecordingKey::stem_for(1700000000000, 42), "1700000000000-42");
+        assert_eq!(
+            RecordingKey::stem_for(1700000000000, 42),
+            "1700000000000-42"
+        );
     }
 
     #[test]
@@ -252,9 +325,6 @@ mod tests {
             s.playlist_url(),
             "/api/audio/1/2/2026/04/1700000000000/playlist.m3u8"
         );
-        assert_eq!(
-            s.state_url(),
-            "/api/audio/1/2/2026/04/1700000000000/state"
-        );
+        assert_eq!(s.state_url(), "/api/audio/1/2/2026/04/1700000000000/state");
     }
 }
