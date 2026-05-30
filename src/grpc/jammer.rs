@@ -8,13 +8,13 @@ use tracing::{error, info, warn};
 
 use crate::cooldown::CheckResult;
 
-use super::MyJammer;
-use super::hello_world::jam_response::JamResponseEnum;
-use super::hello_world::jammer_server::Jammer;
-use super::hello_world::{JamData, JamResponse};
+use super::FbiAgentGrpc;
+use super::proto::jam_response::JamResponseEnum;
+use super::proto::jammer_server::Jammer;
+use super::proto::{JamData, JamResponse};
 
 #[tonic::async_trait]
-impl Jammer for MyJammer {
+impl Jammer for FbiAgentGrpc {
     async fn jam_it(&self, request: Request<JamData>) -> Result<Response<JamResponse>, Status> {
         let data = request.into_inner();
         let application_id_release = crate::config::application_id_release()

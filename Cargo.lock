@@ -944,6 +944,7 @@ dependencies = [
  "prost",
  "rustls 0.23.35",
  "sakiot-paths",
+ "sakiot-proto",
  "serde",
  "serde_json",
  "serde_repr",
@@ -956,7 +957,6 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-prost",
- "tonic-prost-build",
  "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
@@ -3553,6 +3553,16 @@ checksum = "a50f4cf475b65d88e057964e0e9bb1f0aa9bbb2036dc65c64596b42932536984"
 [[package]]
 name = "sakiot-paths"
 version = "0.1.0"
+
+[[package]]
+name = "sakiot-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+]
 
 [[package]]
 name = "salsa20"

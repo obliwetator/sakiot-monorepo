@@ -41,6 +41,7 @@ serde_repr = "0.1"
 tonic = "0.14"
 prost = "0.14"
 tonic-prost = "0.14.2"
+sakiot-proto = { path = "../sakiot-proto" }
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 console-subscriber = "0.5.0"
 rustls = { version = "0.23", features = ["ring"] }
@@ -59,10 +60,6 @@ tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
 ogg = "0.9"
 opus2 = "0.4"
-
-
-[build-dependencies]
-tonic-prost-build = "0.14"
 
 [profile.release]
 # debug = true

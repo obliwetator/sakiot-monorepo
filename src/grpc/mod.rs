@@ -1,7 +1,7 @@
 use crate::Custom;
 
-pub mod hello_world {
-    tonic::include_proto!("helloworld");
+pub mod proto {
+    pub use sakiot_proto::fbi_agent::*;
 }
 
 mod admin;
@@ -10,11 +10,11 @@ mod jammer;
 mod snapshot;
 
 #[derive(Clone)]
-pub struct MyJammer {
+pub struct FbiAgentGrpc {
     data_cache: Custom,
 }
 
-impl MyJammer {
+impl FbiAgentGrpc {
     pub fn new(data_cache: Custom) -> Self {
         Self { data_cache }
     }

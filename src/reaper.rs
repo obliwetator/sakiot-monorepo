@@ -24,7 +24,7 @@
 //! voice lease is live and become reapable later.
 
 use chrono::{DateTime, Datelike, Utc};
-use sakiot_paths::{RECORDING_ROOT, RecordingKey};
+use sakiot_paths::{DataRoots, RecordingKey};
 use sqlx::{Pool, Postgres};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
@@ -111,7 +111,8 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
                 dt.month(),
                 z.file_name.clone(),
             );
-            let path = key.recording_path(RECORDING_ROOT);
+            let recording_root = DataRoots::from_env().recordings_str();
+            let path = key.recording_path(&recording_root);
             match std::fs::remove_file(&path) {
                 Ok(_) => {
                     deleted_files += 1;
@@ -124,7 +125,7 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
                     error!(path = %path.display(), error = %e, "reaper: delete failed");
                 }
             }
-            let hls = key.live_dir(RECORDING_ROOT);
+            let hls = key.live_dir(&recording_root);
             if hls.exists()
                 && let Err(e) = std::fs::remove_dir_all(&hls)
             {

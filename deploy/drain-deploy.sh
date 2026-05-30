@@ -11,6 +11,7 @@ deploy_state_dir="${repo_dir}/releases/.deploy"
 current_grpc_file="${deploy_state_dir}/current-grpc-addr"
 old_grpc_addr="${FBI_AGENT_GRPC_ADDR:-$(cat "${current_grpc_file}" 2>/dev/null || printf '127.0.0.1:50052')}"
 web_server_url="${WEB_SERVER_URL:-http://127.0.0.1:8900}"
+data_dir="${SAKIOT_DATA_DIR:-${repo_dir}/../data}"
 new_service="fbi-agent@${release_id}.service"
 user_unit_dir="${HOME}/.config/systemd/user"
 user_unit="${user_unit_dir}/fbi-agent@.service"
@@ -47,6 +48,7 @@ fi
 
 install -d -m 0755 "${release_dir}"
 install -d -m 0755 "${deploy_state_dir}"
+install -d -m 0755 "${data_dir}/voice_recordings" "${data_dir}/no_silence_voice_recordings" "${data_dir}/waveform_data" "${data_dir}/clips"
 
 cargo build --release
 install -m 0755 target/release/fbi_agent "${release_bin}"
@@ -56,6 +58,7 @@ BOT_INSTANCE_ID=$(hostname)-${release_id}
 RELEASE_ID=${release_id}
 GRPC_ADDR=${new_grpc_addr}
 DRAIN_TIMEOUT_SECONDS=0
+SAKIOT_DATA_DIR=${data_dir}
 EOF
 
 install -d -m 0755 "${user_unit_dir}"
@@ -64,11 +67,11 @@ systemctl --user daemon-reload
 
 if [[ -n "${grpcurl_bin}" ]]; then
   "${grpcurl_bin}" -plaintext \
-    -import-path proto \
-    -proto helloworld.proto \
+    -import-path "${repo_dir}/../sakiot-proto/proto" \
+    -proto fbi_agent.proto \
     -d '{"reason":"deploy '"${release_id}"'"}' \
     "${old_grpc_addr}" \
-    helloworld.Admin/StartDrain || true
+    fbi_agent.Admin/StartDrain || true
 else
   echo "grpcurl not found; old instance will not be switched to drain mode" >&2
 fi
@@ -89,11 +92,11 @@ fi
 
 if [[ -n "${grpcurl_bin}" ]]; then
   "${grpcurl_bin}" -plaintext \
-    -import-path proto \
-    -proto helloworld.proto \
+    -import-path "${repo_dir}/../sakiot-proto/proto" \
+    -proto fbi_agent.proto \
     -d '{"reason":"new release '"${release_id}"' started"}' \
     "${old_grpc_addr}" \
-    helloworld.Admin/ShutdownWhenEmpty || true
+    fbi_agent.Admin/ShutdownWhenEmpty || true
 fi
 
 shopt -s nullglob

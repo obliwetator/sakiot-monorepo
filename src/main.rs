@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     event_handler::Handler,
-    grpc::{MyJammer, hello_world::jammer_server::JammerServer},
+    grpc::{FbiAgentGrpc, proto::jammer_server::JammerServer},
 };
 
 pub mod metrics;
@@ -74,8 +74,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     crate::telemetry::init_telemetry()?;
 
-    if !std::path::Path::new(events::voice_receiver::RECORDING_FILE_PATH).exists() {
-        tokio::fs::create_dir_all(events::voice_receiver::RECORDING_FILE_PATH).await?;
+    let recording_path = events::voice_receiver::recording_file_path();
+    if !recording_path.exists() {
+        tokio::fs::create_dir_all(&recording_path).await?;
     }
 
     let db_url = config::db_url()?;
@@ -178,16 +179,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         };
 
-        let jammer = MyJammer::new(custom.clone());
+        let jammer = FbiAgentGrpc::new(custom.clone());
 
         info!("gRPC server listening on {}", addr);
 
         Server::builder()
             .add_service(JammerServer::new(jammer.clone()))
-            .add_service(crate::grpc::hello_world::admin_server::AdminServer::new(
+            .add_service(crate::grpc::proto::admin_server::AdminServer::new(
                 jammer.clone(),
             ))
-            .add_service(crate::grpc::hello_world::dashboard_server::DashboardServer::new(jammer))
+            .add_service(crate::grpc::proto::dashboard_server::DashboardServer::new(jammer))
             .serve_with_shutdown(addr, async move {
                 let mut rx = grpc_shutdown_rx;
                 while !*rx.borrow() {

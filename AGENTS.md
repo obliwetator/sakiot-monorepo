@@ -118,17 +118,14 @@ Reason:
 
 ## Proto Location
 
-`proto` in this repo is a symlink:
+The shared gRPC contract lives in the sibling `sakiot-proto` crate:
 
 ```text
-proto -> ../web_server/proto
+../sakiot-proto/proto/fbi_agent.proto
 ```
 
-Actual proto file:
-
-```text
-/home/tulipan/projects/sakiot/web_server/proto/helloworld.proto
-```
+Both `FBI-agent` and `web_server` depend on `sakiot-proto` for generated Rust
+types instead of using a repo-local proto symlink.
 
 ## Current Expected State
 
@@ -138,4 +135,3 @@ Normal post-deploy state can include:
 - zero or more old draining releases while they still have voice connections
 
 Only the newest active release should be enabled on boot.
-

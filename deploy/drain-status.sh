@@ -41,8 +41,8 @@ for unit in ${units}; do
   fi
 
   "${grpcurl_bin}" -plaintext \
-    -import-path proto \
-    -proto helloworld.proto \
+    -import-path "${repo_dir}/../sakiot-proto/proto" \
+    -proto fbi_agent.proto \
     "${grpc_addr}" \
-    helloworld.Admin/GetDrainStatus || true
+    fbi_agent.Admin/GetDrainStatus || true
 done

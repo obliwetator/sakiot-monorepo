@@ -21,6 +21,8 @@ Sakiot application:
 - `sakiot_stage` is the web UI that talks to `web_server`.
 - `sakiot-paths` provides the shared recording path layout used by the bot and
   server.
+- `sakiot-proto` provides the shared gRPC contract and generated Rust types used
+  by the bot and server.
 
 ## What It Does
 
@@ -31,6 +33,12 @@ Sakiot application:
   control.
 - Supports drain-aware release deployment through the scripts in `deploy/`.
 - Emits telemetry and process metrics for observability.
+
+Runtime media defaults to `../data` and can be moved by setting
+`SAKIOT_DATA_DIR`, for example `SAKIOT_DATA_DIR=/data` in containers.
+Existing local media should be moved into `../data/{voice_recordings,
+no_silence_voice_recordings,waveform_data,clips}` during a planned downtime
+window before deploying a build that uses the new default.
 
 ## Status
 

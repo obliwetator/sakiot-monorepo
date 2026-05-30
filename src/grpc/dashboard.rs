@@ -10,15 +10,15 @@ use tracing::{info, warn};
 
 use crate::BotMetricsKey;
 
-use super::MyJammer;
-use super::hello_world::dashboard_server::Dashboard;
-use super::hello_world::{
+use super::FbiAgentGrpc;
+use super::proto::dashboard_server::Dashboard;
+use super::proto::{
     ActionResponse, ClientMessage, DashboardEvent, Empty, GuildRequest, MetricsResponse,
 };
 use super::snapshot::{GlobalMetricsSnapshot, StreamLifetime};
 
 #[tonic::async_trait]
-impl Dashboard for MyJammer {
+impl Dashboard for FbiAgentGrpc {
     type GetMetricsStream = ReceiverStream<Result<MetricsResponse, Status>>;
 
     async fn get_metrics(

@@ -1,16 +1,15 @@
 use crate::cooldown::{CheckResult, JamCooldown};
-use crate::events::voice_receiver::{CLIPS_FILE_PATH, RECORDING_FILE_PATH};
-use std::path::Path;
+use crate::events::voice_receiver::{clips_file_path, recording_file_path};
 use std::time::{Duration, SystemTime};
 
 #[tokio::test]
 async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> {
-    let rec_path = Path::new(RECORDING_FILE_PATH);
-    let clips_path = Path::new(CLIPS_FILE_PATH);
+    let rec_path = recording_file_path();
+    let clips_path = clips_file_path();
 
     // Ensure directories can be created
-    std::fs::create_dir_all(rec_path)?;
-    std::fs::create_dir_all(clips_path)?;
+    std::fs::create_dir_all(&rec_path)?;
+    std::fs::create_dir_all(&clips_path)?;
 
     assert!(
         rec_path.exists(),

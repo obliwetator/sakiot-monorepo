@@ -1,5 +1,5 @@
 use chrono::Datelike;
-use sakiot_paths::{RECORDING_ROOT, RecordingKey};
+use sakiot_paths::{DataRoots, RecordingKey};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -45,8 +45,9 @@ pub(super) async fn create_path(
         file_name.clone(),
     );
 
-    let dir_path = key.recording_dir(RECORDING_ROOT);
-    let combined_path = key.recording_dir(RECORDING_ROOT).join(&file_name);
+    let recording_root = DataRoots::from_env().recordings_str();
+    let dir_path = key.recording_dir(&recording_root);
+    let combined_path = key.recording_dir(&recording_root).join(&file_name);
 
     if let Err(err) = std::fs::create_dir_all(&dir_path) {
         error!("cannot create path {}: {}", dir_path.display(), err);
