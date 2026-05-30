@@ -3,7 +3,7 @@ use serenity::client::Context;
 use serenity::model::id::{ChannelId, UserId};
 use serenity::model::prelude::CommandOptionType;
 
-use crate::events::voice_receiver::CLIPS_FILE_PATH;
+use crate::events::voice_receiver::clips_file_path;
 use serenity::model::prelude::GuildId;
 use songbird::Songbird;
 use sqlx::{Pool, Postgres};
@@ -34,7 +34,7 @@ pub async fn play_clip(
         return Err(format!("Clip with ID '{}' not found in database.", clip_id));
     };
 
-    let result = songbird::input::File::new(format!("{}/{}", CLIPS_FILE_PATH, saved_file_name));
+    let result = songbird::input::File::new(clips_file_path().join(saved_file_name));
     let input = songbird::input::Input::from(result);
 
     let handler = match manager.get(guild_id) {

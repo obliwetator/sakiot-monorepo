@@ -158,10 +158,10 @@ if [[ "${role}" == "current" ]]; then
 fi
 
 "${grpcurl_bin}" -plaintext \
-  -import-path proto \
-  -proto helloworld.proto \
+  -import-path "${repo_dir}/../sakiot-proto/proto" \
+  -proto fbi_agent.proto \
   "${grpc_addr}" \
-  helloworld.Admin/GetDrainStatus || true
+  fbi_agent.Admin/GetDrainStatus || true
 
 read -r -p "Type FORCE to bypass drain and stop ${unit}: " confirm
 if [[ "${confirm}" != "FORCE" ]]; then
@@ -170,11 +170,11 @@ if [[ "${confirm}" != "FORCE" ]]; then
 fi
 
 "${grpcurl_bin}" -plaintext \
-  -import-path proto \
-  -proto helloworld.proto \
+  -import-path "${repo_dir}/../sakiot-proto/proto" \
+  -proto fbi_agent.proto \
   -d '{"reason":"interactive force stop"}' \
   "${grpc_addr}" \
-  helloworld.Admin/ForceShutdown || true
+  fbi_agent.Admin/ForceShutdown || true
 
 delete_voice_leases_for_instance "${instance_id}" || true
 

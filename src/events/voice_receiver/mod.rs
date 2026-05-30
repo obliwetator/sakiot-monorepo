@@ -1,4 +1,4 @@
-use sakiot_paths::{CLIPS_ROOT, RECORDING_ROOT};
+use sakiot_paths::DataRoots;
 use serenity::{
     async_trait,
     client::Context,
@@ -23,8 +23,13 @@ mod tick;
 
 pub use state::VoiceEventType;
 
-pub const RECORDING_FILE_PATH: &str = RECORDING_ROOT;
-pub const CLIPS_FILE_PATH: &str = CLIPS_ROOT;
+pub fn recording_file_path() -> std::path::PathBuf {
+    DataRoots::from_env().recordings
+}
+
+pub fn clips_file_path() -> std::path::PathBuf {
+    DataRoots::from_env().clips
+}
 
 #[derive(Clone)]
 pub struct Receiver {
@@ -37,8 +42,7 @@ pub(super) struct InnerReceiver {
     pub(super) ctx_main: Arc<Context>,
     pub(super) guild_id: GuildId,
     /// Active per-user recordings keyed by SSRC.
-    pub(super) ssrc_writer_hashmap:
-        Arc<RwLock<HashMap<u32, Arc<Mutex<state::UserRecording>>>>>,
+    pub(super) ssrc_writer_hashmap: Arc<RwLock<HashMap<u32, Arc<Mutex<state::UserRecording>>>>>,
     pub(super) user_id_hashmap: Arc<RwLock<HashMap<u64, u32>>>,
     pub(super) paused_recordings: Arc<RwLock<HashMap<u64, state::PausedRecording>>>,
     pub(super) paused_recording_token: AtomicU64,

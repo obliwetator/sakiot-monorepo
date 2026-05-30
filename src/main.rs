@@ -74,8 +74,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     crate::telemetry::init_telemetry()?;
 
-    if !std::path::Path::new(events::voice_receiver::RECORDING_FILE_PATH).exists() {
-        tokio::fs::create_dir_all(events::voice_receiver::RECORDING_FILE_PATH).await?;
+    let recording_path = events::voice_receiver::recording_file_path();
+    if !recording_path.exists() {
+        tokio::fs::create_dir_all(&recording_path).await?;
     }
 
     let db_url = config::db_url()?;

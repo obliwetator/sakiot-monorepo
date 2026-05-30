@@ -1,7 +1,7 @@
 use crate::Custom;
 
 pub mod proto {
-    tonic::include_proto!("fbi_agent");
+    pub use sakiot_proto::fbi_agent::*;
 }
 
 mod admin;
