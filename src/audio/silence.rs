@@ -9,7 +9,7 @@ use crate::errors::AppError;
 
 use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
 use super::types::HashMapContainer;
-use super::util::{file_exists, get_file_path_root, handle_idempotency_key};
+use super::util::{file_exists, get_file_path_root, handle_idempotency_key, is_stale};
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct RemoveSilenceResponse {
@@ -56,6 +56,14 @@ pub async fn remove_silence(
 
     info!("File name: {}", path.4);
 
+    // Source recording and the (correctly prefixed) cached output. The cache is
+    // only valid when it's newer than the source — a file produced from an
+    // earlier, shorter version of the recording (e.g. while still live) is
+    // treated as stale, so the user can refresh it as the recording grows.
+    let source_file = format!("{}/{}.ogg", file_path, path.4);
+    let cached_fresh =
+        file_exists(&file_no_silence).await && !is_stale(&source_file, &file_no_silence).await;
+
     if hashmap.0.read().await.contains_key(&path.4) {
         info!("Already processing");
         let mut rec = {
@@ -83,7 +91,7 @@ pub async fn remove_silence(
             url: file_no_silence,
             message: " Success",
         }))
-    } else if file_exists(&(no_silence_file_path.to_owned() + "/" + &path.4 + ".ogg")).await {
+    } else if cached_fresh {
         info!("file already exists");
         Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
             url: file_no_silence,
@@ -105,7 +113,7 @@ pub async fn remove_silence(
             return Err(AppError::IoError(err));
         }
 
-        let file: String = file_path.to_owned() + "/" + path.4.as_str() + ".ogg";
+        let file = source_file.clone();
         let file_no_silence_clone = file_no_silence.to_owned();
 
         info!("NO SILENCE FILE PATH: {}", &file_no_silence);
@@ -115,6 +123,9 @@ pub async fn remove_silence(
             let file_name: String = path.4.clone();
             let mut command = tokio::process::Command::new("ffmpeg");
             command
+                // -y so a stale cached file is overwritten on regeneration
+                // (otherwise ffmpeg blocks on an interactive overwrite prompt).
+                .arg("-y")
                 .args(["-i", &file])
                 .args([
                     "-af",
