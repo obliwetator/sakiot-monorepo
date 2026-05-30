@@ -22,6 +22,7 @@ Sakiot application:
   waveform data, live streams, and clips.
 - `sakiot-proto` provides the shared gRPC contract and generated Rust types used
   to talk to FBI Agent instances.
+- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `FBI-agent`.
 
 ## What It Does
 
