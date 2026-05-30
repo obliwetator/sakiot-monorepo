@@ -20,6 +20,8 @@ Sakiot application:
 - `sakiot_stage` is the frontend that consumes this server's API.
 - `sakiot-paths` provides the shared path layout used to find recordings,
   waveform data, live streams, and clips.
+- `sakiot-proto` provides the shared gRPC contract and generated Rust types used
+  to talk to FBI Agent instances.
 
 ## What It Does
 
@@ -32,6 +34,12 @@ Sakiot application:
 - Publishes OpenAPI documentation at `/api-doc/openapi.json` and Scalar at
   `/scalar`.
 - Emits HTTP metrics and telemetry for observability.
+
+Runtime media defaults to `../data` and can be moved by setting
+`SAKIOT_DATA_DIR`, for example `SAKIOT_DATA_DIR=/data` in containers.
+Existing local media should be moved into `../data/{voice_recordings,
+no_silence_voice_recordings,waveform_data,clips}` during a planned downtime
+window before deploying a build that uses the new default.
 
 ## Status
 

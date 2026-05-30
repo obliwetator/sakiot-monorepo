@@ -12,7 +12,7 @@ pub use events::get_recording_events;
 pub use listing::{get_current_month_permission, get_live_stems};
 pub use live::{live_playlist, live_segment, live_state, LiveContainer};
 pub use paths::{
-    CLIPS_PATH, NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH, WAVEFORM_PATH,
+    clips_path, no_silence_recording_path, recording_path, waveform_path, NO_SILENCE_PREFIX,
 };
 pub use peaks::get_waveform_data;
 pub use serve::{download_audio, get_audio};

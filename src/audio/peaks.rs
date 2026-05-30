@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::errors::AppError;
 use crate::waveform::generate_peaks_background;
 
-use super::paths::{RECORDING_PATH, WAVEFORM_PATH};
+use super::paths::{recording_path, waveform_path};
 use super::types::WaveformProgressContainer;
 use super::util::{file_exists, get_file_path_root};
 
@@ -31,9 +31,9 @@ pub async fn get_waveform_data(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
-    let base_path_recording: String = get_file_path_root(RECORDING_PATH, &path);
+    let base_path_recording: String = get_file_path_root(&recording_path(), &path);
     let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
-    let output = format!("{}{}.dat", WAVEFORM_PATH, path.4);
+    let output = format!("{}{}.dat", waveform_path(), path.4);
     let file_name = path.4.clone();
 
     let row = sqlx::query!(

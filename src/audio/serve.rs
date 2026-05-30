@@ -9,10 +9,9 @@ use tracing::info;
 
 use crate::errors::AppError;
 
-
 use sakiot_paths::RecordingKey;
 
-use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
+use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
 
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {
@@ -33,15 +32,15 @@ pub async fn get_audio(
 
     let (root, leaf) = if query_param.silence.is_some() {
         (
-            NO_SILENCE_RECORDING_PATH,
+            no_silence_recording_path(),
             format!("{}{}", NO_SILENCE_PREFIX, file_name),
         )
     } else {
-        (RECORDING_PATH, file_name.clone())
+        (recording_path(), file_name.clone())
     };
 
     let path = RecordingKey::new(guild_id as i64, channel_id, year, month as u32, "")
-        .recording_dir(root)
+        .recording_dir(&root)
         .join(leaf);
 
     if let Ok(f) = NamedFile::open_async(&path).await {
@@ -67,18 +66,22 @@ pub async fn download_audio(
 
     let (root, leaf) = if is_silence.silence.is_some() {
         (
-            NO_SILENCE_RECORDING_PATH,
+            no_silence_recording_path(),
             format!("{}{}", NO_SILENCE_PREFIX, file_name_from_url),
         )
     } else {
-        (RECORDING_PATH, file_name_from_url.clone())
+        (recording_path(), file_name_from_url.clone())
     };
 
     let path = RecordingKey::new(guild_id, channel_id, year, month as u32, "")
-        .recording_dir(root)
+        .recording_dir(&root)
         .join(leaf);
-        
-    info!("download try: {} is_silence: {:?}", path.display(), is_silence);
+
+    info!(
+        "download try: {} is_silence: {:?}",
+        path.display(),
+        is_silence
+    );
     let file = actix_files::NamedFile::open_async(&path)
         .await
         .map_err(|_| AppError::FileNotFound)?;

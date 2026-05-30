@@ -28,7 +28,7 @@ use tracing::{error, info, warn};
 
 use crate::errors::AppError;
 
-use super::paths::RECORDING_PATH;
+use super::paths::recording_path;
 
 #[derive(Default, Debug)]
 pub struct LiveContainer(pub RwLock<HashMap<String, Arc<Mutex<JobState>>>>);
@@ -74,11 +74,12 @@ fn validate_seg(s: &str) -> Result<(), AppError> {
 }
 
 async fn source_path(k: &RecordingKey) -> Option<PathBuf> {
-    let padded = k.recording_path(RECORDING_PATH);
+    let recording_root = recording_path();
+    let padded = k.recording_path(&recording_root);
     if tokio::fs::try_exists(&padded).await.unwrap_or(false) {
         return Some(padded);
     }
-    let root = RECORDING_PATH.trim_end_matches('/');
+    let root = recording_root.trim_end_matches('/');
     let unpadded = PathBuf::from(root)
         .join(format!(
             "{}/{}/{}/{}",
@@ -398,7 +399,8 @@ async fn ensure_job(
         }
     }
 
-    let out_dir = key.live_dir(RECORDING_PATH);
+    let recording_root = recording_path();
+    let out_dir = key.live_dir(&recording_root);
     let playlist = out_dir.join("playlist.m3u8");
     let db = db_state(&pool, &key.stem).await?;
     let is_live = db.live;
@@ -444,7 +446,7 @@ pub async fn live_playlist(
     validate_stem(&stem)?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
-    let pl = key.live_playlist_path(RECORDING_PATH);
+    let pl = key.live_playlist_path(&recording_path());
     let body = tokio::fs::read(&pl)
         .await
         .map_err(|_| AppError::FileNotFound)?;
@@ -510,7 +512,7 @@ pub async fn live_segment(
         return Err(AppError::BadRequest("reserved name".into()));
     }
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
-    let path = key.live_segment_path(RECORDING_PATH, &seg);
+    let path = key.live_segment_path(&recording_path(), &seg);
     let f = NamedFile::open_async(&path)
         .await
         .map_err(|_| AppError::FileNotFound)?;

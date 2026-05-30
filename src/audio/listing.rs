@@ -9,7 +9,7 @@ use tracing::error;
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
-use super::paths::RECORDING_PATH;
+use super::paths::recording_path;
 use super::types::{Channels, Directories, File};
 
 const KIND_USERNAME: i32 = 1;
@@ -276,7 +276,8 @@ pub async fn for_channel_ids(
     dirs_vec: &mut Vec<Channels>,
     channel_hashset: HashSet<i64>,
 ) -> Result<(), AppError> {
-    let mut channel_ids = tokio::fs::read_dir(format!("{}{}", RECORDING_PATH, guild_id))
+    let recording_path = recording_path();
+    let mut channel_ids = tokio::fs::read_dir(format!("{}{}", recording_path, guild_id))
         .await
         .map_err(|err| {
             tracing::error!("{}", err);
@@ -301,7 +302,7 @@ pub async fn for_channel_ids(
         };
 
         if channel_hashset.contains(&channel) {
-            let years = tokio::fs::read_dir(format!("{}{}/{}", RECORDING_PATH, guild_id, channel))
+            let years = tokio::fs::read_dir(format!("{}{}/{}", recording_path, guild_id, channel))
                 .await
                 .map_err(|err| {
                     tracing::error!("{}", err);
@@ -353,7 +354,10 @@ pub async fn for_years(
 
         let months = tokio::fs::read_dir(format!(
             "{}{}/{}/{}",
-            RECORDING_PATH, guild_id, channel, year_as_int
+            recording_path(),
+            guild_id,
+            channel,
+            year_as_int
         ))
         .await
         .map_err(|err| {
@@ -400,7 +404,11 @@ pub async fn for_months(
 
         let entries = tokio::fs::read_dir(format!(
             "{}{}/{}/{}/{}",
-            RECORDING_PATH, guild_id, channel, year_as_int, &month_as_string
+            recording_path(),
+            guild_id,
+            channel,
+            year_as_int,
+            &month_as_string
         ))
         .await
         .map_err(|err| {

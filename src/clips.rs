@@ -14,7 +14,7 @@ use tracing::{error, info};
 use crate::proto::jammer::jam_response::JamResponseEnum;
 use crate::proto::jammer::JamData;
 use crate::{
-    audio::CLIPS_PATH,
+    audio::{clips_path, recording_path},
     auth::{Access, Token},
     errors::AppError,
     fbi_agent_registry::AgentGrpcRegistry,
@@ -74,7 +74,7 @@ pub async fn get_clip(
     .ok_or(AppError::ClipNotFound)?;
 
     let saved_file_name = row.saved_file_name.unwrap_or_default();
-    let full_path = format!("{}{}", CLIPS_PATH, saved_file_name);
+    let full_path = format!("{}{}", clips_path(), saved_file_name);
 
     let file = NamedFile::open_async(&full_path)
         .await
@@ -287,7 +287,7 @@ pub async fn create_clip(
     }
     let src_path = {
         let dir = crate::audio::util::get_file_path_root(
-            crate::audio::RECORDING_PATH,
+            &recording_path(),
             &(
                 guild_id,
                 channel_id,
@@ -321,7 +321,7 @@ pub async fn create_clip(
 
     let clip_id = uuid::Uuid::new_v4().to_string();
 
-    let target_dir = format!("{}{}/{:02}", CLIPS_PATH, c_year, c_month);
+    let target_dir = format!("{}{}/{:02}", clips_path(), c_year, c_month);
     let saved_file_name = format!("{}/{:02}/{}.ogg", c_year, c_month, clip_id);
     let full_save_path = format!("{}/{}.ogg", target_dir, clip_id);
 

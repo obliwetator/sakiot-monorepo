@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::errors::AppError;
 
-use super::paths::{NO_SILENCE_PREFIX, NO_SILENCE_RECORDING_PATH, RECORDING_PATH};
+use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
 use super::types::HashMapContainer;
 use super::util::{file_exists, get_file_path_root, handle_idempotency_key};
 
@@ -47,8 +47,8 @@ pub async fn remove_silence(
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
 
-    let file_path: String = get_file_path_root(RECORDING_PATH, &path);
-    let no_silence_file_path = get_file_path_root(NO_SILENCE_RECORDING_PATH, &path);
+    let file_path: String = get_file_path_root(&recording_path(), &path);
+    let no_silence_file_path = get_file_path_root(&no_silence_recording_path(), &path);
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";
 

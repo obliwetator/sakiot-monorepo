@@ -1,9 +1,24 @@
-// Re-export the canonical path layout from sakiot-paths. Kept under the old
-// names so callers in this crate compile without churn. With trailing slash
-// for legacy call sites that concatenated manually.
-
-pub const RECORDING_PATH: &str = "./voice_recordings/";
-pub const NO_SILENCE_RECORDING_PATH: &str = "./no_silence_voice_recordings/";
-pub const CLIPS_PATH: &str = "./clips/";
 pub const NO_SILENCE_PREFIX: &str = sakiot_paths::NO_SILENCE_PREFIX;
-pub const WAVEFORM_PATH: &str = "./waveform_data/";
+
+fn with_trailing_slash(mut path: String) -> String {
+    if !path.ends_with('/') {
+        path.push('/');
+    }
+    path
+}
+
+pub fn recording_path() -> String {
+    with_trailing_slash(sakiot_paths::DataRoots::from_env().recordings_str())
+}
+
+pub fn no_silence_recording_path() -> String {
+    with_trailing_slash(sakiot_paths::DataRoots::from_env().no_silence_str())
+}
+
+pub fn clips_path() -> String {
+    with_trailing_slash(sakiot_paths::DataRoots::from_env().clips_str())
+}
+
+pub fn waveform_path() -> String {
+    with_trailing_slash(sakiot_paths::DataRoots::from_env().waveforms_str())
+}
