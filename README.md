@@ -23,6 +23,7 @@ Sakiot application:
   server.
 - `sakiot-proto` provides the shared gRPC contract and generated Rust types used
   by the bot and server.
+- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `web_server`.
 
 ## What It Does
 
