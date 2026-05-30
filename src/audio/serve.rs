@@ -2,7 +2,7 @@ use actix_files::NamedFile;
 use actix_web::{
     get,
     http::header::{ContentDisposition, DispositionType},
-    web, HttpRequest, Responder,
+    route, web, HttpRequest, Responder,
 };
 use serde::Deserialize;
 use tracing::info;
@@ -18,7 +18,11 @@ pub struct AudioQuery {
     pub silence: Option<bool>,
 }
 
-#[get("/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[route(
+    "/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    method = "GET",
+    method = "HEAD"
+)]
 pub async fn get_audio(
     req: HttpRequest,
     path: web::Path<(u64, i64, i32, i32, String)>,
