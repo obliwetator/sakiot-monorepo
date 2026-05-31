@@ -26,7 +26,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 
+use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::require_channel_access;
 
 use super::paths::recording_path;
 
@@ -441,9 +443,12 @@ pub async fn live_playlist(
     path: web::Path<(i64, i64, i32, u32, String)>,
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, channel_id, year, month, stem) = path.into_inner();
     validate_stem(&stem)?;
+    let token = token.ok_or(AppError::Unauthorized)?;
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
     let pl = key.live_playlist_path(&recording_path());
@@ -478,6 +483,8 @@ pub async fn live_playlist(
     responses(
         (status = 200, description = "Live recording state", body = StateResponse),
         (status = 400, description = "Invalid stem", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -486,13 +493,14 @@ pub async fn live_playlist(
 pub async fn live_state(
     path: web::Path<(i64, i64, i32, u32, String)>,
     pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
-    let (_g, _c, _y, _m, stem) = path.into_inner();
+    let (guild_id, channel_id, _y, _m, stem) = path.into_inner();
     validate_stem(&stem)?;
+    let token = token.ok_or(AppError::Unauthorized)?;
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
     let db = db_state(&pool, &stem).await?;
-    let ended_at = db
-        .end_ts
-        .or(if db.live { None } else { db.start_ts });
+    let ended_at = db.end_ts.or(if db.live { None } else { db.start_ts });
     Ok(HttpResponse::Ok().json(StateResponse {
         live: db.live,
         started_at: db.start_ts,
@@ -504,10 +512,14 @@ pub async fn live_state(
 pub async fn live_segment(
     req: HttpRequest,
     path: web::Path<(i64, i64, i32, u32, String, String)>,
+    pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let (guild_id, channel_id, year, month, stem, seg) = path.into_inner();
     validate_stem(&stem)?;
     validate_seg(&seg)?;
+    let token = token.ok_or(AppError::Unauthorized)?;
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
     if seg == "playlist.m3u8" || seg == "state" {
         return Err(AppError::BadRequest("reserved name".into()));
     }

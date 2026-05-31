@@ -5,6 +5,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::require_channel_access;
 
 fn validate_stem(s: &str) -> Result<(), AppError> {
     if s.is_empty() || s.contains('/') || s.contains("..") || s.contains('\\') || s.contains('\'') {
@@ -48,7 +49,8 @@ pub struct VoiceEventDto {
     responses(
         (status = 200, description = "Voice events for recording", body = [VoiceEventDto]),
         (status = 400, description = "Invalid request", body = crate::errors::ApiError),
-        (status = 401, description = "Missing access or channel permission", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
         (status = 404, description = "Recording not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
@@ -65,11 +67,7 @@ pub async fn get_recording_events(
     let (guild_id, channel_id, _year, _month, stem) = path.into_inner();
     validate_stem(&stem)?;
 
-    let permitted =
-        crate::permissions::get_available_channels_for_user(&pool, guild_id, token.user_id).await?;
-    if !permitted.contains(&channel_id) {
-        return Err(AppError::Unauthorized);
-    }
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
 
     let row = sqlx::query!(
         "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",

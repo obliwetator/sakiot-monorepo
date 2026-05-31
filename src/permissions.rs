@@ -286,6 +286,39 @@ pub async fn get_available_channels_for_user(
         .collect())
 }
 
+pub async fn visible_channels_for_user(
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<HashSet<i64>, crate::errors::AppError> {
+    let membership = sqlx::query!(
+        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
+        guild_id,
+        user_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await?;
+    if membership.is_none() {
+        return Err(crate::errors::AppError::Forbidden);
+    }
+
+    get_available_channels_for_user(pool, guild_id, user_id).await
+}
+
+pub async fn require_channel_access(
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+    channel_id: i64,
+    user_id: i64,
+) -> Result<(), crate::errors::AppError> {
+    let permitted = visible_channels_for_user(pool, guild_id, user_id).await?;
+    if permitted.contains(&channel_id) {
+        Ok(())
+    } else {
+        Err(crate::errors::AppError::Forbidden)
+    }
+}
+
 async fn apply_member_overwrites(
     pool: &web::Data<Pool<Postgres>>,
     user_id: i64,
@@ -378,7 +411,13 @@ async fn require_guild_permission(
         .get::<Token<Access>>()
         .map(|t| t.user_id)
         .ok_or(crate::errors::AppError::Unauthorized)?;
-    let permissions = get_combined_perm_for_user(pool, guild_id, user_id).await?;
+    let permissions = match get_combined_perm_for_user(pool, guild_id, user_id).await {
+        Ok(permissions) => permissions,
+        Err(crate::errors::AppError::DbError(sqlx::Error::RowNotFound)) => {
+            return Err(crate::errors::AppError::Forbidden);
+        }
+        Err(err) => return Err(err),
+    };
     if permissions.intersects(required_mask) {
         Ok(user_id)
     } else {

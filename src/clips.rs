@@ -11,6 +11,9 @@ use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
+use crate::permissions::{
+    require_channel_access, require_guild_manager, visible_channels_for_user,
+};
 use crate::proto::jammer::jam_response::JamResponseEnum;
 use crate::proto::jammer::JamData;
 use crate::{
@@ -59,13 +62,15 @@ pub async fn get_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, String)>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     use actix_files::NamedFile;
 
     let (guild_id, clip_id) = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        "SELECT saved_file_name, channel_id FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
         clip_id
     )
@@ -73,7 +78,10 @@ pub async fn get_clip(
     .await?
     .ok_or(AppError::ClipNotFound)?;
 
-    let saved_file_name = row.saved_file_name.unwrap_or_default();
+    let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+
+    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = format!("{}{}", clips_path(), saved_file_name);
 
     let file = NamedFile::open_async(&full_path)
@@ -102,6 +110,7 @@ pub async fn get_clip(
     responses(
         (status = 200, description = "Guild clips", body = [ClipInfo]),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -111,8 +120,15 @@ pub async fn get_clips(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let permitted = visible_channels_for_user(&pool, guild_id, token.user_id).await?;
+    if permitted.is_empty() {
+        return Ok(HttpResponse::Ok().json(Vec::<ClipInfo>::new()));
+    }
+    let permitted: Vec<i64> = permitted.into_iter().collect();
 
     let result = sqlx::query_as!(
         ClipInfo,
@@ -128,9 +144,10 @@ pub async fn get_clips(
         channel_id as "channel_id!",
         start_time
         FROM clips
-        WHERE guild_id = $1 AND deleted_at IS NULL
+        WHERE guild_id = $1 AND deleted_at IS NULL AND channel_id = ANY($2)
         "#,
-        guild_id
+        guild_id,
+        &permitted
     )
     .fetch_all(pool.get_ref())
     .await?;
@@ -158,12 +175,19 @@ pub async fn play_clip(
     req: HttpRequest,
     info: web::Json<JamItBody>,
     registry: web::Data<AgentGrpcRegistry>,
+    pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let user_id = req
         .extensions()
         .get::<Token<Access>>()
         .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
+    if visible_channels_for_user(&pool, info.guild_id, user_id)
+        .await?
+        .is_empty()
+    {
+        return Err(AppError::Forbidden);
+    }
 
     let active_address = registry.active_address();
     let (grpc_address, mut client) = grpc_client::connect_jammer(active_address.clone())
@@ -265,6 +289,7 @@ async fn crop_ffmpeg(
         (status = 200, description = "Clip created", body = CreateClipResponse),
         (status = 400, description = "Invalid clip request", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -285,6 +310,7 @@ pub async fn create_clip(
     if !is_valid_recording_file_name(&file_name_from_url) {
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
+    require_channel_access(&pool, guild_id, channel_id, user_id).await?;
     let src_path = {
         let dir = crate::audio::util::get_file_path_root(
             &recording_path(),
@@ -384,6 +410,7 @@ pub async fn create_clip(
     responses(
         (status = 200, description = "Clip deleted"),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Not clip owner or guild manager", body = crate::errors::ApiError),
         (status = 404, description = "Clip not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
@@ -391,10 +418,28 @@ pub async fn create_clip(
 )]
 #[delete("/audio/clips/{guild_id}/{clip_id}")]
 pub async fn delete(
+    req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, String)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, clip_id) = path.into_inner();
+    let user_id = req
+        .extensions()
+        .get::<Token<Access>>()
+        .map(|t| t.user_id)
+        .ok_or(AppError::Unauthorized)?;
+
+    let row = sqlx::query!(
+        "SELECT user_id FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
+    if row.user_id != Some(user_id) {
+        require_guild_manager(&req, &pool, guild_id).await?;
+    }
 
     let result = sqlx::query!(
         r#"

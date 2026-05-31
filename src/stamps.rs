@@ -4,7 +4,9 @@ use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
+use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::visible_channels_for_user;
 
 type DisplayFromstr = As<DisplayFromStr>;
 
@@ -47,6 +49,7 @@ pub struct StampInfo {
     responses(
         (status = 200, description = "Recent stamps for guild", body = [StampInfo]),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -55,8 +58,15 @@ pub struct StampInfo {
 pub async fn get_stamps(
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let guild_id = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let permitted = visible_channels_for_user(&pool, guild_id, token.user_id).await?;
+    if permitted.is_empty() {
+        return Ok(HttpResponse::Ok().json(Vec::<StampInfo>::new()));
+    }
+    let permitted: Vec<i64> = permitted.into_iter().collect();
 
     #[derive(Debug)]
     struct Row {
@@ -107,10 +117,12 @@ pub async fn get_stamps(
         LEFT JOIN channels        c  ON c.channel_id = s.channel_id
         LEFT JOIN audio_files     af ON af.id = s.audio_file_id
         WHERE s.guild_id = $1
+          AND s.channel_id = ANY($2)
         ORDER BY s.stamp_ts DESC
         LIMIT 500
         "#,
-        guild_id
+        guild_id,
+        &permitted
     )
     .fetch_all(pool.get_ref())
     .await?;

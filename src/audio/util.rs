@@ -32,7 +32,9 @@ pub fn handle_idempotency_key(req: &HttpRequest) -> Result<String, crate::errors
         Some(ok) => ok,
         None => {
             error!("Idempotency key is missing");
-            return Err(crate::errors::AppError::BadRequest("Idempotency key is missing".into()));
+            return Err(crate::errors::AppError::BadRequest(
+                "Idempotency key is missing".into(),
+            ));
         }
     };
 
@@ -40,7 +42,9 @@ pub fn handle_idempotency_key(req: &HttpRequest) -> Result<String, crate::errors
         Ok(ok) => Ok(ok.to_owned()),
         Err(_) => {
             error!("No value in Idempotency header");
-            Err(crate::errors::AppError::BadRequest("No value in Idempotency header".into()))
+            Err(crate::errors::AppError::BadRequest(
+                "No value in Idempotency header".into(),
+            ))
         }
     }
 }

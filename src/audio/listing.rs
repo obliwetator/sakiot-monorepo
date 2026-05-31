@@ -450,7 +450,7 @@ pub async fn get_live_stems(
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
     let permitted =
-        crate::permissions::get_available_channels_for_user(&pool, guild_id, token.user_id).await?;
+        crate::permissions::visible_channels_for_user(&pool, guild_id, token.user_id).await?;
 
     let rows = sqlx::query!(
         "SELECT af.file_name, af.channel_id
@@ -508,7 +508,7 @@ pub async fn get_current_month_permission(
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
     let permission_hashset =
-        crate::permissions::get_available_channels_for_user(&pool, guild_id_as_int, token.user_id)
+        crate::permissions::visible_channels_for_user(&pool, guild_id_as_int, token.user_id)
             .await?;
 
     let mut dirs_vec = get_channels_dir(guild_id, permission_hashset).await?;

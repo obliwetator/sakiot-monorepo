@@ -4,7 +4,9 @@ use serde_json::json;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
+use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::require_channel_access;
 use crate::waveform::generate_peaks_background;
 
 use super::paths::{no_silence_recording_path, recording_path, waveform_path, NO_SILENCE_PREFIX};
@@ -82,8 +84,11 @@ pub async fn get_waveform_data(
     query: web::Query<AudioQuery>,
     progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
+    require_channel_access(&pool, path.0, path.1, token.user_id).await?;
 
     // Silence-free version is a separate static file: distinct input,
     // distinct cache/progress key. No DB cache marker — the file is final

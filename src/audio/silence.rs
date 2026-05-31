@@ -5,7 +5,9 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
+use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::require_channel_access;
 
 use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
 use super::types::HashMapContainer;
@@ -33,6 +35,8 @@ pub struct RemoveSilenceResponse {
         (status = 200, description = "Silence removal file exists or processing started", body = RemoveSilenceResponse),
         (status = 202, description = "Existing processing request completed", body = RemoveSilenceResponse),
         (status = 400, description = "Missing idempotency key", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
         (status = 503, description = "Concurrent processing state unavailable", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
@@ -44,8 +48,11 @@ pub async fn remove_silence(
     path: web::Path<(i64, i64, i32, i32, String)>,
     hashmap: web::Data<HashMapContainer>,
     pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
+    require_channel_access(&pool, path.0, path.1, token.user_id).await?;
 
     let file_path: String = get_file_path_root(&recording_path(), &path);
     let no_silence_file_path = get_file_path_root(&no_silence_recording_path(), &path);
