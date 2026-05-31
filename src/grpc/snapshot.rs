@@ -7,8 +7,6 @@ use songbird::SongbirdKey;
 
 use crate::{BotMetrics, BotMetricsKey};
 
-use super::proto::MetricsResponse;
-
 #[derive(Default)]
 pub(super) struct GlobalMetricsSnapshot {
     pub total_guilds: i32,
@@ -30,6 +28,8 @@ pub(super) struct GlobalMetricsSnapshot {
     pub tokio_active_tasks: i32,
     pub messages_received: i32,
     pub last_voice_packet_time: i64,
+    pub active_recording_users: i64,
+    pub voice_users: i64,
 }
 
 impl GlobalMetricsSnapshot {
@@ -60,6 +60,8 @@ impl GlobalMetricsSnapshot {
             snap.tokio_active_tasks = metrics.tokio_active_tasks.load(Ordering::Relaxed) as i32;
             snap.messages_received = metrics.messages_received.load(Ordering::Relaxed) as i32;
             snap.last_voice_packet_time = metrics.last_voice_packet_time.load(Ordering::Relaxed);
+            snap.active_recording_users = metrics.active_recording_users.len() as i64;
+            snap.voice_users = metrics.voice_users.len() as i64;
         }
 
         if data.get::<SongbirdKey>().is_some() {
@@ -67,32 +69,6 @@ impl GlobalMetricsSnapshot {
         }
 
         snap
-    }
-}
-
-impl From<GlobalMetricsSnapshot> for MetricsResponse {
-    fn from(s: GlobalMetricsSnapshot) -> Self {
-        Self {
-            total_guilds: s.total_guilds,
-            active_voice_connections: s.active_voice_connections,
-            uptime_seconds: s.uptime_seconds,
-            commands_executed: s.commands_executed,
-            active_recordings: s.active_recordings,
-            writer_setup_failures: s.writer_setup_failures,
-            audio_packets_received: s.audio_packets_received,
-            audio_packets_dropped: s.audio_packets_dropped,
-            gateway_reconnects: s.gateway_reconnects,
-            driver_reconnects: s.driver_reconnects,
-            voice_state_updates_received: s.voice_state_updates_received,
-            db_query_errors: s.db_query_errors,
-            db_insert_failures: s.db_insert_failures,
-            grpc_active_streams: s.grpc_active_streams,
-            process_rss_bytes: s.process_rss_bytes,
-            process_open_fds: s.process_open_fds,
-            tokio_active_tasks: s.tokio_active_tasks,
-            messages_received: s.messages_received,
-            last_voice_packet_time: s.last_voice_packet_time,
-        }
     }
 }
 

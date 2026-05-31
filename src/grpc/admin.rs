@@ -76,6 +76,12 @@ impl FbiAgentGrpc {
                 })
                 .unwrap_or(0)
         };
+        let active_recordings = {
+            let data = self.data_cache.data.read().await;
+            data.get::<crate::BotMetricsKey>()
+                .map(|metrics| metrics.active_recordings.load(Ordering::Relaxed) as u64)
+                .unwrap_or(0)
+        };
 
         DrainStatus {
             instance_id: self.data_cache.runtime.config().instance_id.clone(),
@@ -87,6 +93,12 @@ impl FbiAgentGrpc {
             message: message.to_string(),
             drain_age_seconds: self.data_cache.runtime.drain_age_seconds(),
             force_shutdown: self.data_cache.runtime.force_shutdown_requested(),
+            voice_state: if active_voice_connections > 0 {
+                "connected".to_string()
+            } else {
+                "empty".to_string()
+            },
+            active_recordings,
         }
     }
 }

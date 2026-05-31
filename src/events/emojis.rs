@@ -11,5 +11,4 @@ pub async fn guild_emojis_update(
         serenity::model::guild::Emoji,
     >,
 ) {
-
 }

@@ -6,48 +6,17 @@ use songbird::SongbirdKey;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::BotMetricsKey;
 
 use super::FbiAgentGrpc;
 use super::proto::dashboard_server::Dashboard;
-use super::proto::{
-    ActionResponse, ClientMessage, DashboardEvent, Empty, GuildRequest, MetricsResponse,
-};
+use super::proto::{ClientMessage, DashboardEvent};
 use super::snapshot::{GlobalMetricsSnapshot, StreamLifetime};
 
 #[tonic::async_trait]
 impl Dashboard for FbiAgentGrpc {
-    type GetMetricsStream = ReceiverStream<Result<MetricsResponse, Status>>;
-
-    async fn get_metrics(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<Self::GetMetricsStream>, Status> {
-        let (tx, rx) = mpsc::channel(4);
-        let data_cache = self.data_cache.clone();
-
-        tokio::spawn(async move {
-            let _lifetime = StreamLifetime::acquire(&data_cache.data).await;
-
-            loop {
-                let snap = {
-                    let data_guard = data_cache.data.read().await;
-                    GlobalMetricsSnapshot::capture(&data_guard, &data_cache.cache)
-                };
-
-                if tx.send(Ok(MetricsResponse::from(snap))).await.is_err() {
-                    break;
-                }
-
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        });
-
-        Ok(Response::new(ReceiverStream::new(rx)))
-    }
-
     type DashboardStreamStream = ReceiverStream<Result<DashboardEvent, Status>>;
 
     async fn dashboard_stream(
@@ -135,6 +104,8 @@ impl Dashboard for FbiAgentGrpc {
                         "tokio_active_tasks": snap.tokio_active_tasks,
                         "messages_received": snap.messages_received,
                         "last_voice_packet_time": snap.last_voice_packet_time,
+                        "active_recording_users": snap.active_recording_users,
+                        "voice_users": snap.voice_users,
                     });
 
                     let event = DashboardEvent {
@@ -151,16 +122,33 @@ impl Dashboard for FbiAgentGrpc {
                     let mut voice_states_json = Vec::new();
                     let mut user_start_times_json = serde_json::Map::new();
 
-                    let (user_start_times, guild_rec_metrics) = {
+                    let (user_start_times, guild_rec_metrics, call) = {
                         let data_guard = data_cache.data.read().await;
                         if let Some(metrics) = data_guard.get::<BotMetricsKey>() {
                             (
                                 Some(metrics.user_start_times.clone()),
                                 Some(metrics.guild_metrics(guild_id)),
+                                data_guard
+                                    .get::<SongbirdKey>()
+                                    .and_then(|manager| manager.get(GuildId::new(guild_id))),
                             )
                         } else {
-                            (None, None)
+                            (
+                                None,
+                                None,
+                                data_guard
+                                    .get::<SongbirdKey>()
+                                    .and_then(|manager| manager.get(GuildId::new(guild_id))),
+                            )
                         }
+                    };
+                    let bot_voice_channel_id = if let Some(call) = call {
+                        call.lock()
+                            .await
+                            .current_channel()
+                            .map(|channel| channel.0.get().to_string())
+                    } else {
+                        None
                     };
 
                     if let Some(guild) = data_cache.cache.guild(GuildId::new(guild_id)) {
@@ -205,6 +193,13 @@ impl Dashboard for FbiAgentGrpc {
                         json_payload: serde_json::json!({
                             "voice_states": voice_states_json,
                             "user_start_times": user_start_times_json,
+                            "voice_status": {
+                                "connected": bot_voice_channel_id.is_some(),
+                                "channel_id": bot_voice_channel_id,
+                                "instance_id": data_cache.runtime.config().instance_id.clone(),
+                                "role": data_cache.runtime.role().as_str(),
+                                "draining": data_cache.runtime.is_draining(),
+                            },
                             "recording_metrics": recording_metrics_json,
                         })
                         .to_string(),
@@ -235,45 +230,5 @@ impl Dashboard for FbiAgentGrpc {
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
-    }
-
-    async fn disconnect_voice(
-        &self,
-        request: Request<GuildRequest>,
-    ) -> Result<Response<ActionResponse>, Status> {
-        let req = request.into_inner();
-        let guild_id = GuildId::new(
-            u64::try_from(req.guild_id)
-                .map_err(|_| Status::invalid_argument("guild_id must be non-negative"))?,
-        );
-
-        let data_guard = self.data_cache.data.read().await;
-        let Some(songbird) = data_guard.get::<SongbirdKey>() else {
-            warn!("disconnect_voice requested but Songbird manager is missing");
-            return Ok(Response::new(ActionResponse {
-                success: false,
-                message: "Voice system is not configured".to_string(),
-            }));
-        };
-        let manager = songbird.clone();
-
-        if manager.get(guild_id).is_some() {
-            if let Err(e) = manager.remove(guild_id).await {
-                return Ok(Response::new(ActionResponse {
-                    success: false,
-                    message: format!("Failed to disconnect: {}", e),
-                }));
-            }
-
-            return Ok(Response::new(ActionResponse {
-                success: true,
-                message: "Successfully disconnected from voice".to_string(),
-            }));
-        }
-
-        Ok(Response::new(ActionResponse {
-            success: false,
-            message: "Bot is not in a voice channel in this guild".to_string(),
-        }))
     }
 }

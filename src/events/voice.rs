@@ -1,46 +1,24 @@
-use crate::{event_handler::Handler, events::voice_receiver::Receiver, get_lock_read};
+use crate::{event_handler::Handler, get_lock_read};
 use serenity::{
     client::Context,
     model::id::{ChannelId, GuildId},
+    prelude::{RwLock, TypeMap},
 };
-use songbird::CoreEvent;
 use sqlx::{Pool, Postgres};
 use std::{sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
-// Voice state event type IDs match rows seeded in the voice_state_event_types
-// migrations.
-const EVT_SERVER_MUTE: i32 = 1;
-const EVT_SERVER_UNMUTE: i32 = 2;
-const EVT_SERVER_DEAFEN: i32 = 3;
-const EVT_SERVER_UNDEAFEN: i32 = 4;
-const EVT_SELF_MUTE: i32 = 5;
-const EVT_SELF_UNMUTE: i32 = 6;
-const EVT_SELF_DEAFEN: i32 = 7;
-const EVT_SELF_UNDEAFEN: i32 = 8;
-const EVT_SUPPRESS_ON: i32 = 9;
-const EVT_SUPPRESS_OFF: i32 = 10;
-const EVT_STREAM_START: i32 = 11;
-const EVT_STREAM_STOP: i32 = 12;
-const EVT_VIDEO_ON: i32 = 13;
-const EVT_VIDEO_OFF: i32 = 14;
-const EVT_CHANNEL_JOIN: i32 = 15;
-const EVT_CHANNEL_LEAVE: i32 = 16;
-const EVT_CHANNEL_SWITCH: i32 = 17;
-pub(super) const EVT_RECORDING_PAUSE: i32 = 18;
-pub(super) const EVT_RECORDING_RESUME: i32 = 19;
-pub(super) const EVT_USER_RECORDING_PAUSE: i32 = 20;
-pub(super) const EVT_USER_RECORDING_RESUME: i32 = 21;
+mod session;
+mod store;
+
+pub use session::{VoiceConnectOutcome, VoiceDisconnectOutcome};
+pub(super) use store::{
+    EVT_RECORDING_PAUSE, EVT_RECORDING_RESUME, EVT_USER_RECORDING_PAUSE, EVT_USER_RECORDING_RESUME,
+    insert_voice_event,
+};
 
 const LOG_VOICE_STATE_CHANGES: bool = false;
 const EMPTY_CHANNEL_LEAVE_DEBOUNCE: Duration = Duration::from_secs(3);
-
-const VOICE_FLAG_SERVER_MUTE: u8 = 1 << 0;
-const VOICE_FLAG_SERVER_DEAF: u8 = 1 << 1;
-const VOICE_FLAG_SELF_MUTE: u8 = 1 << 2;
-const VOICE_FLAG_SELF_DEAF: u8 = 1 << 3;
-const VOICE_FLAG_SUPPRESS: u8 = 1 << 4;
-const VOICE_FLAG_VIDEO: u8 = 1 << 5;
 
 pub async fn voice_server_update(
     _self: &Handler,
@@ -49,231 +27,22 @@ pub async fn voice_server_update(
 ) {
 }
 
-pub(super) async fn insert_voice_event(
+pub async fn connect_to_voice_channel(
+    pool: Pool<Postgres>,
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    _user_id: u64,
+) -> VoiceConnectOutcome {
+    session::connect_to_voice_channel(pool, ctx, guild_id, channel_id).await
+}
+
+pub async fn disconnect_voice_channel(
+    data: &Arc<RwLock<TypeMap>>,
     pool: &Pool<Postgres>,
-    guild_id: i64,
-    channel_id: Option<i64>,
-    user_id: i64,
-    event_type_id: i32,
-) {
-    if let Err(err) = sqlx::query!(
-        "INSERT INTO voice_state_events (guild_id, channel_id, user_id, event_type_id) \
-         VALUES ($1, $2, $3, $4)",
-        guild_id,
-        channel_id,
-        user_id,
-        event_type_id
-    )
-    .execute(pool)
-    .await
-    {
-        warn!("Failed to insert voice_state_event: {}", err);
-    }
-}
-
-struct VoiceFlagEvent {
-    label: &'static str,
-    enabled_event_type_id: i32,
-    disabled_event_type_id: i32,
-}
-
-fn voice_state_flags(state: &serenity::model::prelude::VoiceState) -> u8 {
-    let mut flags = 0;
-    if state.mute {
-        flags |= VOICE_FLAG_SERVER_MUTE;
-    }
-    if state.deaf {
-        flags |= VOICE_FLAG_SERVER_DEAF;
-    }
-    if state.self_mute {
-        flags |= VOICE_FLAG_SELF_MUTE;
-    }
-    if state.self_deaf {
-        flags |= VOICE_FLAG_SELF_DEAF;
-    }
-    if state.suppress {
-        flags |= VOICE_FLAG_SUPPRESS;
-    }
-    if state.self_video {
-        flags |= VOICE_FLAG_VIDEO;
-    }
-    flags
-}
-
-fn voice_flag_event(flag: u8) -> Option<VoiceFlagEvent> {
-    match flag {
-        VOICE_FLAG_SERVER_MUTE => Some(VoiceFlagEvent {
-            label: "User server muted changed",
-            enabled_event_type_id: EVT_SERVER_MUTE,
-            disabled_event_type_id: EVT_SERVER_UNMUTE,
-        }),
-        VOICE_FLAG_SERVER_DEAF => Some(VoiceFlagEvent {
-            label: "User server deafened changed",
-            enabled_event_type_id: EVT_SERVER_DEAFEN,
-            disabled_event_type_id: EVT_SERVER_UNDEAFEN,
-        }),
-        VOICE_FLAG_SELF_MUTE => Some(VoiceFlagEvent {
-            label: "User self muted changed",
-            enabled_event_type_id: EVT_SELF_MUTE,
-            disabled_event_type_id: EVT_SELF_UNMUTE,
-        }),
-        VOICE_FLAG_SELF_DEAF => Some(VoiceFlagEvent {
-            label: "User self deafened changed",
-            enabled_event_type_id: EVT_SELF_DEAFEN,
-            disabled_event_type_id: EVT_SELF_UNDEAFEN,
-        }),
-        VOICE_FLAG_SUPPRESS => Some(VoiceFlagEvent {
-            label: "User suppress status changed",
-            enabled_event_type_id: EVT_SUPPRESS_ON,
-            disabled_event_type_id: EVT_SUPPRESS_OFF,
-        }),
-        VOICE_FLAG_VIDEO => Some(VoiceFlagEvent {
-            label: "User video status changed",
-            enabled_event_type_id: EVT_VIDEO_ON,
-            disabled_event_type_id: EVT_VIDEO_OFF,
-        }),
-        _ => None,
-    }
-}
-
-async fn record_changed_voice_flag_events(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    channel_id: Option<i64>,
-    user_id: i64,
-    log_changes: bool,
-    old_flags: u8,
-    new_flags: u8,
-) {
-    let mut changed_flags = old_flags ^ new_flags;
-    while changed_flags != 0 {
-        let flag = 1u8 << changed_flags.trailing_zeros();
-        changed_flags &= !flag;
-
-        let Some(event) = voice_flag_event(flag) else {
-            continue;
-        };
-        let old_value = old_flags & flag != 0;
-        let new_value = new_flags & flag != 0;
-
-        if log_changes {
-            info!("{}: {} -> {}", event.label, old_value, new_value);
-        }
-
-        insert_voice_event(
-            pool,
-            guild_id,
-            channel_id,
-            user_id,
-            if new_value {
-                event.enabled_event_type_id
-            } else {
-                event.disabled_event_type_id
-            },
-        )
-        .await;
-    }
-}
-
-async fn record_voice_events(
-    pool: &Pool<Postgres>,
-    old: Option<&serenity::model::prelude::VoiceState>,
-    new: &serenity::model::prelude::VoiceState,
-    log_changes: bool,
-) {
-    let Some(guild_id) = new.guild_id.map(|g| g.get() as i64) else {
-        return;
-    };
-    let user_id = new.user_id.get() as i64;
-    let new_channel = new.channel_id.map(|c| c.get() as i64);
-
-    // Channel transition events.
-    match (old.and_then(|o| o.channel_id), new.channel_id) {
-        (None, Some(new_ch)) => {
-            if log_changes {
-                info!("User joined voice channel: {}", new_ch);
-            }
-            insert_voice_event(
-                pool,
-                guild_id,
-                Some(new_ch.get() as i64),
-                user_id,
-                EVT_CHANNEL_JOIN,
-            )
-            .await;
-        }
-        (Some(old_ch), None) => {
-            if log_changes {
-                info!("User left voice channel: {}", old_ch);
-            }
-            insert_voice_event(
-                pool,
-                guild_id,
-                Some(old_ch.get() as i64),
-                user_id,
-                EVT_CHANNEL_LEAVE,
-            )
-            .await;
-        }
-        (Some(old_ch), Some(new_ch)) if old_ch != new_ch => {
-            if log_changes {
-                info!("User switched voice channels: {} -> {}", old_ch, new_ch);
-            }
-            insert_voice_event(
-                pool,
-                guild_id,
-                Some(new_ch.get() as i64),
-                user_id,
-                EVT_CHANNEL_SWITCH,
-            )
-            .await;
-        }
-        _ => {}
-    }
-
-    // Per-field diffs require a previous state.
-    let Some(old) = old else { return };
-
-    record_changed_voice_flag_events(
-        pool,
-        guild_id,
-        new_channel,
-        user_id,
-        log_changes,
-        voice_state_flags(old),
-        voice_state_flags(new),
-    )
-    .await;
-
-    let old_streaming = old.self_stream.unwrap_or(false);
-    let new_streaming = new.self_stream.unwrap_or(false);
-    if old_streaming != new_streaming {
-        if log_changes {
-            info!(
-                "User stream status changed: {:?} -> {:?}",
-                old.self_stream, new.self_stream
-            );
-        }
-        insert_voice_event(
-            pool,
-            guild_id,
-            new_channel,
-            user_id,
-            if new_streaming {
-                EVT_STREAM_START
-            } else {
-                EVT_STREAM_STOP
-            },
-        )
-        .await;
-    }
-
-    if log_changes && old.request_to_speak_timestamp != new.request_to_speak_timestamp {
-        info!(
-            "User request to speak changed: {:?} -> {:?}",
-            old.request_to_speak_timestamp, new.request_to_speak_timestamp
-        );
-    }
+    guild_id: GuildId,
+) -> VoiceDisconnectOutcome {
+    session::disconnect_voice_channel(data, pool, guild_id).await
 }
 
 pub async fn voice_state_update(
@@ -293,7 +62,7 @@ pub async fn voice_state_update(
         .map(|m| m.user.bot)
         .unwrap_or(false);
     if !is_bot {
-        record_voice_events(
+        store::record_voice_events(
             &_self.database,
             old_state.as_ref(),
             &new_state,
@@ -534,7 +303,7 @@ fn schedule_leave_if_still_empty(
                     channel_id = channel_id.get(),
                     "empty channel leave confirmed"
                 );
-                leave_voice_channel(&ctx, &pool, guild_id).await;
+                disconnect_voice_channel(&ctx.data, &pool, guild_id).await;
             }
             Ok(count) => {
                 info!(
@@ -617,244 +386,4 @@ async fn get_channel_with_most_members(
         }
     }
     Some((highest_channel_id, highest_channel_len))
-}
-
-async fn leave_voice_channel(ctx: &Context, pool: &Pool<Postgres>, guild_id: GuildId) {
-    let Some(manager) = songbird::get(ctx).await else {
-        error!("Songbird manager missing while leaving voice channel");
-        return;
-    };
-    let manager = manager.clone();
-
-    let existed = manager.get(guild_id).is_some();
-    if manager.remove(guild_id).await.is_ok() && existed {
-        let data_read = ctx.data.read().await;
-        if let Some(metrics) = data_read.get::<crate::BotMetricsKey>() {
-            metrics
-                .active_voice_connections
-                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = metrics.update_tx.send(());
-        }
-        if let Some(runtime) = data_read.get::<crate::runtime::RuntimeStateKey>() {
-            crate::deployment::release_voice_session(pool, runtime, guild_id).await;
-        }
-    }
-}
-
-pub async fn connect_to_voice_channel(
-    pool: Pool<Postgres>,
-    ctx: &Context,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    user_id: u64,
-) {
-    if crate::runtime::is_draining_ctx(ctx).await {
-        info!(
-            guild_id = guild_id.get(),
-            channel_id = channel_id.get(),
-            "skipping voice connect while instance is draining"
-        );
-        return;
-    }
-
-    let Some(manager) = songbird::get(ctx).await else {
-        error!("Songbird manager missing while connecting to voice channel");
-        return;
-    };
-    let manager = manager.clone();
-
-    if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-        match crate::deployment::active_lease_owner(&pool, guild_id).await {
-            Ok(Some(owner)) if owner != runtime.config().instance_id => {
-                info!(
-                    guild_id = guild_id.get(),
-                    channel_id = channel_id.get(),
-                    owner = %owner,
-                    "skipping voice connect because another instance owns lease"
-                );
-                return;
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!(
-                    guild_id = guild_id.get(),
-                    "failed to inspect voice lease before join: {}", err
-                );
-            }
-        }
-    }
-
-    if let Some(arc_call) = manager.get(guild_id) {
-        // already have call, check current channel
-        let current = arc_call.lock().await.current_channel();
-
-        match current {
-            Some(ch) if ch.0.get() == channel_id.get() => {}
-            Some(ch) => {
-                join_ch(
-                    pool,
-                    manager,
-                    guild_id,
-                    channel_id,
-                    ctx,
-                    user_id,
-                    JoinMode::Switch {
-                        _old_channel: ch.0.get(),
-                    },
-                )
-                .await;
-            }
-            None => {
-                // Disconnected (e.g. kicked). Keep existing receiver handlers
-                // so recoverable recording state can resume on DriverConnect.
-                info!("Call exists but disconnected, rejoining");
-                join_ch(
-                    pool,
-                    manager,
-                    guild_id,
-                    channel_id,
-                    ctx,
-                    user_id,
-                    JoinMode::RejoinDisconnected,
-                )
-                .await;
-            }
-        }
-    } else {
-        join_ch(
-            pool,
-            manager,
-            guild_id,
-            channel_id,
-            ctx,
-            user_id,
-            JoinMode::Fresh,
-        )
-        .await;
-    }
-}
-
-enum JoinMode {
-    Fresh,
-    RejoinDisconnected,
-    Switch { _old_channel: u64 },
-}
-
-async fn join_ch(
-    pool: Pool<Postgres>,
-    manager: Arc<songbird::Songbird>,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    ctx: &Context,
-    _user_id: u64,
-    mode: JoinMode,
-) {
-    if !matches!(mode, JoinMode::Switch { .. }) {
-        let handler_lock = manager.get_or_insert(guild_id);
-        let result = {
-            let mut handler = handler_lock.lock().await;
-            if matches!(mode, JoinMode::Fresh) {
-                register_voice_receiver(
-                    &mut handler,
-                    pool.clone(),
-                    ctx,
-                    guild_id,
-                    channel_id,
-                    true,
-                )
-                .await;
-            }
-            handler.join(channel_id).await
-        };
-
-        match result {
-            Ok(join) => match join.await {
-                Ok(()) => {
-                    record_active_voice_connection(ctx).await;
-                    if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-                        crate::deployment::claim_voice_session(
-                            &pool, &runtime, guild_id, channel_id,
-                        )
-                        .await;
-                    }
-                }
-                Err(err) => {
-                    error!("cannot join channel {}: {}", channel_id, err);
-                    if let Err(remove_err) = manager.remove(guild_id).await {
-                        error!("failed to clean up failed voice join: {}", remove_err);
-                    }
-                }
-            },
-            Err(err) => {
-                error!("cannot join channel {}: {}", channel_id, err);
-                if let Err(remove_err) = manager.remove(guild_id).await {
-                    error!("failed to clean up failed voice join: {}", remove_err);
-                }
-            }
-        }
-        return;
-    }
-
-    let result_handler_lock = manager.join(guild_id, channel_id).await;
-    match result_handler_lock {
-        Ok(_) => {
-            // switching channels. Don't re-register. Cleanup
-            info!("Clean up switching chanels");
-            if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-                crate::deployment::claim_voice_session(&pool, &runtime, guild_id, channel_id).await;
-            }
-        }
-        Err(err) => {
-            error!("cannot join channel {}: {}", channel_id, err);
-            if let Err(remove_err) = manager.remove(guild_id).await {
-                error!("failed to clean up failed voice join: {}", remove_err);
-            }
-        }
-    }
-}
-
-async fn register_voice_receiver(
-    handler: &mut songbird::Call,
-    pool: Pool<Postgres>,
-    ctx: &Context,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    reset_existing_handlers: bool,
-) {
-    if reset_existing_handlers {
-        handler.remove_all_global_events();
-    }
-
-    let metrics = {
-        let data_read = ctx.data.read().await;
-        let Some(m) = data_read.get::<crate::BotMetricsKey>() else {
-            error!("BotMetrics missing while joining voice channel");
-            return;
-        };
-        m.clone()
-    };
-
-    let ctx1 = Arc::new(ctx.clone());
-    let receiver = Receiver::new(pool, ctx1, guild_id, channel_id, metrics).await;
-
-    handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::VoiceTick.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::RtcpPacket.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::ClientDisconnect.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::DriverConnect.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::DriverReconnect.into(), receiver.clone());
-    handler.add_global_event(CoreEvent::DriverDisconnect.into(), receiver.clone());
-}
-
-async fn record_active_voice_connection(ctx: &Context) {
-    let data_read = ctx.data.read().await;
-    let Some(metrics) = data_read.get::<crate::BotMetricsKey>() else {
-        error!("BotMetrics missing while recording active voice connection");
-        return;
-    };
-
-    metrics
-        .active_voice_connections
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _ = metrics.update_tx.send(());
 }

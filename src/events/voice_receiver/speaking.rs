@@ -9,8 +9,8 @@ use tracing::{Instrument, debug, error, info};
 
 use super::InnerReceiver;
 use super::pause::resume_paused_recording;
-use super::persistence::{create_path, insert_voice_event_audit};
-use super::state::{UserRecording, VoiceEventType};
+use super::persistence::{create_path, insert_receiver_voice_event, mark_recording_setup_failed};
+use super::state::{RecordingFinalizeReason, UserRecording, VoiceEventType};
 use crate::events::ogg_opus_writer::OggOpusWriter;
 
 pub(super) async fn handle_speaking_state_update(
@@ -59,9 +59,9 @@ pub(super) async fn handle_speaking_state_update(
             return;
         }
 
-        let (is_channel_empty, previous_ssrc) = {
+        let previous_ssrc = {
             let users = inner.user_id_hashmap.read().await;
-            (users.is_empty(), users.get(&user_id.0).copied())
+            users.get(&user_id.0).copied()
         };
 
         if let Some(previous_ssrc) = previous_ssrc {
@@ -83,8 +83,10 @@ pub(super) async fn handle_speaking_state_update(
             if let Some(recording) = recording {
                 inner.user_id_hashmap.write().await.insert(user_id.0, ssrc);
 
-                let mut rec = recording.lock().await;
-                rec.ssrc = ssrc;
+                {
+                    let mut rec = recording.lock().await;
+                    rec.ssrc = ssrc;
+                }
                 info!(
                     "Remapped active writer for user {} from ssrc {} to {}",
                     user_id.0, previous_ssrc, ssrc
@@ -140,8 +142,9 @@ pub(super) async fn handle_speaking_state_update(
         info!("New writer for ssrc {}", ssrc);
         let now = chrono::Utc::now();
         let now_ms = now.timestamp_millis();
+        let file_name = RecordingKey::stem_for(now_ms, user_id.0 as i64);
 
-        let Some(path) = create_path(&inner, now, user_id.0, is_channel_empty).await else {
+        let Some(path) = create_path(&inner, now, user_id.0).await else {
             error!("Failed to create recording path for ssrc {}", ssrc);
             return;
         };
@@ -153,6 +156,12 @@ pub(super) async fn handle_speaking_state_update(
                 inner
                     .metrics
                     .track_writer_setup_failure(&inner.guild_metrics, &inner.channel_metrics);
+                mark_recording_setup_failed(
+                    &inner,
+                    &file_name,
+                    RecordingFinalizeReason::FileCreate,
+                )
+                .await;
                 return;
             }
         };
@@ -161,11 +170,19 @@ pub(super) async fn handle_speaking_state_update(
             Ok(w) => w,
             Err(e) => {
                 error!("Failed to init OggOpusWriter for ssrc {}: {}", ssrc, e);
+                inner
+                    .metrics
+                    .track_writer_setup_failure(&inner.guild_metrics, &inner.channel_metrics);
+                mark_recording_setup_failed(
+                    &inner,
+                    &file_name,
+                    RecordingFinalizeReason::WriterInit,
+                )
+                .await;
                 return;
             }
         };
 
-        let file_name = RecordingKey::stem_for(now_ms, user_id.0 as i64);
         let recording = UserRecording {
             writer,
             file_name,
@@ -192,7 +209,7 @@ pub(super) async fn handle_speaking_state_update(
             user_id.0,
         );
 
-        insert_voice_event_audit(
+        insert_receiver_voice_event(
             &inner,
             user_id.0,
             ssrc,

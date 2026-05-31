@@ -53,11 +53,15 @@ async fn test_jam_cooldown_system() -> Result<(), Box<dyn std::error::Error>> {
     let cooldown_manager = JamCooldown::new();
 
     // 1. Initially, with no database entries, cooldown should be 0 (no cooldown active)
-    let res = cooldown_manager.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::Allowed));
 
     // Subsequent immediate checks should still be Allowed because cooldown is 0
-    let res2 = cooldown_manager.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res2 = cooldown_manager
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res2, CheckResult::Allowed));
 
     // 2. Insert guild base cooldown of 3 seconds
@@ -72,18 +76,24 @@ async fn test_jam_cooldown_system() -> Result<(), Box<dyn std::error::Error>> {
     let cooldown_manager_guild = JamCooldown::new();
 
     // First check should be allowed
-    let res = cooldown_manager_guild.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_guild
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::Allowed));
 
     // Immediate second check should be OnCooldown
-    let res = cooldown_manager_guild.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_guild
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::OnCooldown { .. }));
 
     // Wait 3.5 seconds
     tokio::time::sleep(Duration::from_millis(3500)).await;
 
     // Third check should be allowed
-    let res = cooldown_manager_guild.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_guild
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::Allowed));
 
     // 3. Insert user override cooldown of 1 second (which overrides the guild cooldown)
@@ -99,18 +109,24 @@ async fn test_jam_cooldown_system() -> Result<(), Box<dyn std::error::Error>> {
     let cooldown_manager_override = JamCooldown::new();
 
     // First check should be allowed
-    let res = cooldown_manager_override.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_override
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::Allowed));
 
     // Immediate second check should be OnCooldown
-    let res = cooldown_manager_override.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_override
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::OnCooldown { .. }));
 
     // Wait 1.5 seconds (more than user override of 1s, but less than guild cooldown of 3s)
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     // Check should be allowed, showing that the 1s override was preferred over the 3s guild cooldown
-    let res = cooldown_manager_override.check_and_record(&pool, test_guild_id, test_user_id).await;
+    let res = cooldown_manager_override
+        .check_and_record(&pool, test_guild_id, test_user_id)
+        .await;
     assert!(matches!(res, CheckResult::Allowed));
 
     // Teardown: Clean up the test records

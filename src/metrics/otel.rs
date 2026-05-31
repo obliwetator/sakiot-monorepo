@@ -537,8 +537,7 @@ fn register_deployment_gauges(
                 let labels = deployment_labels(&r, release_id.as_str());
                 observer.observe(
                     m.active_voice_connections
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                        as u64,
+                        .load(std::sync::atomic::Ordering::Relaxed) as u64,
                     &labels,
                 );
             })
@@ -556,8 +555,7 @@ fn register_deployment_gauges(
                 let labels = deployment_labels(&r, release_id.as_str());
                 observer.observe(
                     m.active_recordings
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                        as u64,
+                        .load(std::sync::atomic::Ordering::Relaxed) as u64,
                     &labels,
                 );
             })
@@ -609,9 +607,7 @@ fn register_deployment_gauges(
             .u64_observable_gauge("uptime_seconds")
             .with_description("Bot process uptime in seconds")
             .with_unit("s")
-            .with_callback(move |observer| {
-                observer.observe(m.start_time.elapsed().as_secs(), &[])
-            })
+            .with_callback(move |observer| observer.observe(m.start_time.elapsed().as_secs(), &[]))
             .build();
     }
 

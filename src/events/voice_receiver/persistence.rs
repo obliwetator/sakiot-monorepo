@@ -6,9 +6,9 @@ use std::sync::atomic::Ordering;
 use tracing::{error, warn};
 
 use super::InnerReceiver;
-use super::state::VoiceEventType;
+use super::state::{RecordingFinalizeReason, VoiceEventType};
 
-pub(super) async fn insert_voice_event_audit(
+pub(super) async fn insert_receiver_voice_event(
     inner: &Arc<InnerReceiver>,
     user_id: u64,
     ssrc: u32,
@@ -16,7 +16,7 @@ pub(super) async fn insert_voice_event_audit(
     details: &str,
 ) {
     let _ = sqlx::query(
-        "INSERT INTO voice_events_audit (guild_id, user_id, ssrc, event_type_id, details) VALUES ($1, $2, $3, $4, $5)"
+        "INSERT INTO voice_events (guild_id, user_id, ssrc, event_type_id, details) VALUES ($1, $2, $3, $4, $5)"
     )
     .bind(inner.guild_id.get() as i64)
     .bind(user_id as i64)
@@ -32,7 +32,6 @@ pub(super) async fn create_path(
     inner: &Arc<InnerReceiver>,
     now: chrono::DateTime<chrono::Utc>,
     user_id: u64,
-    is_channel_empty: bool,
 ) -> Option<String> {
     let guild_id = inner.guild_id;
     let channel_id = inner.channel_id;
@@ -54,12 +53,11 @@ pub(super) async fn create_path(
         return None;
     };
 
-    let null: Option<i64> = None;
-
     match sqlx::query!(
         "INSERT INTO audio_files
-	(file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts, state_enter, recording_owner_instance_id, recording_heartbeat_at) VALUES
-	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())",
+		(file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
+	     recording_owner_instance_id, recording_heartbeat_at) VALUES
+		($1, $2, $3, $4, $5, $6, $7, NULL, $8, now())",
         file_name,
         guild_id.get() as i64,
         channel_id.get() as i64,
@@ -67,9 +65,7 @@ pub(super) async fn create_path(
         now.year(),
         now.month() as i32,
         now.timestamp_millis(),
-        null,
-        if is_channel_empty { 1 } else { 2 },
-        inner.recording_owner_instance_id.clone()
+        inner.recording_owner_instance_id.clone(),
     )
     .execute(&inner.pool)
     .await
@@ -127,5 +123,35 @@ pub(super) async fn heartbeat_active_recordings(inner: &Arc<InnerReceiver>) {
     .await
     {
         warn!("recording heartbeat failed: {}", err);
+    }
+}
+
+pub(super) async fn mark_recording_setup_failed(
+    inner: &Arc<InnerReceiver>,
+    file_name: &str,
+    reason: RecordingFinalizeReason,
+) {
+    if let Err(err) = sqlx::query!(
+        "UPDATE audio_files
+            SET end_ts = COALESCE(end_ts, start_ts),
+                reaped = TRUE,
+                recording_heartbeat_at = NULL,
+                finalize_reason_id = $3
+          WHERE file_name = $1
+            AND recording_owner_instance_id = $2
+            AND end_ts IS NULL",
+        file_name,
+        &inner.recording_owner_instance_id,
+        reason.id(),
+    )
+    .execute(&inner.pool)
+    .await
+    {
+        warn!(
+            file_name,
+            reason = reason.as_str(),
+            "failed to mark recording setup failure: {}",
+            err
+        );
     }
 }

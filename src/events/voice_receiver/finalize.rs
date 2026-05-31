@@ -4,8 +4,8 @@ use tokio::sync::Mutex;
 use tracing::error;
 
 use super::InnerReceiver;
-use super::persistence::insert_voice_event_audit;
-use super::state::{PausedRecording, UserRecording, VoiceEventType};
+use super::persistence::insert_receiver_voice_event;
+use super::state::{PausedRecording, RecordingFinalizeReason, UserRecording, VoiceEventType};
 
 pub(super) async fn finalize_all_active_recordings(
     inner: &Arc<InnerReceiver>,
@@ -79,10 +79,12 @@ pub(super) async fn finalize_recording_arc(
 ) {
     let mut rec = arc.lock().await;
 
+    let mut finalize_reason = finalize_reason(event_type);
     if let Err(e) = rec.writer.finish() {
         error!("Failed to finalize writer for ssrc {}: {}", ssrc, e);
+        finalize_reason = RecordingFinalizeReason::WriterError;
         inner.metrics.track_recording_finalize_error();
-        insert_voice_event_audit(
+        insert_receiver_voice_event(
             inner,
             rec.user_id,
             ssrc,
@@ -103,10 +105,6 @@ pub(super) async fn finalize_recording_arc(
         rec.user_id,
         time_elapsed as f64 / 1000.0,
     );
-    let last_person_in_channel = inner.user_id_hashmap.read().await.is_empty();
-    // 2 = JOINED 3 = LAST
-    let state = if last_person_in_channel { 3 } else { 2 };
-
     let file_name = rec.file_name.clone();
     let user_id = rec.user_id;
     let rec_ssrc = rec.ssrc;
@@ -115,12 +113,12 @@ pub(super) async fn finalize_recording_arc(
     if let Err(err) = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = audio_files.start_ts + $1,
-                state_leave = $2,
-                recording_heartbeat_at = NULL
-            WHERE file_name = $3",
+                recording_heartbeat_at = NULL,
+                finalize_reason_id = $3
+            WHERE file_name = $2",
         time_elapsed,
-        state,
-        file_name
+        file_name,
+        finalize_reason.id(),
     )
     .execute(&inner.pool)
     .await
@@ -132,5 +130,14 @@ pub(super) async fn finalize_recording_arc(
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    insert_voice_event_audit(inner, user_id, rec_ssrc, event_type, "Writer closed").await;
+    insert_receiver_voice_event(inner, user_id, rec_ssrc, event_type, "Writer closed").await;
+}
+
+fn finalize_reason(event_type: VoiceEventType) -> RecordingFinalizeReason {
+    match event_type {
+        VoiceEventType::WriterOpen => RecordingFinalizeReason::Unknown,
+        VoiceEventType::WriterClose => RecordingFinalizeReason::WriterClose,
+        VoiceEventType::WriterError => RecordingFinalizeReason::WriterError,
+        VoiceEventType::ZombieReaped => RecordingFinalizeReason::ZombieReaped,
+    }
 }

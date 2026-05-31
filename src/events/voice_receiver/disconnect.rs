@@ -4,9 +4,7 @@ use std::sync::atomic::Ordering;
 use tracing::{error, info, warn};
 
 use super::InnerReceiver;
-use super::finalize::{
-    clear_receiver_state, finalize_all_active_recordings, finalize_writer_at,
-};
+use super::finalize::{clear_receiver_state, finalize_all_active_recordings, finalize_writer_at};
 use super::pause::{scan_users_no_longer_in_voice_state, silence_frames_for_gap_ms};
 use super::state::VoiceEventType;
 
@@ -15,7 +13,7 @@ pub(super) const RECOVERABLE_DISCONNECT_TIMEOUT_MS: u64 = 60_000;
 // Without this only way to test if pray discord randomly disconncts our bot. Need to manually toggle
 // CAVEAT: this includes bot self disconnects
 // TODO: Remote toggle for easier testing. No need to recompile
-pub(super) const RESUME_INTENTIONAL_DISCONNECTS_FOR_TESTING: bool = true;
+pub(super) const RESUME_INTENTIONAL_DISCONNECTS_FOR_TESTING: bool = false;
 
 pub(super) fn is_intentional_driver_disconnect(reason: Option<&DisconnectReason>) -> bool {
     reason.is_none() || matches!(reason, Some(DisconnectReason::Requested))
@@ -116,9 +114,7 @@ pub(super) async fn handle_driver_disconnect(
     }
 
     if should_finalize_empty_channel_disconnect {
-        info!(
-            "Intentional disconnect with no human users in channel. Closing active recordings."
-        );
+        info!("Intentional disconnect with no human users in channel. Closing active recordings.");
     }
 
     inner.disconnected_at_ms.store(0, Ordering::SeqCst);
@@ -140,10 +136,7 @@ pub(super) async fn handle_driver_reconnect(inner: &Arc<InnerReceiver>) {
     resume_after_recoverable_disconnect(inner).await;
 }
 
-fn schedule_recoverable_disconnect_timeout(
-    inner: &Arc<InnerReceiver>,
-    disconnected_at_ms: i64,
-) {
+fn schedule_recoverable_disconnect_timeout(inner: &Arc<InnerReceiver>, disconnected_at_ms: i64) {
     let inner = Arc::clone(inner);
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(
@@ -260,6 +253,14 @@ mod tests {
         assert!(should_resume_recordings_for_disconnect(
             Some(&DisconnectReason::TimedOut),
             false
+        ));
+    }
+
+    #[test]
+    fn production_default_does_not_resume_requested_disconnects() {
+        assert!(!should_resume_recordings_for_disconnect(
+            Some(&DisconnectReason::Requested),
+            RESUME_INTENTIONAL_DISCONNECTS_FOR_TESTING
         ));
     }
 

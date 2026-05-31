@@ -1,4 +1,3 @@
-pub mod channels;
 pub mod user_names;
 
 use crate::event_handler::Handler;
@@ -73,8 +72,7 @@ async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) {
 
                 query_builder
                     .push_values(chunk, |mut b, pair| {
-                        b.push_bind(pair.0)
-                            .push_bind(pair.1);
+                        b.push_bind(pair.0).push_bind(pair.1);
                     })
                     .push(" ON CONFLICT (user_id, role_id) DO UPDATE SET role_id=EXCLUDED.role_id");
 
@@ -93,8 +91,12 @@ async fn update_permissions(guild_cached: &[Guild], handler: &Handler) {
         for channel in guild.channels.values() {
             for p in &channel.permission_overwrites {
                 let kind = match p.kind {
-                    serenity::model::prelude::PermissionOverwriteType::Member(target_id) => ("user", target_id.get() as i64),
-                    serenity::model::prelude::PermissionOverwriteType::Role(target_id) => ("role", target_id.get() as i64),
+                    serenity::model::prelude::PermissionOverwriteType::Member(target_id) => {
+                        ("user", target_id.get() as i64)
+                    }
+                    serenity::model::prelude::PermissionOverwriteType::Role(target_id) => {
+                        ("role", target_id.get() as i64)
+                    }
                     _ => {
                         error!(
                             channel_id = channel.id.get(),

@@ -120,7 +120,7 @@ pub async fn join(
         None => return "You must be in a voice channel to use /join.".to_string(),
     };
 
-    crate::events::voice::connect_to_voice_channel(
+    let outcome = crate::events::voice::connect_to_voice_channel(
         pool.clone(),
         ctx,
         guild_id,
@@ -129,7 +129,7 @@ pub async fn join(
     )
     .await;
 
-    "Joined your voice channel.".to_string()
+    outcome.user_message()
 }
 
 fn user_voice_channel(ctx: &Context, guild_id: GuildId, user_id: UserId) -> Option<ChannelId> {

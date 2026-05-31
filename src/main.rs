@@ -188,7 +188,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             .add_service(crate::grpc::proto::admin_server::AdminServer::new(
                 jammer.clone(),
             ))
-            .add_service(crate::grpc::proto::dashboard_server::DashboardServer::new(jammer))
+            .add_service(crate::grpc::proto::dashboard_server::DashboardServer::new(
+                jammer,
+            ))
             .serve_with_shutdown(addr, async move {
                 let mut rx = grpc_shutdown_rx;
                 while !*rx.borrow() {
