@@ -9,7 +9,9 @@ use crate::errors::AppError;
 use crate::permissions::require_channel_access;
 use crate::waveform::generate_peaks_background;
 
-use super::paths::{no_silence_recording_path, recording_path, waveform_path, NO_SILENCE_PREFIX};
+use super::paths::{
+    clips_path, no_silence_recording_path, recording_path, waveform_path, NO_SILENCE_PREFIX,
+};
 use super::serve::AudioQuery;
 use super::types::WaveformProgressContainer;
 use super::util::{file_exists, get_file_path_root, is_stale};
@@ -232,6 +234,73 @@ pub async fn get_waveform_data(
                 error!("Error updating waveform cache marker: {:?}", e);
                 progress_map_clone.0.write().await.insert(file_name, -1);
             }
+        }
+    });
+
+    Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
+}
+
+// A clip is its own trimmed, immutable .ogg — no live/end_ts logic. Generate
+// peaks straight from the clip file, keyed by clip_id, mirroring the simple
+// silence-free path. On-disk existence is the cache (the file never changes).
+#[get("/audio/clips/waveform/{guild_id}/{clip_id}")]
+pub async fn get_clip_waveform_data(
+    path: web::Path<(i64, String)>,
+    progress_map: web::Data<WaveformProgressContainer>,
+    pool: web::Data<Pool<Postgres>>,
+    token: Option<web::ReqData<Token<Access>>>,
+) -> Result<HttpResponse, AppError> {
+    let (guild_id, clip_id) = path.into_inner();
+    let token = token.ok_or(AppError::Unauthorized)?;
+
+    let row = sqlx::query!(
+        "SELECT saved_file_name, channel_id FROM clips \
+         WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
+
+    let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
+    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+
+    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
+    let input_file = format!("{}{}", clips_path(), saved_file_name);
+
+    // Prefix the cache/progress key so it never collides with recording stems
+    // ({ts}-{user_id}) or the silence-free (_no_silence_) key.
+    let cache_key = format!("clip-{}", clip_id);
+    let output = format!("{}{}.dat", waveform_path(), cache_key);
+
+    if file_exists(&output).await {
+        return waveform_response(&output).await;
+    }
+
+    // Claim the generation slot (or report an in-flight one) under one lock.
+    {
+        let mut progress = progress_map.0.write().await;
+        if let Some(&pct) = progress.get(&cache_key) {
+            if pct == -1 {
+                progress.remove(&cache_key);
+                return Err(AppError::InternalError);
+            }
+            return Ok(HttpResponse::Ok().json(json!({ "progress": pct.clamp(0, 99) })));
+        }
+        if !file_exists(&input_file).await {
+            return Err(AppError::FileNotFound);
+        }
+        progress.insert(cache_key.clone(), 0);
+    }
+
+    let progress_map_clone = progress_map.clone();
+    tokio::spawn(async move {
+        if let Err(e) =
+            generate_peaks_background(input_file, output, cache_key, None, progress_map_clone, None)
+                .await
+        {
+            error!("Error generating clip peaks: {:?}", e);
         }
     });
 
