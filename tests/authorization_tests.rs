@@ -45,9 +45,6 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query!("INSERT INTO channel_type (id, type) VALUES (2, 'voice')")
         .execute(pool)
         .await?;
-    sqlx::query!("INSERT INTO audio_files_state (state) VALUES (0)")
-        .execute(pool)
-        .await?;
     sqlx::query!(
         "INSERT INTO guilds (id, owner_id) VALUES ($1, $2), ($3, $2)",
         ALLOWED_GUILD_ID,
