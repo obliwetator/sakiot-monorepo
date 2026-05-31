@@ -15,9 +15,10 @@ use web_server::admin::cooldowns::{
     set_user_override,
 };
 use web_server::audio::{
-    download_audio, get_audio, get_current_month_permission, get_live_stems, get_recording_events,
-    get_waveform_data, live_playlist, live_segment, live_state, remove_silence, spawn_hls_reaper,
-    HashMapContainer, LiveContainer, WaveformProgressContainer,
+    download_audio, get_audio, get_clip_waveform_data, get_current_month_permission,
+    get_live_stems, get_recording_events, get_waveform_data, live_playlist, live_segment,
+    live_state, remove_silence, spawn_hls_reaper, HashMapContainer, LiveContainer,
+    WaveformProgressContainer,
 };
 #[cfg(feature = "dev-login")]
 use web_server::auth::dev_login;
@@ -129,6 +130,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete)
             .service(dashboard::dashboard_stream)
             .service(get_clips)
+            // Before get_clip: its {clip_id:.*} is greedy and would otherwise
+            // match /audio/clips/waveform/... too.
+            .service(get_clip_waveform_data)
             .service(get_clip)
             .service(get_stamps)
             .service(play_clip)
