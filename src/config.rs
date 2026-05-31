@@ -24,6 +24,8 @@ pub struct Config {
     pub dev_account_id: i64,
     pub dev_login_secret: Option<String>,
     pub cors_allowed_origin: String,
+    pub oauth_allowed_opener_origins: Vec<String>,
+    pub oauth_allowed_opener_host_suffixes: Vec<String>,
     pub cookie_domain: String,
     pub discord_redirect_uri: String,
     pub grpc_address: String,
@@ -45,6 +47,19 @@ fn optional_nonempty(key: &str) -> Option<String> {
     env::var(key).ok().filter(|s| !s.trim().is_empty())
 }
 
+fn csv_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn optional_csv(key: &str) -> Vec<String> {
+    env::var(key).ok().map(|v| csv_list(&v)).unwrap_or_default()
+}
+
 fn parse<T: FromStr>(key: &'static str, default: T) -> Result<T, ConfigError> {
     match env::var(key) {
         Ok(v) => v.parse().map_err(|_| ConfigError::Parse {
@@ -58,6 +73,12 @@ fn parse<T: FromStr>(key: &'static str, default: T) -> Result<T, ConfigError> {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
+        let cors_allowed_origin = optional("CORS_ALLOWED_ORIGIN", "http://localhost:3000");
+        let mut oauth_allowed_opener_origins = optional_csv("OAUTH_ALLOWED_OPENER_ORIGINS");
+        if oauth_allowed_opener_origins.is_empty() {
+            oauth_allowed_opener_origins.push(cors_allowed_origin.clone());
+        }
+
         Ok(Self {
             database_url: require("DATABASE_URL")?,
             client_id: require("DISCORD_CLIENT_ID")?,
@@ -66,7 +87,9 @@ impl Config {
             refresh_secret: require("JWT_REFRESH_SECRET")?,
             dev_account_id: parse("DEV_ACCOUNT_ID", 0)?,
             dev_login_secret: env::var("DEV_LOGIN_SECRET").ok().filter(|s| !s.is_empty()),
-            cors_allowed_origin: optional("CORS_ALLOWED_ORIGIN", "http://localhost:3000"),
+            cors_allowed_origin,
+            oauth_allowed_opener_origins,
+            oauth_allowed_opener_host_suffixes: optional_csv("OAUTH_ALLOWED_OPENER_HOST_SUFFIXES"),
             cookie_domain: optional("COOKIE_DOMAIN", "localhost"),
             discord_redirect_uri: optional(
                 "DISCORD_REDIRECT_URI",

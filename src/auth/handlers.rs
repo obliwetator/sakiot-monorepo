@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-login")]
 use actix_files::NamedFile;
-use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
 use tracing::warn;
@@ -47,9 +47,10 @@ pub struct RefreshTokenError {
     pub message: &'static str,
 }
 
-pub fn is_allowed_opener_origin(origin: &str, cfg: &Config) -> bool {
-    if origin == cfg.cors_allowed_origin {
-        return true;
+fn origin_matches_host_suffix(origin: &str, suffix: &str) -> bool {
+    let suffix = suffix.trim().trim_start_matches('.');
+    if suffix.is_empty() {
+        return false;
     }
 
     let Some(host) = origin.strip_prefix("https://") else {
@@ -58,11 +59,80 @@ pub fn is_allowed_opener_origin(origin: &str, cfg: &Config) -> bool {
     if host.contains('/') || host.contains('?') || host.contains('#') || host.is_empty() {
         return false;
     }
-    if host == "patrykstyla.com" {
+
+    host == suffix
+        || host
+            .strip_suffix(&format!(".{suffix}"))
+            .is_some_and(|subdomain| !subdomain.is_empty())
+}
+
+pub fn is_allowed_opener_origin(origin: &str, cfg: &Config) -> bool {
+    if cfg
+        .oauth_allowed_opener_origins
+        .iter()
+        .any(|allowed| origin == allowed)
+    {
         return true;
     }
-    host.strip_suffix(".patrykstyla.com")
-        .is_some_and(|subdomain| !subdomain.is_empty())
+
+    cfg.oauth_allowed_opener_host_suffixes
+        .iter()
+        .any(|suffix| origin_matches_host_suffix(origin, suffix))
+}
+
+fn csrf_header(req: &HttpRequest) -> Option<&str> {
+    req.headers()
+        .get("X-CSRF-Token")
+        .and_then(|v| v.to_str().ok())
+}
+
+fn require_csrf(req: &HttpRequest, expected: &str) -> Result<(), AppError> {
+    let Some(actual) = csrf_header(req) else {
+        warn!("CSRF token missing for {}", req.path());
+        return Err(AppError::Forbidden);
+    };
+    let Some(cookie) = req.cookie("xsrf_token") else {
+        warn!("CSRF cookie missing for {}", req.path());
+        return Err(AppError::Forbidden);
+    };
+
+    let header_matches = actual.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 1;
+    let cookie_matches = cookie
+        .value()
+        .as_bytes()
+        .ct_eq(expected.as_bytes())
+        .unwrap_u8()
+        == 1;
+    if header_matches && cookie_matches {
+        Ok(())
+    } else {
+        warn!("CSRF token mismatch for {}", req.path());
+        Err(AppError::Forbidden)
+    }
+}
+
+fn require_cookie_csrf(req: &HttpRequest) -> Result<(), AppError> {
+    let Some(actual) = csrf_header(req) else {
+        warn!("CSRF token missing for {}", req.path());
+        return Err(AppError::Forbidden);
+    };
+    let Some(cookie) = req.cookie("xsrf_token") else {
+        warn!("CSRF cookie missing for {}", req.path());
+        return Err(AppError::Forbidden);
+    };
+
+    if !actual.is_empty()
+        && actual
+            .as_bytes()
+            .ct_eq(cookie.value().as_bytes())
+            .unwrap_u8()
+            == 1
+    {
+        Ok(())
+    } else {
+        warn!("CSRF token mismatch for {}", req.path());
+        Err(AppError::Forbidden)
+    }
 }
 
 #[get("/oauth/start")]
@@ -217,16 +287,18 @@ pub async fn dev_login(
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/refresh",
     tag = "auth",
     responses(
         (status = 200, description = "New access token issued", body = RefreshTokenResponse),
         (status = 401, description = "Missing, expired, or invalid refresh token"),
+        (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
+    security(("csrf_token" = [])),
 )]
-#[get("/refresh")]
+#[post("/refresh")]
 pub async fn refresh_jwt(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
@@ -268,6 +340,8 @@ pub async fn refresh_jwt(
         }
     };
 
+    require_csrf(&req, &decoded_refresh.csrf)?;
+
     let csrf_token = Uuid::new_v4().to_string();
 
     let (new_access_token, new_refresh_token) = create_jwt_tokens(
@@ -288,15 +362,19 @@ pub async fn refresh_jwt(
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/logout",
     tag = "auth",
     responses(
         (status = 200, description = "Cookies cleared"),
+        (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
     ),
+    security(("csrf_token" = [])),
 )]
-#[get("/logout")]
-pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> {
+#[post("/logout")]
+pub async fn logout(req: HttpRequest, cfg: web::Data<Config>) -> Result<impl Responder, AppError> {
+    require_cookie_csrf(&req)?;
+
     let d = cfg.cookie_domain.as_str();
     let mut resp = HttpResponse::Ok().finish();
     resp.add_cookie(&clear_access_token_cookie(d))?;
@@ -308,8 +386,11 @@ pub async fn logout(cfg: web::Data<Config>) -> Result<impl Responder, AppError> 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_opener_origin, RefreshTokenResponse};
+    use super::{
+        is_allowed_opener_origin, require_cookie_csrf, require_csrf, RefreshTokenResponse,
+    };
     use crate::config::Config;
+    use actix_web::{cookie::Cookie, test as actix_test};
 
     fn cfg() -> Config {
         Config {
@@ -321,6 +402,8 @@ mod tests {
             dev_account_id: 1,
             dev_login_secret: Some("dev".into()),
             cors_allowed_origin: "http://localhost:3000".into(),
+            oauth_allowed_opener_origins: vec!["http://localhost:3000".into()],
+            oauth_allowed_opener_host_suffixes: vec!["patrykstyla.com".into()],
             cookie_domain: "localhost".into(),
             discord_redirect_uri: "http://localhost:8900/api/discord_login".into(),
             grpc_address: "http://[::1]:50052".into(),
@@ -332,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn opener_origin_allows_production_and_local_dev() {
+    fn opener_origin_allows_configured_suffix_and_exact_local_dev() {
         let cfg = cfg();
 
         assert!(is_allowed_opener_origin("https://patrykstyla.com", &cfg));
@@ -341,6 +424,18 @@ mod tests {
             &cfg
         ));
         assert!(is_allowed_opener_origin("http://localhost:3000", &cfg));
+    }
+
+    #[test]
+    fn opener_origin_rejects_production_when_not_configured() {
+        let mut cfg = cfg();
+        cfg.oauth_allowed_opener_host_suffixes.clear();
+
+        assert!(!is_allowed_opener_origin("https://patrykstyla.com", &cfg));
+        assert!(!is_allowed_opener_origin(
+            "https://app.patrykstyla.com",
+            &cfg
+        ));
     }
 
     #[test]
@@ -357,6 +452,18 @@ mod tests {
             "https://app.patrykstyla.com/callback",
             &cfg
         ));
+    }
+
+    #[test]
+    fn csrf_requires_matching_header_cookie_and_expected_token() {
+        let req = actix_test::TestRequest::default()
+            .insert_header(("X-CSRF-Token", "csrf-123"))
+            .cookie(Cookie::new("xsrf_token", "csrf-123"))
+            .to_http_request();
+
+        assert!(require_csrf(&req, "csrf-123").is_ok());
+        assert!(require_csrf(&req, "csrf-456").is_err());
+        assert!(require_cookie_csrf(&req).is_ok());
     }
 
     #[test]
