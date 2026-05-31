@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 
 use serenity::{all::ApplicationId, client::Cache, http::Http, prelude::*};
 use songbird::{Config, SerenityInit, driver::DecodeMode};
@@ -10,6 +10,8 @@ use crate::{
     event_handler::Handler,
     grpc::{FbiAgentGrpc, proto::jammer_server::JammerServer},
 };
+
+const SHARD_SHUTDOWN_TIMEOUT_SECONDS: u64 = 15;
 
 pub mod metrics;
 pub mod reaper;
@@ -160,6 +162,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             error!("Discord client exited with error: {}", err);
         }
     });
+    let bot_abort = bot.abort_handle();
 
     // Background task: sample process health every 15 seconds.
     BotMetrics::start_sysinfo_monitoring(process_metrics.clone());
@@ -237,19 +240,42 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
 
-        shard_manager.shutdown_all().await;
+        let shutdown_result = tokio::time::timeout(
+            Duration::from_secs(SHARD_SHUTDOWN_TIMEOUT_SECONDS),
+            shard_manager.shutdown_all(),
+        )
+        .await;
+        let bot_aborted_for_shutdown = if shutdown_result.is_err() {
+            warn!(
+                timeout_seconds = SHARD_SHUTDOWN_TIMEOUT_SECONDS,
+                "shard shutdown timed out; aborting Discord client task"
+            );
+            bot_abort.abort();
+            true
+        } else {
+            false
+        };
         let _ = shutdown_tx.send(true);
+        bot_aborted_for_shutdown
     });
 
     let (bot_result, grpc_result, shutdown_result) = tokio::join!(bot, grpc_server, shutdown_task);
-    if let Err(err) = bot_result {
-        error!("Discord task join error: {}", err);
-    }
     if let Err(err) = grpc_result {
         error!("gRPC task join error: {}", err);
     }
-    if let Err(err) = shutdown_result {
-        error!("shutdown task join error: {}", err);
+    let bot_aborted_for_shutdown = match shutdown_result {
+        Ok(aborted) => aborted,
+        Err(err) => {
+            error!("shutdown task join error: {}", err);
+            false
+        }
+    };
+    if let Err(err) = bot_result {
+        if bot_aborted_for_shutdown && err.is_cancelled() {
+            warn!("Discord task aborted after shard shutdown timeout");
+        } else {
+            error!("Discord task join error: {}", err);
+        }
     }
 
     deployment::mark_instance_stopped(&pool, &runtime).await;
