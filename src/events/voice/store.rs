@@ -40,18 +40,19 @@ pub(in crate::events) async fn insert_voice_event(
     user_id: i64,
     event_type_id: i32,
 ) {
-    if let Err(err) = sqlx::query!(
-        "INSERT INTO voice_state_events (guild_id, channel_id, user_id, event_type_id) \
-         VALUES ($1, $2, $3, $4)",
+    if let Err(err) = crate::database::voice_events::insert_voice_state_event(
+        pool,
         guild_id,
         channel_id,
         user_id,
-        event_type_id
+        event_type_id,
     )
-    .execute(pool)
     .await
     {
-        warn!("Failed to insert voice_state_event: {}", err);
+        warn!(
+            guild_id,
+            channel_id, user_id, event_type_id, "failed to insert voice_state_event: {}", err
+        );
     }
 }
 
@@ -64,21 +65,26 @@ pub(super) async fn insert_voice_connection_event(
     reason: Option<&str>,
     details: Option<&str>,
 ) {
-    if let Err(err) = sqlx::query(
-        "INSERT INTO voice_connection_events
-            (guild_id, channel_id, owner_instance_id, event_type, reason, details)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+    if let Err(err) = crate::database::voice_events::insert_voice_connection_event(
+        pool,
+        guild_id,
+        channel_id,
+        owner_instance_id,
+        event_type,
+        reason,
+        details,
     )
-    .bind(guild_id)
-    .bind(channel_id)
-    .bind(owner_instance_id)
-    .bind(event_type)
-    .bind(reason)
-    .bind(details)
-    .execute(pool)
     .await
     {
-        warn!("Failed to insert voice_connection_event: {}", err);
+        warn!(
+            guild_id,
+            channel_id,
+            owner_instance_id,
+            event_type,
+            reason,
+            "failed to insert voice_connection_event: {}",
+            err
+        );
     }
 }
 

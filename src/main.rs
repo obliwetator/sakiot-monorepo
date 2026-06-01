@@ -67,13 +67,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .connect(&db_url)
         .await?;
 
-    reaper::reap_zombie_recordings(&pool).await;
+    reaper::reap_zombie_recordings(&pool).await?;
 
     // let a = conn.exec_map("SELECT * FROM guilds WHERE id IN (:id)", db_param, | id | DBGuild { id });
     // Configure the client with your Discord bot token in the environment.
     let discord_config = config::discord_config()?;
     let runtime = crate::runtime::RuntimeState::new(crate::runtime::RuntimeConfig::from_env());
-    deployment::upsert_instance(&pool, &runtime).await;
+    deployment::upsert_instance(&pool, &runtime).await?;
     deployment::start_heartbeat(pool.clone(), runtime.clone());
     info!(
         instance_id = %runtime.config().instance_id,
@@ -193,7 +193,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         shutdown_runtime.start_drain(true);
         clear_voice_presence_metrics(&shutdown_data).await;
-        deployment::heartbeat_instance_and_leases(&shutdown_pool, &shutdown_runtime).await;
+        if let Err(err) =
+            deployment::heartbeat_instance_and_leases(&shutdown_pool, &shutdown_runtime).await
+        {
+            error!("shutdown heartbeat failed: {}", err);
+        }
 
         let deadline = if shutdown_runtime.config().drain_timeout.is_zero() {
             None
@@ -258,7 +262,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
-    deployment::mark_instance_stopped(&pool, &runtime).await;
+    deployment::mark_instance_stopped(&pool, &runtime).await?;
 
     Ok(())
 }

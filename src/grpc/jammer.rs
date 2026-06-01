@@ -6,6 +6,7 @@ use songbird::SongbirdKey;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
+use crate::commands::voice_controls::PlayClipError;
 use crate::cooldown::CheckResult;
 
 use super::FbiAgentGrpc;
@@ -26,13 +27,14 @@ impl Jammer for FbiAgentGrpc {
             .check_and_record(&self.data_cache.pool, data.guild_id, data.user_id)
             .await
         {
-            CheckResult::Allowed => {}
-            CheckResult::OnCooldown { remaining_secs } => {
+            Ok(CheckResult::Allowed) => {}
+            Ok(CheckResult::OnCooldown { remaining_secs }) => {
                 return Ok(Response::new(JamResponse {
                     resp: JamResponseEnum::Cooldown.into(),
                     cooldown_remaining_seconds: remaining_secs,
                 }));
             }
+            Err(err) => return Err(Status::internal(format!("database error: {err}"))),
         }
 
         let guild_id = match u64::try_from(data.guild_id) {
@@ -86,6 +88,9 @@ impl Jammer for FbiAgentGrpc {
                     .await
                     {
                         error!("Failed to handle gRPC jam playback: {}", err);
+                        if let PlayClipError::Db(db_err) = err {
+                            return Err(Status::internal(format!("database error: {db_err}")));
+                        }
                         return Ok(Response::new(JamResponse {
                             resp: JamResponseEnum::Unknown.into(),
                             cooldown_remaining_seconds: 0,
@@ -113,17 +118,18 @@ async fn handle_play_audio_to_channel(
     user_id: i64,
     data: Arc<RwLock<TypeMap>>,
     pool: sqlx::Pool<sqlx::Postgres>,
-) -> Result<(), String> {
+) -> Result<(), PlayClipError> {
     let manager = {
         let data_guard = data.read().await;
-        data_guard
-            .get::<SongbirdKey>()
-            .cloned()
-            .ok_or_else(|| "Songbird manager missing from typemap".to_string())?
+        data_guard.get::<SongbirdKey>().cloned().ok_or_else(|| {
+            PlayClipError::User("Songbird manager missing from typemap".to_string())
+        })?
     };
 
-    let guild_id =
-        GuildId::new(u64::try_from(id).map_err(|_| "guild_id must be non-negative".to_string())?);
+    let guild_id = GuildId::new(
+        u64::try_from(id)
+            .map_err(|_| PlayClipError::User("guild_id must be non-negative".to_string()))?,
+    );
     crate::commands::voice_controls::play_clip(&pool, &manager, guild_id, clip_name, user_id)
         .await
         .map(|_| ())

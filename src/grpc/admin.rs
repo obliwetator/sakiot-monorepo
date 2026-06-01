@@ -21,7 +21,8 @@ impl Admin for FbiAgentGrpc {
             &self.data_cache.pool,
             &self.data_cache.runtime,
         )
-        .await;
+        .await
+        .map_err(|err| Status::internal(format!("database error: {err}")))?;
         Ok(Response::new(self.status("drain started").await))
     }
 
@@ -44,7 +45,8 @@ impl Admin for FbiAgentGrpc {
             &self.data_cache.pool,
             &self.data_cache.runtime,
         )
-        .await;
+        .await
+        .map_err(|err| Status::internal(format!("database error: {err}")))?;
         Ok(Response::new(
             self.status("shutdown when empty requested").await,
         ))
@@ -62,7 +64,8 @@ impl Admin for FbiAgentGrpc {
             &self.data_cache.pool,
             &self.data_cache.runtime,
         )
-        .await;
+        .await
+        .map_err(|err| Status::internal(format!("database error: {err}")))?;
         Ok(Response::new(self.status("force shutdown requested").await))
     }
 }

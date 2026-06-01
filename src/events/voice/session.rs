@@ -116,7 +116,14 @@ pub async fn disconnect_voice_channel(
                     None,
                 )
                 .await;
-                crate::deployment::release_voice_session(pool, &runtime, guild_id).await;
+                if let Err(err) =
+                    crate::deployment::release_voice_session(pool, &runtime, guild_id).await
+                {
+                    warn!(
+                        guild_id = guild_id.get(),
+                        "voice lease release failed after leave: {}", err
+                    );
+                }
             }
             refresh_active_voice_connection_gauge(data, Some(&manager)).await;
             VoiceDisconnectOutcome::Disconnected
@@ -260,7 +267,14 @@ async fn switch_channel(
                     Some(&old_channel.to_string()),
                 )
                 .await;
-                crate::deployment::release_voice_session(&pool, &runtime, guild_id).await;
+                if let Err(err) =
+                    crate::deployment::release_voice_session(&pool, &runtime, guild_id).await
+                {
+                    warn!(
+                        guild_id = guild_id.get(),
+                        "voice lease release failed before switch: {}", err
+                    );
+                }
             }
             refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
             join_ch(
@@ -388,8 +402,15 @@ async fn join_ch(
             }
             Err(err) => {
                 error!("cannot join channel {}: {}", channel_id, err);
-                if claimed_lease && let Some(runtime) = &runtime {
-                    crate::deployment::release_voice_session(&pool, runtime, guild_id).await;
+                if claimed_lease
+                    && let Some(runtime) = &runtime
+                    && let Err(release_err) =
+                        crate::deployment::release_voice_session(&pool, runtime, guild_id).await
+                {
+                    warn!(
+                        guild_id = guild_id.get(),
+                        "voice lease release failed after join error: {}", release_err
+                    );
                 }
                 let owner = runtime
                     .as_ref()
@@ -410,8 +431,15 @@ async fn join_ch(
         },
         Err(err) => {
             error!("cannot join channel {}: {}", channel_id, err);
-            if claimed_lease && let Some(runtime) = &runtime {
-                crate::deployment::release_voice_session(&pool, runtime, guild_id).await;
+            if claimed_lease
+                && let Some(runtime) = &runtime
+                && let Err(release_err) =
+                    crate::deployment::release_voice_session(&pool, runtime, guild_id).await
+            {
+                warn!(
+                    guild_id = guild_id.get(),
+                    "voice lease release failed after join error: {}", release_err
+                );
             }
             let owner = runtime
                 .as_ref()

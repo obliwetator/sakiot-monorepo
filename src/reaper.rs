@@ -29,14 +29,9 @@ use sqlx::{Pool, Postgres};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 
-struct ZombieRecording {
-    file_name: String,
-    guild_id: i64,
-    channel_id: i64,
-    start_ts: Option<i64>,
-}
+use crate::database::DbResult;
 
-pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
+pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<()> {
     let purge = std::env::var("REAPER_PURGE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -45,46 +40,12 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
         Ok(d) => d.as_millis() as i64,
         Err(e) => {
             error!("reaper: clock before epoch: {}", e);
-            return;
+            0
         }
     };
 
-    let last_reap_ts: i64 =
-        match sqlx::query_scalar!("SELECT last_reap_ts FROM bot_reaper_state WHERE id = 1")
-            .fetch_optional(pool)
-            .await
-        {
-            Ok(Some(v)) => v,
-            Ok(None) => 0,
-            Err(e) => {
-                error!("reaper: read last_reap_ts failed: {}", e);
-                return;
-            }
-        };
-
-    let zombies = match sqlx::query_as!(
-        ZombieRecording,
-        "SELECT file_name, guild_id, channel_id, start_ts
-           FROM audio_files
-          WHERE end_ts IS NULL
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM bot_instances bi
-                 WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                   AND bi.heartbeat_at > now() - interval '120 seconds'
-                   AND bi.state <> 'stopped'
-            )"
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            error!("reaper: zombie select failed: {}", e);
-            return;
-        }
-    };
+    let last_reap_ts = crate::database::recordings::last_reap_ts(pool).await?;
+    let zombies = crate::database::recordings::zombie_recordings(pool).await?;
 
     if zombies.is_empty() {
         info!(last_reap_ts, "reaper: no zombies");
@@ -135,61 +96,12 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
     }
 
     let rows_changed = if purge {
-        match sqlx::query!(
-            "DELETE FROM audio_files
-              WHERE end_ts IS NULL
-                AND NOT EXISTS (
-                    SELECT 1
-                      FROM bot_instances bi
-                     WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                       AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                       AND bi.heartbeat_at > now() - interval '120 seconds'
-                       AND bi.state <> 'stopped'
-                )"
-        )
-        .execute(pool)
-        .await
-        {
-            Ok(r) => r.rows_affected(),
-            Err(e) => {
-                error!("reaper: zombie delete failed: {}", e);
-                return;
-            }
-        }
+        crate::database::recordings::delete_zombie_recordings(pool).await?
     } else {
-        match sqlx::query!(
-            "UPDATE audio_files
-                SET end_ts = start_ts, reaped = TRUE
-                WHERE end_ts IS NULL
-                  AND NOT EXISTS (
-                      SELECT 1
-                        FROM bot_instances bi
-                       WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                         AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                         AND bi.heartbeat_at > now() - interval '120 seconds'
-                         AND bi.state <> 'stopped'
-                  )"
-        )
-        .execute(pool)
-        .await
-        {
-            Ok(r) => r.rows_affected(),
-            Err(e) => {
-                error!("reaper: zombie update failed: {}", e);
-                return;
-            }
-        }
+        crate::database::recordings::mark_zombie_recordings_reaped(pool).await?
     };
 
-    if let Err(e) = sqlx::query!(
-        "UPDATE bot_reaper_state SET last_reap_ts = $1 WHERE id = 1",
-        now_ms
-    )
-    .execute(pool)
-    .await
-    {
-        error!("reaper: bump last_reap_ts failed: {}", e);
-    }
+    crate::database::recordings::bump_last_reap_ts(pool, now_ms).await?;
 
     info!(
         purge,
@@ -201,4 +113,5 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) {
         now_ms,
         "startup zombie reaper done"
     );
+    Ok(())
 }

@@ -198,25 +198,19 @@ async fn get_clip_choices(
     pool: &sqlx::Pool<sqlx::Postgres>,
     guild_id: i64,
 ) -> Vec<AutocompleteChoice> {
-    let query_wildcard = format!("%{}%", query);
-
-    let rows = sqlx::query!(
-        "SELECT name, clip_id FROM clips WHERE guild_id = $1 AND name ILIKE $2 AND deleted_at IS NULL LIMIT 25",
-        guild_id,
-        query_wildcard
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let mut choices = Vec::new();
-    for row in rows {
-        if let (Some(name), clip_id) = (row.name, row.clip_id) {
-            choices.push(AutocompleteChoice::new(name, clip_id));
+    match crate::database::clips::autocomplete_clip_choices(pool, guild_id, query).await {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| AutocompleteChoice::new(row.name, row.clip_id))
+            .collect(),
+        Err(err) => {
+            warn!(guild_id, query, "clip autocomplete lookup failed: {}", err);
+            vec![AutocompleteChoice::new(
+                "Search temporarily unavailable",
+                "__db_unavailable__",
+            )]
         }
     }
-
-    choices
 }
 
 async fn handle_jam(
@@ -265,12 +259,19 @@ async fn handle_jam(
         .check_and_record(pool, guild_id.get() as i64, user_id)
         .await
     {
-        crate::cooldown::CheckResult::Allowed => {}
-        crate::cooldown::CheckResult::OnCooldown { remaining_secs } => {
+        Ok(crate::cooldown::CheckResult::Allowed) => {}
+        Ok(crate::cooldown::CheckResult::OnCooldown { remaining_secs }) => {
             return (
                 format!("On cooldown — {}s remaining.", remaining_secs),
                 None,
             );
+        }
+        Err(err) => {
+            warn!(
+                guild_id = guild_id.get(),
+                user_id, "jam cooldown lookup failed: {}", err
+            );
+            return ("Database error. Try again later.".to_string(), None);
         }
     }
     match crate::commands::voice_controls::play_clip(pool, &manager, guild_id, &clip_name, user_id)
@@ -279,7 +280,7 @@ async fn handle_jam(
         Ok(msg) => (msg, Some(clip_name)),
         Err(e) => {
             warn!("Failed to play clip: {}", e);
-            (e, None)
+            (e.user_message(), None)
         }
     }
 }
@@ -306,9 +307,16 @@ async fn replay_clip(
         .check_and_record(pool, guild_id.get() as i64, user_id)
         .await
     {
-        crate::cooldown::CheckResult::Allowed => {}
-        crate::cooldown::CheckResult::OnCooldown { remaining_secs } => {
+        Ok(crate::cooldown::CheckResult::Allowed) => {}
+        Ok(crate::cooldown::CheckResult::OnCooldown { remaining_secs }) => {
             return format!("On cooldown — {}s remaining.", remaining_secs);
+        }
+        Err(err) => {
+            warn!(
+                guild_id = guild_id.get(),
+                user_id, "replay cooldown lookup failed: {}", err
+            );
+            return "Database error. Try again later.".to_string();
         }
     }
 
@@ -316,7 +324,10 @@ async fn replay_clip(
         .await
     {
         Ok(msg) => msg,
-        Err(e) => e,
+        Err(e) => {
+            warn!("Failed to replay clip: {}", e);
+            e.user_message()
+        }
     }
 }
 

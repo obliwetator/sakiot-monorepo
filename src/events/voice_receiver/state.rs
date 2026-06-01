@@ -46,6 +46,7 @@ impl RecordingFinalizeReason {
 /// finalize the audio_files row when the writer closes.
 pub(in crate::events) struct UserRecording {
     pub(in crate::events) writer: OggOpusWriter<BufWriter<File>>,
+    pub(in crate::events) audio_file_id: i64,
     pub(in crate::events) file_name: String,
     pub(in crate::events) start_time: chrono::DateTime<chrono::Utc>,
     pub(in crate::events) user_id: u64,

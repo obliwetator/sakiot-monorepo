@@ -63,6 +63,7 @@ tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
 ogg = "0.9"
 opus2 = "0.4"
+thiserror = "2"
 
 [profile.release]
 # debug = true

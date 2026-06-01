@@ -1,4 +1,3 @@
-use sakiot_paths::RecordingKey;
 use serenity::model::id::UserId;
 use songbird::model::payload::Speaking;
 use std::fs::File;
@@ -9,7 +8,9 @@ use tracing::{Instrument, debug, error, info};
 
 use super::InnerReceiver;
 use super::pause::resume_paused_recording;
-use super::persistence::{create_path, insert_receiver_voice_event, mark_recording_setup_failed};
+use super::persistence::{
+    create_recording, insert_receiver_voice_event, mark_recording_setup_failed,
+};
 use super::state::{RecordingFinalizeReason, UserRecording, VoiceEventType};
 use crate::events::ogg_opus_writer::OggOpusWriter;
 
@@ -141,15 +142,13 @@ pub(super) async fn handle_speaking_state_update(
 
         info!("New writer for ssrc {}", ssrc);
         let now = chrono::Utc::now();
-        let now_ms = now.timestamp_millis();
-        let file_name = RecordingKey::stem_for(now_ms, user_id.0 as i64);
 
-        let Some(path) = create_path(&inner, now, user_id.0).await else {
+        let Some(recording_handle) = create_recording(&inner, now, user_id.0).await else {
             error!("Failed to create recording path for ssrc {}", ssrc);
             return;
         };
 
-        let file = match File::create(format!("{}.ogg", path)) {
+        let file = match File::create(format!("{}.ogg", recording_handle.path)) {
             Ok(f) => f,
             Err(e) => {
                 error!("Failed to create file for ssrc {}: {}", ssrc, e);
@@ -158,7 +157,7 @@ pub(super) async fn handle_speaking_state_update(
                     .track_writer_setup_failure(&inner.guild_metrics, &inner.channel_metrics);
                 mark_recording_setup_failed(
                     &inner,
-                    &file_name,
+                    recording_handle.audio_file_id,
                     RecordingFinalizeReason::FileCreate,
                 )
                 .await;
@@ -175,7 +174,7 @@ pub(super) async fn handle_speaking_state_update(
                     .track_writer_setup_failure(&inner.guild_metrics, &inner.channel_metrics);
                 mark_recording_setup_failed(
                     &inner,
-                    &file_name,
+                    recording_handle.audio_file_id,
                     RecordingFinalizeReason::WriterInit,
                 )
                 .await;
@@ -185,7 +184,8 @@ pub(super) async fn handle_speaking_state_update(
 
         let recording = UserRecording {
             writer,
-            file_name,
+            audio_file_id: recording_handle.audio_file_id,
+            file_name: recording_handle.file_name,
             start_time: now,
             user_id: user_id.0,
             ssrc,

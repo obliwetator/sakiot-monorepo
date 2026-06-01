@@ -79,14 +79,8 @@ pub async fn handle_stamp(
     // TOCTOU: two /stamp calls for the same target within a few ms can both
     // pass this check and both insert. Acceptable for a 10s human-scale guard;
     // tighten with a partial unique index if strict enforcement is needed.
-    match sqlx::query_scalar!(
-        r#"SELECT MAX(stamp_ts) FROM stamps
-           WHERE guild_id = $1 AND target_user_id = $2"#,
-        guild_id.get() as i64,
-        target.get() as i64,
-    )
-    .fetch_one(pool)
-    .await
+    match crate::database::stamps::latest_stamp_ts(pool, guild_id.get() as i64, target.get() as i64)
+        .await
     {
         Ok(Some(last_ts)) => {
             let delta = now_ms - last_ts;
@@ -102,45 +96,28 @@ pub async fn handle_stamp(
         Ok(None) => {}
         Err(e) => {
             warn!("Failed cooldown lookup: {}", e);
+            return "Database error. Try again later.".to_string();
         }
     }
 
-    let active_file_id: Option<i64> = match sqlx::query_scalar!(
-        r#"SELECT id FROM audio_files
-           WHERE user_id = $1 AND guild_id = $2 AND channel_id = $3
-             AND start_ts <= $4 AND end_ts IS NULL
-             AND EXISTS (
-                 SELECT 1
-                   FROM bot_instances bi
-                  WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                    AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                    AND bi.heartbeat_at > now() - interval '120 seconds'
-                    AND bi.state <> 'stopped'
-             )
-           ORDER BY start_ts DESC
-           LIMIT 1"#,
+    let active_file_id: Option<i64> = match crate::database::stamps::active_audio_file_id_for_stamp(
+        pool,
         target.get() as i64,
         guild_id.get() as i64,
         channel_id as i64,
         now_ms,
     )
-    .fetch_optional(pool)
     .await
     {
-        Ok(Some(id)) => Some(id),
-        Ok(None) => None,
+        Ok(id) => id,
         Err(e) => {
             warn!("Failed to look up active audio_file: {}", e);
-            None
+            return "Database error. Try again later.".to_string();
         }
     };
 
-    let insert = sqlx::query!(
-        r#"INSERT INTO stamps
-             (guild_id, channel_id, target_user_id, stamper_user_id,
-              stamp_ts, offset_ms, audio_file_id, note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id"#,
+    let insert = crate::database::stamps::create_stamp(
+        pool,
         guild_id.get() as i64,
         channel_id as i64,
         target.get() as i64,
@@ -148,15 +125,14 @@ pub async fn handle_stamp(
         now_ms,
         offset_ms,
         active_file_id,
-        note,
+        note.as_deref(),
     )
-    .fetch_one(pool)
     .await;
 
     match insert {
-        Ok(row) => {
+        Ok(stamp_id) => {
             info!(
-                stamp_id = row.id,
+                stamp_id,
                 target = target.get(),
                 audio_file_id = ?active_file_id,
                 "stamp created"

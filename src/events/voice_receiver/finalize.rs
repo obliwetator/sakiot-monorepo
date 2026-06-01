@@ -106,24 +106,24 @@ pub(super) async fn finalize_recording_arc(
         time_elapsed as f64 / 1000.0,
     );
     let file_name = rec.file_name.clone();
+    let audio_file_id = rec.audio_file_id;
     let user_id = rec.user_id;
     let rec_ssrc = rec.ssrc;
     drop(rec);
 
-    if let Err(err) = sqlx::query!(
-        "UPDATE audio_files
-            SET end_ts = audio_files.start_ts + $1,
-                recording_heartbeat_at = NULL,
-                finalize_reason_id = $3
-            WHERE file_name = $2",
+    if let Err(err) = crate::database::recordings::finalize_recording(
+        &inner.pool,
+        audio_file_id,
+        &inner.recording_owner_instance_id,
         time_elapsed,
-        file_name,
         finalize_reason.id(),
     )
-    .execute(&inner.pool)
     .await
     {
-        error!("{}", err);
+        error!(
+            file_name,
+            audio_file_id, "failed to finalize recording row: {}", err
+        );
         inner
             .metrics
             .db_query_errors
