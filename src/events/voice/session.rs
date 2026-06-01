@@ -303,6 +303,53 @@ async fn join_ch(
     ctx: &Context,
     mode: JoinMode,
 ) -> VoiceConnectOutcome {
+    let runtime = crate::runtime::state_from_ctx(ctx).await;
+    let claimed_lease = if let Some(runtime) = &runtime {
+        match crate::deployment::claim_voice_session(&pool, runtime, guild_id, channel_id).await {
+            Ok(crate::deployment::VoiceLeaseClaim::Claimed) => true,
+            Ok(crate::deployment::VoiceLeaseClaim::OwnedByOther(owner)) => {
+                info!(
+                    guild_id = guild_id.get(),
+                    channel_id = channel_id.get(),
+                    owner = %owner,
+                    "skipping voice connect because another instance won lease claim"
+                );
+                store::insert_voice_connection_event(
+                    &pool,
+                    guild_id.get() as i64,
+                    Some(channel_id.get() as i64),
+                    Some(&runtime.config().instance_id),
+                    "join_skipped",
+                    Some("lease_owned"),
+                    Some(&owner),
+                )
+                .await;
+                return VoiceConnectOutcome::SkippedLeaseOwned { owner };
+            }
+            Err(err) => {
+                error!(
+                    guild_id = guild_id.get(),
+                    channel_id = channel_id.get(),
+                    "voice lease claim failed: {}",
+                    err
+                );
+                store::insert_voice_connection_event(
+                    &pool,
+                    guild_id.get() as i64,
+                    Some(channel_id.get() as i64),
+                    Some(&runtime.config().instance_id),
+                    "join_failed",
+                    Some("lease_claim_failed"),
+                    Some(&err.to_string()),
+                )
+                .await;
+                return VoiceConnectOutcome::Failed(format!("voice lease claim failed: {}", err));
+            }
+        }
+    } else {
+        false
+    };
+
     let handler_lock = manager.get_or_insert(guild_id);
     let result = {
         let mut handler = handler_lock.lock().await;
@@ -316,9 +363,7 @@ async fn join_ch(
     match result {
         Ok(join) => match join.await {
             Ok(()) => {
-                if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-                    crate::deployment::claim_voice_session(&pool, &runtime, guild_id, channel_id)
-                        .await;
+                if let Some(runtime) = &runtime {
                     store::insert_voice_connection_event(
                         &pool,
                         guild_id.get() as i64,
@@ -343,8 +388,11 @@ async fn join_ch(
             }
             Err(err) => {
                 error!("cannot join channel {}: {}", channel_id, err);
-                let owner = crate::runtime::state_from_ctx(ctx)
-                    .await
+                if claimed_lease && let Some(runtime) = &runtime {
+                    crate::deployment::release_voice_session(&pool, runtime, guild_id).await;
+                }
+                let owner = runtime
+                    .as_ref()
                     .map(|runtime| runtime.config().instance_id.clone());
                 store::insert_voice_connection_event(
                     &pool,
@@ -362,8 +410,11 @@ async fn join_ch(
         },
         Err(err) => {
             error!("cannot join channel {}: {}", channel_id, err);
-            let owner = crate::runtime::state_from_ctx(ctx)
-                .await
+            if claimed_lease && let Some(runtime) = &runtime {
+                crate::deployment::release_voice_session(&pool, runtime, guild_id).await;
+            }
+            let owner = runtime
+                .as_ref()
                 .map(|runtime| runtime.config().instance_id.clone());
             store::insert_voice_connection_event(
                 &pool,

@@ -51,16 +51,19 @@ pub async fn voice_state_update(
     old_state: Option<serenity::model::prelude::VoiceState>,
     new_state: serenity::model::prelude::VoiceState,
 ) {
-    if should_skip_voice_state_for_lease(_self, new_state.guild_id).await {
-        return;
-    }
-
-    // Persist voice events for non-bot users (timeline overlay on recordings).
     let is_bot = new_state
         .member
         .as_ref()
         .map(|m| m.user.bot)
         .unwrap_or(false);
+
+    track_active_voice_state_metrics(_self, &ctx, old_state.as_ref(), &new_state, is_bot).await;
+
+    if should_skip_voice_state_for_lease(_self, new_state.guild_id).await {
+        return;
+    }
+
+    // Persist voice events for non-bot users (timeline overlay on recordings).
     if !is_bot {
         store::record_voice_events(
             &_self.database,
@@ -69,58 +72,6 @@ pub async fn voice_state_update(
             LOG_VOICE_STATE_CHANGES,
         )
         .await;
-    }
-
-    // Notify the dashboard stream of any user voice state changes
-    {
-        let data_read = ctx.data.read().await;
-        if let Some(metrics) = data_read.get::<crate::BotMetricsKey>() {
-            let _ = metrics.voice_update_tx.send(());
-
-            // Track user start times
-            let user_id = new_state.user_id.get();
-            if let Some(guild_id) = new_state.guild_id {
-                metrics.track_voice_presence(
-                    guild_id.get(),
-                    user_id,
-                    new_state
-                        .channel_id
-                        .map(|channel_id| crate::VoiceUserPresence {
-                            channel_id: channel_id.get(),
-                            is_bot,
-                            server_mute: new_state.mute,
-                            server_deaf: new_state.deaf,
-                            self_mute: new_state.self_mute,
-                            self_deaf: new_state.self_deaf,
-                            suppress: new_state.suppress,
-                            streaming: new_state.self_stream.unwrap_or(false),
-                            video: new_state.self_video,
-                        }),
-                );
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or_else(|err| {
-                    error!("System clock before UNIX_EPOCH: {}", err);
-                    0
-                });
-
-            if let Some(new_ch) = new_state.channel_id {
-                if let Some(old) = &old_state {
-                    if old.channel_id != Some(new_ch) {
-                        // User switched channels
-                        metrics.user_start_times.insert(user_id, now);
-                    }
-                } else {
-                    // User joined a channel
-                    metrics.user_start_times.insert(user_id, now);
-                }
-            } else {
-                // User left the channel completely
-                metrics.user_start_times.remove(&user_id);
-            }
-        }
     }
 
     if let Some(member) = &new_state.member {
@@ -185,6 +136,66 @@ pub async fn voice_state_update(
         }
     } else {
         error!("No member in new_state");
+    }
+}
+
+async fn track_active_voice_state_metrics(
+    handler: &Handler,
+    ctx: &Context,
+    old_state: Option<&serenity::model::prelude::VoiceState>,
+    new_state: &serenity::model::prelude::VoiceState,
+    is_bot: bool,
+) {
+    if handler.runtime.is_draining() {
+        return;
+    }
+
+    let data_read = ctx.data.read().await;
+    let Some(metrics) = data_read.get::<crate::BotMetricsKey>() else {
+        return;
+    };
+
+    metrics.record_voice_state_update();
+    let _ = metrics.voice_update_tx.send(());
+
+    let user_id = new_state.user_id.get();
+    if let Some(guild_id) = new_state.guild_id {
+        metrics.track_voice_presence(
+            guild_id.get(),
+            user_id,
+            new_state
+                .channel_id
+                .map(|channel_id| crate::VoiceUserPresence {
+                    channel_id: channel_id.get(),
+                    is_bot,
+                    server_mute: new_state.mute,
+                    server_deaf: new_state.deaf,
+                    self_mute: new_state.self_mute,
+                    self_deaf: new_state.self_deaf,
+                    suppress: new_state.suppress,
+                    streaming: new_state.self_stream.unwrap_or(false),
+                    video: new_state.self_video,
+                }),
+        );
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_else(|err| {
+            error!("System clock before UNIX_EPOCH: {}", err);
+            0
+        });
+
+    if let Some(new_ch) = new_state.channel_id {
+        if let Some(old) = old_state {
+            if old.channel_id != Some(new_ch) {
+                metrics.user_start_times.insert(user_id, now);
+            }
+        } else {
+            metrics.user_start_times.insert(user_id, now);
+        }
+    } else {
+        metrics.user_start_times.remove(&user_id);
     }
 }
 

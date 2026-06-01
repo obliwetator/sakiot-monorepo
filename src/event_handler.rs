@@ -279,12 +279,10 @@ impl EventHandler for Handler {
         old: Option<serenity::model::prelude::VoiceState>,
         new: serenity::model::prelude::VoiceState,
     ) {
-        Self::with_metrics(&ctx, |m| m.record_voice_state_update()).await;
         events::voice::voice_state_update(self, ctx, old, new).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: serenity::all::Interaction) {
-        Self::with_metrics(&ctx, |m| m.record_command_executed()).await;
         events::interactions::interaction_create(self, ctx, interaction).await;
     }
 

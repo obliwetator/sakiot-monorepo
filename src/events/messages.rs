@@ -9,6 +9,10 @@ use crate::event_handler::Handler;
 pub async fn message(_self: &Handler, ctx: Context, msg: Message) {
     // let pool = db_helper::get_pool_from_ctx(&ctx).await;
     // db_helper::get_channels(&pool).await;
+    if _self.runtime.is_draining() {
+        return;
+    }
+
     match msg.kind {
         MessageType::Regular => {
             let data_read = ctx.data.read().await;

@@ -16,6 +16,7 @@ impl Admin for FbiAgentGrpc {
         let reason = request.into_inner().reason;
         info!(reason = %reason, "admin requested drain");
         self.data_cache.runtime.start_drain(false);
+        self.clear_voice_presence_metrics().await;
         crate::deployment::heartbeat_instance_and_leases(
             &self.data_cache.pool,
             &self.data_cache.runtime,
@@ -38,6 +39,7 @@ impl Admin for FbiAgentGrpc {
         let reason = request.into_inner().reason;
         info!(reason = %reason, "admin requested shutdown when empty");
         self.data_cache.runtime.start_drain(true);
+        self.clear_voice_presence_metrics().await;
         crate::deployment::heartbeat_instance_and_leases(
             &self.data_cache.pool,
             &self.data_cache.runtime,
@@ -55,6 +57,7 @@ impl Admin for FbiAgentGrpc {
         let reason = request.into_inner().reason;
         info!(reason = %reason, "admin requested force shutdown");
         self.data_cache.runtime.force_shutdown();
+        self.clear_voice_presence_metrics().await;
         crate::deployment::heartbeat_instance_and_leases(
             &self.data_cache.pool,
             &self.data_cache.runtime,
@@ -65,6 +68,13 @@ impl Admin for FbiAgentGrpc {
 }
 
 impl FbiAgentGrpc {
+    async fn clear_voice_presence_metrics(&self) {
+        let data = self.data_cache.data.read().await;
+        if let Some(metrics) = data.get::<crate::BotMetricsKey>() {
+            metrics.clear_voice_presence();
+        }
+    }
+
     async fn status(&self, message: &str) -> DrainStatus {
         let active_voice_connections = {
             let data = self.data_cache.data.read().await;

@@ -213,6 +213,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             wait_for_shutdown_signal_or_drain(shutdown_runtime.clone()).await;
         }
         shutdown_runtime.start_drain(true);
+        clear_voice_presence_metrics(&shutdown_data).await;
         deployment::heartbeat_instance_and_leases(&shutdown_pool, &shutdown_runtime).await;
 
         let deadline = if shutdown_runtime.config().drain_timeout.is_zero() {
@@ -296,6 +297,13 @@ async fn active_voice_connection_count(data: &Arc<RwLock<TypeMap>>) -> u32 {
             })
         })
         .unwrap_or(0)
+}
+
+async fn clear_voice_presence_metrics(data: &Arc<RwLock<TypeMap>>) {
+    let data_read = data.read().await;
+    if let Some(metrics) = data_read.get::<crate::BotMetricsKey>() {
+        metrics.clear_voice_presence();
+    }
 }
 
 async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeState>) {

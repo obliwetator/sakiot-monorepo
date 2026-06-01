@@ -99,6 +99,12 @@ impl BotMetrics {
         }
     }
 
+    pub fn clear_voice_presence(&self) {
+        self.voice_users.clear();
+        self.user_start_times.clear();
+        let _ = self.voice_update_tx.send(());
+    }
+
     pub fn track_recording_started(
         &self,
         guild_metrics: &GuildRecordingMetrics,

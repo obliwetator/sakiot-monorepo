@@ -21,6 +21,8 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
             warn!("Unhandled interaction type: Ping");
         }
         Interaction::Command(application_command) => {
+            record_command_executed(&ctx).await;
+
             let mut response_msg = CreateInteractionResponseMessage::new().ephemeral(true);
 
             match application_command.data.name.as_str() {
@@ -154,6 +156,13 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
         _ => {
             warn!("Unhandled unknown interaction type");
         }
+    }
+}
+
+async fn record_command_executed(ctx: &Context) {
+    let data = ctx.data.read().await;
+    if let Some(metrics) = data.get::<crate::BotMetricsKey>() {
+        metrics.record_command_executed();
     }
 }
 

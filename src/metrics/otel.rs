@@ -32,13 +32,16 @@ impl BotMetrics {
         macro_rules! u32_counter {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_counter($name)
                     .with_description($desc)
                     .with_callback(move |observer| {
+                        let labels = deployment_labels(&r, release_id.as_str());
                         observer.observe(
                             m.$field.load(std::sync::atomic::Ordering::Relaxed) as u64,
-                            &[],
+                            &labels,
                         );
                     })
                     .build();
@@ -48,11 +51,15 @@ impl BotMetrics {
         macro_rules! u64_counter {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_counter($name)
                     .with_description($desc)
                     .with_callback(move |observer| {
-                        observer.observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &[]);
+                        let labels = deployment_labels(&r, release_id.as_str());
+                        observer
+                            .observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &labels);
                     })
                     .build();
             };
@@ -61,13 +68,16 @@ impl BotMetrics {
         macro_rules! u32_gauge {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_gauge($name)
                     .with_description($desc)
                     .with_callback(move |observer| {
+                        let labels = deployment_labels(&r, release_id.as_str());
                         observer.observe(
                             m.$field.load(std::sync::atomic::Ordering::Relaxed) as u64,
-                            &[],
+                            &labels,
                         );
                     })
                     .build();
@@ -77,11 +87,15 @@ impl BotMetrics {
         macro_rules! u64_gauge {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_gauge($name)
                     .with_description($desc)
                     .with_callback(move |observer| {
-                        observer.observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &[]);
+                        let labels = deployment_labels(&r, release_id.as_str());
+                        observer
+                            .observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &labels);
                     })
                     .build();
             };
@@ -90,6 +104,8 @@ impl BotMetrics {
         macro_rules! guild_counter {
             ($name:literal, $desc:literal, $field:ident, $map:expr) => {{
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_counter($name)
                     .with_description($desc)
@@ -97,16 +113,18 @@ impl BotMetrics {
                         for entry in m.guild_recording_metrics.iter() {
                             let guild_id = entry.key();
                             let guild_metrics = entry.value();
+                            let mut labels = deployment_labels(&r, release_id.as_str());
+                            labels.push(opentelemetry::KeyValue::new(
+                                "guild_id",
+                                guild_id.to_string(),
+                            ));
                             observer.observe(
                                 $map(
                                     guild_metrics
                                         .$field
                                         .load(std::sync::atomic::Ordering::Relaxed),
                                 ),
-                                &[opentelemetry::KeyValue::new(
-                                    "guild_id",
-                                    guild_id.to_string(),
-                                )],
+                                &labels,
                             );
                         }
                     })
@@ -117,6 +135,8 @@ impl BotMetrics {
         macro_rules! guild_gauge {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_gauge($name)
                     .with_description($desc)
@@ -124,15 +144,17 @@ impl BotMetrics {
                         for entry in m.guild_recording_metrics.iter() {
                             let guild_id = entry.key();
                             let guild_metrics = entry.value();
+                            let mut labels = deployment_labels(&r, release_id.as_str());
+                            labels.push(opentelemetry::KeyValue::new(
+                                "guild_id",
+                                guild_id.to_string(),
+                            ));
                             observer.observe(
                                 guild_metrics
                                     .$field
                                     .load(std::sync::atomic::Ordering::Relaxed)
                                     as u64,
-                                &[opentelemetry::KeyValue::new(
-                                    "guild_id",
-                                    guild_id.to_string(),
-                                )],
+                                &labels,
                             );
                         }
                     })
@@ -143,6 +165,8 @@ impl BotMetrics {
         macro_rules! channel_counter {
             ($name:literal, $desc:literal, $field:ident, $map:expr) => {{
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_counter($name)
                     .with_description($desc)
@@ -150,19 +174,22 @@ impl BotMetrics {
                         for entry in m.channel_recording_metrics.iter() {
                             let (guild_id, channel_id) = entry.key();
                             let channel_metrics = entry.value();
+                            let mut labels = deployment_labels(&r, release_id.as_str());
+                            labels.push(opentelemetry::KeyValue::new(
+                                "guild_id",
+                                guild_id.to_string(),
+                            ));
+                            labels.push(opentelemetry::KeyValue::new(
+                                "channel_id",
+                                channel_id.to_string(),
+                            ));
                             observer.observe(
                                 $map(
                                     channel_metrics
                                         .$field
                                         .load(std::sync::atomic::Ordering::Relaxed),
                                 ),
-                                &[
-                                    opentelemetry::KeyValue::new("guild_id", guild_id.to_string()),
-                                    opentelemetry::KeyValue::new(
-                                        "channel_id",
-                                        channel_id.to_string(),
-                                    ),
-                                ],
+                                &labels,
                             );
                         }
                     })
@@ -173,6 +200,8 @@ impl BotMetrics {
         macro_rules! channel_gauge {
             ($name:literal, $desc:literal, $field:ident) => {
                 let m = metrics.clone();
+                let r = runtime.clone();
+                let release_id = release_id.clone();
                 meter
                     .u64_observable_gauge($name)
                     .with_description($desc)
@@ -180,18 +209,21 @@ impl BotMetrics {
                         for entry in m.channel_recording_metrics.iter() {
                             let (guild_id, channel_id) = entry.key();
                             let channel_metrics = entry.value();
+                            let mut labels = deployment_labels(&r, release_id.as_str());
+                            labels.push(opentelemetry::KeyValue::new(
+                                "guild_id",
+                                guild_id.to_string(),
+                            ));
+                            labels.push(opentelemetry::KeyValue::new(
+                                "channel_id",
+                                channel_id.to_string(),
+                            ));
                             observer.observe(
                                 channel_metrics
                                     .$field
                                     .load(std::sync::atomic::Ordering::Relaxed)
                                     as u64,
-                                &[
-                                    opentelemetry::KeyValue::new("guild_id", guild_id.to_string()),
-                                    opentelemetry::KeyValue::new(
-                                        "channel_id",
-                                        channel_id.to_string(),
-                                    ),
-                                ],
+                                &labels,
                             );
                         }
                     })
@@ -199,7 +231,7 @@ impl BotMetrics {
             };
         }
 
-        register_voice_presence_gauges(&meter, &metrics);
+        register_voice_presence_gauges(&meter, &metrics, &runtime, &release_id);
         register_deployment_gauges(&meter, &metrics, &runtime, &release_id);
 
         u64_gauge!(
@@ -361,9 +393,13 @@ impl BotMetrics {
 fn register_voice_presence_gauges(
     meter: &opentelemetry::metrics::Meter,
     metrics: &Arc<BotMetrics>,
+    runtime: &Arc<crate::runtime::RuntimeState>,
+    release_id: &str,
 ) {
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("voice_user_present")
             .with_description("Current voice channel presence per user")
@@ -371,22 +407,21 @@ fn register_voice_presence_gauges(
                 for entry in m.voice_users.iter() {
                     let key = entry.key();
                     let presence = entry.value();
-                    observer.observe(
-                        1,
-                        &[
-                            KeyValue::new("guild_id", key.guild_id.to_string()),
-                            KeyValue::new("channel_id", presence.channel_id.to_string()),
-                            KeyValue::new("user_id", key.user_id.to_string()),
-                            KeyValue::new("is_bot", presence.is_bot.to_string()),
-                            KeyValue::new("server_mute", presence.server_mute.to_string()),
-                            KeyValue::new("server_deaf", presence.server_deaf.to_string()),
-                            KeyValue::new("self_mute", presence.self_mute.to_string()),
-                            KeyValue::new("self_deaf", presence.self_deaf.to_string()),
-                            KeyValue::new("suppress", presence.suppress.to_string()),
-                            KeyValue::new("streaming", presence.streaming.to_string()),
-                            KeyValue::new("video", presence.video.to_string()),
-                        ],
-                    );
+                    let mut labels = deployment_labels(&r, release_id.as_str());
+                    labels.extend([
+                        KeyValue::new("guild_id", key.guild_id.to_string()),
+                        KeyValue::new("channel_id", presence.channel_id.to_string()),
+                        KeyValue::new("user_id", key.user_id.to_string()),
+                        KeyValue::new("is_bot", presence.is_bot.to_string()),
+                        KeyValue::new("server_mute", presence.server_mute.to_string()),
+                        KeyValue::new("server_deaf", presence.server_deaf.to_string()),
+                        KeyValue::new("self_mute", presence.self_mute.to_string()),
+                        KeyValue::new("self_deaf", presence.self_deaf.to_string()),
+                        KeyValue::new("suppress", presence.suppress.to_string()),
+                        KeyValue::new("streaming", presence.streaming.to_string()),
+                        KeyValue::new("video", presence.video.to_string()),
+                    ]);
+                    observer.observe(1, &labels);
                 }
             })
             .build();
@@ -394,6 +429,8 @@ fn register_voice_presence_gauges(
 
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("voice_channel_users")
             .with_description("Current voice users per guild/channel")
@@ -408,14 +445,13 @@ fn register_voice_presence_gauges(
                         .or_default() += 1;
                 }
                 for ((guild_id, channel_id, is_bot), count) in counts {
-                    observer.observe(
-                        count,
-                        &[
-                            KeyValue::new("guild_id", guild_id.to_string()),
-                            KeyValue::new("channel_id", channel_id.to_string()),
-                            KeyValue::new("is_bot", is_bot.to_string()),
-                        ],
-                    );
+                    let mut labels = deployment_labels(&r, release_id.as_str());
+                    labels.extend([
+                        KeyValue::new("guild_id", guild_id.to_string()),
+                        KeyValue::new("channel_id", channel_id.to_string()),
+                        KeyValue::new("is_bot", is_bot.to_string()),
+                    ]);
+                    observer.observe(count, &labels);
                 }
             })
             .build();
@@ -423,6 +459,8 @@ fn register_voice_presence_gauges(
 
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("voice_channel_state_users")
             .with_description("Current voice users per guild/channel/state")
@@ -450,14 +488,13 @@ fn register_voice_presence_gauges(
                     }
                 }
                 for ((guild_id, channel_id, state), count) in counts {
-                    observer.observe(
-                        count,
-                        &[
-                            KeyValue::new("guild_id", guild_id.to_string()),
-                            KeyValue::new("channel_id", channel_id.to_string()),
-                            KeyValue::new("state", state),
-                        ],
-                    );
+                    let mut labels = deployment_labels(&r, release_id.as_str());
+                    labels.extend([
+                        KeyValue::new("guild_id", guild_id.to_string()),
+                        KeyValue::new("channel_id", channel_id.to_string()),
+                        KeyValue::new("state", state),
+                    ]);
+                    observer.observe(count, &labels);
                 }
             })
             .build();
@@ -465,6 +502,8 @@ fn register_voice_presence_gauges(
 
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("recording_user_active")
             .with_description("Current active recording users")
@@ -472,14 +511,13 @@ fn register_voice_presence_gauges(
                 for entry in m.active_recording_users.iter() {
                     let key = entry.key();
                     let channel_id = entry.value();
-                    observer.observe(
-                        1,
-                        &[
-                            KeyValue::new("guild_id", key.guild_id.to_string()),
-                            KeyValue::new("channel_id", channel_id.to_string()),
-                            KeyValue::new("user_id", key.user_id.to_string()),
-                        ],
-                    );
+                    let mut labels = deployment_labels(&r, release_id.as_str());
+                    labels.extend([
+                        KeyValue::new("guild_id", key.guild_id.to_string()),
+                        KeyValue::new("channel_id", channel_id.to_string()),
+                        KeyValue::new("user_id", key.user_id.to_string()),
+                    ]);
+                    observer.observe(1, &labels);
                 }
             })
             .build();
@@ -495,7 +533,14 @@ fn register_deployment_gauges(
     meter
         .u64_observable_gauge("bot_up")
         .with_description("Bot process health: 1 while the process exports metrics")
-        .with_callback(|observer| observer.observe(1, &[]))
+        .with_callback({
+            let r = runtime.clone();
+            let release_id = release_id.to_string();
+            move |observer| {
+                let labels = deployment_labels(&r, release_id.as_str());
+                observer.observe(1, &labels);
+            }
+        })
         .build();
 
     {
@@ -603,42 +648,53 @@ fn register_deployment_gauges(
 
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("uptime_seconds")
             .with_description("Bot process uptime in seconds")
             .with_unit("s")
-            .with_callback(move |observer| observer.observe(m.start_time.elapsed().as_secs(), &[]))
-            .build();
-    }
-
-    {
-        let m = metrics.clone();
-        meter
-            .i64_observable_gauge("last_voice_packet_timestamp_seconds")
-            .with_description("Unix timestamp in seconds of the last observed voice packet")
-            .with_unit("s")
             .with_callback(move |observer| {
-                let ms = m
-                    .last_voice_packet_time
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                observer.observe(ms / 1000, &[]);
+                let labels = deployment_labels(&r, release_id.as_str());
+                observer.observe(m.start_time.elapsed().as_secs(), &labels);
             })
             .build();
     }
 
     {
         let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
+        meter
+            .i64_observable_gauge("last_voice_packet_timestamp_seconds")
+            .with_description("Unix timestamp in seconds of the last observed voice packet")
+            .with_unit("s")
+            .with_callback(move |observer| {
+                let labels = deployment_labels(&r, release_id.as_str());
+                let ms = m
+                    .last_voice_packet_time
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                observer.observe(ms / 1000, &labels);
+            })
+            .build();
+    }
+
+    {
+        let m = metrics.clone();
+        let r = runtime.clone();
+        let release_id = release_id.to_string();
         meter
             .u64_observable_gauge("last_voice_packet_age_seconds")
             .with_description("Seconds since the last observed voice packet")
             .with_unit("s")
             .with_callback(move |observer| {
+                let labels = deployment_labels(&r, release_id.as_str());
                 let last_ms = m
                     .last_voice_packet_time
                     .load(std::sync::atomic::Ordering::Relaxed);
                 if last_ms > 0 {
                     let now_ms = chrono::Utc::now().timestamp_millis();
-                    observer.observe(((now_ms - last_ms).max(0) / 1000) as u64, &[]);
+                    observer.observe(((now_ms - last_ms).max(0) / 1000) as u64, &labels);
                 }
             })
             .build();

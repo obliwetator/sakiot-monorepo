@@ -62,13 +62,19 @@ pub async fn heartbeat_instance_and_leases(pool: &Pool<Postgres>, runtime: &Runt
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum VoiceLeaseClaim {
+    Claimed,
+    OwnedByOther(String),
+}
+
 pub async fn claim_voice_session(
     pool: &Pool<Postgres>,
     runtime: &RuntimeState,
     guild_id: GuildId,
     channel_id: ChannelId,
-) {
-    if let Err(err) = sqlx::query!(
+) -> Result<VoiceLeaseClaim, sqlx::Error> {
+    let result = sqlx::query!(
         "INSERT INTO voice_session_leases
             (guild_id, channel_id, owner_instance_id, state, heartbeat_at, started_at)
          VALUES ($1, $2, $3, $4, now(), now())
@@ -76,7 +82,16 @@ pub async fn claim_voice_session(
             SET channel_id = EXCLUDED.channel_id,
                 owner_instance_id = EXCLUDED.owner_instance_id,
                 state = EXCLUDED.state,
-                heartbeat_at = now()",
+                heartbeat_at = now()
+          WHERE voice_session_leases.owner_instance_id = EXCLUDED.owner_instance_id
+             OR voice_session_leases.heartbeat_at <= now() - interval '120 seconds'
+             OR NOT EXISTS (
+                SELECT 1
+                  FROM bot_instances b
+                 WHERE b.instance_id = voice_session_leases.owner_instance_id
+                   AND b.heartbeat_at > now() - interval '120 seconds'
+                   AND b.state <> 'stopped'
+             )",
         guild_id.get() as i64,
         channel_id.get() as i64,
         runtime.config().instance_id,
@@ -87,15 +102,17 @@ pub async fn claim_voice_session(
         }
     )
     .execute(pool)
-    .await
-    {
-        error!(
-            guild_id = guild_id.get(),
-            channel_id = channel_id.get(),
-            "voice lease claim failed: {}",
-            err
-        );
+    .await?;
+
+    if result.rows_affected() > 0 {
+        return Ok(VoiceLeaseClaim::Claimed);
     }
+
+    Ok(VoiceLeaseClaim::OwnedByOther(
+        active_lease_owner(pool, guild_id)
+            .await?
+            .unwrap_or_else(|| "unknown".to_string()),
+    ))
 }
 
 pub async fn release_voice_session(
