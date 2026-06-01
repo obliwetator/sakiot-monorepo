@@ -13,6 +13,10 @@ pub struct Handler {
     pub(crate) database: Pool<Postgres>,
     pub(crate) jam_cooldown: crate::cooldown::JamCooldown,
     pub(crate) runtime: std::sync::Arc<crate::runtime::RuntimeState>,
+    /// Per-guild AFK channel id (`None` = no AFK channel). Seeded in
+    /// `cache_ready`, read when picking the busiest voice channel.
+    pub(crate) afk_channels:
+        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<u64, Option<u64>>>>,
 }
 
 impl Handler {

@@ -1,4 +1,4 @@
-use crate::{event_handler::Handler, get_lock_read};
+use crate::event_handler::Handler;
 use serenity::{
     client::Context,
     model::id::{ChannelId, GuildId},
@@ -112,7 +112,7 @@ pub async fn voice_state_update(
         }
 
         let (highest_channel_id, highest_channel_len) =
-            match get_channel_with_most_members(&ctx, &new_state).await {
+            match get_channel_with_most_members(_self, &ctx, &new_state).await {
                 Some(value) => value,
                 None => {
                     warn!(
@@ -337,11 +337,10 @@ fn schedule_leave_if_still_empty(
 }
 
 async fn get_channel_with_most_members(
+    handler: &Handler,
     ctx: &Context,
     new_state: &serenity::model::prelude::VoiceState,
 ) -> Option<(ChannelId, usize)> {
-    let lock = get_lock_read(ctx).await;
-
     let guild_id = match new_state.guild_id {
         Some(id) => id,
         None => return None,
@@ -351,7 +350,7 @@ async fn get_channel_with_most_members(
     // Holding the guard across the channel-iteration loop (which calls into the cache)
     // would block any concurrent writer (e.g. cache_ready) for the entire duration.
     let afk_channel_id_option: Option<u64> = {
-        let lock_guard = lock.read().await;
+        let lock_guard = handler.afk_channels.read().await;
         lock_guard.get(&guild_id.get()).copied().unwrap_or(None)
     };
 
