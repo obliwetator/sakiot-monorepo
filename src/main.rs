@@ -36,11 +36,6 @@ impl TypeMapKey for HasBossMusic {
     type Value = HashMap<u64, Option<String>>;
 }
 
-pub struct HelperStruct;
-impl TypeMapKey for HelperStruct {
-    type Value = Arc<RwLock<HashMap<u64, Option<u64>>>>;
-}
-
 #[derive(Clone)]
 pub struct Custom {
     cache: Arc<Cache>,
@@ -49,21 +44,6 @@ pub struct Custom {
     pub pool: sqlx::Pool<sqlx::Postgres>,
     pub jam_cooldown: crate::cooldown::JamCooldown,
     pub runtime: Arc<crate::runtime::RuntimeState>,
-}
-
-pub async fn get_lock_read(ctx: &Context) -> Arc<RwLock<HashMap<u64, Option<u64>>>> {
-    if let Some(lock) = {
-        let data_write = ctx.data.read().await;
-        data_write.get::<HelperStruct>().cloned()
-    } {
-        return lock;
-    }
-
-    error!("HelperStruct missing from typemap; recreating it");
-    let lock = Arc::new(RwLock::new(HashMap::new()));
-    let mut data_write = ctx.data.write().await;
-    data_write.insert::<HelperStruct>(lock.clone());
-    lock
 }
 
 #[tokio::main]
@@ -119,6 +99,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             database: pool.clone(),
             jam_cooldown: jam_cooldown.clone(),
             runtime: runtime.clone(),
+            afk_channels: Arc::new(RwLock::new(HashMap::new())),
         })
         .intents(intents)
         .register_songbird_from_config(songbird_config)
@@ -126,8 +107,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .await?;
     {
         let mut data = client.data.write().await;
-        // data.insert::<MysqlConnection>(mysql_pool.clone());
-        data.insert::<HelperStruct>(Arc::new(RwLock::new(HashMap::new())));
         data.insert::<HasBossMusic>(HashMap::new());
         data.insert::<BotMetricsKey>(Arc::new(BotMetrics::default()));
         data.insert::<crate::runtime::RuntimeStateKey>(runtime.clone());
