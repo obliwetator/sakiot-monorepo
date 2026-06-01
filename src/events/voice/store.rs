@@ -49,42 +49,7 @@ pub(in crate::events) async fn insert_voice_event(
     )
     .await
     {
-        warn!(
-            guild_id,
-            channel_id, user_id, event_type_id, "failed to insert voice_state_event: {}", err
-        );
-    }
-}
-
-pub(super) async fn insert_voice_connection_event(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    channel_id: Option<i64>,
-    owner_instance_id: Option<&str>,
-    event_type: &str,
-    reason: Option<&str>,
-    details: Option<&str>,
-) {
-    if let Err(err) = crate::database::voice_events::insert_voice_connection_event(
-        pool,
-        guild_id,
-        channel_id,
-        owner_instance_id,
-        event_type,
-        reason,
-        details,
-    )
-    .await
-    {
-        warn!(
-            guild_id,
-            channel_id,
-            owner_instance_id,
-            event_type,
-            reason,
-            "failed to insert voice_connection_event: {}",
-            err
-        );
+        warn!("Failed to insert voice_state_event: {}", err);
     }
 }
 

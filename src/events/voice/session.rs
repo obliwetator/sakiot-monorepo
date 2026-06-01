@@ -9,7 +9,6 @@ use songbird::{CoreEvent, SongbirdKey};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
-use super::store;
 use crate::{BotMetricsKey, events::voice_receiver::Receiver};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -87,18 +86,6 @@ pub async fn disconnect_voice_channel(
 
     let existed = manager.get(guild_id).is_some();
     if !existed {
-        store::insert_voice_connection_event(
-            pool,
-            guild_id.get() as i64,
-            None,
-            runtime
-                .as_ref()
-                .map(|runtime| runtime.config().instance_id.as_str()),
-            "leave_skipped",
-            Some("not_connected"),
-            None,
-        )
-        .await;
         refresh_active_voice_connection_gauge(data, Some(&manager)).await;
         return VoiceDisconnectOutcome::NotConnected;
     }
@@ -106,16 +93,6 @@ pub async fn disconnect_voice_channel(
     match manager.remove(guild_id).await {
         Ok(()) => {
             if let Some(runtime) = runtime {
-                store::insert_voice_connection_event(
-                    pool,
-                    guild_id.get() as i64,
-                    None,
-                    Some(&runtime.config().instance_id),
-                    "leave",
-                    None,
-                    None,
-                )
-                .await;
                 if let Err(err) =
                     crate::deployment::release_voice_session(pool, &runtime, guild_id).await
                 {
@@ -129,18 +106,6 @@ pub async fn disconnect_voice_channel(
             VoiceDisconnectOutcome::Disconnected
         }
         Err(err) => {
-            store::insert_voice_connection_event(
-                pool,
-                guild_id.get() as i64,
-                None,
-                runtime
-                    .as_ref()
-                    .map(|runtime| runtime.config().instance_id.as_str()),
-                "leave_failed",
-                None,
-                Some(&err.to_string()),
-            )
-            .await;
             refresh_active_voice_connection_gauge(data, Some(&manager)).await;
             VoiceDisconnectOutcome::Failed(err.to_string())
         }
@@ -159,19 +124,6 @@ pub async fn connect_to_voice_channel(
             channel_id = channel_id.get(),
             "skipping voice connect while instance is draining"
         );
-        let owner = crate::runtime::state_from_ctx(ctx)
-            .await
-            .map(|runtime| runtime.config().instance_id.clone());
-        store::insert_voice_connection_event(
-            &pool,
-            guild_id.get() as i64,
-            Some(channel_id.get() as i64),
-            owner.as_deref(),
-            "join_skipped",
-            Some("draining"),
-            None,
-        )
-        .await;
         return VoiceConnectOutcome::SkippedDraining;
     }
 
@@ -191,16 +143,6 @@ pub async fn connect_to_voice_channel(
                     owner = %owner,
                     "skipping voice connect because another instance owns lease"
                 );
-                store::insert_voice_connection_event(
-                    &pool,
-                    guild_id.get() as i64,
-                    Some(channel_id.get() as i64),
-                    Some(&runtime.config().instance_id),
-                    "join_skipped",
-                    Some("lease_owned"),
-                    Some(&owner),
-                )
-                .await;
                 return VoiceConnectOutcome::SkippedLeaseOwned { owner };
             }
             Ok(_) => {}
@@ -257,16 +199,6 @@ async fn switch_channel(
     match manager.remove(guild_id).await {
         Ok(()) => {
             if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-                store::insert_voice_connection_event(
-                    &pool,
-                    guild_id.get() as i64,
-                    Some(channel_id.get() as i64),
-                    Some(&runtime.config().instance_id),
-                    "switch_start",
-                    None,
-                    Some(&old_channel.to_string()),
-                )
-                .await;
                 if let Err(err) =
                     crate::deployment::release_voice_session(&pool, &runtime, guild_id).await
                 {
@@ -290,19 +222,6 @@ async fn switch_channel(
             .await
         }
         Err(err) => {
-            let owner = crate::runtime::state_from_ctx(ctx)
-                .await
-                .map(|runtime| runtime.config().instance_id.clone());
-            store::insert_voice_connection_event(
-                &pool,
-                guild_id.get() as i64,
-                Some(channel_id.get() as i64),
-                owner.as_deref(),
-                "switch_failed",
-                None,
-                Some(&err.to_string()),
-            )
-            .await;
             refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
             VoiceConnectOutcome::Failed(err.to_string())
         }
@@ -328,16 +247,6 @@ async fn join_ch(
                     owner = %owner,
                     "skipping voice connect because another instance won lease claim"
                 );
-                store::insert_voice_connection_event(
-                    &pool,
-                    guild_id.get() as i64,
-                    Some(channel_id.get() as i64),
-                    Some(&runtime.config().instance_id),
-                    "join_skipped",
-                    Some("lease_owned"),
-                    Some(&owner),
-                )
-                .await;
                 return VoiceConnectOutcome::SkippedLeaseOwned { owner };
             }
             Err(err) => {
@@ -347,16 +256,6 @@ async fn join_ch(
                     "voice lease claim failed: {}",
                     err
                 );
-                store::insert_voice_connection_event(
-                    &pool,
-                    guild_id.get() as i64,
-                    Some(channel_id.get() as i64),
-                    Some(&runtime.config().instance_id),
-                    "join_failed",
-                    Some("lease_claim_failed"),
-                    Some(&err.to_string()),
-                )
-                .await;
                 return VoiceConnectOutcome::Failed(format!("voice lease claim failed: {}", err));
             }
         }
@@ -377,22 +276,6 @@ async fn join_ch(
     match result {
         Ok(join) => match join.await {
             Ok(()) => {
-                if let Some(runtime) = &runtime {
-                    store::insert_voice_connection_event(
-                        &pool,
-                        guild_id.get() as i64,
-                        Some(channel_id.get() as i64),
-                        Some(&runtime.config().instance_id),
-                        match mode {
-                            JoinMode::Fresh => "join",
-                            JoinMode::RejoinDisconnected => "rejoin",
-                            JoinMode::SwitchFresh { .. } => "switch",
-                        },
-                        None,
-                        None,
-                    )
-                    .await;
-                }
                 refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
                 match mode {
                     JoinMode::Fresh => VoiceConnectOutcome::Joined,
@@ -412,19 +295,6 @@ async fn join_ch(
                         "voice lease release failed after join error: {}", release_err
                     );
                 }
-                let owner = runtime
-                    .as_ref()
-                    .map(|runtime| runtime.config().instance_id.clone());
-                store::insert_voice_connection_event(
-                    &pool,
-                    guild_id.get() as i64,
-                    Some(channel_id.get() as i64),
-                    owner.as_deref(),
-                    "join_failed",
-                    None,
-                    Some(&err.to_string()),
-                )
-                .await;
                 cleanup_failed_join(&ctx.data, &manager, guild_id).await;
                 VoiceConnectOutcome::Failed(err.to_string())
             }
@@ -441,19 +311,6 @@ async fn join_ch(
                     "voice lease release failed after join error: {}", release_err
                 );
             }
-            let owner = runtime
-                .as_ref()
-                .map(|runtime| runtime.config().instance_id.clone());
-            store::insert_voice_connection_event(
-                &pool,
-                guild_id.get() as i64,
-                Some(channel_id.get() as i64),
-                owner.as_deref(),
-                "join_failed",
-                None,
-                Some(&err.to_string()),
-            )
-            .await;
             cleanup_failed_join(&ctx.data, &manager, guild_id).await;
             VoiceConnectOutcome::Failed(err.to_string())
         }
