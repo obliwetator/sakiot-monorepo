@@ -64,6 +64,7 @@ pub async fn active_audio_file_id_for_stamp(
     channel_id: i64,
     stamp_ts: i64,
 ) -> DbResult<Option<i64>> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let active_file_id = sqlx::query_scalar!(
         r#"SELECT id
              FROM audio_files
@@ -76,8 +77,8 @@ pub async fn active_audio_file_id_for_stamp(
                   SELECT 1
                     FROM bot_instances bi
                    WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                     AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                     AND bi.heartbeat_at > now() - interval '120 seconds'
+                     AND audio_files.recording_heartbeat_at > now() - ($5::double precision * interval '1 second')
+                     AND bi.heartbeat_at > now() - ($5::double precision * interval '1 second')
                      AND bi.state <> 'stopped'
               )
             ORDER BY start_ts DESC
@@ -86,6 +87,7 @@ pub async fn active_audio_file_id_for_stamp(
         guild_id,
         channel_id,
         stamp_ts,
+        stale_after_seconds,
     )
     .fetch_optional(pool)
     .await?;

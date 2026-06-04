@@ -68,6 +68,7 @@ pub async fn claim_voice_session(
     guild_id: GuildId,
     channel_id: ChannelId,
 ) -> DbResult<VoiceLeaseClaim> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let result = sqlx::query!(
         "INSERT INTO voice_session_leases
             (guild_id, channel_id, owner_instance_id, state, heartbeat_at, started_at)
@@ -78,12 +79,12 @@ pub async fn claim_voice_session(
                 state = EXCLUDED.state,
                 heartbeat_at = now()
           WHERE voice_session_leases.owner_instance_id = EXCLUDED.owner_instance_id
-             OR voice_session_leases.heartbeat_at <= now() - interval '120 seconds'
+             OR voice_session_leases.heartbeat_at <= now() - ($5::double precision * interval '1 second')
              OR NOT EXISTS (
                 SELECT 1
                   FROM bot_instances b
                  WHERE b.instance_id = voice_session_leases.owner_instance_id
-                   AND b.heartbeat_at > now() - interval '120 seconds'
+                   AND b.heartbeat_at > now() - ($5::double precision * interval '1 second')
                    AND b.state <> 'stopped'
              )",
         guild_id.get() as i64,
@@ -93,7 +94,8 @@ pub async fn claim_voice_session(
             "draining"
         } else {
             "active"
-        }
+        },
+        stale_after_seconds
     )
     .execute(pool)
     .await?;
@@ -130,16 +132,18 @@ pub async fn active_lease_owner(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
 ) -> DbResult<Option<String>> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let row = sqlx::query_scalar!(
         "SELECT v.owner_instance_id
            FROM voice_session_leases v
            JOIN bot_instances b ON b.instance_id = v.owner_instance_id
           WHERE v.guild_id = $1
-            AND v.heartbeat_at > now() - interval '120 seconds'
-            AND b.heartbeat_at > now() - interval '120 seconds'
+            AND v.heartbeat_at > now() - ($2::double precision * interval '1 second')
+            AND b.heartbeat_at > now() - ($2::double precision * interval '1 second')
             AND b.state <> 'stopped'
           LIMIT 1",
-        guild_id.get() as i64
+        guild_id.get() as i64,
+        stale_after_seconds
     )
     .fetch_optional(pool)
     .await?;

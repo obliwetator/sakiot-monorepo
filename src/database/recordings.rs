@@ -165,6 +165,7 @@ pub async fn last_reap_ts(pool: &Pool<Postgres>) -> DbResult<i64> {
 }
 
 pub async fn zombie_recordings(pool: &Pool<Postgres>) -> DbResult<Vec<ZombieRecording>> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let zombies = sqlx::query_as!(
         ZombieRecording,
         r#"SELECT id AS "audio_file_id!", file_name, guild_id, channel_id, start_ts
@@ -174,10 +175,11 @@ pub async fn zombie_recordings(pool: &Pool<Postgres>) -> DbResult<Vec<ZombieReco
                 SELECT 1
                   FROM bot_instances bi
                  WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                   AND bi.heartbeat_at > now() - interval '120 seconds'
+                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')
+                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')
                    AND bi.state <> 'stopped'
-            )"#
+            )"#,
+        stale_after_seconds
     )
     .fetch_all(pool)
     .await?;
@@ -186,6 +188,7 @@ pub async fn zombie_recordings(pool: &Pool<Postgres>) -> DbResult<Vec<ZombieReco
 }
 
 pub async fn delete_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<u64> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let result = sqlx::query!(
         "DELETE FROM audio_files
           WHERE end_ts IS NULL
@@ -193,10 +196,11 @@ pub async fn delete_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<u64> {
                 SELECT 1
                   FROM bot_instances bi
                  WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                   AND bi.heartbeat_at > now() - interval '120 seconds'
+                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')
+                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')
                    AND bi.state <> 'stopped'
-            )"
+            )",
+        stale_after_seconds
     )
     .execute(pool)
     .await?;
@@ -205,6 +209,7 @@ pub async fn delete_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<u64> {
 }
 
 pub async fn mark_zombie_recordings_reaped(pool: &Pool<Postgres>) -> DbResult<u64> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let result = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = start_ts,
@@ -216,11 +221,12 @@ pub async fn mark_zombie_recordings_reaped(pool: &Pool<Postgres>) -> DbResult<u6
                 SELECT 1
                   FROM bot_instances bi
                  WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - interval '120 seconds'
-                   AND bi.heartbeat_at > now() - interval '120 seconds'
+                   AND audio_files.recording_heartbeat_at > now() - ($2::double precision * interval '1 second')
+                   AND bi.heartbeat_at > now() - ($2::double precision * interval '1 second')
                    AND bi.state <> 'stopped'
             )",
         FINALIZE_REASON_ZOMBIE_REAPED,
+        stale_after_seconds
     )
     .execute(pool)
     .await?;

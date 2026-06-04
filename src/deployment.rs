@@ -7,7 +7,7 @@ use tracing::{debug, warn};
 use crate::database::{self, DbResult};
 use crate::runtime::RuntimeState;
 
-pub const LEASE_STALE_AFTER_SECONDS: i64 = 120;
+pub const LEASE_STALE_AFTER_SECONDS: i64 = crate::heartbeat::STALE_AFTER_SECONDS;
 
 pub use database::runtime::VoiceLeaseClaim;
 
