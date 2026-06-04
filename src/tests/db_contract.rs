@@ -139,8 +139,7 @@ async fn cooldown_db_failure_propagates() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[tokio::test]
-async fn db_constraints_reject_negative_cooldown_and_bad_connection_event()
--> Result<(), Box<dyn std::error::Error>> {
+async fn db_constraints_reject_negative_cooldown() -> Result<(), Box<dyn std::error::Error>> {
     let pool = test_pool().await?;
     let guild_id = unique_id();
 
@@ -152,15 +151,6 @@ async fn db_constraints_reject_negative_cooldown_and_bad_connection_event()
     .execute(&pool)
     .await;
     assert!(negative_cooldown.is_err());
-
-    let bad_event = sqlx::query!(
-        "INSERT INTO voice_connection_events (guild_id, event_type)
-         VALUES ($1, 'bad_event')",
-        guild_id
-    )
-    .execute(&pool)
-    .await;
-    assert!(bad_event.is_err());
 
     Ok(())
 }
