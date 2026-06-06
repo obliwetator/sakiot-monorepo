@@ -1,7 +1,5 @@
 use std::fs::File;
 use std::io::BufWriter;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::events::ogg_opus_writer::OggOpusWriter;
 
@@ -53,10 +51,10 @@ pub(in crate::events) struct UserRecording {
     pub(in crate::events) ssrc: u32,
 }
 
-#[derive(Clone)]
 pub(in crate::events) struct PausedRecording {
-    pub(in crate::events) recording: Arc<Mutex<UserRecording>>,
+    pub(in crate::events) recording: UserRecording,
     pub(in crate::events) ssrc: u32,
     pub(in crate::events) paused_at: chrono::DateTime<chrono::Utc>,
     pub(in crate::events) token: u64,
+    pub(in crate::events) deadline_ms: i64,
 }
