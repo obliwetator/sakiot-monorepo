@@ -192,6 +192,22 @@ impl BotMetrics {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub fn track_audio_packets_dropped(
+        &self,
+        guild_metrics: &GuildRecordingMetrics,
+        channel_metrics: &GuildRecordingMetrics,
+        count: u64,
+    ) {
+        self.audio_packets_dropped
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        guild_metrics
+            .audio_packets_dropped
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+        channel_metrics
+            .audio_packets_dropped
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn track_last_voice_packet(
         &self,
         guild_metrics: &GuildRecordingMetrics,
