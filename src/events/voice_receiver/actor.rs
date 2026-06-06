@@ -1,11 +1,8 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::File,
     io::BufWriter,
-    sync::{
-        Arc,
-        atomic::{AtomicI64, AtomicUsize, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
@@ -24,6 +21,7 @@ use tracing::{debug, error, info, warn};
 use super::{
     disconnect::{RECOVERABLE_DISCONNECT_TIMEOUT_MS, recording_channel_has_human_members},
     pause::{USER_REJOIN_RESUME_TIMEOUT_MS, paused_timeout_matches, silence_frames_for_gap_ms},
+    recordings::{RecorderStats, Recordings, RemapOutcome},
     state::{PausedRecording, RecordingFinalizeReason, UserRecording, VoiceEventType},
 };
 use crate::events::ogg_opus_writer::OggOpusWriter;
@@ -33,22 +31,6 @@ const CONTROL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const REAPER_INTERVAL: Duration = Duration::from_secs(60);
 const DEADLINE_INTERVAL: Duration = Duration::from_secs(1);
-
-#[derive(Default)]
-pub(super) struct RecorderStats {
-    active_user_count: AtomicUsize,
-    last_voice_packet_time: AtomicI64,
-}
-
-impl RecorderStats {
-    pub(super) fn active_user_count(&self) -> usize {
-        self.active_user_count.load(Ordering::Relaxed)
-    }
-
-    pub(super) fn last_voice_packet_time(&self) -> i64 {
-        self.last_voice_packet_time.load(Ordering::Relaxed)
-    }
-}
 
 #[derive(Clone)]
 pub(super) struct RecorderHandle {
@@ -89,12 +71,8 @@ impl RecorderHandle {
             channel_metrics: channel_metrics.clone(),
             recording_owner_instance_id,
             stats: stats.clone(),
-            active: HashMap::new(),
-            user_ssrcs: HashMap::new(),
-            paused: HashMap::new(),
+            recordings: Recordings::new(stats.clone()),
             paused_token: 1,
-            bot_ssrcs: HashSet::new(),
-            bot_user_ssrcs: HashMap::new(),
             disconnected_at_ms: 0,
             recoverable_disconnect_deadline_ms: 0,
         };
@@ -195,12 +173,8 @@ struct RecorderActor {
     channel_metrics: Arc<crate::GuildRecordingMetrics>,
     recording_owner_instance_id: String,
     stats: Arc<RecorderStats>,
-    active: HashMap<u32, UserRecording>,
-    user_ssrcs: HashMap<u64, u32>,
-    paused: HashMap<u64, PausedRecording>,
+    recordings: Recordings,
     paused_token: u64,
-    bot_ssrcs: HashSet<u32>,
-    bot_user_ssrcs: HashMap<u64, u32>,
     disconnected_at_ms: i64,
     recoverable_disconnect_deadline_ms: i64,
 }
@@ -278,12 +252,23 @@ impl RecorderActor {
             return;
         };
 
-        if self.remap_known_bot(user_id, ssrc) {
+        if self.recordings.remap_bot(user_id, ssrc) {
             return;
         }
 
-        if self.remap_existing_user_recording(user_id, ssrc) {
-            return;
+        match self.recordings.remap_active_user(user_id, ssrc) {
+            RemapOutcome::AlreadyActive => {
+                debug!("Writer already active for ssrc {}", ssrc);
+                return;
+            }
+            RemapOutcome::Remapped { from, to } => {
+                info!(
+                    "Remapped active writer for user {} from ssrc {} to {}",
+                    user_id, from, to
+                );
+                return;
+            }
+            RemapOutcome::NotActive | RemapOutcome::Stale => {}
         }
 
         let Some(member) = self.resolve_member(user_id).await else {
@@ -291,8 +276,7 @@ impl RecorderActor {
         };
 
         if member.user.bot {
-            self.bot_ssrcs.insert(ssrc);
-            self.bot_user_ssrcs.insert(user_id, ssrc);
+            self.recordings.insert_bot(user_id, ssrc);
             return;
         }
 
@@ -300,52 +284,12 @@ impl RecorderActor {
             return;
         }
 
-        if self.active.contains_key(&ssrc) {
+        if self.recordings.has_active_ssrc(ssrc) {
             debug!("Writer already active for ssrc {}", ssrc);
             return;
         }
 
         self.open_user_recording(user_id, ssrc, &member).await;
-    }
-
-    fn remap_known_bot(&mut self, user_id: u64, ssrc: u32) -> bool {
-        let Some(previous_bot_ssrc) = self.bot_user_ssrcs.get(&user_id).copied() else {
-            return false;
-        };
-
-        if previous_bot_ssrc != ssrc {
-            self.bot_ssrcs.remove(&previous_bot_ssrc);
-            self.bot_ssrcs.insert(ssrc);
-            self.bot_user_ssrcs.insert(user_id, ssrc);
-        }
-        true
-    }
-
-    fn remap_existing_user_recording(&mut self, user_id: u64, ssrc: u32) -> bool {
-        let Some(previous_ssrc) = self.user_ssrcs.get(&user_id).copied() else {
-            return false;
-        };
-
-        if previous_ssrc == ssrc {
-            debug!("Writer already active for ssrc {}", ssrc);
-            return true;
-        }
-
-        let Some(mut recording) = self.active.remove(&previous_ssrc) else {
-            self.user_ssrcs.remove(&user_id);
-            self.refresh_active_user_count();
-            return false;
-        };
-
-        recording.ssrc = ssrc;
-        self.active.insert(ssrc, recording);
-        self.user_ssrcs.insert(user_id, ssrc);
-        self.refresh_active_user_count();
-        info!(
-            "Remapped active writer for user {} from ssrc {} to {}",
-            user_id, previous_ssrc, ssrc
-        );
-        true
     }
 
     async fn resolve_member(&self, user_id: u64) -> Option<Member> {
@@ -409,7 +353,8 @@ impl RecorderActor {
             }
         };
 
-        self.active.insert(
+        self.recordings.insert_active(
+            user_id,
             ssrc,
             UserRecording {
                 writer,
@@ -420,8 +365,6 @@ impl RecorderActor {
                 ssrc,
             },
         );
-        self.user_ssrcs.insert(user_id, ssrc);
-        self.refresh_active_user_count();
 
         crate::database::user_names::observe(
             &self.pool,
@@ -456,15 +399,10 @@ impl RecorderActor {
             .filter(|packet| !packet.opus.is_empty())
             .map(|packet| (packet.ssrc, packet.opus))
             .collect();
-        let active_ssrcs: Vec<u32> = self
-            .active
-            .keys()
-            .copied()
-            .filter(|ssrc| !self.bot_ssrcs.contains(ssrc))
-            .collect();
+        let active_ssrcs = self.recordings.active_non_bot_ssrcs();
 
         for ssrc in active_ssrcs {
-            let Some(recording) = self.active.get_mut(&ssrc) else {
+            let Some(recording) = self.recordings.active_get_mut(ssrc) else {
                 continue;
             };
             let result = match packet_map.get(&ssrc) {
@@ -493,13 +431,12 @@ impl RecorderActor {
     async fn handle_client_disconnect(&mut self, user_id: u64, at_ms: i64) {
         info!("client disconnected id: {}", user_id);
 
-        if let Some(bot_ssrc) = self.bot_user_ssrcs.remove(&user_id) {
+        if let Some(bot_ssrc) = self.recordings.remove_bot_user(user_id) {
             warn!("Removed bot with id: {} and ssrc: {}", user_id, bot_ssrc);
-            self.bot_ssrcs.remove(&bot_ssrc);
             return;
         }
 
-        let Some(ssrc) = self.user_ssrcs.remove(&user_id) else {
+        let Some(ssrc) = self.recordings.ssrc_for_user(user_id) else {
             warn!("tried to remove bot");
             return;
         };
@@ -508,15 +445,13 @@ impl RecorderActor {
     }
 
     async fn pause_recording_for_rejoin(&mut self, user_id: u64, ssrc: u32, at_ms: i64) {
-        let Some(recording) = self.active.remove(&ssrc) else {
+        let Some(recording) = self.recordings.remove_active_by_user(user_id) else {
             warn!(
                 user_id,
                 ssrc, "ClientDisconnect had no active writer to pause"
             );
-            self.refresh_active_user_count();
             return;
         };
-        self.refresh_active_user_count();
 
         let paused_at =
             chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now);
@@ -530,7 +465,7 @@ impl RecorderActor {
             deadline_ms: at_ms.saturating_add(USER_REJOIN_RESUME_TIMEOUT_MS as i64),
         };
 
-        if let Some(previous) = self.paused.insert(user_id, paused) {
+        if let Some(previous) = self.recordings.insert_paused(user_id, paused) {
             warn!(
                 user_id,
                 previous_ssrc = previous.ssrc,
@@ -563,7 +498,7 @@ impl RecorderActor {
     }
 
     async fn resume_paused_recording(&mut self, user_id: u64, ssrc: u32) -> bool {
-        let Some(mut paused) = self.paused.remove(&user_id) else {
+        let Some(mut paused) = self.recordings.take_paused(user_id) else {
             return false;
         };
 
@@ -584,9 +519,7 @@ impl RecorderActor {
         }
         paused.recording.ssrc = ssrc;
 
-        self.active.insert(ssrc, paused.recording);
-        self.user_ssrcs.insert(user_id, ssrc);
-        self.refresh_active_user_count();
+        self.recordings.insert_active(user_id, ssrc, paused.recording);
 
         crate::events::voice::insert_voice_event(
             &self.pool,
@@ -629,7 +562,7 @@ impl RecorderActor {
                 self.recoverable_disconnect_deadline_ms =
                     at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
                 info!("Recoverable disconnect recorded at {}", at_ms);
-                for user_id in self.user_ssrcs.keys().copied().collect::<Vec<_>>() {
+                for user_id in self.recordings.user_ids() {
                     crate::events::voice::insert_voice_event(
                         &self.pool,
                         self.guild_id.get() as i64,
@@ -688,7 +621,7 @@ impl RecorderActor {
             frames
         );
 
-        for user_id in self.user_ssrcs.keys().copied().collect::<Vec<_>>() {
+        for user_id in self.recordings.user_ids() {
             crate::events::voice::insert_voice_event(
                 &self.pool,
                 self.guild_id.get() as i64,
@@ -699,14 +632,9 @@ impl RecorderActor {
             .await;
         }
 
-        let active_ssrcs: Vec<u32> = self
-            .active
-            .keys()
-            .copied()
-            .filter(|ssrc| !self.bot_ssrcs.contains(ssrc))
-            .collect();
+        let active_ssrcs = self.recordings.active_non_bot_ssrcs();
         for ssrc in active_ssrcs {
-            let Some(recording) = self.active.get_mut(&ssrc) else {
+            let Some(recording) = self.recordings.active_get_mut(ssrc) else {
                 continue;
             };
             if let Err(err) = recording.writer.write_silence(frames) {
@@ -722,7 +650,6 @@ impl RecorderActor {
                 "User {} (SSRC {}) is no longer in voice after reconnect. Closing writer.",
                 uid, ssrc
             );
-            self.user_ssrcs.remove(&uid);
             self.finalize_writer_at(ssrc, VoiceEventType::WriterClose, reconnect_time)
                 .await;
         }
@@ -744,14 +671,10 @@ impl RecorderActor {
             self.clear_receiver_state();
         }
 
-        let expired: Vec<u64> = self
-            .paused
-            .iter()
-            .filter_map(|(user_id, paused)| (now_ms >= paused.deadline_ms).then_some(*user_id))
-            .collect();
+        let expired = self.recordings.expired_paused_user_ids(now_ms);
 
         for user_id in expired {
-            let Some(paused) = self.paused.remove(&user_id) else {
+            let Some(paused) = self.recordings.take_paused(user_id) else {
                 continue;
             };
             if !paused_timeout_matches(Some(paused.token), paused.token) {
@@ -774,7 +697,7 @@ impl RecorderActor {
     }
 
     async fn reap_stale_users(&mut self) {
-        if self.disconnected_at_ms > 0 || self.user_ssrcs.is_empty() {
+        if self.disconnected_at_ms > 0 || !self.recordings.has_users() {
             return;
         }
 
@@ -783,7 +706,6 @@ impl RecorderActor {
                 "Reaper: User {} (SSRC {}) is no longer in voice state. Closing writer.",
                 uid, ssrc
             );
-            self.user_ssrcs.remove(&uid);
             self.finalize_writer_at(ssrc, VoiceEventType::ZombieReaped, chrono::Utc::now())
                 .await;
         }
@@ -792,7 +714,7 @@ impl RecorderActor {
     fn scan_users_no_longer_in_voice_state(&self) -> Vec<(u64, u32)> {
         let mut users_to_remove = Vec::new();
         if let Some(guild) = self.ctx.cache.guild(self.guild_id) {
-            for (&uid, &ssrc) in &self.user_ssrcs {
+            for (uid, ssrc) in self.recordings.user_ssrc_pairs() {
                 if !guild.voice_states.contains_key(&UserId::new(uid)) {
                     users_to_remove.push((uid, ssrc));
                 }
@@ -802,22 +724,11 @@ impl RecorderActor {
     }
 
     async fn heartbeat_active_recordings(&self) {
-        let mut audio_file_ids = self
-            .active
-            .values()
-            .map(|recording| recording.audio_file_id)
-            .collect::<HashSet<_>>();
-        audio_file_ids.extend(
-            self.paused
-                .values()
-                .map(|recording| recording.recording.audio_file_id),
-        );
-
+        let audio_file_ids = self.recordings.tracked_audio_file_ids();
         if audio_file_ids.is_empty() {
             return;
         }
 
-        let audio_file_ids = audio_file_ids.into_iter().collect::<Vec<_>>();
         if let Err(err) = crate::database::recordings::heartbeat_active_recordings(
             &self.pool,
             &audio_file_ids,
@@ -835,16 +746,12 @@ impl RecorderActor {
         event_type: VoiceEventType,
         close_time: chrono::DateTime<chrono::Utc>,
     ) {
-        let active = std::mem::take(&mut self.active);
-        self.user_ssrcs.clear();
-        self.refresh_active_user_count();
-        for (ssrc, recording) in active {
+        for (ssrc, recording) in self.recordings.take_all_active() {
             self.finalize_recording(ssrc, recording, event_type, close_time)
                 .await;
         }
 
-        let paused = std::mem::take(&mut self.paused);
-        for (_, paused) in paused {
+        for paused in self.recordings.take_all_paused() {
             self.finalize_recording(paused.ssrc, paused.recording, event_type, paused.paused_at)
                 .await;
         }
@@ -856,12 +763,9 @@ impl RecorderActor {
         event_type: VoiceEventType,
         close_time: chrono::DateTime<chrono::Utc>,
     ) {
-        let Some(recording) = self.active.remove(&ssrc) else {
-            self.refresh_active_user_count();
+        let Some(recording) = self.recordings.remove_active_by_ssrc(ssrc) else {
             return;
         };
-        self.user_ssrcs.remove(&recording.user_id);
-        self.refresh_active_user_count();
         self.finalize_recording(ssrc, recording, event_type, close_time)
             .await;
     }
@@ -924,19 +828,9 @@ impl RecorderActor {
     }
 
     fn clear_receiver_state(&mut self) {
-        self.user_ssrcs.clear();
-        self.paused.clear();
-        self.bot_ssrcs.clear();
-        self.bot_user_ssrcs.clear();
+        self.recordings.clear();
         self.disconnected_at_ms = 0;
         self.recoverable_disconnect_deadline_ms = 0;
-        self.refresh_active_user_count();
-    }
-
-    fn refresh_active_user_count(&self) {
-        self.stats
-            .active_user_count
-            .store(self.active.len(), Ordering::Relaxed);
     }
 
     async fn create_recording(

@@ -12,6 +12,7 @@ use tracing::warn;
 mod actor;
 mod disconnect;
 mod pause;
+mod recordings;
 mod state;
 
 pub use state::VoiceEventType;
