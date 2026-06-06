@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use crate::database::DbResult;
 use crate::event_handler::Handler;
 use serenity::{
@@ -46,9 +47,9 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()>
                 sqlx::QueryBuilder::new("INSERT INTO roles (guild_id, role_id, permission, name) ");
             query_builder
                 .push_values(chunk, |mut b, role| {
-                    b.push_bind(role.1.guild_id.get() as i64)
-                        .push_bind(role.0.get() as i64)
-                        .push_bind(role.1.permissions.bits() as i64)
+                    b.push_bind(role.1.guild_id.to_i64())
+                        .push_bind(role.0.to_i64())
+                        .push_bind(role.1.permissions.bits().to_i64())
                         .push_bind(&role.1.name);
                 })
                 .push(
@@ -61,8 +62,8 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()>
             query_builder.build().execute(&handler.database).await?;
         }
 
-        let role_ids: Vec<i64> = roles.iter().map(|role| role.0.get() as i64).collect();
-        prune_stale_roles(&handler.database, guild.id.get() as i64, &role_ids).await?;
+        let role_ids: Vec<i64> = roles.iter().map(|role| role.0.to_i64()).collect();
+        prune_stale_roles(&handler.database, guild.id.to_i64(), &role_ids).await?;
     }
 
     Ok(())
@@ -70,12 +71,12 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()>
 
 async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
     for guild in guild_cached {
-        delete_user_roles_for_guild(&handler.database, guild.id.get() as i64).await?;
+        delete_user_roles_for_guild(&handler.database, guild.id.to_i64()).await?;
 
         let mut user_roles = Vec::new();
         for (user_id, user) in guild.members.iter() {
             for role in &user.roles {
-                user_roles.push((user_id.get() as i64, role.get() as i64));
+                user_roles.push((user_id.to_i64(), role.to_i64()));
             }
         }
 
@@ -98,17 +99,17 @@ async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResul
 
 async fn update_permissions(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
     for guild in guild_cached {
-        delete_channel_permissions_for_guild(&handler.database, guild.id.get() as i64).await?;
+        delete_channel_permissions_for_guild(&handler.database, guild.id.to_i64()).await?;
 
         let mut overwrites = Vec::new();
         for channel in guild.channels.values() {
             for p in &channel.permission_overwrites {
                 let kind = match p.kind {
                     serenity::model::prelude::PermissionOverwriteType::Member(target_id) => {
-                        ("user", target_id.get() as i64)
+                        ("user", target_id.to_i64())
                     }
                     serenity::model::prelude::PermissionOverwriteType::Role(target_id) => {
-                        ("role", target_id.get() as i64)
+                        ("role", target_id.to_i64())
                     }
                     _ => {
                         error!(
@@ -119,11 +120,11 @@ async fn update_permissions(guild_cached: &[Guild], handler: &Handler) -> DbResu
                     }
                 };
                 overwrites.push((
-                    channel.id.get() as i64,
+                    channel.id.to_i64(),
                     kind.1,
                     kind.0,
-                    p.allow.bits() as i64,
-                    p.deny.bits() as i64,
+                    p.allow.bits().to_i64(),
+                    p.deny.bits().to_i64(),
                 ));
             }
         }
@@ -160,8 +161,8 @@ async fn update_guilds(guild_cached: &[Guild], handler: &Handler) -> DbResult<()
 
     query_builder
         .push_values(guild_cached.iter().take(BIND_LIMIT / 2), |mut b, guild| {
-            b.push_bind(guild.id.get() as i64)
-                .push_bind(guild.owner_id.get() as i64);
+            b.push_bind(guild.id.to_i64())
+                .push_bind(guild.owner_id.to_i64());
         })
         .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
 
@@ -179,8 +180,8 @@ async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<
 
             query_builder
                 .push_values(chunk, |mut b, channel| {
-                    b.push_bind(channel.id.get() as i64)
-                        .push_bind(channel.guild_id.get() as i64)
+                    b.push_bind(channel.id.to_i64())
+                        .push_bind(channel.guild_id.to_i64())
                         .push_bind(u8::from(channel.kind) as i32)
                         .push_bind(channel.name());
                 })
@@ -196,9 +197,9 @@ async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<
 
         let channel_ids: Vec<i64> = channels
             .iter()
-            .map(|channel| channel.id.get() as i64)
+            .map(|channel| channel.id.to_i64())
             .collect();
-        prune_stale_channels(&handler.database, guild.id.get() as i64, &channel_ids).await?;
+        prune_stale_channels(&handler.database, guild.id.to_i64(), &channel_ids).await?;
     }
 
     Ok(())
@@ -298,7 +299,7 @@ pub async fn update_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handl
 async fn sync_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handler) -> DbResult<()> {
     let guild_ids: Vec<i64> = guilds
         .into_iter()
-        .map(|guild| guild.id.get() as i64)
+        .map(|guild| guild.id.to_i64())
         .collect();
 
     for chunk in guild_ids.chunks(BIND_LIMIT) {

@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use std::{
     env,
     sync::{
@@ -139,7 +140,7 @@ impl RuntimeState {
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
+        .map(|duration| duration.as_secs().to_i64())
         .unwrap_or(0)
 }
 

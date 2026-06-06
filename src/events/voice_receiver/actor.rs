@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use std::{
     collections::HashMap,
     fs::File,
@@ -462,7 +463,7 @@ impl RecorderActor {
             ssrc,
             paused_at,
             token,
-            deadline_ms: at_ms.saturating_add(USER_REJOIN_RESUME_TIMEOUT_MS as i64),
+            deadline_ms: at_ms.saturating_add(USER_REJOIN_RESUME_TIMEOUT_MS.to_i64()),
         };
 
         if let Some(previous) = self.recordings.insert_paused(user_id, paused) {
@@ -482,9 +483,9 @@ impl RecorderActor {
 
         crate::events::voice::insert_voice_event(
             &self.pool,
-            self.guild_id.get() as i64,
-            Some(self.channel_id.get() as i64),
-            user_id as i64,
+            self.guild_id.to_i64(),
+            Some(self.channel_id.to_i64()),
+            user_id.to_i64(),
             crate::events::voice::EVT_USER_RECORDING_PAUSE,
         )
         .await;
@@ -523,9 +524,9 @@ impl RecorderActor {
 
         crate::events::voice::insert_voice_event(
             &self.pool,
-            self.guild_id.get() as i64,
-            Some(self.channel_id.get() as i64),
-            user_id as i64,
+            self.guild_id.to_i64(),
+            Some(self.channel_id.to_i64()),
+            user_id.to_i64(),
             crate::events::voice::EVT_USER_RECORDING_RESUME,
         )
         .await;
@@ -560,14 +561,14 @@ impl RecorderActor {
             if self.disconnected_at_ms == 0 {
                 self.disconnected_at_ms = at_ms;
                 self.recoverable_disconnect_deadline_ms =
-                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
+                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS.to_i64());
                 info!("Recoverable disconnect recorded at {}", at_ms);
                 for user_id in self.recordings.user_ids() {
                     crate::events::voice::insert_voice_event(
                         &self.pool,
-                        self.guild_id.get() as i64,
-                        Some(self.channel_id.get() as i64),
-                        user_id as i64,
+                        self.guild_id.to_i64(),
+                        Some(self.channel_id.to_i64()),
+                        user_id.to_i64(),
                         crate::events::voice::EVT_RECORDING_PAUSE,
                     )
                     .await;
@@ -624,9 +625,9 @@ impl RecorderActor {
         for user_id in self.recordings.user_ids() {
             crate::events::voice::insert_voice_event(
                 &self.pool,
-                self.guild_id.get() as i64,
-                Some(self.channel_id.get() as i64),
-                user_id as i64,
+                self.guild_id.to_i64(),
+                Some(self.channel_id.to_i64()),
+                user_id.to_i64(),
                 crate::events::voice::EVT_RECORDING_RESUME,
             )
             .await;
@@ -840,9 +841,9 @@ impl RecorderActor {
     ) -> Option<crate::database::recordings::RecordingHandle> {
         match crate::database::recordings::create_recording(
             &self.pool,
-            self.guild_id.get() as i64,
-            self.channel_id.get() as i64,
-            user_id as i64,
+            self.guild_id.to_i64(),
+            self.channel_id.to_i64(),
+            user_id.to_i64(),
             now,
             &self.recording_owner_instance_id,
         )
@@ -869,9 +870,9 @@ impl RecorderActor {
     ) {
         if let Err(err) = crate::database::voice_events::insert_receiver_voice_event(
             &self.pool,
-            self.guild_id.get() as i64,
-            user_id as i64,
-            ssrc as i64,
+            self.guild_id.to_i64(),
+            user_id.to_i64(),
+            ssrc.to_i64(),
             event_type as i32,
             details,
         )

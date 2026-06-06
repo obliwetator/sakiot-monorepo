@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::client::Context;
 use serenity::model::id::{ChannelId, UserId};
@@ -33,7 +34,7 @@ pub async fn play_clip(
     clip_id: &str,
     user_id: i64,
 ) -> Result<String, PlayClipError> {
-    let clip = crate::database::clips::playable_clip(pool, guild_id.get() as i64, clip_id)
+    let clip = crate::database::clips::playable_clip(pool, guild_id.to_i64(), clip_id)
         .await
         .map_err(PlayClipError::Db)?
         .ok_or_else(|| PlayClipError::User(format!("Clip with ID '{}' not found.", clip_id)))?;
@@ -50,7 +51,7 @@ pub async fn play_clip(
         }
     };
 
-    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.get() as i64, clip_id)
+    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.to_i64(), clip_id)
         .await
         .map_err(PlayClipError::Db)?;
 

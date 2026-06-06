@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::all::{CommandDataOptionValue, CommandInteraction, UserId};
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::client::Context;
@@ -79,7 +80,7 @@ pub async fn handle_stamp(
     // TOCTOU: two /stamp calls for the same target within a few ms can both
     // pass this check and both insert. Acceptable for a 10s human-scale guard;
     // tighten with a partial unique index if strict enforcement is needed.
-    match crate::database::stamps::latest_stamp_ts(pool, guild_id.get() as i64, target.get() as i64)
+    match crate::database::stamps::latest_stamp_ts(pool, guild_id.to_i64(), target.to_i64())
         .await
     {
         Ok(Some(last_ts)) => {
@@ -102,9 +103,9 @@ pub async fn handle_stamp(
 
     let active_file_id: Option<i64> = match crate::database::stamps::active_audio_file_id_for_stamp(
         pool,
-        target.get() as i64,
-        guild_id.get() as i64,
-        channel_id as i64,
+        target.to_i64(),
+        guild_id.to_i64(),
+        channel_id.to_i64(),
         now_ms,
     )
     .await
@@ -118,10 +119,10 @@ pub async fn handle_stamp(
 
     let insert = crate::database::stamps::create_stamp(
         pool,
-        guild_id.get() as i64,
-        channel_id as i64,
-        target.get() as i64,
-        stamper_id.get() as i64,
+        guild_id.to_i64(),
+        channel_id.to_i64(),
+        target.to_i64(),
+        stamper_id.to_i64(),
         now_ms,
         offset_ms,
         active_file_id,

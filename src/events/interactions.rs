@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::{
     all::{ButtonStyle, CommandDataOptionValue, CommandInteraction, Interaction},
     builder::{
@@ -87,7 +88,7 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
         }
         Interaction::Component(component) => {
             if let Some(clip_id) = component.data.custom_id.strip_prefix("jam_replay:") {
-                let user_id = component.user.id.get() as i64;
+                let user_id = component.user.id.to_i64();
                 let content = replay_clip(
                     clip_id,
                     &component.guild_id,
@@ -125,7 +126,7 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                     .map(|a| a.value)
                     .unwrap_or("");
 
-                let guild_id = autocomplete.guild_id.map(|id| id.get() as i64).unwrap_or(0);
+                let guild_id = autocomplete.guild_id.map(|id| id.to_i64()).unwrap_or(0);
 
                 let choices = get_clip_choices(focused_value, &_self.database, guild_id).await;
 
@@ -254,9 +255,9 @@ async fn handle_jam(
         }
     };
 
-    let user_id = application_command.user.id.get() as i64;
+    let user_id = application_command.user.id.to_i64();
     match cooldown
-        .check_and_record(pool, guild_id.get() as i64, user_id)
+        .check_and_record(pool, guild_id.to_i64(), user_id)
         .await
     {
         Ok(crate::cooldown::CheckResult::Allowed) => {}
@@ -304,7 +305,7 @@ async fn replay_clip(
     };
 
     match cooldown
-        .check_and_record(pool, guild_id.get() as i64, user_id)
+        .check_and_record(pool, guild_id.to_i64(), user_id)
         .await
     {
         Ok(crate::cooldown::CheckResult::Allowed) => {}
