@@ -157,7 +157,6 @@ async fn forbidden_cross_guild_requests_are_rejected(
         "/api/audio/2/200/2026/5/forbidden-rec.ogg",
         "/api/download/2/200/2026/5/forbidden-rec.ogg",
         "/api/audio/waveform/2/200/2026/5/forbidden-rec",
-        "/api/remove_silence/2/200/2026/5/forbidden-rec",
         "/api/audio/live/2/200/2026/5/forbidden-rec/playlist.m3u8",
         "/api/audio/live/2/200/2026/5/forbidden-rec/state",
         "/api/audio/live/2/200/2026/5/forbidden-rec/seg_00000.m4s",
@@ -175,6 +174,15 @@ async fn forbidden_cross_guild_requests_are_rejected(
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{uri}");
     }
+
+    let req = test::TestRequest::post()
+        .uri("/api/remove_silence/2/200/2026/5/forbidden-rec")
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .insert_header(("Idempotency-Key", "forbidden-test"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     let req = test::TestRequest::post()
         .uri("/api/audio/clips/create/2/200/2026/5/forbidden-rec")
