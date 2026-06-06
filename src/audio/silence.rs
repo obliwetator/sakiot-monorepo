@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use actix_web::{get, web, HttpRequest, HttpResponse};
+use actix_web::{post, web, HttpRequest, HttpResponse};
 use sqlx::{Pool, Postgres};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
@@ -20,7 +20,7 @@ pub struct RemoveSilenceResponse {
 }
 
 #[utoipa::path(
-    get,
+    post,
     path = "/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
     tag = "audio",
     params(
@@ -42,7 +42,7 @@ pub struct RemoveSilenceResponse {
     ),
     security(("access_token" = [])),
 )]
-#[get("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[post("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn remove_silence(
     req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
