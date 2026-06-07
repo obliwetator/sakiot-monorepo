@@ -38,6 +38,7 @@ chmod 0755 "$ASSETS_TARGET"
 # Keep old hashed assets so stale cached HTML and open browser sessions can still load.
 rsync -a --no-owner --no-group --no-perms --no-times --checksum \
   "$ASSETS_SRC" "$ASSETS_TARGET/"
+chmod -R u=rwX,go=rX "$ASSETS_TARGET"
 rsync -a --no-owner --no-group --no-perms --no-times --delete --checksum \
   --exclude='assets/' \
   --exclude='assets.legacy-*/' \
