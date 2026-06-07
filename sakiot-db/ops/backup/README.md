@@ -74,9 +74,9 @@ Use absolute paths (cron has a minimal `PATH`); point them at this checkout.
 
 ```cron
 # m  h            dom mon dow  command
-17   0-2,4-23     *   *   *    /home/tulipan/projects/sakiot/sakiot-db/ops/backup/backup.sh hourly
-17   3            *   *   *    /home/tulipan/projects/sakiot/sakiot-db/ops/backup/backup.sh nightly
-30   4            1   *   *    /home/tulipan/projects/sakiot/sakiot-db/ops/backup/restore-test.sh
+17   0-2,4-23     *   *   *    /path/to/sakiot-monorepo/sakiot-db/ops/backup/backup.sh hourly
+17   3            *   *   *    /path/to/sakiot-monorepo/sakiot-db/ops/backup/backup.sh nightly
+30   4            1   *   *    /path/to/sakiot-monorepo/sakiot-db/ops/backup/restore-test.sh
 ```
 
 - **Hourly** at :17 every hour except 03:00 (the nightly covers that slot).

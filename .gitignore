@@ -1,0 +1,9 @@
+.env
+*.pem
+
+data/
+dist/
+logs/
+node_modules/
+releases/
+target/

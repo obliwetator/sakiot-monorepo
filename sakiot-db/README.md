@@ -9,7 +9,8 @@ schema changes have one owner instead of being split by service.
 
 ## Commands
 
-Run from this directory, or pass `--source /home/tulipan/projects/sakiot/sakiot-db/migrations`.
+Run from this directory, or pass an absolute path to
+`sakiot-monorepo/sakiot-db/migrations`.
 
 ```sh
 sqlx migrate info --source migrations

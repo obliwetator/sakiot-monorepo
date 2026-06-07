@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "FBI-agent",
+    "sakiot-paths",
+    "sakiot-proto",
+    "web_server",
+]
+resolver = "3"
