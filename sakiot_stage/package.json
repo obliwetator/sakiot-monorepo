@@ -1,0 +1,51 @@
+{
+	"name": "sakiot_stage",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "biome check . && tsc && vite build",
+		"deploy": "bun run build && ./scripts/deploy.sh",
+		"generate:api-types": "bun scripts/generate-api-types.ts",
+		"preview": "vite preview",
+		"test": "bun test",
+		"lint": "biome lint .",
+		"format": "biome check --write ."
+	},
+	"dependencies": {
+		"@emotion/react": "^11.10.4",
+		"@emotion/styled": "^11.10.4",
+		"@mui/icons-material": "^7",
+		"@mui/material": "^7",
+		"@mui/x-tree-view": "^8.3.1",
+		"@react-spring/web": "^10",
+		"@reduxjs/toolkit": "^2",
+		"@tailwindcss/postcss": "^4.1.7",
+		"@types/node": "^25.6.0",
+		"@wavesurfer/react": "^1.0.12",
+		"async-mutex": "^0.5.0",
+		"hls.js": "^1.6.16",
+		"react": "^19",
+		"react-dom": "^19",
+		"react-redux": "^9.2.0",
+		"react-router-dom": "^7.0",
+		"waveform-data": "^4.3.0",
+		"wavesurfer.js": "^7.12.1"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.12",
+		"@types/react": "^19",
+		"@types/react-dom": "^19",
+		"@vitejs/devtools": "^0.1.8",
+		"@vitejs/plugin-react": "^6.0.1",
+		"autoprefixer": "^10.4.8",
+		"babel-plugin-react-compiler": "^1.0.0",
+		"openapi-typescript": "^7.13.0",
+		"postcss": "^8.4.16",
+		"rollup-plugin-visualizer": "^7.0.1",
+		"tailwindcss": "^4.1.7",
+		"typescript": "^5.8.3",
+		"vite": "^8.0.0"
+	}
+}
