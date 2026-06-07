@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+// gRPC API exposed by the FBI Agent Discord bot. Consumed by web_server.
+package fbi_agent;
+
+service Jammer {
+	rpc JamIt (JamData) returns (JamResponse);
+}
+
+service Dashboard {
+	rpc DashboardStream (stream ClientMessage) returns (stream DashboardEvent);
+}
+
+service Admin {
+	rpc StartDrain (DrainRequest) returns (DrainStatus);
+	rpc GetDrainStatus (Empty) returns (DrainStatus);
+	rpc ShutdownWhenEmpty (DrainRequest) returns (DrainStatus);
+	rpc ForceShutdown (DrainRequest) returns (DrainStatus);
+}
+
+message ClientMessage {
+	string action = 1; // "subscribe" or "unsubscribe"
+	string topic = 2; // e.g., "global", "guild:123"
+}
+
+message DashboardEvent {
+	string event_type = 1; // e.g., "METRICS_UPDATE", "USER_JOINED"
+	string json_payload = 2;
+}
+
+message Empty {}
+
+message DrainRequest {
+	string reason = 1;
+}
+
+message DrainStatus {
+	string instance_id = 1;
+	string role = 2;
+	bool draining = 3;
+	bool shutdown_when_empty = 4;
+	uint64 drain_timeout_seconds = 5;
+	uint32 active_voice_connections = 6;
+	string message = 7;
+	uint64 drain_age_seconds = 8;
+	bool force_shutdown = 9;
+	string voice_state = 10;
+	uint64 active_recordings = 11;
+}
+
+message JamData {
+	string clip_name = 1;
+	int64 guild_id = 2;
+	int64 user_id = 3;
+}
+
+message JamResponse {
+	enum JamResponseEnum {
+		OK = 0;
+		NOT_PRESENT = 1;
+		UNKNOWN = 2;
+		COOLDOWN = 3;
+	}
+
+	JamResponseEnum resp = 1;
+	uint32 cooldown_remaining_seconds = 2;
+}
