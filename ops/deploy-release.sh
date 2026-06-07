@@ -219,6 +219,23 @@ old_bot_is_legacy=0
 previous_bot_unit=""
 previous_bot_grpc=""
 
+publish_bot_registry() {
+  local active="$1"
+  local draining_json="$2"
+  local registry_body
+  local -a curl_args=(-fsS -H 'Content-Type: application/json')
+
+  registry_body="$(
+    jq -cn --arg active "${active}" --argjson draining "${draining_json}" \
+      '{active:$active,draining:$draining}'
+  )"
+  curl_args+=(--connect-timeout 2 --max-time 5)
+  if [[ -n "${FBI_AGENT_REGISTRY_SECRET:-}" ]]; then
+    curl_args+=(-H "X-FBI-Agent-Registry-Secret: ${FBI_AGENT_REGISTRY_SECRET}")
+  fi
+  curl "${curl_args[@]}" -d "${registry_body}" "${web_registry_url}" >/dev/null
+}
+
 cancel_old_bot_drain() {
   if [[ "${bot_recovery_required}" != "1" || -z "${old_bot_grpc}" ]]; then
     return
@@ -234,9 +251,13 @@ cancel_old_bot_drain() {
     run_systemctl legacy-bot-restart "${old_bot_unit}" || \
       log "legacy FBI Agent restart unavailable; manual restart required"
   fi
+  return 0
 }
 recover_bot_on_error() {
   local status=$?
+
+  trap - ERR
+  set +e
   if [[ "${new_bot_started}" == "1" && -n "${new_bot_unit}" ]]; then
     run_systemctl stop "${new_bot_unit}" || true
     run_systemctl disable "${new_bot_unit}" || true
@@ -251,6 +272,10 @@ recover_bot_on_error() {
     fi
   fi
   cancel_old_bot_drain
+  if [[ -n "${old_bot_grpc}" ]]; then
+    publish_bot_registry "${old_bot_grpc}" '[]' || \
+      log "failed to restore old FBI Agent in web registry"
+  fi
   exit "${status}"
 }
 trap recover_bot_on_error ERR
@@ -344,16 +369,7 @@ EOF
   if [[ -n "${old_bot_grpc}" ]]; then
     draining_json="$(jq -cn --arg address "${old_bot_grpc}" '[$address]')"
   fi
-  registry_body="$(
-    jq -cn --arg active "${new_bot_grpc}" --argjson draining "${draining_json}" \
-      '{active:$active,draining:$draining}'
-  )"
-  curl_args=(-fsS -H 'Content-Type: application/json')
-  curl_args+=(--connect-timeout 2 --max-time 5)
-  if [[ -n "${FBI_AGENT_REGISTRY_SECRET:-}" ]]; then
-    curl_args+=(-H "X-FBI-Agent-Registry-Secret: ${FBI_AGENT_REGISTRY_SECRET}")
-  fi
-  curl "${curl_args[@]}" -d "${registry_body}" "${web_registry_url}" >/dev/null \
+  publish_bot_registry "${new_bot_grpc}" "${draining_json}" \
     || log "web server registry unavailable; web release env will use new endpoint"
 
   if [[ -n "${old_bot_grpc}" ]]; then

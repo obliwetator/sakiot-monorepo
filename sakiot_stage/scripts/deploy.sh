@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 
 TARGET="${SAKIOT_FRONTEND_ROOT:-/var/www/patrykstyla.com}"
 SRC="${SAKIOT_FRONTEND_DIST:-./dist}/"
@@ -21,18 +22,22 @@ if [ ! -d "$ASSETS_SRC" ]; then
   exit 1
 fi
 
+chmod 0755 "$TARGET"
+
 if [ -d "$ASSETS_TARGET" ] && [ ! -w "$ASSETS_TARGET" ]; then
   LEGACY_ASSETS="${TARGET}/assets.legacy-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mv "$ASSETS_TARGET" "$LEGACY_ASSETS"
   mkdir -p "$ASSETS_TARGET"
-  rsync -a --no-owner --no-group --checksum "$LEGACY_ASSETS/" "$ASSETS_TARGET/"
+  rsync -a --no-owner --no-group --no-perms --no-times --checksum \
+    "$LEGACY_ASSETS/" "$ASSETS_TARGET/"
 fi
 
 mkdir -p "$ASSETS_TARGET"
 
 # Keep old hashed assets so stale cached HTML and open browser sessions can still load.
-rsync -a --no-owner --no-group --checksum "$ASSETS_SRC" "$ASSETS_TARGET/"
-rsync -a --no-owner --no-group --delete --checksum \
+rsync -a --no-owner --no-group --no-perms --no-times --checksum \
+  "$ASSETS_SRC" "$ASSETS_TARGET/"
+rsync -a --no-owner --no-group --no-perms --no-times --delete --checksum \
   --exclude='assets/' \
   --exclude='assets.legacy-*/' \
   --exclude='index.html' \

@@ -9,6 +9,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "${temporary}/bin" "${temporary}/dist/assets" "${temporary}/target"
+chmod 0750 "${temporary}/target"
 touch "${temporary}/dist/assets/app-hash.js" \
   "${temporary}/dist/index.html" \
   "${temporary}/dist/version.json" \
@@ -32,12 +33,13 @@ SAKIOT_FRONTEND_DIST="${temporary}/dist" \
   "${test_dir}/../../sakiot_stage/scripts/deploy.sh"
 
 mapfile -t calls <"${temporary}/calls"
-[[ "${calls[0]}" == rsync*"--no-owner --no-group"*"dist/assets/"* ]]
+[[ "${calls[0]}" == rsync*"--no-owner --no-group --no-perms --no-times"*"dist/assets/"* ]]
 [[ "${calls[1]}" == rsync*"--exclude=assets.legacy-*/"*"--exclude=index.html"*"dist/"* ]]
 [[ "${calls[2]}" == install*"index.html"* ]]
 [[ "${calls[3]}" == install*"version.json"* ]]
 [[ -f "${temporary}/target/index.html" ]]
 [[ -f "${temporary}/target/version.json" ]]
+[[ "$(stat -c '%a' "${temporary}/target")" == "755" ]]
 
 mkdir -p "${temporary}/legacy-target/assets"
 touch "${temporary}/legacy-target/assets/old-hash.js"
