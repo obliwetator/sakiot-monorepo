@@ -126,6 +126,18 @@ impl RuntimeState {
         self.notify.notify_waiters();
     }
 
+    pub fn cancel_drain(&self) -> bool {
+        if self.force_shutdown_requested() {
+            return false;
+        }
+
+        self.shutdown_when_empty.store(false, Ordering::SeqCst);
+        self.draining.store(false, Ordering::SeqCst);
+        self.drain_started_at.store(0, Ordering::SeqCst);
+        self.notify.notify_waiters();
+        true
+    }
+
     pub fn force_shutdown(&self) {
         self.start_drain(true);
         self.force_shutdown.store(true, Ordering::SeqCst);
@@ -159,4 +171,39 @@ pub async fn is_draining_ctx(ctx: &serenity::client::Context) -> bool {
         .await
         .map(|state| state.is_draining())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BotRole, RuntimeConfig, RuntimeState};
+    use std::time::Duration;
+
+    fn runtime() -> std::sync::Arc<RuntimeState> {
+        RuntimeState::new(RuntimeConfig {
+            instance_id: "test".to_string(),
+            initial_role: BotRole::Active,
+            drain_timeout: Duration::from_secs(30),
+        })
+    }
+
+    #[test]
+    fn cancel_drain_restores_active_role() {
+        let runtime = runtime();
+        runtime.start_drain(true);
+
+        assert!(runtime.cancel_drain());
+        assert_eq!(runtime.role(), BotRole::Active);
+        assert!(!runtime.shutdown_when_empty());
+        assert_eq!(runtime.drain_age_seconds(), 0);
+    }
+
+    #[test]
+    fn force_shutdown_cannot_be_cancelled() {
+        let runtime = runtime();
+        runtime.force_shutdown();
+
+        assert!(!runtime.cancel_drain());
+        assert!(runtime.is_draining());
+        assert!(runtime.shutdown_when_empty());
+    }
 }

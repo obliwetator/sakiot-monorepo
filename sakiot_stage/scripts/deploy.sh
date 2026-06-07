@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="/var/www/patrykstyla.com"
-SRC="./dist/"
+TARGET="${SAKIOT_FRONTEND_ROOT:-/var/www/patrykstyla.com}"
+SRC="${SAKIOT_FRONTEND_DIST:-./dist}/"
 ASSETS_SRC="${SRC}assets/"
 ASSETS_TARGET="${TARGET}/assets/"
 
@@ -24,5 +24,11 @@ fi
 mkdir -p "$ASSETS_TARGET"
 
 # Keep old hashed assets so stale cached HTML and open browser sessions can still load.
-rsync -a --delete --checksum --exclude='assets/' "$SRC" "$TARGET/"
 rsync -a --checksum "$ASSETS_SRC" "$ASSETS_TARGET/"
+rsync -a --delete --checksum \
+  --exclude='assets/' \
+  --exclude='index.html' \
+  --exclude='version.json' \
+  "$SRC" "$TARGET/"
+install -m 0644 "${SRC}index.html" "${TARGET}/index.html"
+install -m 0644 "${SRC}version.json" "${TARGET}/version.json"

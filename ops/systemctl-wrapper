@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+bot_unit_pattern='^sakiot-fbi-agent@[A-Za-z0-9._-]+\.service$'
+
+case "${1:-}" in
+  start|stop|enable|disable)
+    [[ "$#" -eq 2 && "$2" =~ ${bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl "$1" "$2"
+    ;;
+  is-active)
+    [[ "$#" -eq 3 && "$2" == "--quiet" && "$3" =~ ${bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl is-active --quiet "$3"
+    ;;
+  restart)
+    [[ "$#" -eq 2 && "$2" == "sakiot-web.service" ]] || exit 2
+    exec /usr/bin/systemctl restart sakiot-web.service
+    ;;
+  *)
+    exit 2
+    ;;
+esac

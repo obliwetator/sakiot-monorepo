@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "${1:-}" in
+  release)
+    [[ "$#" -eq 3 ]] || {
+      echo "usage: ops/deploy release <tag> <sha>" >&2
+      exit 2
+    }
+    exec "${script_dir}/deploy-release.sh" release "$2" "$3"
+    ;;
+  rollback)
+    [[ "$#" -ge 3 && "$#" -le 4 ]] || {
+      echo "usage: ops/deploy rollback <tag> <sha> [--allow-schema-mismatch]" >&2
+      exit 2
+    }
+    exec "${script_dir}/deploy-release.sh" rollback "$2" "$3" "${4:-}"
+    ;;
+  *)
+    echo "usage: ops/deploy {release|rollback} ..." >&2
+    exit 2
+    ;;
+esac

@@ -31,6 +31,7 @@ use web_server::dashboard;
 use web_server::fbi_agent_registry::{
     get_agent_grpc_endpoints, register_agent_grpc_endpoints, AgentGrpcRegistry,
 };
+use web_server::health::healthz;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 
@@ -160,6 +161,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(agent_grpc_registry.clone())
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
+            .service(healthz)
             .service(api_scope)
             .service(register_agent_grpc_endpoints)
             .service(get_agent_grpc_endpoints)

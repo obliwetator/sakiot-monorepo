@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+original="${SSH_ORIGINAL_COMMAND:-}"
+
+if [[ "${original}" =~ ^release\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" release "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
+if [[ "${original}" =~ ^rollback\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" rollback "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
+if [[ "${original}" =~ ^rollback\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})\ --allow-schema-mismatch$ ]]; then
+  exec "${script_dir}/deploy" rollback "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
+    --allow-schema-mismatch
+fi
+
+echo "rejected deployment command" >&2
+exit 126

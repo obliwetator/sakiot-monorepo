@@ -13,6 +13,7 @@ service Dashboard {
 
 service Admin {
 	rpc StartDrain (DrainRequest) returns (DrainStatus);
+	rpc CancelDrain (DrainRequest) returns (DrainStatus);
 	rpc GetDrainStatus (Empty) returns (DrainStatus);
 	rpc ShutdownWhenEmpty (DrainRequest) returns (DrainStatus);
 	rpc ForceShutdown (DrainRequest) returns (DrainStatus);

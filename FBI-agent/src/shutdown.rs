@@ -19,16 +19,27 @@ pub(crate) fn spawn_shutdown_task(
     shutdown_tx: watch::Sender<bool>,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
-        if !runtime.shutdown_when_empty() {
-            wait_for_shutdown_signal_or_drain(runtime.clone()).await;
-        }
-        runtime.start_drain(true);
-        clear_voice_presence_metrics(&data).await;
-        if let Err(err) = crate::deployment::heartbeat_instance_and_leases(&pool, &runtime).await {
-            error!("shutdown heartbeat failed: {}", err);
-        }
+        loop {
+            let triggered_by_signal = if runtime.shutdown_when_empty() {
+                false
+            } else {
+                wait_for_shutdown_signal_or_drain(runtime.clone()).await
+            };
+            if triggered_by_signal {
+                runtime.start_drain(true);
+            }
+            clear_voice_presence_metrics(&data).await;
+            if let Err(err) =
+                crate::deployment::heartbeat_instance_and_leases(&pool, &runtime).await
+            {
+                error!("shutdown heartbeat failed: {}", err);
+            }
 
-        wait_for_drain(&runtime, &data).await;
+            if wait_for_drain(&runtime, &data).await {
+                break;
+            }
+            info!("drain cancelled; resuming active runtime");
+        }
 
         let shutdown_result = tokio::time::timeout(
             Duration::from_secs(SHARD_SHUTDOWN_TIMEOUT_SECONDS),
@@ -50,30 +61,39 @@ pub(crate) fn spawn_shutdown_task(
     })
 }
 
-async fn wait_for_drain(runtime: &crate::runtime::RuntimeState, data: &Arc<RwLock<TypeMap>>) {
+async fn wait_for_drain(
+    runtime: &crate::runtime::RuntimeState,
+    data: &Arc<RwLock<TypeMap>>,
+) -> bool {
     let deadline = if runtime.config().drain_timeout.is_zero() {
         None
     } else {
         Some(tokio::time::Instant::now() + runtime.config().drain_timeout)
     };
     loop {
+        if !runtime.is_draining() || !runtime.shutdown_when_empty() {
+            return false;
+        }
         if runtime.force_shutdown_requested() {
             warn!("force shutdown requested; bypassing drain wait");
-            break;
+            return true;
         }
 
         let active = active_voice_connection_count(data).await;
         if active == 0 {
             info!("drain complete; shutting down shards");
-            break;
+            return true;
         }
         if let Some(deadline) = deadline
             && tokio::time::Instant::now() >= deadline
         {
             warn!(active_voice_connections = active, "drain timeout reached");
-            break;
+            return true;
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::select! {
+            () = tokio::time::sleep(Duration::from_secs(2)) => {}
+            () = runtime.changed() => {}
+        }
     }
 }
 
@@ -99,7 +119,7 @@ async fn clear_voice_presence_metrics(data: &Arc<RwLock<TypeMap>>) {
     }
 }
 
-async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeState>) {
+async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeState>) -> bool {
     #[cfg(unix)]
     {
         let mut sigterm =
@@ -108,17 +128,17 @@ async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeS
                 Err(err) => {
                     error!("failed to register SIGTERM handler: {}", err);
                     runtime.changed().await;
-                    return;
+                    return false;
                 }
             };
 
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => break,
-                _ = sigterm.recv() => break,
+                _ = tokio::signal::ctrl_c() => return true,
+                _ = sigterm.recv() => return true,
                 _ = runtime.changed() => {
                     if runtime.shutdown_when_empty() {
-                        break;
+                        return false;
                     }
                 }
             }
@@ -129,10 +149,10 @@ async fn wait_for_shutdown_signal_or_drain(runtime: Arc<crate::runtime::RuntimeS
     {
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => break,
+                _ = tokio::signal::ctrl_c() => return true,
                 _ = runtime.changed() => {
                     if runtime.shutdown_when_empty() {
-                        break;
+                        return false;
                     }
                 }
             }

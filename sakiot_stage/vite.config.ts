@@ -4,7 +4,11 @@ import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig, type Plugin } from "vite";
 
 const bundleBuiltAt = new Date().toISOString();
-const bundleVersion = `${Date.now()}`;
+const releaseTag = process.env.SAKIOT_RELEASE_TAG ?? "development";
+const commitSha = process.env.SAKIOT_COMMIT_SHA ?? "unknown";
+const bundleVersion =
+	process.env.SAKIOT_BUNDLE_VERSION ??
+	`${releaseTag}-${commitSha}-${Date.now()}`;
 
 function bundleVersionPlugin(): Plugin {
 	return {
@@ -15,7 +19,12 @@ function bundleVersionPlugin(): Plugin {
 				type: "asset",
 				fileName: "version.json",
 				source: `${JSON.stringify(
-					{ version: bundleVersion, builtAt: bundleBuiltAt },
+					{
+						version: bundleVersion,
+						releaseTag,
+						commitSha,
+						builtAt: bundleBuiltAt,
+					},
 					null,
 					2,
 				)}\n`,

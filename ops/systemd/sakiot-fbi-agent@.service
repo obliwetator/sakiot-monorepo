@@ -1,0 +1,23 @@
+[Unit]
+Description=Sakiot FBI Agent release %i
+After=network-online.target postgresql.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=sakiot
+Group=sakiot
+WorkingDirectory=/var/lib/sakiot/data
+EnvironmentFile=/etc/sakiot/production.env
+EnvironmentFile=/srv/sakiot/releases/%i/fbi-agent/service.env
+ExecStart=/srv/sakiot/releases/%i/fbi-agent/fbi_agent
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=infinity
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

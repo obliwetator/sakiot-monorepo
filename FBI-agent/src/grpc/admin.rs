@@ -26,6 +26,26 @@ impl Admin for FbiAgentGrpc {
         Ok(Response::new(self.status("drain started").await))
     }
 
+    async fn cancel_drain(
+        &self,
+        request: Request<DrainRequest>,
+    ) -> Result<Response<DrainStatus>, Status> {
+        let reason = request.into_inner().reason;
+        info!(reason = %reason, "admin requested drain cancellation");
+        if !self.data_cache.runtime.cancel_drain() {
+            return Err(Status::failed_precondition(
+                "force shutdown cannot be cancelled",
+            ));
+        }
+        crate::deployment::heartbeat_instance_and_leases(
+            &self.data_cache.pool,
+            &self.data_cache.runtime,
+        )
+        .await
+        .map_err(|err| Status::internal(format!("database error: {err}")))?;
+        Ok(Response::new(self.status("drain cancelled").await))
+    }
+
     async fn get_drain_status(
         &self,
         _request: Request<Empty>,

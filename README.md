@@ -30,6 +30,14 @@ the database backup scripts. Set `SAKIOT_ENV_FILE` to override its path for
 backup jobs. Frontend development values live in root `.env.development`; Vite
 loads environment files from the monorepo root.
 
+For isolated local PostgreSQL on port `54320`:
+
+```sh
+docker compose -f compose.dev.yml up -d
+DATABASE_URL=postgres://postgres:password@localhost:54320/sakiot_rouvas \
+  sqlx migrate run --source sakiot-db/migrations
+```
+
 ## Rust Workspace
 
 The repository root is a Cargo workspace containing both services and both
@@ -94,3 +102,4 @@ Media defaults to the repository's `data` directory. Override this with
 `SAKIOT_DATA_DIR`, for example `/data` in containers with a shared volume.
 
 Each component has its own README with configuration and deployment details.
+Production tag deployment and rollback are documented in `ops/README.md`.

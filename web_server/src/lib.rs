@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod errors;
 pub mod fbi_agent_registry;
 pub mod grpc_client;
+pub mod health;
 pub mod http_metrics;
 pub mod openapi;
 pub mod permissions;

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sakiot_rouvas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "127.0.0.1:54320:5432"
+    volumes:
+      - sakiot-dev-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sakiot_rouvas"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  sakiot-dev-postgres:

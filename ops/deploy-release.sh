@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 027
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "${script_dir}/lib/common.sh"
+# shellcheck source=lib/components.sh
+source "${script_dir}/lib/components.sh"
+
+mode="${1:-}"
+tag="${2:-}"
+sha="${3:-}"
+schema_override="${4:-}"
+
+[[ "${mode}" == "release" || "${mode}" == "rollback" ]] || die "invalid deployment mode"
+validate_tag "${tag}"
+validate_sha "${sha}"
+if [[ -n "${schema_override}" && "${schema_override}" != "--allow-schema-mismatch" ]]; then
+  die "invalid rollback option"
+fi
+
+env_file="${SAKIOT_ENV_FILE:-/etc/sakiot/production.env}"
+if [[ -f "${env_file}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${env_file}"
+  set +a
+fi
+
+repository_url="${SAKIOT_REPOSITORY_URL:?set SAKIOT_REPOSITORY_URL}"
+[[ "${repository_url}" == https://* ]] || die "SAKIOT_REPOSITORY_URL must use HTTPS"
+
+data_dir="${SAKIOT_DATA_DIR:-/var/lib/sakiot/data}"
+state_dir="${SAKIOT_DEPLOY_STATE_DIR:-/var/lib/sakiot/deploy}"
+release_root="${SAKIOT_RELEASE_ROOT:-/srv/sakiot/releases}"
+current_root="${SAKIOT_CURRENT_ROOT:-/srv/sakiot/current}"
+cache_dir="${SAKIOT_CACHE_DIR:-/var/cache/sakiot}"
+source_repo="${cache_dir}/repository"
+worktree_root="${cache_dir}/worktrees"
+frontend_root="${SAKIOT_FRONTEND_ROOT:-/var/www/patrykstyla.com}"
+web_health_url="${SAKIOT_WEB_HEALTH_URL:-http://127.0.0.1:8900/healthz}"
+web_registry_url="${SAKIOT_WEB_REGISTRY_URL:-http://127.0.0.1:8900/internal/fbi-agent/grpc-endpoints}"
+
+for command in git flock jq cargo curl rsync install; do
+  require_command "${command}"
+done
+if [[ "${SAKIOT_SYSTEMCTL_USE_SUDO:-1}" == "1" ]]; then
+  require_command sudo
+  [[ -x /usr/local/lib/sakiot-deploy/systemctl-wrapper ]] \
+    || die "systemctl wrapper is not installed"
+else
+  require_command systemctl
+fi
+
+install -d -m 0750 "${state_dir}" "${state_dir}/tags" "${release_root}" \
+  "${current_root}" "${cache_dir}" "${worktree_root}"
+install -d -m 0755 "${data_dir}" "${data_dir}/voice_recordings" \
+  "${data_dir}/no_silence_voice_recordings" "${data_dir}/waveform_data" \
+  "${data_dir}/clips"
+
+exec 9>"${state_dir}/deploy.lock"
+flock 9
+
+if [[ ! -d "${source_repo}/.git" ]]; then
+  log "creating deployment repository cache"
+  git clone --no-checkout "${repository_url}" "${source_repo}"
+fi
+
+git -C "${source_repo}" remote set-url origin "${repository_url}"
+git -C "${source_repo}" fetch --prune origin \
+  '+refs/heads/*:refs/remotes/origin/*' \
+  "+refs/tags/${tag}:refs/tags/${tag}"
+
+resolved_sha="$(git -C "${source_repo}" rev-list -n 1 "refs/tags/${tag}")"
+[[ "${resolved_sha}" == "${sha}" ]] || {
+  die "tag ${tag} resolves to ${resolved_sha}, not supplied SHA ${sha}"
+}
+git -C "${source_repo}" cat-file -e "${sha}^{commit}"
+
+tag_record="${state_dir}/tags/${tag}"
+validate_tag_record "${mode}" "${tag_record}" "${tag}" "${sha}"
+
+previous_sha="$(cat "${state_dir}/current.sha" 2>/dev/null || true)"
+previous_tag="$(cat "${state_dir}/current.tag" 2>/dev/null || true)"
+
+if [[ "${mode}" == "rollback" && -n "${previous_sha}" && "${schema_override}" != "--allow-schema-mismatch" ]]; then
+  mapfile -t migration_changes < <(
+    git -C "${source_repo}" diff --name-only "${sha}" "${previous_sha}" -- sakiot-db/migrations
+  )
+  if [[ "${#migration_changes[@]}" -gt 0 ]]; then
+    die "rollback crosses migration changes; use explicit schema compatibility override"
+  fi
+fi
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ "${mode}" == "rollback" ]]; then
+  release_id="${tag}-${sha:0:12}-rollback-${timestamp}"
+else
+  release_id="${tag}-${sha:0:12}-${timestamp}"
+fi
+artifact_dir="${release_root}/${release_id}"
+worktree="${worktree_root}/${release_id}"
+
+cleanup_worktree() {
+  git -C "${source_repo}" worktree remove --force "${worktree}" >/dev/null 2>&1 || true
+}
+trap cleanup_worktree EXIT
+cleanup_worktree
+git -C "${source_repo}" worktree add --detach "${worktree}" "${sha}"
+
+if [[ "${mode}" == "rollback" || -z "${previous_sha}" ]]; then
+  mapfile -t components < <(all_components)
+  if [[ "${mode}" == "rollback" ]]; then
+    components=(bot web frontend)
+  fi
+else
+  mapfile -t changed_paths < <(
+    git -C "${source_repo}" diff --name-only "${previous_sha}" "${sha}"
+  )
+  mapfile -t components < <(components_for_paths "${changed_paths[@]}")
+fi
+
+if [[ "${#components[@]}" -eq 0 ]]; then
+  log "documentation-only release; no application components selected"
+fi
+
+if [[ -e "${artifact_dir}" ]]; then
+  die "release directory already exists: ${artifact_dir}"
+fi
+install -d -m 0755 "${artifact_dir}"
+
+build_rust=0
+component_selected bot "${components[@]}" && build_rust=1
+component_selected web "${components[@]}" && build_rust=1
+if [[ "${build_rust}" == "1" ]]; then
+  require_command protoc
+  log "testing Rust workspace"
+  (
+    cd "${worktree}"
+    CARGO_TARGET_DIR="${cache_dir}/cargo-target" cargo test --workspace --locked
+  )
+fi
+
+if component_selected bot "${components[@]}"; then
+  log "building FBI Agent"
+  (
+    cd "${worktree}"
+    CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+      cargo build --release --locked --package fbi_agent
+  )
+  install -d -m 0755 "${artifact_dir}/fbi-agent"
+  install -m 0755 "${cache_dir}/cargo-target/release/fbi_agent" \
+    "${artifact_dir}/fbi-agent/fbi_agent"
+fi
+
+if component_selected web "${components[@]}"; then
+  log "building web server"
+  (
+    cd "${worktree}"
+    CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+      cargo build --release --locked --package web_server
+  )
+  install -d -m 0755 "${artifact_dir}/web"
+  install -m 0755 "${cache_dir}/cargo-target/release/web_server" \
+    "${artifact_dir}/web/web_server"
+fi
+
+if component_selected frontend "${components[@]}"; then
+  require_command bun
+  log "testing and building frontend"
+  (
+    cd "${worktree}/sakiot_stage"
+    bun install --frozen-lockfile
+    bun run test
+    SAKIOT_RELEASE_TAG="${tag}" \
+      SAKIOT_COMMIT_SHA="${sha}" \
+      SAKIOT_BUNDLE_VERSION="${release_id}" \
+      bun run build
+  )
+  install -d -m 0755 "${artifact_dir}/frontend"
+  cp -a "${worktree}/sakiot_stage/dist" "${artifact_dir}/frontend/dist"
+fi
+
+if [[ -x "${worktree}/ops/tests/run.sh" ]]; then
+  log "testing deployment scripts"
+  "${worktree}/ops/tests/run.sh"
+fi
+
+migration_head="$(
+  find "${worktree}/sakiot-db/migrations" -maxdepth 1 -type f -printf '%f\n' \
+    | sort | tail -n 1
+)"
+migrations_ran=false
+if component_selected database "${components[@]}"; then
+  require_command sqlx
+  require_command pg_dump
+  require_command age
+  log "checking migration state"
+  sqlx migrate info --source "${worktree}/sakiot-db/migrations"
+  log "backing up database and applying pending migrations"
+  SAKIOT_ENV_FILE="${env_file}" \
+    "${worktree}/sakiot-db/ops/backup/pre-migrate-backup.sh"
+  migrations_ran=true
+fi
+
+proto_dir="${worktree}/sakiot-proto/proto"
+bot_recovery_required=0
+new_bot_started=0
+new_bot_unit=""
+old_bot_unit=""
+old_bot_grpc=""
+
+cancel_old_bot_drain() {
+  if [[ "${bot_recovery_required}" != "1" || -z "${old_bot_grpc}" ]]; then
+    return
+  fi
+  log "new FBI Agent failed readiness; cancelling old instance drain"
+  grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+    -d "{\"reason\":\"release ${release_id} failed readiness\"}" \
+    "${old_bot_grpc}" fbi_agent.Admin/CancelDrain >/dev/null || true
+}
+recover_bot_on_error() {
+  local status=$?
+  if [[ "${new_bot_started}" == "1" && -n "${new_bot_unit}" ]]; then
+    run_systemctl stop "${new_bot_unit}" || true
+  fi
+  cancel_old_bot_drain
+  exit "${status}"
+}
+trap recover_bot_on_error ERR
+
+if component_selected bot "${components[@]}"; then
+  require_command grpcurl
+  require_command python3
+
+  old_bot_unit="$(cat "${state_dir}/current-bot.unit" 2>/dev/null || true)"
+  old_bot_grpc="$(cat "${state_dir}/current-bot.grpc" 2>/dev/null || true)"
+  new_bot_unit="sakiot-fbi-agent@${release_id}.service"
+  new_bot_grpc="127.0.0.1:$(
+    python3 - <<'PY'
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+  )"
+
+  cat >"${artifact_dir}/fbi-agent/service.env" <<EOF
+BOT_ROLE=active
+BOT_INSTANCE_ID=$(hostname)-${release_id}
+RELEASE_ID=${release_id}
+GRPC_ADDR=${new_bot_grpc}
+DRAIN_TIMEOUT_SECONDS=0
+SAKIOT_DATA_DIR=${data_dir}
+EOF
+  chmod 0640 "${artifact_dir}/fbi-agent/service.env"
+
+  if [[ -n "${old_bot_unit}" ]] && run_systemctl is-active --quiet "${old_bot_unit}"; then
+    [[ -n "${old_bot_grpc}" ]] || die "current FBI Agent is missing its gRPC address"
+    log "draining ${old_bot_unit}"
+    grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+      -d "{\"reason\":\"deploy ${release_id}\"}" \
+      "${old_bot_grpc}" fbi_agent.Admin/StartDrain >/dev/null
+    bot_recovery_required=1
+  else
+    old_bot_unit=""
+    old_bot_grpc=""
+  fi
+
+  log "starting ${new_bot_unit}"
+  if ! run_systemctl start "${new_bot_unit}"; then
+    run_systemctl stop "${new_bot_unit}" || true
+    cancel_old_bot_drain
+    exit 1
+  fi
+  new_bot_started=1
+
+  bot_ready=0
+  for _ in $(seq 1 30); do
+    if grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+      "${new_bot_grpc}" fbi_agent.Admin/GetDrainStatus >/dev/null 2>&1; then
+      bot_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${bot_ready}" != "1" ]]; then
+    run_systemctl stop "${new_bot_unit}" || true
+    new_bot_started=0
+    cancel_old_bot_drain
+    die "new FBI Agent failed readiness"
+  fi
+
+  run_systemctl enable "${new_bot_unit}" >/dev/null
+  printf '%s\n' "${new_bot_unit}" >"${state_dir}/current-bot.unit"
+  printf '%s\n' "${new_bot_grpc}" >"${state_dir}/current-bot.grpc"
+
+  draining_json='[]'
+  if [[ -n "${old_bot_grpc}" ]]; then
+    draining_json="$(jq -cn --arg address "${old_bot_grpc}" '[$address]')"
+  fi
+  registry_body="$(
+    jq -cn --arg active "${new_bot_grpc}" --argjson draining "${draining_json}" \
+      '{active:$active,draining:$draining}'
+  )"
+  curl_args=(-fsS -H 'Content-Type: application/json')
+  curl_args+=(--connect-timeout 2 --max-time 5)
+  if [[ -n "${FBI_AGENT_REGISTRY_SECRET:-}" ]]; then
+    curl_args+=(-H "X-FBI-Agent-Registry-Secret: ${FBI_AGENT_REGISTRY_SECRET}")
+  fi
+  curl "${curl_args[@]}" -d "${registry_body}" "${web_registry_url}" >/dev/null \
+    || log "web server registry unavailable; web release env will use new endpoint"
+
+  if [[ -n "${old_bot_grpc}" ]]; then
+    grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+      -d "{\"reason\":\"release ${release_id} is ready\"}" \
+      "${old_bot_grpc}" fbi_agent.Admin/ShutdownWhenEmpty >/dev/null
+    run_systemctl disable "${old_bot_unit}" >/dev/null || true
+  fi
+  bot_recovery_required=0
+  new_bot_started=0
+fi
+
+if component_selected web "${components[@]}"; then
+  active_bot_grpc="$(cat "${state_dir}/current-bot.grpc" 2>/dev/null || true)"
+  cat >"${artifact_dir}/web/service.env" <<EOF
+RELEASE_ID=${release_id}
+SAKIOT_DATA_DIR=${data_dir}
+GRPC_ADDRESS=http://${active_bot_grpc:-127.0.0.1:50052}
+EOF
+  chmod 0640 "${artifact_dir}/web/service.env"
+
+  previous_web_target="$(readlink "${current_root}/web" 2>/dev/null || true)"
+  atomic_symlink "${artifact_dir}/web" "${current_root}/web"
+  log "restarting web server"
+  if ! run_systemctl restart sakiot-web.service; then
+    if [[ -n "${previous_web_target}" ]]; then
+      atomic_symlink "${previous_web_target}" "${current_root}/web"
+      run_systemctl restart sakiot-web.service || true
+    fi
+    die "web server restart failed"
+  fi
+
+  web_ready=0
+  for _ in $(seq 1 30); do
+    if curl -fsS --connect-timeout 2 --max-time 5 "${web_health_url}" \
+      | jq -e --arg release "${release_id}" \
+        '.status == "ok" and .database == "ready" and .release_id == $release' \
+        >/dev/null; then
+      web_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${web_ready}" != "1" ]]; then
+    if [[ -n "${previous_web_target}" ]]; then
+      atomic_symlink "${previous_web_target}" "${current_root}/web"
+      run_systemctl restart sakiot-web.service || true
+    fi
+    die "web server failed readiness; previous release restored"
+  fi
+fi
+
+if component_selected frontend "${components[@]}"; then
+  install -d -m 0755 "${frontend_root}"
+  log "publishing frontend assets, HTML, then version metadata"
+  SAKIOT_FRONTEND_ROOT="${frontend_root}" \
+    SAKIOT_FRONTEND_DIST="${artifact_dir}/frontend/dist" \
+    "${worktree}/sakiot_stage/scripts/deploy.sh"
+fi
+
+components_json="$(printf '%s\n' "${components[@]}" | json_array_from_lines)"
+changed_paths_json="$(
+  if [[ -n "${changed_paths+x}" ]]; then
+    printf '%s\n' "${changed_paths[@]}" | json_array_from_lines
+  else
+    printf '[]'
+  fi
+)"
+manifest="${artifact_dir}/manifest.json"
+jq -n \
+  --arg mode "${mode}" \
+  --arg tag "${tag}" \
+  --arg sha "${sha}" \
+  --arg previous_tag "${previous_tag}" \
+  --arg previous_sha "${previous_sha}" \
+  --arg release_id "${release_id}" \
+  --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg migration_head "${migration_head}" \
+  --argjson components "${components_json}" \
+  --argjson changed_paths "${changed_paths_json}" \
+  --argjson migrations_ran "${migrations_ran}" \
+  '{
+    mode:$mode,
+    tag:$tag,
+    sha:$sha,
+    previous_tag:$previous_tag,
+    previous_sha:$previous_sha,
+    release_id:$release_id,
+    components:$components,
+    changed_paths:$changed_paths,
+    database:{migrations_ran:$migrations_ran,migration_head:$migration_head},
+    deployed_at:$deployed_at
+  }' >"${manifest}"
+
+printf '%s\n' "${sha}" >"${state_dir}/current.sha.new"
+mv "${state_dir}/current.sha.new" "${state_dir}/current.sha"
+printf '%s\n' "${tag}" >"${state_dir}/current.tag.new"
+mv "${state_dir}/current.tag.new" "${state_dir}/current.tag"
+printf '%s\n' "${manifest}" >"${state_dir}/current.manifest.new"
+mv "${state_dir}/current.manifest.new" "${state_dir}/current.manifest"
+if [[ "${mode}" == "release" ]]; then
+  printf '%s\n' "${sha}" >"${tag_record}"
+fi
+
+log "${mode} complete: ${release_id}"
+log "stopped release directories retained for rollback"
