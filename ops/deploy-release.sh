@@ -184,7 +184,8 @@ if [[ "${build_rust}" == "1" ]]; then
   log "testing Rust workspace"
   (
     cd "${worktree}"
-    CARGO_TARGET_DIR="${cache_dir}/cargo-target" cargo test --workspace --locked
+    SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+      cargo test --workspace --locked
   )
 fi
 
@@ -198,7 +199,7 @@ if component_selected bot "${components[@]}"; then
     log "building FBI Agent"
     (
       cd "${worktree}"
-      CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+      SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
         cargo build --release --locked --package fbi_agent
     )
     install -m 0755 "${cache_dir}/cargo-target/release/fbi_agent" \
@@ -216,7 +217,7 @@ if component_selected web "${components[@]}"; then
     log "building web server"
     (
       cd "${worktree}"
-      CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+      SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
         cargo build --release --locked --package web_server
     )
     install -m 0755 "${cache_dir}/cargo-target/release/web_server" \
