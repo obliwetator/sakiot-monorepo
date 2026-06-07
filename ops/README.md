@@ -85,3 +85,21 @@ Release manifests are under `/srv/sakiot/releases/<release>/manifest.json`;
 `/var/lib/sakiot/deploy/current.manifest` points to the last successful one.
 Stopped releases are intentionally retained. Never remove a release directory
 while its `sakiot-fbi-agent@...` unit is active or draining.
+
+## Temporary legacy data
+
+If production was cut over before the recording tree was migrated, keep the
+canonical production path while bind-mounting the existing tree:
+
+```sh
+sudo ./ops/use-legacy-data.sh /home/tulipan/projects/sakiot/data
+```
+
+The script stops the production bot and web server, merges files created since
+cutover into the legacy tree, grants the `sakiot` account access with POSIX
+ACLs, adds an idempotent `/etc/fstab` bind entry, mounts the tree at
+`/var/lib/sakiot/data`, and restarts both services. It does not copy the full
+recording archive or change `DATABASE_URL`.
+
+Remove the bind entry only after the legacy tree has been copied into an
+independent production filesystem while both services are stopped.
