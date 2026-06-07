@@ -2,11 +2,18 @@
 set -euo pipefail
 
 bot_unit_pattern='^sakiot-fbi-agent@[A-Za-z0-9._-]+\.service$'
+legacy_bot_unit_pattern='^fbi-agent@[A-Za-z0-9._-]+\.service$'
+legacy_machine='tulipan@.host'
 
 case "${1:-}" in
-  start|stop|enable|disable)
+  start|enable|disable)
     [[ "$#" -eq 2 && "$2" =~ ${bot_unit_pattern} ]] || exit 2
     exec /usr/bin/systemctl "$1" "$2"
+    ;;
+  stop)
+    [[ "$#" -eq 2 ]] || exit 2
+    [[ "$2" =~ ${bot_unit_pattern} || "$2" == "sakiot-web.service" ]] || exit 2
+    exec /usr/bin/systemctl stop "$2"
     ;;
   is-active)
     [[ "$#" -eq 3 && "$2" == "--quiet" && "$3" =~ ${bot_unit_pattern} ]] || exit 2
@@ -15,6 +22,40 @@ case "${1:-}" in
   restart)
     [[ "$#" -eq 2 && "$2" == "sakiot-web.service" ]] || exit 2
     exec /usr/bin/systemctl restart sakiot-web.service
+    ;;
+  legacy-web-is-active)
+    [[ "$#" -eq 1 ]] || exit 2
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      is-active --quiet web_server.service
+    ;;
+  legacy-web-stop-disable)
+    [[ "$#" -eq 1 ]] || exit 2
+    /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      stop web_server.service
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      disable web_server.service
+    ;;
+  legacy-web-start-enable)
+    [[ "$#" -eq 1 ]] || exit 2
+    /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      enable web_server.service
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      start web_server.service
+    ;;
+  legacy-bot-is-active)
+    [[ "$#" -eq 2 && "$2" =~ ${legacy_bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      is-active --quiet "$2"
+    ;;
+  legacy-bot-disable)
+    [[ "$#" -eq 2 && "$2" =~ ${legacy_bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      disable "$2"
+    ;;
+  legacy-bot-enable)
+    [[ "$#" -eq 2 && "$2" =~ ${legacy_bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      enable "$2"
     ;;
   *)
     exit 2

@@ -26,6 +26,12 @@ the generated key line contains `restrict` and the forced command. Keep manual
 debug services under the developer account; production units are named
 `sakiot-web.service` and `sakiot-fbi-agent@<release>.service`.
 
+For the first release on a host still running the prior `tulipan` user units,
+set `SAKIOT_LEGACY_BOT_UNIT`, `SAKIOT_LEGACY_BOT_GRPC`, and
+`SAKIOT_LEGACY_WEB_ENABLED=1`. The deployer drains the old bot, stops the old
+web service only after builds pass, and restores the old web service if new
+health checks fail. These settings are ignored after production state exists.
+
 Copy this repository's `ops` directory to `/usr/local/lib/sakiot-deploy` after
 reviewing deployment-framework changes. Application release tags cannot modify
 the root-owned SSH bootstrap by themselves.

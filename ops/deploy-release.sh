@@ -41,6 +41,9 @@ worktree_root="${cache_dir}/worktrees"
 frontend_root="${SAKIOT_FRONTEND_ROOT:-/var/www/patrykstyla.com}"
 web_health_url="${SAKIOT_WEB_HEALTH_URL:-http://127.0.0.1:8900/healthz}"
 web_registry_url="${SAKIOT_WEB_REGISTRY_URL:-http://127.0.0.1:8900/internal/fbi-agent/grpc-endpoints}"
+legacy_bot_unit="${SAKIOT_LEGACY_BOT_UNIT:-}"
+legacy_bot_grpc="${SAKIOT_LEGACY_BOT_GRPC:-}"
+legacy_web_enabled="${SAKIOT_LEGACY_WEB_ENABLED:-0}"
 
 for command in git flock jq cargo curl rsync install; do
   require_command "${command}"
@@ -207,9 +210,14 @@ fi
 proto_dir="${worktree}/sakiot-proto/proto"
 bot_recovery_required=0
 new_bot_started=0
+bot_handoff_pending=0
+old_bot_disabled=0
 new_bot_unit=""
 old_bot_unit=""
 old_bot_grpc=""
+old_bot_is_legacy=0
+previous_bot_unit=""
+previous_bot_grpc=""
 
 cancel_old_bot_drain() {
   if [[ "${bot_recovery_required}" != "1" || -z "${old_bot_grpc}" ]]; then
@@ -224,11 +232,25 @@ recover_bot_on_error() {
   local status=$?
   if [[ "${new_bot_started}" == "1" && -n "${new_bot_unit}" ]]; then
     run_systemctl stop "${new_bot_unit}" || true
+    printf '%s\n' "${previous_bot_unit}" >"${state_dir}/current-bot.unit"
+    printf '%s\n' "${previous_bot_grpc}" >"${state_dir}/current-bot.grpc"
+  fi
+  if [[ "${old_bot_disabled}" == "1" && -n "${old_bot_unit}" ]]; then
+    if [[ "${old_bot_is_legacy}" == "1" ]]; then
+      run_systemctl legacy-bot-enable "${old_bot_unit}" || true
+    else
+      run_systemctl enable "${old_bot_unit}" || true
+    fi
   fi
   cancel_old_bot_drain
   exit "${status}"
 }
 trap recover_bot_on_error ERR
+
+fail_deployment() {
+  printf 'error: %s\n' "$*" >&2
+  return 1
+}
 
 if component_selected bot "${components[@]}"; then
   require_command grpcurl
@@ -236,6 +258,8 @@ if component_selected bot "${components[@]}"; then
 
   old_bot_unit="$(cat "${state_dir}/current-bot.unit" 2>/dev/null || true)"
   old_bot_grpc="$(cat "${state_dir}/current-bot.grpc" 2>/dev/null || true)"
+  previous_bot_unit="${old_bot_unit}"
+  previous_bot_grpc="${old_bot_grpc}"
   new_bot_unit="sakiot-fbi-agent@${release_id}.service"
   new_bot_grpc="127.0.0.1:$(
     python3 - <<'PY'
@@ -256,7 +280,19 @@ SAKIOT_DATA_DIR=${data_dir}
 EOF
   chmod 0640 "${artifact_dir}/fbi-agent/service.env"
 
+  old_bot_active=0
   if [[ -n "${old_bot_unit}" ]] && run_systemctl is-active --quiet "${old_bot_unit}"; then
+    old_bot_active=1
+  elif [[ -z "${old_bot_unit}" && -n "${legacy_bot_unit}" && -n "${legacy_bot_grpc}" ]] \
+    && run_systemctl legacy-bot-is-active "${legacy_bot_unit}"; then
+    old_bot_unit="${legacy_bot_unit}"
+    old_bot_grpc="${legacy_bot_grpc}"
+    old_bot_is_legacy=1
+    old_bot_active=1
+    log "adopting legacy FBI Agent ${old_bot_unit} for first-release handoff"
+  fi
+
+  if [[ "${old_bot_active}" == "1" ]]; then
     [[ -n "${old_bot_grpc}" ]] || die "current FBI Agent is missing its gRPC address"
     log "draining ${old_bot_unit}"
     grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
@@ -313,13 +349,8 @@ EOF
     || log "web server registry unavailable; web release env will use new endpoint"
 
   if [[ -n "${old_bot_grpc}" ]]; then
-    grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
-      -d "{\"reason\":\"release ${release_id} is ready\"}" \
-      "${old_bot_grpc}" fbi_agent.Admin/ShutdownWhenEmpty >/dev/null
-    run_systemctl disable "${old_bot_unit}" >/dev/null || true
+    bot_handoff_pending=1
   fi
-  bot_recovery_required=0
-  new_bot_started=0
 fi
 
 if component_selected web "${components[@]}"; then
@@ -332,14 +363,29 @@ EOF
   chmod 0640 "${artifact_dir}/web/service.env"
 
   previous_web_target="$(readlink "${current_root}/web" 2>/dev/null || true)"
-  atomic_symlink "${artifact_dir}/web" "${current_root}/web"
-  log "restarting web server"
-  if ! run_systemctl restart sakiot-web.service; then
+  legacy_web_stopped=0
+  restore_previous_web() {
     if [[ -n "${previous_web_target}" ]]; then
       atomic_symlink "${previous_web_target}" "${current_root}/web"
       run_systemctl restart sakiot-web.service || true
+    elif [[ "${legacy_web_stopped}" == "1" ]]; then
+      run_systemctl legacy-web-start-enable || true
     fi
-    die "web server restart failed"
+  }
+  atomic_symlink "${artifact_dir}/web" "${current_root}/web"
+  if [[ -z "${previous_web_target}" && "${legacy_web_enabled}" == "1" ]] \
+    && run_systemctl legacy-web-is-active; then
+    log "stopping legacy web server for first-release handoff"
+    if ! run_systemctl legacy-web-stop-disable; then
+      run_systemctl legacy-web-start-enable || true
+      fail_deployment "failed to stop legacy web server"
+    fi
+    legacy_web_stopped=1
+  fi
+  log "restarting web server"
+  if ! run_systemctl restart sakiot-web.service; then
+    restore_previous_web
+    fail_deployment "web server restart failed"
   fi
 
   web_ready=0
@@ -354,11 +400,9 @@ EOF
     sleep 1
   done
   if [[ "${web_ready}" != "1" ]]; then
-    if [[ -n "${previous_web_target}" ]]; then
-      atomic_symlink "${previous_web_target}" "${current_root}/web"
-      run_systemctl restart sakiot-web.service || true
-    fi
-    die "web server failed readiness; previous release restored"
+    run_systemctl stop sakiot-web.service || true
+    restore_previous_web
+    fail_deployment "web server failed readiness; previous release restored"
   fi
 fi
 
@@ -369,6 +413,21 @@ if component_selected frontend "${components[@]}"; then
     SAKIOT_FRONTEND_DIST="${artifact_dir}/frontend/dist" \
     "${worktree}/sakiot_stage/scripts/deploy.sh"
 fi
+
+if [[ "${bot_handoff_pending}" == "1" ]]; then
+  if [[ "${old_bot_is_legacy}" == "1" ]]; then
+    run_systemctl legacy-bot-disable "${old_bot_unit}" >/dev/null
+  else
+    run_systemctl disable "${old_bot_unit}" >/dev/null
+  fi
+  old_bot_disabled=1
+  grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+    -d "{\"reason\":\"release ${release_id} is fully ready\"}" \
+    "${old_bot_grpc}" fbi_agent.Admin/ShutdownWhenEmpty >/dev/null
+fi
+bot_recovery_required=0
+new_bot_started=0
+old_bot_disabled=0
 
 components_json="$(printf '%s\n' "${components[@]}" | json_array_from_lines)"
 changed_paths_json="$(
