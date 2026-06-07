@@ -73,6 +73,54 @@ release_bot_unit() {
   printf 'sakiot-fbi-agent@%s.service' "$(basename "${release_dir}")"
 }
 
+# Print release dirs under release_root newest -> oldest, ordered by the trailing
+# release timestamp in the id, falling back to directory mtime when absent.
+releases_newest_first() {
+  local release_root_abs="$1"
+  local dir stamp
+  for dir in "${release_root_abs}"/*/; do
+    [[ -d "${dir}" ]] || continue
+    dir="${dir%/}"
+    stamp="$(basename "${dir}" | grep -oE '[0-9]{8}T[0-9]{6}Z' | tail -n 1)"
+    [[ -n "${stamp}" ]] || stamp="$(date -u -r "${dir}" +%Y%m%dT%H%M%SZ 2>/dev/null || echo 00000000T000000Z)"
+    printf '%s\t%s\n' "${stamp}" "${dir}"
+  done | sort -r | cut -f2-
+}
+
+# Find a prior release dir whose manifest SHA matches target_sha and that holds a
+# usable artifact for `component` (bot|web|frontend). Prints the newest match, or
+# nothing. exclude_dir (the release being built now) is skipped.
+reusable_artifact() {
+  local release_root="$1"
+  local target_sha="$2"
+  local component="$3"
+  local exclude_dir="$4"
+
+  [[ -d "${release_root}" ]] || return 0
+  local release_root_abs
+  release_root_abs="$(cd "${release_root}" && pwd)"
+
+  local dir manifest_sha
+  while IFS= read -r dir; do
+    [[ -n "${dir}" ]] || continue
+    [[ "${dir}" == "${exclude_dir}" ]] && continue
+    [[ -f "${dir}/manifest.json" ]] || continue
+    manifest_sha="$(jq -r '.sha // empty' "${dir}/manifest.json" 2>/dev/null || true)"
+    [[ "${manifest_sha}" == "${target_sha}" ]] || continue
+
+    case "${component}" in
+      bot)      [[ -s "${dir}/fbi-agent/fbi_agent" ]] || continue ;;
+      web)      [[ -s "${dir}/web/web_server" ]] || continue ;;
+      frontend) [[ -d "${dir}/frontend/dist" ]] && [[ -n "$(ls -A "${dir}/frontend/dist" 2>/dev/null)" ]] || continue ;;
+      *) return 0 ;;
+    esac
+
+    printf '%s\n' "${dir}"
+    return 0
+  done < <(releases_newest_first "${release_root_abs}")
+  return 0
+}
+
 # Remove old release directories under release_root, keeping the newest `keep`
 # and never touching a release that is still in use (current web symlink target,
 # current manifest, current bot, or any release whose bot unit is active such as
@@ -108,21 +156,12 @@ prune_old_releases() {
     protected["${release_root_abs}/${unit_release}"]=1
   fi
 
-  # Sort newest -> oldest by the trailing release timestamp, falling back to
-  # directory mtime when the id carries no timestamp.
+  # Newest -> oldest so the first `keep` are retained.
   local -a ordered=()
-  local dir stamp
+  local dir
   while IFS= read -r dir; do
     [[ -n "${dir}" ]] && ordered+=("${dir}")
-  done < <(
-    for dir in "${release_root_abs}"/*/; do
-      [[ -d "${dir}" ]] || continue
-      dir="${dir%/}"
-      stamp="$(basename "${dir}" | grep -oE '[0-9]{8}T[0-9]{6}Z' | tail -n 1)"
-      [[ -n "${stamp}" ]] || stamp="$(date -u -r "${dir}" +%Y%m%dT%H%M%SZ 2>/dev/null || echo 00000000T000000Z)"
-      printf '%s\t%s\n' "${stamp}" "${dir}"
-    done | sort -r | cut -f2-
-  )
+  done < <(releases_newest_first "${release_root_abs}")
 
   local index=0
   for dir in "${ordered[@]}"; do

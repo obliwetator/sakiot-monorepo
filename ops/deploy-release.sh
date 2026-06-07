@@ -133,9 +133,25 @@ if [[ -e "${artifact_dir}" ]]; then
 fi
 install -d -m 0755 "${artifact_dir}"
 
+# On rollback, reuse the binaries/dist already built for this exact SHA instead
+# of recompiling. Resolved per component; empty means build from source.
+reuse_bot=""
+reuse_web=""
+reuse_frontend=""
+if [[ "${mode}" == "rollback" && "${SAKIOT_ROLLBACK_FORCE_REBUILD:-0}" != "1" ]]; then
+  component_selected bot "${components[@]}" \
+    && reuse_bot="$(reusable_artifact "${release_root}" "${sha}" bot "${artifact_dir}")"
+  component_selected web "${components[@]}" \
+    && reuse_web="$(reusable_artifact "${release_root}" "${sha}" web "${artifact_dir}")"
+  component_selected frontend "${components[@]}" \
+    && reuse_frontend="$(reusable_artifact "${release_root}" "${sha}" frontend "${artifact_dir}")"
+fi
+
+# Only test/compile Rust when a Rust component is actually built from source.
+# Reused binaries were already tested at their original deploy.
 build_rust=0
-component_selected bot "${components[@]}" && build_rust=1
-component_selected web "${components[@]}" && build_rust=1
+component_selected bot "${components[@]}" && [[ -z "${reuse_bot}" ]] && build_rust=1
+component_selected web "${components[@]}" && [[ -z "${reuse_web}" ]] && build_rust=1
 if [[ "${build_rust}" == "1" ]]; then
   require_command protoc
   log "testing Rust workspace"
@@ -146,43 +162,60 @@ if [[ "${build_rust}" == "1" ]]; then
 fi
 
 if component_selected bot "${components[@]}"; then
-  log "building FBI Agent"
-  (
-    cd "${worktree}"
-    CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
-      cargo build --release --locked --package fbi_agent
-  )
   install -d -m 0755 "${artifact_dir}/fbi-agent"
-  install -m 0755 "${cache_dir}/cargo-target/release/fbi_agent" \
-    "${artifact_dir}/fbi-agent/fbi_agent"
+  if [[ -n "${reuse_bot}" ]]; then
+    log "reusing FBI Agent artifact from ${reuse_bot}"
+    install -m 0755 "${reuse_bot}/fbi-agent/fbi_agent" \
+      "${artifact_dir}/fbi-agent/fbi_agent"
+  else
+    log "building FBI Agent"
+    (
+      cd "${worktree}"
+      CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+        cargo build --release --locked --package fbi_agent
+    )
+    install -m 0755 "${cache_dir}/cargo-target/release/fbi_agent" \
+      "${artifact_dir}/fbi-agent/fbi_agent"
+  fi
 fi
 
 if component_selected web "${components[@]}"; then
-  log "building web server"
-  (
-    cd "${worktree}"
-    CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
-      cargo build --release --locked --package web_server
-  )
   install -d -m 0755 "${artifact_dir}/web"
-  install -m 0755 "${cache_dir}/cargo-target/release/web_server" \
-    "${artifact_dir}/web/web_server"
+  if [[ -n "${reuse_web}" ]]; then
+    log "reusing web server artifact from ${reuse_web}"
+    install -m 0755 "${reuse_web}/web/web_server" \
+      "${artifact_dir}/web/web_server"
+  else
+    log "building web server"
+    (
+      cd "${worktree}"
+      CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+        cargo build --release --locked --package web_server
+    )
+    install -m 0755 "${cache_dir}/cargo-target/release/web_server" \
+      "${artifact_dir}/web/web_server"
+  fi
 fi
 
 if component_selected frontend "${components[@]}"; then
-  require_command bun
-  log "testing and building frontend"
-  (
-    cd "${worktree}/sakiot_stage"
-    bun install --frozen-lockfile
-    bun run test
-    SAKIOT_RELEASE_TAG="${tag}" \
-      SAKIOT_COMMIT_SHA="${sha}" \
-      SAKIOT_BUNDLE_VERSION="${release_id}" \
-      bun run build
-  )
   install -d -m 0755 "${artifact_dir}/frontend"
-  cp -a "${worktree}/sakiot_stage/dist" "${artifact_dir}/frontend/dist"
+  if [[ -n "${reuse_frontend}" ]]; then
+    log "reusing frontend artifact from ${reuse_frontend}"
+    cp -a "${reuse_frontend}/frontend/dist" "${artifact_dir}/frontend/dist"
+  else
+    require_command bun
+    log "testing and building frontend"
+    (
+      cd "${worktree}/sakiot_stage"
+      bun install --frozen-lockfile
+      bun run test
+      SAKIOT_RELEASE_TAG="${tag}" \
+        SAKIOT_COMMIT_SHA="${sha}" \
+        SAKIOT_BUNDLE_VERSION="${release_id}" \
+        bun run build
+    )
+    cp -a "${worktree}/sakiot_stage/dist" "${artifact_dir}/frontend/dist"
+  fi
 fi
 
 if [[ -x "${worktree}/ops/tests/run.sh" ]]; then
@@ -474,6 +507,13 @@ changed_paths_json="$(
     printf '[]'
   fi
 )"
+reused_json="$(
+  jq -cn \
+    --argjson bot "$([[ -n "${reuse_bot}" ]] && echo true || echo false)" \
+    --argjson web "$([[ -n "${reuse_web}" ]] && echo true || echo false)" \
+    --argjson frontend "$([[ -n "${reuse_frontend}" ]] && echo true || echo false)" \
+    '{bot:$bot,web:$web,frontend:$frontend}'
+)"
 manifest="${artifact_dir}/manifest.json"
 jq -n \
   --arg mode "${mode}" \
@@ -487,6 +527,7 @@ jq -n \
   --argjson components "${components_json}" \
   --argjson changed_paths "${changed_paths_json}" \
   --argjson migrations_ran "${migrations_ran}" \
+  --argjson reused "${reused_json}" \
   '{
     mode:$mode,
     tag:$tag,
@@ -497,6 +538,7 @@ jq -n \
     components:$components,
     changed_paths:$changed_paths,
     database:{migrations_ran:$migrations_ran,migration_head:$migration_head},
+    reused:$reused,
     deployed_at:$deployed_at
   }' >"${manifest}"
 

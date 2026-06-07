@@ -65,10 +65,15 @@ Documentation-only tags are recorded as successful no-ops.
 
 ## Rollback
 
-Run the `Roll back production` workflow with a prior tag. Rollback rebuilds all
-application components and never reverses migrations or restores a database.
-It blocks when migration files differ from current production unless
-`allow_schema_mismatch` is explicitly selected after compatibility review.
+Run the `Roll back production` workflow with a prior tag. Rollback reuses the
+binaries and frontend `dist` already built for that commit when its release
+directory still exists under `/srv/sakiot/releases` (kept by retention), copying
+them into the new rollback release instead of recompiling; any component without
+a reusable artifact is rebuilt from source. Set `SAKIOT_ROLLBACK_FORCE_REBUILD=1`
+to skip reuse and rebuild everything. Rollback never reverses migrations or
+restores a database, and blocks when migration files differ from current
+production unless `allow_schema_mismatch` is explicitly selected after
+compatibility review.
 
 ## Runtime state
 
