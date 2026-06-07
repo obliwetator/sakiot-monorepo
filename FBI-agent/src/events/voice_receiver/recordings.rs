@@ -222,7 +222,10 @@ impl Recordings {
     }
 
     pub(super) fn user_ssrc_pairs(&self) -> Vec<(u64, u32)> {
-        self.user_ssrcs.iter().map(|(&uid, &ssrc)| (uid, ssrc)).collect()
+        self.user_ssrcs
+            .iter()
+            .map(|(&uid, &ssrc)| (uid, ssrc))
+            .collect()
     }
 
     // --- paused users -----------------------------------------------------
@@ -327,7 +330,11 @@ mod tests {
         assert!(removed.is_some());
         assert_eq!(stats.active_user_count(), 0);
         assert!(!rec.has_active_ssrc(100));
-        assert_eq!(rec.ssrc_for_user(7), None, "user index must not outlive writer");
+        assert_eq!(
+            rec.ssrc_for_user(7),
+            None,
+            "user index must not outlive writer"
+        );
     }
 
     #[test]
