@@ -13,7 +13,9 @@ for arguments in \
   "legacy-bot-is-active ssh.service" \
   "legacy-bot-disable fbi-agent@good.service extra.service" \
   "legacy-bot-enable ssh.service" \
+  "legacy-bot-restart ssh.service" \
   "legacy-web-stop-disable extra" \
+  "enable-web extra" \
   "daemon-reload"; do
   read -r -a argv <<<"${arguments}"
   if "${wrapper}" "${argv[@]}" >/dev/null 2>&1; then

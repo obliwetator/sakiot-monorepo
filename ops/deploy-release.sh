@@ -224,14 +224,22 @@ cancel_old_bot_drain() {
     return
   fi
   log "new FBI Agent failed readiness; cancelling old instance drain"
-  grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
+  if grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
     -d "{\"reason\":\"release ${release_id} failed readiness\"}" \
-    "${old_bot_grpc}" fbi_agent.Admin/CancelDrain >/dev/null || true
+    "${old_bot_grpc}" fbi_agent.Admin/CancelDrain >/dev/null; then
+    return
+  fi
+  if [[ "${old_bot_is_legacy}" == "1" ]]; then
+    log "legacy FBI Agent lacks CancelDrain; restarting it to clear drain state"
+    run_systemctl legacy-bot-restart "${old_bot_unit}" || \
+      log "legacy FBI Agent restart unavailable; manual restart required"
+  fi
 }
 recover_bot_on_error() {
   local status=$?
   if [[ "${new_bot_started}" == "1" && -n "${new_bot_unit}" ]]; then
     run_systemctl stop "${new_bot_unit}" || true
+    run_systemctl disable "${new_bot_unit}" || true
     printf '%s\n' "${previous_bot_unit}" >"${state_dir}/current-bot.unit"
     printf '%s\n' "${previous_bot_grpc}" >"${state_dir}/current-bot.grpc"
   fi
@@ -387,6 +395,9 @@ EOF
     restore_previous_web
     fail_deployment "web server restart failed"
   fi
+  if ! run_systemctl enable-web >/dev/null; then
+    log "web enable action unavailable; install updated production controls"
+  fi
 
   web_ready=0
   for _ in $(seq 1 30); do
@@ -424,6 +435,16 @@ if [[ "${bot_handoff_pending}" == "1" ]]; then
   grpcurl -max-time 3 -plaintext -import-path "${proto_dir}" -proto fbi_agent.proto \
     -d "{\"reason\":\"release ${release_id} is fully ready\"}" \
     "${old_bot_grpc}" fbi_agent.Admin/ShutdownWhenEmpty >/dev/null
+fi
+
+if component_selected bot "${components[@]}"; then
+  for stale_bot_dir in "${release_root}"/*/fbi-agent; do
+    [[ -d "${stale_bot_dir}" ]] || continue
+    stale_release_id="$(basename "$(dirname "${stale_bot_dir}")")"
+    stale_bot_unit="sakiot-fbi-agent@${stale_release_id}.service"
+    [[ "${stale_bot_unit}" == "${new_bot_unit}" ]] && continue
+    run_systemctl disable "${stale_bot_unit}" >/dev/null || true
+  done
 fi
 bot_recovery_required=0
 new_bot_started=0

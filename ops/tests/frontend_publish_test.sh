@@ -3,7 +3,11 @@ set -euo pipefail
 
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 temporary="$(mktemp -d)"
-trap 'rm -rf "${temporary}"' EXIT
+cleanup() {
+  chmod -R u+w "${temporary}" 2>/dev/null || true
+  rm -rf "${temporary}"
+}
+trap cleanup EXIT
 mkdir -p "${temporary}/bin" "${temporary}/dist/assets" "${temporary}/target"
 touch "${temporary}/dist/assets/app-hash.js" \
   "${temporary}/dist/index.html" \
@@ -17,6 +21,7 @@ EOF
 cat >"${temporary}/bin/install" <<'EOF'
 #!/usr/bin/env bash
 printf 'install %s\n' "$*" >>"${CALL_LOG}"
+cp "${@: -2:1}" "${@: -1}"
 EOF
 chmod +x "${temporary}/bin/rsync" "${temporary}/bin/install"
 
@@ -27,7 +32,26 @@ SAKIOT_FRONTEND_DIST="${temporary}/dist" \
   "${test_dir}/../../sakiot_stage/scripts/deploy.sh"
 
 mapfile -t calls <"${temporary}/calls"
-[[ "${calls[0]}" == rsync*"dist/assets/"* ]]
-[[ "${calls[1]}" == rsync*"--exclude=index.html"*"dist/"* ]]
+[[ "${calls[0]}" == rsync*"--no-owner --no-group"*"dist/assets/"* ]]
+[[ "${calls[1]}" == rsync*"--exclude=assets.legacy-*/"*"--exclude=index.html"*"dist/"* ]]
 [[ "${calls[2]}" == install*"index.html"* ]]
 [[ "${calls[3]}" == install*"version.json"* ]]
+[[ -f "${temporary}/target/index.html" ]]
+[[ -f "${temporary}/target/version.json" ]]
+
+mkdir -p "${temporary}/legacy-target/assets"
+touch "${temporary}/legacy-target/assets/old-hash.js"
+chmod 0555 "${temporary}/legacy-target/assets"
+: >"${temporary}/calls"
+
+CALL_LOG="${temporary}/calls" \
+PATH="${temporary}/bin:${PATH}" \
+SAKIOT_FRONTEND_ROOT="${temporary}/legacy-target" \
+SAKIOT_FRONTEND_DIST="${temporary}/dist" \
+  "${test_dir}/../../sakiot_stage/scripts/deploy.sh"
+
+mapfile -t calls <"${temporary}/calls"
+[[ "${calls[0]}" == rsync*"assets.legacy-"*"legacy-target/assets/"* ]]
+[[ "${calls[1]}" == rsync*"dist/assets/"*"legacy-target/assets/"* ]]
+[[ -d "${temporary}/legacy-target/assets" ]]
+compgen -G "${temporary}/legacy-target/assets.legacy-*" >/dev/null

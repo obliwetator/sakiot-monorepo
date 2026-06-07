@@ -23,6 +23,10 @@ case "${1:-}" in
     [[ "$#" -eq 2 && "$2" == "sakiot-web.service" ]] || exit 2
     exec /usr/bin/systemctl restart sakiot-web.service
     ;;
+  enable-web)
+    [[ "$#" -eq 1 ]] || exit 2
+    exec /usr/bin/systemctl enable sakiot-web.service
+    ;;
   legacy-web-is-active)
     [[ "$#" -eq 1 ]] || exit 2
     exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
@@ -56,6 +60,11 @@ case "${1:-}" in
     [[ "$#" -eq 2 && "$2" =~ ${legacy_bot_unit_pattern} ]] || exit 2
     exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
       enable "$2"
+    ;;
+  legacy-bot-restart)
+    [[ "$#" -eq 2 && "$2" =~ ${legacy_bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl --user --machine="${legacy_machine}" \
+      restart "$2"
     ;;
   *)
     exit 2
