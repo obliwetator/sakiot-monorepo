@@ -510,5 +510,9 @@ if [[ "${mode}" == "release" ]]; then
   printf '%s\n' "${sha}" >"${tag_record}"
 fi
 
+keep_releases="${SAKIOT_KEEP_RELEASES:-5}"
+prune_old_releases "${release_root}" "${current_root}" "${state_dir}" \
+  "${keep_releases}" || log "release pruning encountered an error; continuing"
+
 log "${mode} complete: ${release_id}"
-log "stopped release directories retained for rollback"
+log "newest ${keep_releases} releases retained for rollback"
