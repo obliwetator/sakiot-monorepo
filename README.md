@@ -2,7 +2,7 @@
 
 Sakiot is a Discord voice-recording system. The bot records voice activity,
 stores audio and metadata, and exposes recordings through a web application.
-
+ 
 ## Repository Layout
 
 - `FBI-agent` - Discord bot and voice recorder.
