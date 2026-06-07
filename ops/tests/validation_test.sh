@@ -16,6 +16,12 @@ if (validate_tag 'v1.0;id') >/dev/null 2>&1; then
   echo "accepted shell metacharacters in tag" >&2
   exit 1
 fi
+for bad_tag in 'v1.23' 'v1.2.3-rc1' 'v1.2' 'v1.2.3.4' 'v1.2.x'; do
+  if (validate_tag "${bad_tag}") >/dev/null 2>&1; then
+    echo "accepted non-strict-semver tag: ${bad_tag}" >&2
+    exit 1
+  fi
+done
 if (validate_sha 'deadbeef') >/dev/null 2>&1; then
   echo "accepted short commit SHA" >&2
   exit 1

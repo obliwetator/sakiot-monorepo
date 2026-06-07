@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Local helper to cut a production release tag safely. Run from a clean checkout
+# of the repository; it validates, confirms, then creates and pushes the tag that
+# triggers the production deploy workflow. Not installed on the VPS.
+set -Eeuo pipefail
+
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+skip_staging_check=0
+tag=""
+for arg in "$@"; do
+  case "${arg}" in
+    --skip-staging-check) skip_staging_check=1 ;;
+    -*) die "unknown option: ${arg}" ;;
+    *) [[ -z "${tag}" ]] || die "unexpected argument: ${arg}"; tag="${arg}" ;;
+  esac
+done
+
+[[ -n "${tag}" ]] || die "usage: ops/release vX.Y.Z [--skip-staging-check]"
+[[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || die "tag must be strict semver, e.g. v1.2.3 (got '${tag}')"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repository"
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+[[ "${branch}" == "main" ]] || die "must release from main (on '${branch}')"
+
+[[ -z "$(git status --porcelain)" ]] || die "working tree is not clean"
+
+git fetch --quiet origin main "refs/tags/*:refs/tags/*"
+
+head_sha="$(git rev-parse HEAD)"
+origin_sha="$(git rev-parse origin/main)"
+[[ "${head_sha}" == "${origin_sha}" ]] \
+  || die "local main (${head_sha:0:12}) differs from origin/main (${origin_sha:0:12}); pull/push first"
+
+git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1 \
+  && die "tag ${tag} already exists locally"
+git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1 \
+  && die "tag ${tag} already exists on origin"
+
+# Soft staging gate: the commit should already be deployed on staging.
+staging_url="${SAKIOT_STAGING_VERSION_URL:-https://debug.patrykstyla.com/version.json}"
+if [[ "${skip_staging_check}" == "1" ]]; then
+  printf 'WARNING: skipping staging verification (--skip-staging-check)\n' >&2
+else
+  staging_sha="$(curl -fsS --connect-timeout 5 --max-time 10 "${staging_url}" \
+    | jq -r '.commitSha // empty' 2>/dev/null || true)"
+  if [[ -z "${staging_sha}" ]]; then
+    die "could not read staging commit from ${staging_url}; deploy this commit to staging first, or pass --skip-staging-check"
+  fi
+  if [[ "${staging_sha}" != "${head_sha}" ]]; then
+    die "staging is on ${staging_sha:0:12}, not ${head_sha:0:12}; let staging catch up to this commit, or pass --skip-staging-check"
+  fi
+  printf 'staging verified on %s\n' "${head_sha:0:12}"
+fi
+
+last_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)"
+printf '\nReleasing %s at %s\n' "${tag}" "${head_sha:0:12}"
+if [[ -n "${last_tag}" ]]; then
+  printf 'Changes since %s:\n' "${last_tag}"
+  git --no-pager log --oneline "${last_tag}..HEAD"
+else
+  printf '(no previous release tag found)\n'
+fi
+
+printf '\nCreate and push %s? [y/N] ' "${tag}"
+read -r reply
+[[ "${reply}" == "y" || "${reply}" == "Y" ]] || die "aborted"
+
+git tag -a "${tag}" -m "${tag}"
+git push origin "${tag}"
+printf 'pushed %s -> production deploy triggered\n' "${tag}"

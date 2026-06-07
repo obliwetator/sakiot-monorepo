@@ -14,7 +14,9 @@ require_command() {
 }
 
 validate_tag() {
-  [[ "$1" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] || die "invalid release tag: $1"
+  # Strict semver. Suffixes/typos (v1.23, v1.2.3-rc1) are rejected so only
+  # intentional production releases deploy.
+  [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid release tag: $1"
 }
 
 validate_sha() {
