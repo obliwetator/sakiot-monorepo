@@ -14,6 +14,8 @@
 //! - `bots.user_ssrcs[uid] == ssrc`  =>  `bots.ssrcs` contains `ssrc`.
 //! - `stats.active_user_count == active.len()` (synced on every active mutation).
 
+#[cfg(test)]
+use crate::cast::ToI64;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -300,7 +302,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         UserRecording {
             writer,
-            audio_file_id: ssrc as i64,
+            audio_file_id: ssrc.to_i64(),
             file_name: format!("rec-{user_id}"),
             start_time: chrono::Utc::now(),
             user_id,

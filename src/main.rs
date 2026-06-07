@@ -5,6 +5,7 @@ pub mod reaper;
 pub use app_state::{Custom, HasBossMusic};
 pub use metrics::*;
 
+pub mod cast;
 pub mod commands;
 pub mod config;
 pub mod cooldown;

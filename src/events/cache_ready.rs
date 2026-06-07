@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::client::Context;
 use serenity::model::guild::Guild;
 use serenity::model::id::GuildId;
@@ -51,7 +52,7 @@ async fn seed_voice_presence_metrics(handler: &Handler, ctx: &Context, guilds: &
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_secs().to_i64())
         .unwrap_or(0);
 
     for guild in guilds {

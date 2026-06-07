@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::model::id::ChannelId;
 use sqlx::{Pool, Postgres};
 use tracing::{info, warn};
@@ -186,11 +187,11 @@ pub(super) async fn record_voice_events(
     new: &serenity::model::prelude::VoiceState,
     log_changes: bool,
 ) {
-    let Some(guild_id) = new.guild_id.map(|g| g.get() as i64) else {
+    let Some(guild_id) = new.guild_id.map(|g| g.to_i64()) else {
         return;
     };
-    let user_id = new.user_id.get() as i64;
-    let new_channel = new.channel_id.map(|c| c.get() as i64);
+    let user_id = new.user_id.to_i64();
+    let new_channel = new.channel_id.map(|c| c.to_i64());
 
     match channel_transition(old.and_then(|o| o.channel_id), new.channel_id) {
         ChannelTransition::Joined(new_ch) => {
@@ -200,7 +201,7 @@ pub(super) async fn record_voice_events(
             insert_voice_event(
                 pool,
                 guild_id,
-                Some(new_ch.get() as i64),
+                Some(new_ch.to_i64()),
                 user_id,
                 EVT_CHANNEL_JOIN,
             )
@@ -213,7 +214,7 @@ pub(super) async fn record_voice_events(
             insert_voice_event(
                 pool,
                 guild_id,
-                Some(old_ch.get() as i64),
+                Some(old_ch.to_i64()),
                 user_id,
                 EVT_CHANNEL_LEAVE,
             )
@@ -226,7 +227,7 @@ pub(super) async fn record_voice_events(
             insert_voice_event(
                 pool,
                 guild_id,
-                Some(to.get() as i64),
+                Some(to.to_i64()),
                 user_id,
                 EVT_CHANNEL_SWITCH,
             )

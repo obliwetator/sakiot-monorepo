@@ -135,6 +135,7 @@ mod tests {
     use super::pause::{
         USER_REJOIN_RESUME_TIMEOUT_MS, paused_timeout_matches, silence_frames_for_gap_ms,
     };
+    use crate::cast::ToI64;
 
     #[test]
     fn gap_ms_rounds_up_to_20ms_silence_frames() {
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn ten_minute_user_rejoin_gap_maps_to_silence_frames() {
         assert_eq!(
-            silence_frames_for_gap_ms(USER_REJOIN_RESUME_TIMEOUT_MS as i64),
+            silence_frames_for_gap_ms(USER_REJOIN_RESUME_TIMEOUT_MS.to_i64()),
             30_000
         );
     }

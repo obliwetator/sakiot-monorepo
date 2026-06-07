@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
 
@@ -87,8 +88,8 @@ pub async fn claim_voice_session(
                    AND b.heartbeat_at > now() - ($5::double precision * interval '1 second')
                    AND b.state <> 'stopped'
              )",
-        guild_id.get() as i64,
-        channel_id.get() as i64,
+        guild_id.to_i64(),
+        channel_id.to_i64(),
         runtime.config().instance_id,
         if runtime.is_draining() {
             "draining"
@@ -119,7 +120,7 @@ pub async fn release_voice_session(
     let result = sqlx::query!(
         "DELETE FROM voice_session_leases
           WHERE guild_id = $1 AND owner_instance_id = $2",
-        guild_id.get() as i64,
+        guild_id.to_i64(),
         runtime.config().instance_id
     )
     .execute(pool)
@@ -142,7 +143,7 @@ pub async fn active_lease_owner(
             AND b.heartbeat_at > now() - ($2::double precision * interval '1 second')
             AND b.state <> 'stopped'
           LIMIT 1",
-        guild_id.get() as i64,
+        guild_id.to_i64(),
         stale_after_seconds
     )
     .fetch_optional(pool)

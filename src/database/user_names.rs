@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use serenity::model::{guild::Guild, guild::Member, user::User};
 use sqlx::{Pool, Postgres};
 use tracing::{info, warn};
@@ -12,10 +13,10 @@ enum UserNameEventType {
 /// Record the latest observed names for a user. Each differing value also
 /// appends a row to user_name_history so renames stay traceable.
 pub async fn observe(pool: &Pool<Postgres>, guild_id: u64, user: &User, member: Option<&Member>) {
-    let user_id = user.id.get() as i64;
-    let guild_id_i = guild_id as i64;
-    let username = user.name.clone();
-    let global_name = user.global_name.clone();
+    let user_id = user.id.to_i64();
+    let guild_id_i = guild_id.to_i64();
+    let username = user.name.as_str();
+    let global_name = user.global_name.as_deref();
 
     let existing = sqlx::query!(
         "SELECT username, global_name FROM user_names WHERE user_id = $1",
@@ -43,16 +44,16 @@ pub async fn observe(pool: &Pool<Postgres>, guild_id: u64, user: &User, member: 
                 user_id,
                 None,
                 UserNameEventType::Username,
-                Some(&username),
+                Some(username),
             )
             .await;
-            if let Some(ref gn) = global_name {
+            if let Some(gn) = global_name {
                 push_history(pool, user_id, None, UserNameEventType::GlobalName, Some(gn)).await;
             }
         }
         Ok(Some(row)) => {
             let username_changed = row.username != username;
-            let global_changed = row.global_name != global_name;
+            let global_changed = row.global_name.as_deref() != global_name;
 
             if username_changed || global_changed {
                 if let Err(e) = sqlx::query!(
@@ -74,7 +75,7 @@ pub async fn observe(pool: &Pool<Postgres>, guild_id: u64, user: &User, member: 
                         user_id,
                         None,
                         UserNameEventType::Username,
-                        Some(&username),
+                        Some(username),
                     )
                     .await;
                 }
@@ -84,7 +85,7 @@ pub async fn observe(pool: &Pool<Postgres>, guild_id: u64, user: &User, member: 
                         user_id,
                         None,
                         UserNameEventType::GlobalName,
-                        global_name.as_deref(),
+                        global_name,
                     )
                     .await;
                 }

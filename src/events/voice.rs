@@ -1,3 +1,4 @@
+use crate::cast::ToI64;
 use crate::event_handler::Handler;
 use serenity::{
     client::Context,
@@ -180,7 +181,7 @@ async fn track_active_voice_state_metrics(
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_secs().to_i64())
         .unwrap_or_else(|err| {
             error!("System clock before UNIX_EPOCH: {}", err);
             0
