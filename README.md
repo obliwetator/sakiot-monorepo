@@ -102,4 +102,6 @@ Media defaults to the repository's `data` directory. Override this with
 `SAKIOT_DATA_DIR`, for example `/data` in containers with a shared volume.
 
 Each component has its own README with configuration and deployment details.
-Production tag deployment and rollback are documented in `ops/README.md`.
+Pushes to `main` auto-deploy to a staging instance; production ships on strict
+`vX.Y.Z` tags (use `ops/release`). Staging, tag deployment, and rollback are
+documented in `ops/README.md`.

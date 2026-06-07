@@ -17,5 +17,9 @@ if [[ "${original}" =~ ^rollback\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})\ --all
     --allow-schema-mismatch
 fi
 
+if [[ "${original}" =~ ^staging\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" stage "${BASH_REMATCH[1]}"
+fi
+
 echo "rejected deployment command" >&2
 exit 126

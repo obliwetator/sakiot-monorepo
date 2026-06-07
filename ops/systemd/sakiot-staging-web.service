@@ -1,0 +1,22 @@
+[Unit]
+Description=Sakiot staging web server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sakiot
+Group=sakiot
+WorkingDirectory=/var/lib/sakiot-staging/data
+EnvironmentFile=/etc/sakiot/staging.env
+EnvironmentFile=/srv/sakiot-staging/current/web/service.env
+ExecStart=/srv/sakiot-staging/current/web/web_server
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

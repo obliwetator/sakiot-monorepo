@@ -16,6 +16,13 @@ for arguments in \
   "legacy-bot-restart ssh.service" \
   "legacy-web-stop-disable extra" \
   "enable-web extra" \
+  "enable-web sakiot-staging-web.service.evil" \
+  "enable-web sakiot-web.service extra" \
+  "restart sakiot-web.service extra.service" \
+  "restart evil-sakiot-staging-web.service" \
+  "stop sakiot-staging-fbi-agent@.service" \
+  "is-active --quiet sakiot-staging-web.service" \
+  "start sakiot-staging-fbi-agent@good.service extra.service" \
   "daemon-reload"; do
   read -r -a argv <<<"${arguments}"
   if "${wrapper}" "${argv[@]}" >/dev/null 2>&1; then

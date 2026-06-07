@@ -28,6 +28,16 @@ install -d -o sakiot -g sakiot -m 0750 \
   /srv/sakiot/current
 install -d -o sakiot -g sakiot -m 0755 /var/www/patrykstyla.com
 
+# Staging instance: same user, separate layout.
+install -d -o sakiot -g sakiot -m 0750 \
+  /var/lib/sakiot-staging/data \
+  /var/lib/sakiot-staging/deploy \
+  /var/lib/sakiot-staging/backups \
+  /var/cache/sakiot-staging \
+  /srv/sakiot-staging/releases \
+  /srv/sakiot-staging/current
+install -d -o sakiot -g sakiot -m 0755 /var/www/debug.patrykstyla.com
+
 rm -rf "${install_root}"
 install -d -o root -g root -m 0755 "${install_root}"
 cp -a "${script_dir}/." "${install_root}/"
@@ -41,6 +51,10 @@ install -m 0644 "${script_dir}/systemd/sakiot-fbi-agent@.service" \
   /etc/systemd/system/sakiot-fbi-agent@.service
 install -m 0644 "${script_dir}/systemd/sakiot-web.service" \
   /etc/systemd/system/sakiot-web.service
+install -m 0644 "${script_dir}/systemd/sakiot-staging-fbi-agent@.service" \
+  /etc/systemd/system/sakiot-staging-fbi-agent@.service
+install -m 0644 "${script_dir}/systemd/sakiot-staging-web.service" \
+  /etc/systemd/system/sakiot-staging-web.service
 visudo -cf "${script_dir}/sudoers/sakiot-deploy"
 install -m 0440 "${script_dir}/sudoers/sakiot-deploy" \
   /etc/sudoers.d/sakiot-deploy
@@ -48,6 +62,10 @@ install -m 0440 "${script_dir}/sudoers/sakiot-deploy" \
 if [[ ! -e /etc/sakiot/production.env ]]; then
   install -o root -g sakiot -m 0640 \
     "${script_dir}/production.env.example" /etc/sakiot/production.env
+fi
+if [[ ! -e /etc/sakiot/staging.env ]]; then
+  install -o root -g sakiot -m 0640 \
+    "${script_dir}/staging.env.example" /etc/sakiot/staging.env
 fi
 
 install -d -o sakiot -g sakiot -m 0700 /var/lib/sakiot/.ssh
@@ -58,4 +76,6 @@ chown sakiot:sakiot "${authorized_keys}"
 chmod 0600 "${authorized_keys}"
 
 systemctl daemon-reload
-echo "production skeleton installed; edit /etc/sakiot/production.env before first tag"
+echo "production + staging skeleton installed"
+echo "edit /etc/sakiot/production.env before the first tag"
+echo "edit /etc/sakiot/staging.env and run 'createdb sakiot_staging' before the first main push"

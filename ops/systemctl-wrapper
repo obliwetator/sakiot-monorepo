@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-bot_unit_pattern='^sakiot-fbi-agent@[A-Za-z0-9._-]+\.service$'
+bot_unit_pattern='^sakiot(-staging)?-fbi-agent@[A-Za-z0-9._-]+\.service$'
+web_unit_pattern='^sakiot(-staging)?-web\.service$'
 legacy_bot_unit_pattern='^fbi-agent@[A-Za-z0-9._-]+\.service$'
 legacy_machine='tulipan@.host'
 
@@ -12,7 +13,7 @@ case "${1:-}" in
     ;;
   stop)
     [[ "$#" -eq 2 ]] || exit 2
-    [[ "$2" =~ ${bot_unit_pattern} || "$2" == "sakiot-web.service" ]] || exit 2
+    [[ "$2" =~ ${bot_unit_pattern} || "$2" =~ ${web_unit_pattern} ]] || exit 2
     exec /usr/bin/systemctl stop "$2"
     ;;
   is-active)
@@ -20,12 +21,12 @@ case "${1:-}" in
     exec /usr/bin/systemctl is-active --quiet "$3"
     ;;
   restart)
-    [[ "$#" -eq 2 && "$2" == "sakiot-web.service" ]] || exit 2
-    exec /usr/bin/systemctl restart sakiot-web.service
+    [[ "$#" -eq 2 && "$2" =~ ${web_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl restart "$2"
     ;;
   enable-web)
-    [[ "$#" -eq 1 ]] || exit 2
-    exec /usr/bin/systemctl enable sakiot-web.service
+    [[ "$#" -eq 2 && "$2" =~ ${web_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl enable "$2"
     ;;
   legacy-web-is-active)
     [[ "$#" -eq 1 ]] || exit 2

@@ -9,24 +9,42 @@ source "${script_dir}/lib/common.sh"
 source "${script_dir}/lib/components.sh"
 
 mode="${1:-}"
-tag="${2:-}"
-sha="${3:-}"
-schema_override="${4:-}"
+schema_override=""
+case "${mode}" in
+  release|rollback)
+    target="production"
+    tag="${2:-}"
+    sha="${3:-}"
+    schema_override="${4:-}"
+    validate_tag "${tag}"
+    validate_sha "${sha}"
+    if [[ -n "${schema_override}" && "${schema_override}" != "--allow-schema-mismatch" ]]; then
+      die "invalid rollback option"
+    fi
+    ;;
+  stage)
+    target="staging"
+    tag="main"
+    sha="${2:-}"
+    validate_sha "${sha}"
+    ;;
+  *)
+    die "invalid deployment mode"
+    ;;
+esac
 
-[[ "${mode}" == "release" || "${mode}" == "rollback" ]] || die "invalid deployment mode"
-validate_tag "${tag}"
-validate_sha "${sha}"
-if [[ -n "${schema_override}" && "${schema_override}" != "--allow-schema-mismatch" ]]; then
-  die "invalid rollback option"
-fi
-
-env_file="${SAKIOT_ENV_FILE:-/etc/sakiot/production.env}"
+default_env_file="/etc/sakiot/production.env"
+[[ "${target}" == "staging" ]] && default_env_file="/etc/sakiot/staging.env"
+env_file="${SAKIOT_ENV_FILE:-${default_env_file}}"
 if [[ -f "${env_file}" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "${env_file}"
   set +a
 fi
+
+web_unit="${SAKIOT_WEB_UNIT:-sakiot-web.service}"
+bot_unit_prefix="${SAKIOT_BOT_UNIT_PREFIX:-sakiot-fbi-agent@}"
 
 repository_url="${SAKIOT_REPOSITORY_URL:?set SAKIOT_REPOSITORY_URL}"
 [[ "${repository_url}" == https://* ]] || die "SAKIOT_REPOSITORY_URL must use HTTPS"
@@ -71,18 +89,25 @@ if [[ ! -d "${source_repo}/.git" ]]; then
 fi
 
 git -C "${source_repo}" remote set-url origin "${repository_url}"
-git -C "${source_repo}" fetch --prune origin \
-  '+refs/heads/*:refs/remotes/origin/*' \
-  "+refs/tags/${tag}:refs/tags/${tag}"
+if [[ "${target}" == "production" ]]; then
+  git -C "${source_repo}" fetch --prune origin \
+    '+refs/heads/*:refs/remotes/origin/*' \
+    "+refs/tags/${tag}:refs/tags/${tag}"
 
-resolved_sha="$(git -C "${source_repo}" rev-list -n 1 "refs/tags/${tag}")"
-[[ "${resolved_sha}" == "${sha}" ]] || {
-  die "tag ${tag} resolves to ${resolved_sha}, not supplied SHA ${sha}"
-}
+  resolved_sha="$(git -C "${source_repo}" rev-list -n 1 "refs/tags/${tag}")"
+  [[ "${resolved_sha}" == "${sha}" ]] || {
+    die "tag ${tag} resolves to ${resolved_sha}, not supplied SHA ${sha}"
+  }
+else
+  git -C "${source_repo}" fetch --prune origin \
+    '+refs/heads/*:refs/remotes/origin/*'
+fi
 git -C "${source_repo}" cat-file -e "${sha}^{commit}"
 
-tag_record="${state_dir}/tags/${tag}"
-validate_tag_record "${mode}" "${tag_record}" "${tag}" "${sha}"
+if [[ "${target}" == "production" ]]; then
+  tag_record="${state_dir}/tags/${tag}"
+  validate_tag_record "${mode}" "${tag_record}" "${tag}" "${sha}"
+fi
 
 previous_sha="$(cat "${state_dir}/current.sha" 2>/dev/null || true)"
 previous_tag="$(cat "${state_dir}/current.tag" 2>/dev/null || true)"
@@ -99,6 +124,8 @@ fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 if [[ "${mode}" == "rollback" ]]; then
   release_id="${tag}-${sha:0:12}-rollback-${timestamp}"
+elif [[ "${mode}" == "stage" ]]; then
+  release_id="staging-${sha:0:12}-${timestamp}"
 else
   release_id="${tag}-${sha:0:12}-${timestamp}"
 fi
@@ -230,13 +257,18 @@ migration_head="$(
 migrations_ran=false
 if component_selected database "${components[@]}"; then
   require_command sqlx
-  require_command pg_dump
-  require_command age
   log "checking migration state"
   sqlx migrate info --source "${worktree}/sakiot-db/migrations"
-  log "backing up database and applying pending migrations"
-  SAKIOT_ENV_FILE="${env_file}" \
-    "${worktree}/sakiot-db/ops/backup/pre-migrate-backup.sh"
+  if [[ "${SAKIOT_SKIP_DB_BACKUP:-0}" == "1" ]]; then
+    log "SAKIOT_SKIP_DB_BACKUP=1: applying migrations without a pre-migrate backup"
+    sqlx migrate run --source "${worktree}/sakiot-db/migrations"
+  else
+    require_command pg_dump
+    require_command age
+    log "backing up database and applying pending migrations"
+    SAKIOT_ENV_FILE="${env_file}" \
+      "${worktree}/sakiot-db/ops/backup/pre-migrate-backup.sh"
+  fi
   migrations_ran=true
 fi
 
@@ -326,7 +358,7 @@ if component_selected bot "${components[@]}"; then
   old_bot_grpc="$(cat "${state_dir}/current-bot.grpc" 2>/dev/null || true)"
   previous_bot_unit="${old_bot_unit}"
   previous_bot_grpc="${old_bot_grpc}"
-  new_bot_unit="sakiot-fbi-agent@${release_id}.service"
+  new_bot_unit="${bot_unit_prefix}${release_id}.service"
   new_bot_grpc="127.0.0.1:$(
     python3 - <<'PY'
 import socket
@@ -424,7 +456,7 @@ EOF
   restore_previous_web() {
     if [[ -n "${previous_web_target}" ]]; then
       atomic_symlink "${previous_web_target}" "${current_root}/web"
-      run_systemctl restart sakiot-web.service || true
+      run_systemctl restart "${web_unit}" || true
     elif [[ "${legacy_web_stopped}" == "1" ]]; then
       run_systemctl legacy-web-start-enable || true
     fi
@@ -440,11 +472,11 @@ EOF
     legacy_web_stopped=1
   fi
   log "restarting web server"
-  if ! run_systemctl restart sakiot-web.service; then
+  if ! run_systemctl restart "${web_unit}"; then
     restore_previous_web
     fail_deployment "web server restart failed"
   fi
-  if ! run_systemctl enable-web >/dev/null; then
+  if ! run_systemctl enable-web "${web_unit}" >/dev/null; then
     log "web enable action unavailable; install updated production controls"
   fi
 
@@ -460,7 +492,7 @@ EOF
     sleep 1
   done
   if [[ "${web_ready}" != "1" ]]; then
-    run_systemctl stop sakiot-web.service || true
+    run_systemctl stop "${web_unit}" || true
     restore_previous_web
     fail_deployment "web server failed readiness; previous release restored"
   fi
@@ -490,7 +522,7 @@ if component_selected bot "${components[@]}"; then
   for stale_bot_dir in "${release_root}"/*/fbi-agent; do
     [[ -d "${stale_bot_dir}" ]] || continue
     stale_release_id="$(basename "$(dirname "${stale_bot_dir}")")"
-    stale_bot_unit="sakiot-fbi-agent@${stale_release_id}.service"
+    stale_bot_unit="${bot_unit_prefix}${stale_release_id}.service"
     [[ "${stale_bot_unit}" == "${new_bot_unit}" ]] && continue
     run_systemctl disable "${stale_bot_unit}" >/dev/null || true
   done
@@ -516,6 +548,7 @@ reused_json="$(
 )"
 manifest="${artifact_dir}/manifest.json"
 jq -n \
+  --arg target "${target}" \
   --arg mode "${mode}" \
   --arg tag "${tag}" \
   --arg sha "${sha}" \
@@ -529,6 +562,7 @@ jq -n \
   --argjson migrations_ran "${migrations_ran}" \
   --argjson reused "${reused_json}" \
   '{
+    target:$target,
     mode:$mode,
     tag:$tag,
     sha:$sha,

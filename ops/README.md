@@ -16,15 +16,19 @@ As root:
 ```sh
 ops/install-production.sh /root/github-deploy-key.pub
 $EDITOR /etc/sakiot/production.env
+$EDITOR /etc/sakiot/staging.env
+createdb sakiot_staging
 systemctl enable sakiot-web.service
 ```
 
-The installer creates the `sakiot` user, persistent directories, systemd
-units, restricted `authorized_keys`, and a root-owned systemd command validator
-behind narrowly scoped sudo rules. Validate
-the generated key line contains `restrict` and the forced command. Keep manual
-debug services under the developer account; production units are named
-`sakiot-web.service` and `sakiot-fbi-agent@<release>.service`.
+The installer creates the `sakiot` user, persistent directories for both the
+production and staging instances, systemd units, restricted `authorized_keys`,
+and a root-owned systemd command validator behind narrowly scoped sudo rules.
+Validate the generated key line contains `restrict` and the forced command. Keep
+manual debug services under the developer account; production units are named
+`sakiot-web.service` and `sakiot-fbi-agent@<release>.service`, and the staging
+instance uses `sakiot-staging-web.service` and
+`sakiot-staging-fbi-agent@<release>.service`.
 
 For the first release on a host still running the prior `tulipan` user units,
 set `SAKIOT_LEGACY_BOT_UNIT`, `SAKIOT_LEGACY_BOT_GRPC`, and
@@ -45,17 +49,51 @@ Create a `production` environment without required reviewers and add:
 - `DEPLOY_SSH_KEY`
 - `DEPLOY_KNOWN_HOSTS` (pre-verified host key, not live `ssh-keyscan` output)
 
+Create a `staging` environment with the same four secrets (same VPS, same deploy
+user and key). The staging deploy reuses the restricted key; the forced command
+accepts a `staging <sha>` verb in addition to `release`/`rollback`.
+
 Repository owner account should use a passkey or 2FA. Do not add deployment
 secrets to pull-request workflows or use `pull_request_target`.
 
+## Staging
+
+Every push to `main` deploys to the staging instance via the
+`Deploy staging` workflow (`staging <sha>` over the restricted SSH). Staging runs
+on the same VPS as a fully separate instance: the `sakiot_staging` database, port
+`8901`, the DEBUG Discord bot, `/var/lib/sakiot-staging` + `/srv/sakiot-staging`,
+its own systemd units, and `debug.patrykstyla.com` for the frontend. Its runtime
+profile lives in `/etc/sakiot/staging.env`.
+
+Staging reuses the production deploy engine through `ops/deploy stage <sha>`: it
+builds, runs `sakiot_staging` migrations, performs the same drain-aware bot
+handoff and health-gated web cutover, and prunes old staging releases — without
+touching production. Because the bot binary is built with `cargo build --release`
+(which reads the `*_RELEASE*` credential slots, see `FBI-agent/src/config.rs`),
+`staging.env` puts the DEBUG bot's token/application id in those slots.
+
 ## Release
 
-Push a new immutable release tag:
+Cut a production release with the helper, which validates before it pushes:
+
+```sh
+ops/release v1.2.3
+```
+
+It refuses a dirty tree, a non-`main` branch, a local/remote that is out of sync,
+a non-strict-semver or already-existing tag, and a commit that has not yet been
+deployed and verified on staging (`debug.patrykstyla.com/version.json`). Override
+the staging check only when justified with `--skip-staging-check`.
+
+The raw equivalent (no safety checks) is still:
 
 ```sh
 git tag -a v1.2.3 -m "v1.2.3"
 git push origin v1.2.3
 ```
+
+Production deploys only on **strict semver** tags `vX.Y.Z`; a typo like `v1.23`
+or a suffix like `v1.2.3-rc1` matches neither workflow and is a safe no-op.
 
 The deployer rejects invalid, moved, or previously successful tags. It locks
 deployment state, verifies the tag commit, selects changed components, completes

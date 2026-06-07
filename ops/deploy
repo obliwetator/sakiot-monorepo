@@ -18,8 +18,15 @@ case "${1:-}" in
     }
     exec "${script_dir}/deploy-release.sh" rollback "$2" "$3" "${4:-}"
     ;;
+  stage)
+    [[ "$#" -eq 2 ]] || {
+      echo "usage: ops/deploy stage <sha>" >&2
+      exit 2
+    }
+    exec "${script_dir}/deploy-release.sh" stage "$2"
+    ;;
   *)
-    echo "usage: ops/deploy {release|rollback} ..." >&2
+    echo "usage: ops/deploy {release|rollback|stage} ..." >&2
     exit 2
     ;;
 esac
