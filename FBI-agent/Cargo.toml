@@ -1,0 +1,71 @@
+[package]
+name = "fbi_agent"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serenity = { version = "0.12", default-features = false, features = [
+	"builder",
+	"voice",
+	"client",
+	"gateway",
+	"cache",
+	"http",
+	"model",
+	"utils",
+	"rustls_backend",
+	"unstable_discord_api",
+] }
+tokio = { version = "1.0", features = [
+	"macros",
+	"rt-multi-thread",
+	"tracing",
+	"signal",
+] }
+songbird = { version = "0.6", features = [
+	"driver",
+	"builtin-queue",
+	"receive",
+] }
+symphonia = { version = "0.5", features = ["ogg", "vorbis"] }
+serde_json = "1.0"
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres"] }
+tracing = { version = "0.1", features = ["attributes"] }
+tracing-subscriber = { version = "0.3", features = [
+	"env-filter",
+	"json",
+	"registry",
+] }
+chrono = "0.4"
+serde = "1"
+serde_repr = "0.1"
+tonic = "0.14"
+prost = "0.14"
+tonic-prost = "0.14.2"
+sakiot-proto = { path = "../sakiot-proto" }
+crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
+console-subscriber = "0.5.0"
+rustls = { version = "0.23", features = ["ring"] }
+tokio-stream = { version = "0.1.18", features = ["sync"] }
+dashmap = "6.1.0"
+dotenvy = "0.15"
+sysinfo = "0.38.4"
+opentelemetry = "0.31.0"
+opentelemetry_sdk = { version = "0.31.0", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.1", features = [
+	"grpc-tonic",
+	"metrics",
+] }
+tracing-opentelemetry = "0.32.1"
+tracing-appender = "0.2.4"
+sakiot-paths = { path = "../sakiot-paths" }
+ogg = "0.9"
+opus2 = "0.4"
+thiserror = "2"
+
+[profile.release]
+# debug = true
+[profile.bench]
+# debug = true

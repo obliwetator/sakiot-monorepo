@@ -1,0 +1,13 @@
+/target
+.env
+/voice_recordings
+/voice_recordings.bak
+/waveform_data
+/waveform_data.bak
+/no_silence_voice_recordings
+/no_silence_voice_recordings.bak
+/voice_recordings_v2
+/clips
+/logs
+/migrations
+/releases
