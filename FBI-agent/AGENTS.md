@@ -65,7 +65,7 @@ The script:
 
 1. Builds with `cargo build --release`.
 2. Creates `releases/<release_id>/`.
-3. Copies `target/release/fbi_agent` to `releases/<release_id>/fbi_agent`.
+3. Copies `../target/release/fbi_agent` to `releases/<release_id>/fbi_agent`.
 4. Writes `releases/<release_id>/service.env` with a unique localhost gRPC port.
 5. Installs/reloads the user systemd template.
 6. Calls old active instance `Admin/StartDrain` over gRPC.

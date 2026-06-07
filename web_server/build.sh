@@ -1,3 +1,8 @@
-#! /bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-cargo build --release && systemctl --user restart web_server.service
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${workspace_dir}"
+
+cargo build --package web_server --release
+systemctl --user restart web_server.service
