@@ -26,6 +26,7 @@ function bundleVersionPlugin(): Plugin {
 
 // https://vitejs.dev/config/
 export default defineConfig({
+	envDir: "..",
 	define: {
 		__BUNDLE_VERSION__: JSON.stringify(bundleVersion),
 	},

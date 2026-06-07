@@ -10,10 +10,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# shellcheck source=backup.env.example
-source "$SCRIPT_DIR/backup.env"
-: "${AGE_KEY_FILE:?set AGE_KEY_FILE in backup.env}"
-: "${BACKUP_DIR:?set BACKUP_DIR in backup.env}"
+# shellcheck source=load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
+: "${AGE_KEY_FILE:?set AGE_KEY_FILE in the root .env}"
+: "${BACKUP_DIR:?set BACKUP_DIR in the root .env}"
 
 TESTDB="sakiot_rouvas_restoretest"
 

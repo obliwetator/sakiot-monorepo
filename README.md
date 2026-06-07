@@ -16,6 +16,20 @@ stores audio and metadata, and exposes recordings through a web application.
 The Rust services share `sakiot-paths`, `sakiot-proto`, and one database schema.
 Changes spanning these contracts can therefore be committed atomically.
 
+## Environment
+
+Copy the root example once and fill in local credentials:
+
+```sh
+cp .env.example .env
+chmod 600 .env
+```
+
+The root `.env` is used by both Rust services, SQLx macros and CLI commands, and
+the database backup scripts. Set `SAKIOT_ENV_FILE` to override its path for
+backup jobs. Frontend development values live in root `.env.development`; Vite
+loads environment files from the monorepo root.
+
 ## Rust Workspace
 
 The repository root is a Cargo workspace containing both services and both

@@ -13,12 +13,12 @@ set -euo pipefail
 LABEL="${1:-hourly}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=backup.env.example
-source "$SCRIPT_DIR/backup.env"
+# shellcheck source=load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
 
-: "${DATABASE_URL:?set DATABASE_URL in backup.env}"
-: "${BACKUP_DIR:?set BACKUP_DIR in backup.env}"
-: "${AGE_RECIPIENT:?set AGE_RECIPIENT (age public key) in backup.env}"
+: "${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in the root .env}"
+: "${BACKUP_DIR:?set BACKUP_DIR in the root .env}"
+: "${AGE_RECIPIENT:?set AGE_RECIPIENT (age public key) in the root .env}"
 HOURLY_RETENTION_DAYS="${HOURLY_RETENTION_DAYS:-7}"
 NIGHTLY_RETENTION_DAYS="${NIGHTLY_RETENTION_DAYS:-90}"
 PREMIGRATE_RETENTION_DAYS="${PREMIGRATE_RETENTION_DAYS:-90}"
@@ -41,7 +41,7 @@ trap 'rm -f "$tmp"' EXIT
 
 # pipefail + errexit: if pg_dump dies mid-stream the pipeline fails and we exit
 # before the rename, leaving only the .partial (which the trap removes).
-pg_dump -Fc "$DATABASE_URL" | age -r "$AGE_RECIPIENT" -o "$tmp"
+pg_dump -Fc "$BACKUP_DATABASE_URL" | age -r "$AGE_RECIPIENT" -o "$tmp"
 
 mv "$tmp" "$out"
 chmod 600 "$out"

@@ -23,9 +23,9 @@ age-keygen -o /etc/sakiot/age-key.txt
 #   -> copy the "Public key: age1..." into AGE_RECIPIENT
 #   -> back up /etc/sakiot/age-key.txt OFF this host
 
-# 3. config
-cp ops/backup/backup.env.example ops/backup/backup.env
-$EDITOR ops/backup/backup.env      # fill DATABASE_URL, PGPASSWORD, AGE_*, BACKUP_DIR
+# 3. config (from the monorepo root)
+cp .env.example .env
+$EDITOR .env      # fill BACKUP_DATABASE_URL, PGPASSWORD, AGE_*, BACKUP_DIR
 
 # 4. smoke test
 ops/backup/backup.sh hourly        # writes one encrypted dump
@@ -35,9 +35,9 @@ ops/backup/restore-test.sh         # restores it into a scratch db and checks it
 ## Behavior
 
 ### `backup.sh [hourly|nightly|pre-migrate]`
-1. Sources `backup.env`; fails fast if required vars are unset.
+1. Sources the monorepo root `.env`; fails fast if required vars are unset.
 2. Takes a `flock` so two runs never overlap.
-3. Streams `pg_dump -Fc "$DATABASE_URL" | age -r "$AGE_RECIPIENT"` to
+3. Streams `pg_dump -Fc "$BACKUP_DATABASE_URL" | age -r "$AGE_RECIPIENT"` to
    `BACKUP_DIR/sakiot_rouvas_<label>_<YYYY-MM-DD_HHMM>.dump.age`.
    **No plaintext dump is ever written to disk.**
 4. Writes to a `.partial` file and only `mv`s it into place on success. If
@@ -103,7 +103,7 @@ slow/lock-heavy enough that 1-hour RPO is unacceptable. Then:
 ## Future: offsite
 
 Local-only is the weak point. To ship offsite, append one line to `backup.sh`
-after the prune step (and add the var to `backup.env`):
+after the prune step (and add the var to the root `.env`):
 
 ```sh
 # rclone copy "$BACKUP_DIR" "$RCLONE_REMOTE" --min-age 1m
@@ -113,9 +113,9 @@ Dumps are already `age`-encrypted, so the remote need not be trusted.
 
 ## Security
 
-- `backup.env`, `*.dump`, `*.dump.age` are gitignored — never commit them.
+- `.env`, `*.dump`, `*.dump.age` are gitignored - never commit them.
 - `AGE_KEY_FILE` (private key) is the keystone: a **lost** key makes every backup
   unrecoverable; a **leaked** key exposes all data. Store a copy off this host,
   access-restricted.
-- DB password lives in `backup.env` / `.env` (both gitignored). Lock down file
+- DB password lives in the root `.env` (gitignored). Lock down file
   perms (`chmod 600`).

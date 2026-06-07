@@ -10,9 +10,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=backup.env.example
-source "$SCRIPT_DIR/backup.env"
-: "${AGE_KEY_FILE:?set AGE_KEY_FILE (age private key, restore only) in backup.env}"
+# shellcheck source=load-env.sh
+source "$SCRIPT_DIR/load-env.sh"
+: "${AGE_KEY_FILE:?set AGE_KEY_FILE (age private key, restore only) in the root .env}"
 
 FILE="${1:?usage: restore.sh <file.dump.age> <target_db> [--force]}"
 TARGET="${2:?usage: restore.sh <file.dump.age> <target_db> [--force]}"
