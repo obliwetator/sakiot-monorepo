@@ -33,6 +33,7 @@ if [ -d "$ASSETS_TARGET" ] && [ ! -w "$ASSETS_TARGET" ]; then
 fi
 
 mkdir -p "$ASSETS_TARGET"
+chmod 0755 "$ASSETS_TARGET"
 
 # Keep old hashed assets so stale cached HTML and open browser sessions can still load.
 rsync -a --no-owner --no-group --no-perms --no-times --checksum \

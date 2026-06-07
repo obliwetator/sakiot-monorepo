@@ -10,6 +10,8 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "${temporary}/bin" "${temporary}/dist/assets" "${temporary}/target"
 chmod 0750 "${temporary}/target"
+mkdir -p "${temporary}/target/assets"
+chmod 0750 "${temporary}/target/assets"
 touch "${temporary}/dist/assets/app-hash.js" \
   "${temporary}/dist/index.html" \
   "${temporary}/dist/version.json" \
@@ -40,6 +42,7 @@ mapfile -t calls <"${temporary}/calls"
 [[ -f "${temporary}/target/index.html" ]]
 [[ -f "${temporary}/target/version.json" ]]
 [[ "$(stat -c '%a' "${temporary}/target")" == "755" ]]
+[[ "$(stat -c '%a' "${temporary}/target/assets")" == "755" ]]
 
 mkdir -p "${temporary}/legacy-target/assets"
 touch "${temporary}/legacy-target/assets/old-hash.js"
