@@ -1,0 +1,7 @@
+.env
+
+# backups
+ops/backup/backup.env
+*.dump
+*.dump.age
+*.age
