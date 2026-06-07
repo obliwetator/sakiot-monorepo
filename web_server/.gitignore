@@ -1,0 +1,10 @@
+/target
+/voice_recordings
+/no_silence_voice_recordings
+/clips
+.env
+*.pem
+/waveform_data
+/docs
+*.md
+!README.md

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>404 - Not Found</title>
+	<style>
+		:root {
+			--bg-color: #f9fafb;
+			--text-color: #111827;
+			--accent-color: #3b82f6;
+			--accent-hover: #2563eb;
+		}
+
+		@media (prefers-color-scheme: dark) {
+			:root {
+				--bg-color: #111827;
+				--text-color: #f9fafb;
+				--accent-color: #60a5fa;
+				--accent-hover: #93c5fd;
+			}
+		}
+
+		body {
+			background-color: var(--bg-color);
+			color: var(--text-color);
+			font-family: system-ui, -apple-system, sans-serif;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			height: 100vh;
+			margin: 0;
+			text-align: center;
+			transition: background-color 0.3s, color 0.3s;
+		}
+
+		h1 {
+			font-size: 5rem;
+			margin: 0 0 1rem 0;
+			font-weight: 800;
+		}
+
+		p {
+			font-size: 1.25rem;
+			margin: 0 0 2rem 0;
+			opacity: 0.8;
+		}
+
+		a {
+			color: var(--bg-color);
+			background-color: var(--accent-color);
+			text-decoration: none;
+			font-weight: 600;
+			padding: 0.75rem 1.5rem;
+			border-radius: 0.5rem;
+			transition: background-color 0.2s;
+		}
+
+		a:hover {
+			background-color: var(--accent-hover);
+		}
+	</style>
+</head>
+
+<body>
+	<h1>404</h1>
+	<p>Oops! The page you are looking for doesn't exist or has been moved.</p>
+
+</body>
+
+</html>

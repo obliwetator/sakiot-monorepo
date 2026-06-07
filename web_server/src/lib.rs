@@ -1,0 +1,17 @@
+pub mod admin;
+pub mod audio;
+pub mod auth;
+pub mod clips;
+pub mod config;
+pub mod dashboard;
+pub mod errors;
+pub mod fbi_agent_registry;
+pub mod grpc_client;
+pub mod http_metrics;
+pub mod openapi;
+pub mod permissions;
+pub mod proto;
+pub mod stamps;
+pub mod telemetry;
+pub mod user;
+pub mod waveform;

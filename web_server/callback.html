@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Document</title>
+</head>
+
+<body>
+	TEST
+</body>
+<script>
+	// Server sends opener origin in opener_origin cookie (from OAuth state param)
+	(function () {
+		var target = null;
+		var cookies = document.cookie.split(';');
+		for (var i = 0; i < cookies.length; i++) {
+			var cookie = cookies[i].trim();
+			if (cookie.startsWith('opener_origin=')) {
+				target = decodeURIComponent(cookie.substring('opener_origin='.length));
+				break;
+			}
+		}
+		if (window.opener && target) {
+			window.opener.postMessage({ success: 1 }, target);
+		}
+		window.close();
+	})();
+</script>
+
+</html>
