@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE audio_files\n            SET end_ts = COALESCE(end_ts, start_ts),\n                reaped = CASE WHEN end_ts IS NULL THEN TRUE ELSE reaped END,\n                recording_heartbeat_at = NULL,\n                finalize_reason_id = COALESCE(finalize_reason_id, 3)\n          WHERE recording_owner_instance_id = $1\n            AND end_ts IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "41544da1fbce0ff501ff575b9eff868ef8deb24129f5b9ff09c851ae94f0bc48"
+}

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n    \tSELECT id,\n        username,\n    \tavatar,\n    \temail,\n    \tflags,\n    \tpublic_flags\n    \tFROM discord_auth_user\n    \tWHERE id = $1\n    \t",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "avatar",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "avatar"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "email",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "flags",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "flags"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "public_flags",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "public_flags"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "25f3a591d960f429e7a62f9d6fd792fb50a8013328f5818a3ec8d75a6ca67d3b"
+}

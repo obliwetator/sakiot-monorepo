@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT DISTINCT ON (guilds_present.guild_id)\n            user_guilds.id as \"id!\",\n            user_guilds.name as \"name!\",\n            user_guilds.icon as \"icon\",\n            true as \"owner!\",\n            user_guilds.permissions as \"permissions!\"\n            FROM guilds_present\n            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "icon",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "icon"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "owner!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "permissions!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "permissions"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null,
+      false
+    ]
+  },
+  "hash": "2896307fefad1182280af937726b55844a76e4c6a71c09ed7469dcab997ce10f"
+}

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO clips\n            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time)\n         VALUES\n            ('forbidden-clip', $1, $2, $3, '2026/05/forbidden.ogg', 0),\n            ('own-clip', $4, $5, $6, '2026/05/own.ogg', 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b59c7aa431731f3b83350ec337cfe8edab856c2b35e0aa20796f25d8ed707a5c"
+}

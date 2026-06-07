@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO channel_type (id, type)\n         VALUES (2, 'voice')\n         ON CONFLICT (id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "58392ffea8eb527849865769ffe1722448f61921c9a48f4baa3156da396d3eb1"
+}

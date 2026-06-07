@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO voice_session_leases\n            (guild_id, channel_id, owner_instance_id, state, heartbeat_at, started_at)\n         VALUES ($1, $2, $3, $4, now(), now())\n         ON CONFLICT (guild_id) DO UPDATE\n            SET channel_id = EXCLUDED.channel_id,\n                owner_instance_id = EXCLUDED.owner_instance_id,\n                state = EXCLUDED.state,\n                heartbeat_at = now()\n          WHERE voice_session_leases.owner_instance_id = EXCLUDED.owner_instance_id\n             OR voice_session_leases.heartbeat_at <= now() - ($5::double precision * interval '1 second')\n             OR NOT EXISTS (\n                SELECT 1\n                  FROM bot_instances b\n                 WHERE b.instance_id = voice_session_leases.owner_instance_id\n                   AND b.heartbeat_at > now() - ($5::double precision * interval '1 second')\n                   AND b.state <> 'stopped'\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09135d74bac810ca8a9f8a3b4bece669abf21a8836359a91b4c25a16b28e9e61"
+}

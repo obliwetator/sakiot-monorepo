@@ -1,0 +1,137 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT clip_id,\n        user_id as \"user_id!\",\n        name,\n        original_file_name,\n        saved_file_name,\n        length,\n        size,\n        guild_id as \"guild_id!\",\n        channel_id as \"channel_id!\",\n        start_time\n        FROM clips\n        WHERE guild_id = $1 AND deleted_at IS NULL AND channel_id = ANY($2)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "clip_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "original_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "original_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "saved_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "saved_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "length",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "length"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "size",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "size"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "guild_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "channel_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "start_time",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "start_time"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "4c1cf82a3355d959591ea687bc53a2d6db507c7b7578110df19554432882b7b6"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT permission FROM roles\n\t\t\tWHERE guild_id =$1 AND role_id =$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "permission",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "permission"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5d39b7a9859e1a26850c6e34186fd18b55734801026b0acd50248d36fb172f0e"
+}

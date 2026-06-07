@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            channels.channel_id as \"channel_id!\",\n            COALESCE(channel_permissions.allow, 0) as \"allow!\",\n            COALESCE(channel_permissions.deny, 0) as \"deny!\"\n        FROM channels\n        LEFT JOIN channel_permissions\n            ON channels.channel_id = channel_permissions.channel_id\n            AND channel_permissions.target_id = $1\n        WHERE channels.type = 2\n        AND channels.guild_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "channels",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "allow!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "deny!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "93a2f2a498faf3e961b41d1082b0e8f3e5f2012489b4843ccdf6b4414bf0333f"
+}

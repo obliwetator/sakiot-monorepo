@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE voice_session_leases\n            SET state = $2, heartbeat_at = now()\n          WHERE owner_instance_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e195a282dd207ebd30d94c08a277ceb283f2de2e9eed3d852c3b87ebf94ace82"
+}

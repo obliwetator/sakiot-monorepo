@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"audio_file_id!\", file_name, guild_id, channel_id, start_ts\n           FROM audio_files\n          WHERE end_ts IS NULL\n            AND NOT EXISTS (\n                SELECT 1\n                  FROM bot_instances bi\n                 WHERE bi.instance_id = audio_files.recording_owner_instance_id\n                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')\n                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')\n                   AND bi.state <> 'stopped'\n            )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "audio_file_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "guild_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "start_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "start_ts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "3a207b076fd6c81745a088c0e6175d12b7b26b36d0cce09628e6a6d531dc89b2"
+}

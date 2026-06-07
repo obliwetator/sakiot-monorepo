@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_jam_cooldowns (guild_id, cooldown_seconds)\n         VALUES ($1, -1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f15326964cd61567e3adbee1850a4b8a8a6126cba23801948e1aaa5f1b2cd35b"
+}

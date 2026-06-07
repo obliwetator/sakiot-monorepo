@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE audio_files\n            SET end_ts = audio_files.start_ts + $1,\n                recording_heartbeat_at = NULL,\n                finalize_reason_id = $4\n          WHERE id = $2\n            AND recording_owner_instance_id = $3\n            AND end_ts IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba7f179b3490173d2838ea251ad7a6fd8cc9f937069b4601e5863acd0364327d"
+}

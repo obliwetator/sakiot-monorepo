@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bot_instances\n            SET state = 'stopped', heartbeat_at = now()\n          WHERE instance_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6c03fabcbd5b4658b90f9640919d4d65b089b7cead2e7a5e4f2a64767794f2f8"
+}

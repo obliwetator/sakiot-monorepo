@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id,\n            name,\n            icon,\n            owner,\n            permissions \n            FROM guilds_present \n            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id\n            AND user_guilds.user_id = $1;\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "icon",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "icon"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "owner"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "permissions",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "permissions"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c76b1f1a411b493a278fc6b9f44255a2d1821d321771491da3afd689c48063a5"
+}

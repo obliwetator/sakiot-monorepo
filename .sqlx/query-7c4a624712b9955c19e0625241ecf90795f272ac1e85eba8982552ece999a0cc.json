@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_names SET username = $2, global_name = $3, updated_at = now()\n                     WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7c4a624712b9955c19e0625241ecf90795f272ac1e85eba8982552ece999a0cc"
+}

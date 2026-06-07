@@ -42,6 +42,14 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
+SQLx query metadata is checked into `.sqlx` so rust-analyzer and offline builds
+do not need database credentials. After changing a `query!` macro or the
+database schema, refresh it against a migrated development database:
+
+```sh
+cargo sqlx prepare --workspace -- --all-targets
+```
+
 Service-specific commands remain available:
 
 ```sh

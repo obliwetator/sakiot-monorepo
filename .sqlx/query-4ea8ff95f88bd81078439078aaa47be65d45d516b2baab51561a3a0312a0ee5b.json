@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO channel_type (id, type) VALUES (2, 'voice')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4ea8ff95f88bd81078439078aaa47be65d45d516b2baab51561a3a0312a0ee5b"
+}

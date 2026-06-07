@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT last_reap_ts FROM bot_reaper_state WHERE id = 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_reap_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bot_reaper_state",
+            "name": "last_reap_ts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "83b55e0aa2b41408988fc906000a8912b4a5e1da50a7fd7760870e8ca9665837"
+}

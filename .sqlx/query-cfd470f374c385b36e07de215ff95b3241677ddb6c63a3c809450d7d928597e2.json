@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.owner_instance_id\n           FROM voice_session_leases v\n           JOIN bot_instances b ON b.instance_id = v.owner_instance_id\n          WHERE v.guild_id = $1\n            AND v.heartbeat_at > now() - ($2::double precision * interval '1 second')\n            AND b.heartbeat_at > now() - ($2::double precision * interval '1 second')\n            AND b.state <> 'stopped'\n          LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner_instance_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_session_leases",
+            "name": "owner_instance_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cfd470f374c385b36e07de215ff95b3241677ddb6c63a3c809450d7d928597e2"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM audio_files\n          WHERE end_ts IS NULL\n            AND NOT EXISTS (\n                SELECT 1\n                  FROM bot_instances bi\n                 WHERE bi.instance_id = audio_files.recording_owner_instance_id\n                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')\n                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')\n                   AND bi.state <> 'stopped'\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "66507c294b08e57f2edd3dfec071ae14f91ac2f7dfcbbf4f62e1adb94e89b02c"
+}

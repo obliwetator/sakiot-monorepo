@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM voice_session_leases\n          WHERE guild_id = $1 AND owner_instance_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "27a865648413577152b970216c7a2bbf30aaa935b362c7efe815d7790b89e0f5"
+}

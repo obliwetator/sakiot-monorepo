@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT af.file_name, af.channel_id\n           FROM audio_files af\n          WHERE af.guild_id = $1\n            AND af.end_ts IS NULL\n            AND af.reaped IS FALSE\n            AND EXISTS (\n                SELECT 1\n                  FROM bot_instances bi\n                 WHERE bi.instance_id = af.recording_owner_instance_id\n                   AND af.recording_heartbeat_at > now() - interval '120 seconds'\n                   AND bi.heartbeat_at > now() - interval '120 seconds'\n                   AND bi.state <> 'stopped'\n            )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "channel_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b99097a9ffa4f974c42fd3aea1f4a9cc62479d742994bbefdc93ea89d07433bf"
+}

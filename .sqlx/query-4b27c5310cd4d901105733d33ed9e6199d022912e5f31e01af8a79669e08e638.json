@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO stamps (guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts)\n         VALUES ($1, $2, $3, $3, 1000)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4b27c5310cd4d901105733d33ed9e6199d022912e5f31e01af8a79669e08e638"
+}

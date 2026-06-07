@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_jam_cooldowns (guild_id, cooldown_seconds, updated_at)\n         VALUES ($1, $2, NOW())\n         ON CONFLICT (guild_id) DO UPDATE\n         SET cooldown_seconds = EXCLUDED.cooldown_seconds, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a56aedecd77f4bf3d7d5584c3ca3510a0b2cf27524286c8a13df73baf1c37cb2"
+}

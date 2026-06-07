@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_jam_cooldown_overrides (guild_id, user_id, cooldown_seconds) VALUES ($1, $2, 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb458369135f812b76d5e88fcef7cac9c0bc872dee759bd62fd42e4e6a920d31"
+}

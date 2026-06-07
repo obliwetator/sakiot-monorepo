@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)\n         VALUES ($1, 'active', 'active', now(), now())\n         ON CONFLICT (instance_id) DO UPDATE SET state = 'active', heartbeat_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f35f04dc35f49f1a4206b97118f46fa0bf135d75d66cadcdb1df0d1c4910fcd1"
+}

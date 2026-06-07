@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audio_files (file_name, guild_id, channel_id, user_id, year, month)\n         VALUES ('forbidden-rec', $1, $2, $3, 2026, 5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d57b46a354ca6889c23b6e6b039ec5a8aa206d3971cf6fe14f2dfce620bd40b6"
+}

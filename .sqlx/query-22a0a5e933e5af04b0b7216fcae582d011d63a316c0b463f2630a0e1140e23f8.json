@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n              v.user_id,\n              v.channel_id,\n              t.name AS \"event_type!\",\n              ((EXTRACT(EPOCH FROM v.occurred_at) * 1000)::bigint - $1::bigint) AS \"offset_ms!\"\n           FROM voice_state_events v\n           JOIN voice_state_event_types t ON t.id = v.event_type_id\n           WHERE v.guild_id = $2\n             AND v.occurred_at >= to_timestamp(($1::bigint)::double precision / 1000.0)\n             AND v.occurred_at <= COALESCE(\n                 to_timestamp(($3::bigint)::double precision / 1000.0),\n                 now()\n             )\n             AND ($4::bigint IS NULL OR v.user_id = $4)\n           ORDER BY v.occurred_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_state_events",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_state_events",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type!",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "voice_state_event_types",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "offset_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "22a0a5e933e5af04b0b7216fcae582d011d63a316c0b463f2630a0e1140e23f8"
+}

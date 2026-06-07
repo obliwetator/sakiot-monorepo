@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bot_reaper_state (id, last_reap_ts)\n         VALUES (1, $1)\n         ON CONFLICT (id) DO UPDATE SET last_reap_ts = EXCLUDED.last_reap_ts",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5a46bc29e0d5b1df1812c5f0b00d54af2699f3095d34e6ce5bffc2903d59375b"
+}

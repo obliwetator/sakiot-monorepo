@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT cooldown_seconds FROM guild_jam_cooldowns WHERE guild_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cooldown_seconds",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "guild_jam_cooldowns",
+            "name": "cooldown_seconds"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cd37a6a531ff59f498e101090af8bb60f0b9d271dfee42e5fe9990bafe16bbc5"
+}

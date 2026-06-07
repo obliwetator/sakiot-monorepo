@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_jam_cooldown_overrides (guild_id, user_id, cooldown_seconds, updated_at)\n         VALUES ($1, $2, $3, NOW())\n         ON CONFLICT (guild_id, user_id) DO UPDATE\n         SET cooldown_seconds = EXCLUDED.cooldown_seconds, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5c4a9818605469851ab0a67054294d825763a4bdd21191fb4915b3c852cc2bb9"
+}

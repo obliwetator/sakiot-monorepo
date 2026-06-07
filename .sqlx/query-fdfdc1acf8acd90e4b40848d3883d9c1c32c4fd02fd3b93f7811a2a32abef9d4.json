@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "start_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "end_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "end_ts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "fdfdc1acf8acd90e4b40848d3883d9c1c32c4fd02fd3b93f7811a2a32abef9d4"
+}
