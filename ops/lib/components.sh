@@ -16,7 +16,10 @@ components_for_paths() {
 
   for path in "$@"; do
     case "${path}" in
-      *.md|docs/*)
+      *.md|docs/*|ops/*)
+        # ops/ is the deploy framework, installed out-of-band into
+        # /usr/local/lib/sakiot-deploy and /etc/systemd/system, not consumed
+        # from the release tag. Tag-time ops/ changes do not rebuild artifacts.
         ;;
       FBI-agent/*)
         selected[bot]=1
@@ -36,7 +39,7 @@ components_for_paths() {
         selected[bot]=1
         selected[web]=1
         ;;
-      sakiot-db/ops/*|ops/*|.github/*|compose*.yml|compose*.yaml|.env.example)
+      sakiot-db/ops/*|.github/*|compose*.yml|compose*.yaml|.env.example)
         selected[bot]=1
         selected[web]=1
         selected[frontend]=1
