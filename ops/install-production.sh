@@ -31,6 +31,7 @@ install -d -o sakiot -g sakiot -m 0755 /var/www/patrykstyla.com
 rm -rf "${install_root}"
 install -d -o root -g root -m 0755 "${install_root}"
 cp -a "${script_dir}/." "${install_root}/"
+chown -R root:root "${install_root}"
 find "${install_root}" -type d -exec chmod 0755 {} +
 find "${install_root}" -type f -name '*.sh' -exec chmod 0755 {} +
 chmod 0755 "${install_root}/deploy" "${install_root}/ssh/forced-command"
