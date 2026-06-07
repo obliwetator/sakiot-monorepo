@@ -81,7 +81,12 @@ Migrations have a single owner and are not run by either service:
 cd sakiot-db
 sqlx migrate info --source migrations
 sqlx migrate run --source migrations
+cd ..
+cargo sqlx prepare --workspace -- --all-targets
 ```
+
+Regenerate and commit `.sqlx` after every database migration so SQLx macros,
+rust-analyzer, and offline builds validate queries against the current schema.
 
 ## Runtime Media
 
