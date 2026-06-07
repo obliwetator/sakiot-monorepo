@@ -58,7 +58,6 @@ impl Receiver {
 
 #[async_trait]
 impl VoiceEventHandler for Receiver {
-    #[tracing::instrument(level = "trace", skip_all, name = "receiver_act", fields(guild_id = %self.guild_id))]
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         use EventContext as Ctx;
         let now_ms = chrono::Utc::now().timestamp_millis();
