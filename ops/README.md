@@ -156,3 +156,5 @@ sudo ./ops/remove-synthetic-recording-dirs.sh
 
 The cleanup accepts only the test ID range and refuses any directory referenced
 by `audio_files`.
+
+Permanent migration procedure: [DATA_MIGRATION_PLAN.md](DATA_MIGRATION_PLAN.md).
