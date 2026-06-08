@@ -32,7 +32,7 @@ Sakiot application:
 - Stores guild, channel, user, recording, and runtime metadata in Postgres.
 - Provides gRPC APIs for administration, dashboard state, snapshots, and bot
   control.
-- Supports drain-aware release deployment through the scripts in `deploy/`.
+- Supports drain-aware release deployment through the root `../ops/` pipeline.
 - Emits telemetry and process metrics for observability.
 
 Runtime media defaults to `../data` and can be moved by setting
