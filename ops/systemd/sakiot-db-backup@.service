@@ -1,0 +1,19 @@
+[Unit]
+Description=Sakiot database backup (%i)
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/usr/local/lib/sakiot-deploy/backup/backup.sh
+
+[Service]
+Type=oneshot
+User=sakiot
+Group=sakiot
+WorkingDirectory=/var/lib/sakiot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=SAKIOT_ENV_FILE=/etc/sakiot/production.env
+ExecStart=/usr/local/lib/sakiot-deploy/backup/backup.sh %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sakiot/backups

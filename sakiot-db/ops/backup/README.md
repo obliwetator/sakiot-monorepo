@@ -69,8 +69,11 @@ place of bare `sqlx migrate run` so every schema change has a rollback point.
 
 ## Cron
 
-Edit `crontab -e` for the user that owns `BACKUP_DIR` and can reach Postgres.
-Use absolute paths (cron has a minimal `PATH`); point them at this checkout.
+Production uses the systemd timers installed by `ops/install-production.sh`;
+they run as `sakiot` and write to `/var/lib/sakiot/backups`. Use cron only for a
+standalone development installation. Edit `crontab -e` for the user that owns
+`BACKUP_DIR` and can reach Postgres. Use absolute paths and point them at the
+current checkout.
 
 ```cron
 # m  h            dom mon dow  command

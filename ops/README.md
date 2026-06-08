@@ -23,7 +23,10 @@ systemctl enable sakiot-web.service
 
 The installer creates the `sakiot` user, persistent directories for both the
 production and staging instances, systemd units, restricted `authorized_keys`,
-and a root-owned systemd command validator behind narrowly scoped sudo rules.
+and a root-owned systemd command validator behind narrowly scoped sudo rules. It
+also installs production backup scripts under
+`/usr/local/lib/sakiot-deploy/backup`, creates `/var/lib/sakiot/backups`, and
+enables hourly, nightly, and monthly restore-test timers.
 Validate the generated key line contains `restrict` and the forced command. Keep
 manual debug services under the developer account; production units are named
 `sakiot-web.service` and `sakiot-fbi-agent@<release>.service`, and the staging
@@ -39,6 +42,27 @@ health checks fail. These settings are ignored after production state exists.
 Copy this repository's `ops` directory to `/usr/local/lib/sakiot-deploy` after
 reviewing deployment-framework changes. Application release tags cannot modify
 the root-owned SSH bootstrap by themselves.
+
+## Database backups
+
+Production backups belong to the `sakiot` service account and are stored in
+`/var/lib/sakiot/backups`. Configure `BACKUP_DATABASE_URL`, `BACKUP_DIR`,
+`AGE_RECIPIENT`, and `AGE_KEY_FILE` in `/etc/sakiot/production.env`. Install the
+existing age private key at `/etc/sakiot/age-key.txt` with owner `root:sakiot`
+and mode `0640`; the installer does not generate or replace keys. Fresh hosts
+with placeholder backup settings receive the units but must enable them after
+configuration:
+
+```sh
+systemctl enable --now sakiot-db-backup-hourly.timer \
+  sakiot-db-backup-nightly.timer sakiot-db-restore-test.timer
+systemctl list-timers 'sakiot-db-*'
+journalctl -u 'sakiot-db-backup@*' -u sakiot-db-restore-test.service
+```
+
+Do not keep a second cron schedule after the timers are active. Copy historical
+encrypted dumps into `/var/lib/sakiot/backups`, verify a backup and restore test,
+then remove the old cron block.
 
 ## GitHub environment
 
@@ -119,6 +143,7 @@ compatibility review.
 /etc/sakiot/production.env
 /var/lib/sakiot/data
 /var/lib/sakiot/deploy
+/var/lib/sakiot/backups
 /srv/sakiot/releases
 /srv/sakiot/current
 /var/cache/sakiot

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the hourly Sakiot database backup
+
+[Timer]
+OnCalendar=*-*-* 00..02,04..23:17:00
+Persistent=true
+AccuracySec=1m
+Unit=sakiot-db-backup@hourly.service
+
+[Install]
+WantedBy=timers.target

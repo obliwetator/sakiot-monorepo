@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the monthly Sakiot database restore test
+
+[Timer]
+OnCalendar=*-*-01 04:30:00
+Persistent=true
+AccuracySec=1m
+Unit=sakiot-db-restore-test.service
+
+[Install]
+WantedBy=timers.target

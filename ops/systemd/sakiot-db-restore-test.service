@@ -1,0 +1,21 @@
+[Unit]
+Description=Verify the latest Sakiot database backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/usr/local/lib/sakiot-deploy/backup/restore-test.sh
+ConditionPathExists=/etc/sakiot/age-key.txt
+
+[Service]
+Type=oneshot
+User=sakiot
+Group=sakiot
+WorkingDirectory=/var/lib/sakiot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=SAKIOT_ENV_FILE=/etc/sakiot/production.env
+Environment=SAKIOT_MIGRATIONS_DIR=/usr/local/lib/sakiot-deploy/backup/migrations
+ExecStart=/usr/local/lib/sakiot-deploy/backup/restore-test.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sakiot/backups

@@ -23,6 +23,7 @@ install -d -o root -g sakiot -m 0750 /etc/sakiot
 install -d -o sakiot -g sakiot -m 0750 \
   /var/lib/sakiot/data \
   /var/lib/sakiot/deploy \
+  /var/lib/sakiot/backups \
   /var/cache/sakiot \
   /srv/sakiot/releases \
   /srv/sakiot/current
@@ -41,6 +42,9 @@ install -d -o sakiot -g sakiot -m 0755 /var/www/debug.patrykstyla.com
 rm -rf "${install_root}"
 install -d -o root -g root -m 0755 "${install_root}"
 cp -a "${script_dir}/." "${install_root}/"
+install -d -o root -g root -m 0755 "${install_root}/backup"
+cp -a "${script_dir}/../sakiot-db/ops/backup/." "${install_root}/backup/"
+cp -a "${script_dir}/../sakiot-db/migrations" "${install_root}/backup/migrations"
 chown -R root:root "${install_root}"
 find "${install_root}" -type d -exec chmod 0755 {} +
 find "${install_root}" -type f -name '*.sh' -exec chmod 0755 {} +
@@ -55,6 +59,16 @@ install -m 0644 "${script_dir}/systemd/sakiot-staging-fbi-agent@.service" \
   /etc/systemd/system/sakiot-staging-fbi-agent@.service
 install -m 0644 "${script_dir}/systemd/sakiot-staging-web.service" \
   /etc/systemd/system/sakiot-staging-web.service
+install -m 0644 "${script_dir}/systemd/sakiot-db-backup@.service" \
+  /etc/systemd/system/sakiot-db-backup@.service
+install -m 0644 "${script_dir}/systemd/sakiot-db-restore-test.service" \
+  /etc/systemd/system/sakiot-db-restore-test.service
+install -m 0644 "${script_dir}/systemd/sakiot-db-backup-hourly.timer" \
+  /etc/systemd/system/sakiot-db-backup-hourly.timer
+install -m 0644 "${script_dir}/systemd/sakiot-db-backup-nightly.timer" \
+  /etc/systemd/system/sakiot-db-backup-nightly.timer
+install -m 0644 "${script_dir}/systemd/sakiot-db-restore-test.timer" \
+  /etc/systemd/system/sakiot-db-restore-test.timer
 visudo -cf "${script_dir}/sudoers/sakiot-deploy"
 install -m 0440 "${script_dir}/sudoers/sakiot-deploy" \
   /etc/sudoers.d/sakiot-deploy
@@ -76,6 +90,18 @@ chown sakiot:sakiot "${authorized_keys}"
 chmod 0600 "${authorized_keys}"
 
 systemctl daemon-reload
+backup_url="$(sed -n 's/^BACKUP_DATABASE_URL=//p' /etc/sakiot/production.env | head -n 1)"
+age_recipient="$(sed -n 's/^AGE_RECIPIENT=//p' /etc/sakiot/production.env | head -n 1)"
+age_key_file="$(sed -n 's/^AGE_KEY_FILE=//p' /etc/sakiot/production.env | head -n 1)"
+if [[ -n "${backup_url}" && "${backup_url}" != *replace_me* \
+      && "${age_recipient}" == age1* && -r "${age_key_file}" ]]; then
+  systemctl enable --now \
+    sakiot-db-backup-hourly.timer \
+    sakiot-db-backup-nightly.timer \
+    sakiot-db-restore-test.timer
+else
+  echo "backup timers installed but not enabled; configure production backup credentials and age key"
+fi
 echo "production + staging skeleton installed"
 echo "edit /etc/sakiot/production.env before the first tag"
 echo "edit /etc/sakiot/staging.env and run 'createdb sakiot_staging' before the first main push"
