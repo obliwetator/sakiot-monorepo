@@ -41,6 +41,7 @@ async fn insert_test_instance(
 async fn recording_create_heartbeat_finalize_uses_audio_file_id()
 -> Result<(), Box<dyn std::error::Error>> {
     let pool = test_pool().await?;
+    let temporary = tempfile::tempdir()?;
     let base = unique_id();
     let guild_id = base;
     let channel_id = base + 1;
@@ -48,13 +49,14 @@ async fn recording_create_heartbeat_finalize_uses_audio_file_id()
     let owner = format!("test-recording-{base}");
     insert_test_instance(&pool, &owner).await?;
 
-    let handle = recordings::create_recording(
+    let handle = recordings::create_recording_for_test(
         &pool,
         guild_id,
         channel_id,
         user_id,
         chrono::Utc::now(),
         &owner,
+        temporary.path(),
     )
     .await?;
 

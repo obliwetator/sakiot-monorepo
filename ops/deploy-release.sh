@@ -184,7 +184,10 @@ if [[ "${build_rust}" == "1" ]]; then
   log "testing Rust workspace"
   (
     cd "${worktree}"
-    SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
+    test_data_dir="$(mktemp -d "${cache_dir}/test-data.XXXXXX")"
+    trap 'rm -rf "${test_data_dir}"' EXIT
+    SAKIOT_DATA_DIR="${test_data_dir}" \
+      SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
       cargo test --workspace --locked
   )
 fi

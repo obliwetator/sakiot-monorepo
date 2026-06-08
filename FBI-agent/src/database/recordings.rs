@@ -33,6 +33,28 @@ pub async fn create_recording(
     now: chrono::DateTime<chrono::Utc>,
     owner_instance_id: &str,
 ) -> DbResult<RecordingHandle> {
+    let recording_root = DataRoots::from_env().recordings;
+    create_recording_in(
+        pool,
+        guild_id,
+        channel_id,
+        user_id,
+        now,
+        owner_instance_id,
+        &recording_root,
+    )
+    .await
+}
+
+async fn create_recording_in(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    channel_id: i64,
+    user_id: i64,
+    now: chrono::DateTime<chrono::Utc>,
+    owner_instance_id: &str,
+    recording_root: &std::path::Path,
+) -> DbResult<RecordingHandle> {
     let file_name = RecordingKey::stem_for(now.timestamp_millis(), user_id);
     let key = RecordingKey::new(
         guild_id,
@@ -42,9 +64,8 @@ pub async fn create_recording(
         file_name.clone(),
     );
 
-    let recording_root = DataRoots::from_env().recordings_str();
-    let dir_path = key.recording_dir(&recording_root);
-    let combined_path = key.recording_dir(&recording_root).join(&file_name);
+    let dir_path = recording_root.join(key.dir_suffix());
+    let combined_path = dir_path.join(&file_name);
     std::fs::create_dir_all(&dir_path)?;
 
     let row = sqlx::query!(
@@ -71,6 +92,28 @@ pub async fn create_recording(
         file_name,
         path: combined_path.to_string_lossy().into_owned(),
     })
+}
+
+#[cfg(test)]
+pub async fn create_recording_for_test(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    channel_id: i64,
+    user_id: i64,
+    now: chrono::DateTime<chrono::Utc>,
+    owner_instance_id: &str,
+    recording_root: &std::path::Path,
+) -> DbResult<RecordingHandle> {
+    create_recording_in(
+        pool,
+        guild_id,
+        channel_id,
+        user_id,
+        now,
+        owner_instance_id,
+        recording_root,
+    )
+    .await
 }
 
 pub async fn heartbeat_active_recordings(

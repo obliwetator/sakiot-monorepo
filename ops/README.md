@@ -146,3 +146,13 @@ recording archive or change `DATABASE_URL`.
 
 Remove the bind entry only after the legacy tree has been copied into an
 independent production filesystem while both services are stopped.
+
+Synthetic `9000*` guild directories left by older DB contract tests can be
+removed with:
+
+```sh
+sudo ./ops/remove-synthetic-recording-dirs.sh
+```
+
+The cleanup accepts only the test ID range and refuses any directory referenced
+by `audio_files`.

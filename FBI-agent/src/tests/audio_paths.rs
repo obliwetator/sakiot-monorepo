@@ -1,11 +1,13 @@
 use crate::cooldown::{CheckResult, JamCooldown};
-use crate::events::voice_receiver::{clips_file_path, recording_file_path};
+use sakiot_paths::DataRoots;
 use std::time::{Duration, SystemTime};
 
 #[tokio::test]
 async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> {
-    let rec_path = recording_file_path();
-    let clips_path = clips_file_path();
+    let temporary = tempfile::tempdir()?;
+    let roots = DataRoots::new(temporary.path());
+    let rec_path = roots.recordings;
+    let clips_path = roots.clips;
 
     // Ensure directories can be created
     std::fs::create_dir_all(&rec_path)?;
