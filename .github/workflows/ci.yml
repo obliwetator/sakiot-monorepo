@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: sakiot_rouvas
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        ports:
+          - 54320:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sakiot_rouvas"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # Compile-time query validation comes from the checked-in .sqlx
+      # metadata; the live database is only for #[sqlx::test] fixtures.
+      SQLX_OFFLINE: "true"
+      DATABASE_URL: postgres://postgres:password@localhost:54320/sakiot_rouvas
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sakiot_stage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun run test
+
+      # Runs biome check and tsc before vite build.
+      - name: Build
+        run: bun run build
