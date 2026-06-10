@@ -11,6 +11,19 @@ Install required tools: Git, Rust, Bun, `protoc`, OpenSSL development headers,
 FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `grpcurl`,
 `jq`, `rsync`, Python 3, `flock`, and `sudo`.
 
+Create a dedicated SQLx test role and master database. Deploy-time Rust tests
+create and remove a temporary database per test; they never use the runtime
+`DATABASE_URL`.
+
+```sql
+CREATE ROLE sakiot_test LOGIN CREATEDB PASSWORD 'replace_me';
+CREATE DATABASE sakiot_test OWNER sakiot_test;
+```
+
+Set `SAKIOT_TEST_DATABASE_URL` in both runtime env files. Its database name must
+end in `_test` and differ from the runtime database. Keep this role unprivileged
+on production and staging databases.
+
 As root:
 
 ```sh

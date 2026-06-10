@@ -181,12 +181,15 @@ component_selected bot "${components[@]}" && [[ -z "${reuse_bot}" ]] && build_ru
 component_selected web "${components[@]}" && [[ -z "${reuse_web}" ]] && build_rust=1
 if [[ "${build_rust}" == "1" ]]; then
   require_command protoc
+  validate_test_database_url "${DATABASE_URL:?set DATABASE_URL}" \
+    "${SAKIOT_TEST_DATABASE_URL:-}"
   log "testing Rust workspace"
   (
     cd "${worktree}"
     test_data_dir="$(mktemp -d "${cache_dir}/test-data.XXXXXX")"
     trap 'rm -rf "${test_data_dir}"' EXIT
-    SAKIOT_DATA_DIR="${test_data_dir}" \
+    DATABASE_URL="${SAKIOT_TEST_DATABASE_URL}" \
+      SAKIOT_DATA_DIR="${test_data_dir}" \
       SQLX_OFFLINE=true CARGO_TARGET_DIR="${cache_dir}/cargo-target" \
       cargo test --workspace --locked
   )

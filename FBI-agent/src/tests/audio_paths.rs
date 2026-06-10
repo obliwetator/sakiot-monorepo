@@ -36,15 +36,8 @@ async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_jam_cooldown_system() -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
-    let db_url = crate::config::db_url()?;
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&db_url)
-        .await?;
-
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn test_jam_cooldown_system(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Generate unique pseudo-random IDs to prevent test collision
     let now_millis = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)?

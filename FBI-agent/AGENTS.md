@@ -7,9 +7,12 @@ Do not deploy, restart, stop, enable, disable, or kill any `fbi-agent` systemd s
 For verification during normal code work, only run Cargo commands such as:
 
 - `cargo check`
-- `cargo test`
+- `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test`
 - `cargo build`
 - `cargo build --release`
+
+Database tests use `#[sqlx::test]` and must never run with the runtime
+`DATABASE_URL`. Load the root `.env` first so `SAKIOT_TEST_DATABASE_URL` is set.
 
 Do not use `deploy/*.sh`, `systemctl --user ...`, `grpcurl ...`, or service-management commands unless manually instructed.
 

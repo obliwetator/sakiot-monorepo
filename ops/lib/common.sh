@@ -23,6 +23,33 @@ validate_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]] || die "invalid commit SHA: $1"
 }
 
+database_name_from_url() {
+  local url="$1"
+  local without_query="${url%%\?*}"
+  local database="${without_query##*/}"
+
+  [[ "${url}" == postgres://* || "${url}" == postgresql://* ]] \
+    || die "database URL must use postgres:// or postgresql://"
+  [[ -n "${database}" && "${database}" != "${without_query}" ]] \
+    || die "database URL must include a database name"
+  printf '%s\n' "${database}"
+}
+
+validate_test_database_url() {
+  local runtime_url="$1"
+  local test_url="$2"
+  local runtime_database
+  local test_database
+
+  [[ -n "${test_url}" ]] || die "SAKIOT_TEST_DATABASE_URL must be set"
+  runtime_database="$(database_name_from_url "${runtime_url}")"
+  test_database="$(database_name_from_url "${test_url}")"
+  [[ "${test_database}" == *_test ]] \
+    || die "SAKIOT_TEST_DATABASE_URL database must end in _test"
+  [[ "${test_database}" != "${runtime_database}" ]] \
+    || die "test and runtime database names must differ"
+}
+
 validate_tag_record() {
   local mode="$1"
   local record="$2"

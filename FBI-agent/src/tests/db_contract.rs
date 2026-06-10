@@ -1,18 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
+use sqlx::PgPool;
 
 use crate::cooldown::JamCooldown;
 use crate::database::{DbError, recordings};
-
-async fn test_pool() -> Result<Pool<Postgres>, Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
-    let db_url = crate::config::db_url()?;
-    Ok(PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&db_url)
-        .await?)
-}
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -23,7 +14,7 @@ fn unique_id() -> i64 {
 }
 
 async fn insert_test_instance(
-    pool: &Pool<Postgres>,
+    pool: &PgPool,
     owner: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query!(
@@ -37,10 +28,10 @@ async fn insert_test_instance(
     Ok(())
 }
 
-#[tokio::test]
-async fn recording_create_heartbeat_finalize_uses_audio_file_id()
--> Result<(), Box<dyn std::error::Error>> {
-    let pool = test_pool().await?;
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn recording_create_heartbeat_finalize_uses_audio_file_id(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let base = unique_id();
     let guild_id = base;
@@ -105,9 +96,10 @@ async fn recording_create_heartbeat_finalize_uses_audio_file_id()
     Ok(())
 }
 
-#[tokio::test]
-async fn recording_finalize_reports_zero_row_mismatch() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = test_pool().await?;
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn recording_finalize_reports_zero_row_mismatch(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let err = recordings::finalize_recording(
         &pool,
         -unique_id(),
@@ -129,9 +121,8 @@ async fn recording_finalize_reports_zero_row_mismatch() -> Result<(), Box<dyn st
     Ok(())
 }
 
-#[tokio::test]
-async fn cooldown_db_failure_propagates() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = test_pool().await?;
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn cooldown_db_failure_propagates(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     pool.close().await;
 
     let cooldown = JamCooldown::new();
@@ -140,9 +131,10 @@ async fn cooldown_db_failure_propagates() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn db_constraints_reject_negative_cooldown() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = test_pool().await?;
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn db_constraints_reject_negative_cooldown(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let guild_id = unique_id();
 
     let negative_cooldown = sqlx::query!(
@@ -157,10 +149,10 @@ async fn db_constraints_reject_negative_cooldown() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-#[tokio::test]
-async fn guild_cache_prune_removes_stale_roles_channels_and_dependents()
--> Result<(), Box<dyn std::error::Error>> {
-    let pool = test_pool().await?;
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn guild_cache_prune_removes_stale_roles_channels_and_dependents(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let guild_id = unique_id();
     let owner_id = guild_id + 1;
     let keep_role = guild_id + 10;

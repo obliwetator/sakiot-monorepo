@@ -27,6 +27,30 @@ if (validate_sha 'deadbeef') >/dev/null 2>&1; then
   exit 1
 fi
 
+validate_test_database_url \
+  'postgres://app:secret@127.0.0.1/sakiot_rouvas' \
+  'postgres://tests:secret@127.0.0.1/sakiot_test'
+validate_test_database_url \
+  'postgresql://app:secret@127.0.0.1/sakiot_rouvas?sslmode=disable' \
+  'postgresql://tests:secret@127.0.0.1/sakiot_test?sslmode=disable'
+if (validate_test_database_url \
+  'postgres://app@127.0.0.1/sakiot_rouvas' \
+  'postgres://tests@127.0.0.1/sakiot_rouvas') >/dev/null 2>&1; then
+  echo "accepted runtime database as test database" >&2
+  exit 1
+fi
+if (validate_test_database_url \
+  'postgres://app@127.0.0.1/sakiot_rouvas' \
+  'postgres://tests@127.0.0.1/sakiot_ci') >/dev/null 2>&1; then
+  echo "accepted test database without _test suffix" >&2
+  exit 1
+fi
+if (validate_test_database_url \
+  'postgres://app@127.0.0.1/sakiot_rouvas' '') >/dev/null 2>&1; then
+  echo "accepted missing test database URL" >&2
+  exit 1
+fi
+
 temporary="$(mktemp -d)"
 trap 'rm -rf "${temporary}"' EXIT
 sha=0123456789abcdef0123456789abcdef01234567

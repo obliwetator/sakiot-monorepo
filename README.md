@@ -30,6 +30,16 @@ the database backup scripts. Set `SAKIOT_ENV_FILE` to override its path for
 backup jobs. Frontend development values live in root `.env.development`; Vite
 loads environment files from the monorepo root.
 
+Database integration tests use `SAKIOT_TEST_DATABASE_URL`. Export it as
+`DATABASE_URL` when running tests; SQLx creates a disposable database per test:
+
+```sh
+set -a
+. ./.env
+set +a
+DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test --workspace
+```
+
 For isolated local PostgreSQL on port `54320`:
 
 ```sh
@@ -45,7 +55,7 @@ shared crates.
 
 ```sh
 cargo build --workspace
-cargo test --workspace
+DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
