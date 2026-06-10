@@ -92,15 +92,14 @@ pub async fn disconnect_voice_channel(
 
     match manager.remove(guild_id).await {
         Ok(()) => {
-            if let Some(runtime) = runtime {
-                if let Err(err) =
+            if let Some(runtime) = runtime
+                && let Err(err) =
                     crate::deployment::release_voice_session(pool, &runtime, guild_id).await
-                {
-                    warn!(
-                        guild_id = guild_id.get(),
-                        "voice lease release failed after leave: {}", err
-                    );
-                }
+            {
+                warn!(
+                    guild_id = guild_id.get(),
+                    "voice lease release failed after leave: {}", err
+                );
             }
             refresh_active_voice_connection_gauge(data, Some(&manager)).await;
             VoiceDisconnectOutcome::Disconnected
@@ -198,15 +197,14 @@ async fn switch_channel(
 ) -> VoiceConnectOutcome {
     match manager.remove(guild_id).await {
         Ok(()) => {
-            if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
-                if let Err(err) =
+            if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await
+                && let Err(err) =
                     crate::deployment::release_voice_session(&pool, &runtime, guild_id).await
-                {
-                    warn!(
-                        guild_id = guild_id.get(),
-                        "voice lease release failed before switch: {}", err
-                    );
-                }
+            {
+                warn!(
+                    guild_id = guild_id.get(),
+                    "voice lease release failed before switch: {}", err
+                );
             }
             refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
             join_ch(

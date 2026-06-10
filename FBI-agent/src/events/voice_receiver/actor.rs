@@ -520,7 +520,8 @@ impl RecorderActor {
         }
         paused.recording.ssrc = ssrc;
 
-        self.recordings.insert_active(user_id, ssrc, paused.recording);
+        self.recordings
+            .insert_active(user_id, ssrc, paused.recording);
 
         crate::events::voice::insert_voice_event(
             &self.pool,

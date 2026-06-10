@@ -195,10 +195,7 @@ async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<
             query_builder.build().execute(&handler.database).await?;
         }
 
-        let channel_ids: Vec<i64> = channels
-            .iter()
-            .map(|channel| channel.id.to_i64())
-            .collect();
+        let channel_ids: Vec<i64> = channels.iter().map(|channel| channel.id.to_i64()).collect();
         prune_stale_channels(&handler.database, guild.id.to_i64(), &channel_ids).await?;
     }
 
@@ -297,10 +294,7 @@ pub async fn update_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handl
 }
 
 async fn sync_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handler) -> DbResult<()> {
-    let guild_ids: Vec<i64> = guilds
-        .into_iter()
-        .map(|guild| guild.id.to_i64())
-        .collect();
+    let guild_ids: Vec<i64> = guilds.into_iter().map(|guild| guild.id.to_i64()).collect();
 
     for chunk in guild_ids.chunks(BIND_LIMIT) {
         let mut query_builder: sqlx::QueryBuilder<Postgres> =

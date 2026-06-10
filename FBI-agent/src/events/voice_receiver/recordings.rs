@@ -127,6 +127,7 @@ impl Recordings {
 
     // --- bots -------------------------------------------------------------
 
+    #[cfg(test)]
     pub(super) fn is_bot_ssrc(&self, ssrc: u32) -> bool {
         self.bots.is_bot(ssrc)
     }

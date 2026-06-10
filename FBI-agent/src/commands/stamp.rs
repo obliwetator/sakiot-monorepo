@@ -80,9 +80,7 @@ pub async fn handle_stamp(
     // TOCTOU: two /stamp calls for the same target within a few ms can both
     // pass this check and both insert. Acceptable for a 10s human-scale guard;
     // tighten with a partial unique index if strict enforcement is needed.
-    match crate::database::stamps::latest_stamp_ts(pool, guild_id.to_i64(), target.to_i64())
-        .await
-    {
+    match crate::database::stamps::latest_stamp_ts(pool, guild_id.to_i64(), target.to_i64()).await {
         Ok(Some(last_ts)) => {
             let delta = now_ms - last_ts;
             if delta < STAMP_COOLDOWN_MS {

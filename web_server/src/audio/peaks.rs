@@ -296,9 +296,15 @@ pub async fn get_clip_waveform_data(
 
     let progress_map_clone = progress_map.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            generate_peaks_background(input_file, output, cache_key, None, progress_map_clone, None)
-                .await
+        if let Err(e) = generate_peaks_background(
+            input_file,
+            output,
+            cache_key,
+            None,
+            progress_map_clone,
+            None,
+        )
+        .await
         {
             error!("Error generating clip peaks: {:?}", e);
         }
