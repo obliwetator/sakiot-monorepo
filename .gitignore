@@ -1,7 +1,6 @@
 .env
 *.pem
 *.swp
-.sqlx
 data/
 dist/
 logs/
