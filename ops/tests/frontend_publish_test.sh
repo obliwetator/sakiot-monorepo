@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The legacy-assets case relies on a 0555 directory being non-writable, which
+# is never true for root.
+if [[ "${EUID}" -eq 0 ]]; then
+  echo "frontend_publish_test must not run as root" >&2
+  exit 1
+fi
+
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 temporary="$(mktemp -d)"
 cleanup() {

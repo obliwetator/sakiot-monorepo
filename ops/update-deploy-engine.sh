@@ -16,9 +16,11 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 install_root="/usr/local/lib/sakiot-deploy"
 
+# Run the suites as the sakiot user: frontend_publish_test.sh depends on
+# write-permission checks that are vacuously true for root.
 if [[ -x "${script_dir}/tests/run.sh" ]]; then
   echo "running deploy framework tests"
-  "${script_dir}/tests/run.sh"
+  sudo -u sakiot "${script_dir}/tests/run.sh"
 fi
 
 echo "building sakiot-deploy engine"
