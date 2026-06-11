@@ -17,6 +17,7 @@ fail() {
 # an fbi-agent/ subdir; current points at the newest.
 make_tree() {
   local root="$1"
+  local prefix="$2"
   local release_root="${root}/releases"
   local current_root="${root}/current"
   local state_dir="${root}/state"
@@ -32,7 +33,7 @@ make_tree() {
   local newest="v1.0.7-abc123def456-20260107T120000Z"
   ln -s "${release_root}/${newest}/web" "${current_root}/web"
   printf '%s\n' "${release_root}/${newest}/manifest.json" >"${state_dir}/current.manifest"
-  printf 'sakiot-fbi-agent@%s.service\n' "${newest}" >"${state_dir}/current-bot.unit"
+  printf '%s%s.service\n' "${prefix}" "${newest}" >"${state_dir}/current-bot.unit"
 }
 
 # --- Case 1: nothing active, keep=5 -> two oldest pruned --------------------
@@ -52,9 +53,10 @@ esac
 SH
   chmod +x "${shimdir}/systemctl"
 
-  make_tree "${root}"
+  make_tree "${root}" sakiot-fbi-agent@
   PATH="${shimdir}:${PATH}" \
-    prune_old_releases "${root}/releases" "${root}/current" "${root}/state" 5
+    prune_old_releases "${root}/releases" "${root}/current" "${root}/state" 5 \
+      sakiot-fbi-agent@
 
   local remaining
   remaining="$(find "${root}/releases" -maxdepth 1 -mindepth 1 -type d | wc -l)"
@@ -88,9 +90,10 @@ exit 0
 SH
   chmod +x "${shimdir}/systemctl"
 
-  make_tree "${root}"
+  make_tree "${root}" sakiot-fbi-agent@
   PATH="${shimdir}:${PATH}" \
-    prune_old_releases "${root}/releases" "${root}/current" "${root}/state" 5
+    prune_old_releases "${root}/releases" "${root}/current" "${root}/state" 5 \
+      sakiot-fbi-agent@
 
   [[ -d "${root}/releases/v1.0.1-abc123def456-20260101T120000Z" ]] \
     || fail "draining release v1.0.1 must be kept despite being beyond keep=5"
@@ -99,6 +102,39 @@ SH
     || fail "non-draining old release v1.0.2 should have been pruned"
 }
 
+# --- Case 3: staging prefix -> staging units queried, draining one kept ------
+run_case_staging_prefix() {
+  local root shimdir
+  root="$(mktemp -d)"
+  shimdir="$(mktemp -d)"
+  trap 'rm -rf "${root}" "${shimdir}"' RETURN
+
+  # is-active succeeds only for the staging unit of v1.0.1; a query using the
+  # production prefix would not match and v1.0.1 would be wrongly pruned.
+  cat >"${shimdir}/systemctl" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == "is-active" ]]; then
+  for arg in "$@"; do
+    [[ "${arg}" == sakiot-staging-fbi-agent@*"v1.0.1-"* ]] && exit 0
+  done
+  exit 3
+fi
+exit 0
+SH
+  chmod +x "${shimdir}/systemctl"
+
+  make_tree "${root}" sakiot-staging-fbi-agent@
+  PATH="${shimdir}:${PATH}" \
+    prune_old_releases "${root}/releases" "${root}/current" "${root}/state" 5 \
+      sakiot-staging-fbi-agent@
+
+  [[ -d "${root}/releases/v1.0.1-abc123def456-20260101T120000Z" ]] \
+    || fail "draining staging release v1.0.1 must be kept"
+  [[ ! -d "${root}/releases/v1.0.2-abc123def456-20260102T120000Z" ]] \
+    || fail "non-draining old staging release v1.0.2 should have been pruned"
+}
+
 run_case_no_active
 run_case_draining
+run_case_staging_prefix
 echo "release_gc_test ok"

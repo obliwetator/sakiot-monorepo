@@ -595,7 +595,8 @@ fi
 
 keep_releases="${SAKIOT_KEEP_RELEASES:-5}"
 prune_old_releases "${release_root}" "${current_root}" "${state_dir}" \
-  "${keep_releases}" || log "release pruning encountered an error; continuing"
+  "${keep_releases}" "${bot_unit_prefix}" \
+  || log "release pruning encountered an error; continuing"
 
 log "${mode} complete: ${release_id}"
 log "newest ${keep_releases} releases retained for rollback"

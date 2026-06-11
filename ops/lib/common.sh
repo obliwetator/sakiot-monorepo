@@ -98,8 +98,9 @@ json_array_from_lines() {
 # Bot unit name for a release id, or empty if the release has no bot artifact.
 release_bot_unit() {
   local release_dir="$1"
+  local bot_unit_prefix="$2"
   [[ -d "${release_dir}/fbi-agent" ]] || return 0
-  printf 'sakiot-fbi-agent@%s.service' "$(basename "${release_dir}")"
+  printf '%s%s.service' "${bot_unit_prefix}" "$(basename "${release_dir}")"
 }
 
 # Print release dirs under release_root newest -> oldest, ordered by the trailing
@@ -159,6 +160,7 @@ prune_old_releases() {
   local current_root="$2"
   local state_dir="$3"
   local keep="$4"
+  local bot_unit_prefix="$5"
 
   [[ -d "${release_root}" ]] || return 0
   [[ "${keep}" =~ ^[0-9]+$ ]] || {
@@ -180,7 +182,7 @@ prune_old_releases() {
 
   unit="$(cat "${state_dir}/current-bot.unit" 2>/dev/null || true)"
   if [[ -n "${unit}" ]]; then
-    unit_release="${unit#sakiot-fbi-agent@}"
+    unit_release="${unit#"${bot_unit_prefix}"}"
     unit_release="${unit_release%.service}"
     protected["${release_root_abs}/${unit_release}"]=1
   fi
@@ -198,7 +200,7 @@ prune_old_releases() {
     [[ "${index}" -le "${keep}" ]] && continue
     [[ -n "${protected[${dir}]:-}" ]] && continue
 
-    unit="$(release_bot_unit "${dir}")"
+    unit="$(release_bot_unit "${dir}" "${bot_unit_prefix}")"
     if [[ -n "${unit}" ]] && run_systemctl is-active --quiet "${unit}"; then
       log "keeping in-use release ${dir}"
       continue
