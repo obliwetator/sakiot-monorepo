@@ -1,7 +1,8 @@
 use crate::Custom;
+use std::net::{AddrParseError, SocketAddr};
 use tokio::sync::watch;
 use tonic::transport::Server;
-use tracing::{error, info};
+use tracing::info;
 
 pub mod proto {
     pub use sakiot_proto::fbi_agent::*;
@@ -23,18 +24,22 @@ impl FbiAgentGrpc {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GrpcServerError {
+    #[error("invalid gRPC address")]
+    InvalidAddress(#[source] AddrParseError),
+    #[error("gRPC server failed")]
+    Serve(#[source] tonic::transport::Error),
+}
+
 pub(crate) fn spawn_server(
     data_cache: Custom,
     shutdown_rx: watch::Receiver<bool>,
-) -> tokio::task::JoinHandle<()> {
+) -> tokio::task::JoinHandle<Result<(), GrpcServerError>> {
     tokio::spawn(async move {
-        let addr = match crate::config::grpc_addr().parse() {
-            Ok(addr) => addr,
-            Err(err) => {
-                error!("Invalid gRPC address: {}", err);
-                return;
-            }
-        };
+        let addr: SocketAddr = crate::config::grpc_addr()
+            .parse()
+            .map_err(GrpcServerError::InvalidAddress)?;
 
         let jammer = FbiAgentGrpc::new(data_cache);
         info!("gRPC server listening on {}", addr);
@@ -52,6 +57,6 @@ pub(crate) fn spawn_server(
                 }
             })
             .await
-            .unwrap_or_else(|err| error!("gRPC server failed: {}", err));
+            .map_err(GrpcServerError::Serve)
     })
 }

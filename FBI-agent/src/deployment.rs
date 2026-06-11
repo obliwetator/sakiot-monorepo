@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
+use tokio::sync::watch;
 use tracing::{debug, warn};
 
 use crate::database::{self, DbResult};
@@ -15,16 +16,28 @@ pub async fn upsert_instance(pool: &Pool<Postgres>, runtime: &RuntimeState) -> D
     database::runtime::upsert_instance(pool, runtime).await
 }
 
-pub fn start_heartbeat(pool: Pool<Postgres>, runtime: Arc<RuntimeState>) {
+pub fn start_heartbeat(
+    pool: Pool<Postgres>,
+    runtime: Arc<RuntimeState>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
         loop {
-            interval.tick().await;
-            if let Err(err) = heartbeat_instance_and_leases(&pool, &runtime).await {
-                warn!("instance/lease heartbeat failed: {}", err);
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(err) = heartbeat_instance_and_leases(&pool, &runtime).await {
+                        warn!("instance/lease heartbeat failed: {}", err);
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
             }
         }
-    });
+    })
 }
 
 pub async fn heartbeat_instance_and_leases(

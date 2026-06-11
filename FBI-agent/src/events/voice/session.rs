@@ -65,11 +65,43 @@ impl VoiceDisconnectOutcome {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct VoiceTeardownReport {
+    pub(crate) manager_missing: bool,
+    pub(crate) had_call: bool,
+    pub(crate) connected_after: bool,
+    pub(crate) remove_error: Option<String>,
+}
+
 pub async fn disconnect_voice_channel(
     data: &Arc<RwLock<TypeMap>>,
     pool: &Pool<Postgres>,
     guild_id: GuildId,
 ) -> VoiceDisconnectOutcome {
+    let report = teardown_voice_session(data, pool, guild_id).await;
+
+    if report.manager_missing {
+        return VoiceDisconnectOutcome::VoiceSystemMissing;
+    }
+    if !report.had_call {
+        return VoiceDisconnectOutcome::NotConnected;
+    }
+    if !report.connected_after {
+        return VoiceDisconnectOutcome::Disconnected;
+    }
+
+    VoiceDisconnectOutcome::Failed(
+        report
+            .remove_error
+            .unwrap_or_else(|| "voice connection remained locally connected".to_string()),
+    )
+}
+
+pub(crate) async fn teardown_voice_session(
+    data: &Arc<RwLock<TypeMap>>,
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+) -> VoiceTeardownReport {
     let (manager, runtime) = {
         let data_read = data.read().await;
         (
@@ -79,35 +111,66 @@ pub async fn disconnect_voice_channel(
     };
 
     let Some(manager) = manager else {
-        error!("Songbird manager missing while leaving voice channel");
+        error!("Songbird manager missing while tearing down voice session");
+        release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
         refresh_active_voice_connection_gauge(data, None).await;
-        return VoiceDisconnectOutcome::VoiceSystemMissing;
+        return VoiceTeardownReport {
+            manager_missing: true,
+            had_call: false,
+            connected_after: false,
+            remove_error: None,
+        };
     };
 
-    let existed = manager.get(guild_id).is_some();
-    if !existed {
-        refresh_active_voice_connection_gauge(data, Some(&manager)).await;
-        return VoiceDisconnectOutcome::NotConnected;
+    let call_before = manager.get(guild_id);
+    let had_call = call_before.is_some();
+    let remove_error = if had_call {
+        manager.remove(guild_id).await.err().map(|err| {
+            warn!(
+                guild_id = guild_id.get(),
+                "Songbird remove failed during voice teardown: {}", err
+            );
+            err.to_string()
+        })
+    } else {
+        None
+    };
+    let connected_after = current_channel_is_some(manager.get(guild_id)).await;
+    if !connected_after {
+        release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
     }
 
-    match manager.remove(guild_id).await {
-        Ok(()) => {
-            if let Some(runtime) = runtime
-                && let Err(err) =
-                    crate::deployment::release_voice_session(pool, &runtime, guild_id).await
-            {
-                warn!(
-                    guild_id = guild_id.get(),
-                    "voice lease release failed after leave: {}", err
-                );
-            }
-            refresh_active_voice_connection_gauge(data, Some(&manager)).await;
-            VoiceDisconnectOutcome::Disconnected
-        }
-        Err(err) => {
-            refresh_active_voice_connection_gauge(data, Some(&manager)).await;
-            VoiceDisconnectOutcome::Failed(err.to_string())
-        }
+    refresh_active_voice_connection_gauge(data, Some(&manager)).await;
+
+    VoiceTeardownReport {
+        manager_missing: false,
+        had_call,
+        connected_after,
+        remove_error,
+    }
+}
+
+async fn current_channel_is_some(call: Option<Arc<tokio::sync::Mutex<songbird::Call>>>) -> bool {
+    match call {
+        Some(call) => call.lock().await.current_channel().is_some(),
+        None => false,
+    }
+}
+
+async fn release_disconnected_lease(
+    pool: &Pool<Postgres>,
+    runtime: Option<&crate::runtime::RuntimeState>,
+    guild_id: GuildId,
+) {
+    let Some(runtime) = runtime else {
+        return;
+    };
+
+    if let Err(err) = crate::deployment::release_voice_session(pool, runtime, guild_id).await {
+        warn!(
+            guild_id = guild_id.get(),
+            "voice lease release failed after local disconnect: {}", err
+        );
     }
 }
 
@@ -195,35 +258,27 @@ async fn switch_channel(
     ctx: &Context,
     old_channel: u64,
 ) -> VoiceConnectOutcome {
-    match manager.remove(guild_id).await {
-        Ok(()) => {
-            if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await
-                && let Err(err) =
-                    crate::deployment::release_voice_session(&pool, &runtime, guild_id).await
-            {
-                warn!(
-                    guild_id = guild_id.get(),
-                    "voice lease release failed before switch: {}", err
-                );
-            }
-            refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
-            join_ch(
-                pool,
-                manager,
-                guild_id,
-                channel_id,
-                ctx,
-                JoinMode::SwitchFresh {
-                    _old_channel: old_channel,
-                },
-            )
-            .await
-        }
-        Err(err) => {
-            refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
-            VoiceConnectOutcome::Failed(err.to_string())
-        }
+    let report = teardown_voice_session(&ctx.data, &pool, guild_id).await;
+    if let Some(remove_error) = report.remove_error {
+        return VoiceConnectOutcome::Failed(remove_error);
     }
+    if report.connected_after {
+        return VoiceConnectOutcome::Failed(
+            "voice connection remained locally connected".to_string(),
+        );
+    }
+
+    join_ch(
+        pool,
+        manager,
+        guild_id,
+        channel_id,
+        ctx,
+        JoinMode::SwitchFresh {
+            _old_channel: old_channel,
+        },
+    )
+    .await
 }
 
 async fn join_ch(
@@ -363,9 +418,10 @@ pub async fn refresh_active_voice_connection_gauge(
     data: &Arc<RwLock<TypeMap>>,
     manager: Option<&Arc<songbird::Songbird>>,
 ) {
-    let count = manager
-        .map(|manager| manager.iter().count() as u32)
-        .unwrap_or(0);
+    let count = match manager {
+        Some(manager) => connected_voice_connection_count(manager).await,
+        None => 0,
+    };
     let data_read = data.read().await;
     if let Some(metrics) = data_read.get::<BotMetricsKey>() {
         metrics
@@ -373,6 +429,17 @@ pub async fn refresh_active_voice_connection_gauge(
             .store(count, std::sync::atomic::Ordering::Relaxed);
         let _ = metrics.update_tx.send(());
     }
+}
+
+pub(crate) async fn connected_voice_connection_count(manager: &songbird::Songbird) -> u32 {
+    let calls: Vec<_> = manager.iter().map(|(_, call)| call).collect();
+    let mut connected = 0_u32;
+    for call in calls {
+        if call.lock().await.current_channel().is_some() {
+            connected = connected.saturating_add(1);
+        }
+    }
+    connected
 }
 
 #[cfg(test)]

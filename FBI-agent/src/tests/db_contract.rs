@@ -1,9 +1,17 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
+use serenity::{
+    model::id::{ChannelId, GuildId},
+    prelude::{RwLock, TypeMap},
+};
 use sqlx::PgPool;
 
 use crate::cooldown::JamCooldown;
 use crate::database::{DbError, recordings};
+use crate::runtime::{BotRole, RuntimeConfig, RuntimeState};
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -26,6 +34,14 @@ async fn insert_test_instance(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+fn test_runtime(instance_id: String) -> Arc<RuntimeState> {
+    RuntimeState::new(RuntimeConfig {
+        instance_id,
+        initial_role: BotRole::Active,
+        drain_timeout: Duration::from_secs(30),
+    })
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
@@ -282,5 +298,65 @@ async fn guild_cache_prune_removes_stale_roles_channels_and_dependents(
         .execute(&pool)
         .await?;
 
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn local_disconnect_releases_only_current_owner_lease(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let base = unique_id();
+    let own_guild = GuildId::new(base as u64);
+    let other_guild = GuildId::new((base + 1) as u64);
+    let own_runtime = test_runtime(format!("test-local-disconnect-{base}"));
+    let other_runtime = test_runtime(format!("test-other-owner-{base}"));
+
+    crate::deployment::upsert_instance(&pool, &own_runtime).await?;
+    crate::deployment::upsert_instance(&pool, &other_runtime).await?;
+    crate::deployment::claim_voice_session(
+        &pool,
+        &own_runtime,
+        own_guild,
+        ChannelId::new((base + 10) as u64),
+    )
+    .await?;
+    crate::deployment::claim_voice_session(
+        &pool,
+        &other_runtime,
+        other_guild,
+        ChannelId::new((base + 11) as u64),
+    )
+    .await?;
+
+    let data = Arc::new(RwLock::new(TypeMap::new()));
+    {
+        let mut data_write = data.write().await;
+        data_write.insert::<songbird::SongbirdKey>(songbird::Songbird::serenity());
+        data_write.insert::<crate::runtime::RuntimeStateKey>(own_runtime.clone());
+    }
+
+    let report = crate::events::voice::teardown_voice_session(&data, &pool, own_guild).await;
+    assert!(!report.had_call);
+    assert!(!report.connected_after);
+
+    let own_leases = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM voice_session_leases
+          WHERE guild_id = $1 AND owner_instance_id = $2",
+    )
+    .bind(own_guild.get() as i64)
+    .bind(&own_runtime.config().instance_id)
+    .fetch_one(&pool)
+    .await?;
+    let other_leases = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM voice_session_leases
+          WHERE guild_id = $1 AND owner_instance_id = $2",
+    )
+    .bind(other_guild.get() as i64)
+    .bind(&other_runtime.config().instance_id)
+    .fetch_one(&pool)
+    .await?;
+
+    assert_eq!(own_leases, 0);
+    assert_eq!(other_leases, 1);
     Ok(())
 }

@@ -658,10 +658,11 @@ impl RecorderActor {
     }
 
     async fn handle_deadlines(&mut self, now_ms: i64) {
-        if self.disconnected_at_ms > 0
-            && self.recoverable_disconnect_deadline_ms > 0
-            && now_ms >= self.recoverable_disconnect_deadline_ms
-        {
+        if recoverable_disconnect_timed_out(
+            self.disconnected_at_ms,
+            self.recoverable_disconnect_deadline_ms,
+            now_ms,
+        ) {
             warn!(
                 "Recoverable disconnect timed out after {}ms. Closing active recordings.",
                 RECOVERABLE_DISCONNECT_TIMEOUT_MS
@@ -671,6 +672,19 @@ impl RecorderActor {
             self.finalize_all_active_recordings(VoiceEventType::WriterClose, chrono::Utc::now())
                 .await;
             self.clear_receiver_state();
+            let report = crate::events::voice::teardown_voice_session(
+                &self.ctx.data,
+                &self.pool,
+                self.guild_id,
+            )
+            .await;
+            if report.connected_after {
+                warn!(
+                    guild_id = self.guild_id.get(),
+                    remove_error = report.remove_error,
+                    "voice call remained connected after recovery timeout teardown"
+                );
+            }
         }
 
         let expired = self.recordings.expired_paused_user_ids(now_ms);
@@ -918,6 +932,14 @@ impl RecorderActor {
     }
 }
 
+fn recoverable_disconnect_timed_out(
+    disconnected_at_ms: i64,
+    deadline_ms: i64,
+    now_ms: i64,
+) -> bool {
+    disconnected_at_ms > 0 && deadline_ms > 0 && now_ms >= deadline_ms
+}
+
 fn voice_tick_drop_count(active_user_count: usize, packet_count: usize) -> u64 {
     active_user_count.max(packet_count).max(1) as u64
 }
@@ -993,12 +1015,24 @@ pub(super) fn disconnect_command(
 
 #[cfg(test)]
 mod tests {
-    use super::voice_tick_drop_count;
+    use super::{recoverable_disconnect_timed_out, voice_tick_drop_count};
 
     #[test]
     fn voice_tick_drop_count_uses_largest_available_signal() {
         assert_eq!(voice_tick_drop_count(0, 0), 1);
         assert_eq!(voice_tick_drop_count(3, 0), 3);
         assert_eq!(voice_tick_drop_count(1, 4), 4);
+    }
+
+    #[test]
+    fn reconnect_before_recovery_deadline_is_preserved() {
+        assert!(!recoverable_disconnect_timed_out(1_000, 61_000, 60_999));
+        assert!(!recoverable_disconnect_timed_out(0, 0, 61_000));
+    }
+
+    #[test]
+    fn recovery_deadline_fires_at_most_once_after_state_reset() {
+        assert!(recoverable_disconnect_timed_out(1_000, 61_000, 61_000));
+        assert!(!recoverable_disconnect_timed_out(0, 0, 61_001));
     }
 }
