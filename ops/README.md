@@ -8,8 +8,9 @@ migrations, service changes, and health checks run on the VPS.
 ## VPS bootstrap
 
 Install required tools: Git, Rust, Bun, `protoc`, OpenSSL development headers,
-FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `grpcurl`,
-`jq`, `rsync`, Python 3, `flock`, and `sudo`.
+FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rsync`,
+and `sudo`. The bash deploy engine additionally needs `grpcurl`, `jq`,
+Python 3, and `flock`; the Rust engine does that work in-process.
 
 Create a dedicated SQLx test role and master database. Deploy-time Rust tests
 create and remove a temporary database per test; they never use the runtime
@@ -53,8 +54,38 @@ web service only after builds pass, and restores the old web service if new
 health checks fail. These settings are ignored after production state exists.
 
 Copy this repository's `ops` directory to `/usr/local/lib/sakiot-deploy` after
-reviewing deployment-framework changes. Application release tags cannot modify
-the root-owned SSH bootstrap by themselves.
+reviewing deployment-framework changes (`ops/update-deploy-engine.sh` does this
+plus the engine build below). Application release tags cannot modify the
+root-owned SSH bootstrap by themselves.
+
+## Deploy engine (bash → Rust transition)
+
+Two interchangeable deploy engines exist behind `ops/deploy`:
+
+- `ops/deploy-release.sh` + `ops/lib/*.sh` — the original bash engine.
+- `ops/sakiot-deploy/` — a Rust port with identical behavior: same modes,
+  env vars, state files, `manifest.json` schema, and release layout, so
+  releases made by either engine are rollback targets for the other. Both
+  engines take the same `deploy.lock`, so they can never interleave. The
+  binary replaces the bash engine's `grpcurl`, `curl`, `jq`, and `python3`
+  usage with in-process equivalents.
+
+`SAKIOT_DEPLOY_ENGINE` in `/etc/sakiot/{production,staging}.env` selects the
+engine per target (`rust` or `bash`, default `bash`). Flip staging first,
+compare a staging release against a bash-produced one, then flip production.
+Reverting is the same one-line change.
+
+The binary is installed out-of-band like the rest of `ops/`:
+`install-production.sh` (and `update-deploy-engine.sh` for later refreshes)
+builds `--package sakiot-deploy` from the checkout as the `sakiot` user and
+installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
+never built from the release worktree, so a broken commit cannot brick
+deploys. Engine tests run in CI (`cargo test --workspace`) and on the VPS
+during the deploy-time workspace test step.
+
+`sakiot-deploy --dry-run {release|rollback|stage} ...` (local only, not
+reachable through the SSH forced command) reports component selection and
+reuse decisions, then stops before any build, migration, or service change.
 
 ## Database backups
 

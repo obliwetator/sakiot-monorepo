@@ -42,6 +42,8 @@ install -d -o sakiot -g sakiot -m 0755 /var/www/debug.patrykstyla.com
 rm -rf "${install_root}"
 install -d -o root -g root -m 0755 "${install_root}"
 cp -a "${script_dir}/." "${install_root}/"
+# The Rust engine is installed as a built binary below, never as source.
+rm -rf "${install_root}/sakiot-deploy"
 install -d -o root -g root -m 0755 "${install_root}/backup"
 cp -a "${script_dir}/../sakiot-db/ops/backup/." "${install_root}/backup/"
 cp -a "${script_dir}/../sakiot-db/migrations" "${install_root}/backup/migrations"
@@ -50,6 +52,23 @@ find "${install_root}" -type d -exec chmod 0755 {} +
 find "${install_root}" -type f -name '*.sh' -exec chmod 0755 {} +
 chmod 0755 "${install_root}/deploy" "${install_root}/ssh/forced-command"
 chmod 0755 "${install_root}/systemctl-wrapper"
+
+# Rust deploy engine (ops/sakiot-deploy). Built from this checkout as the
+# sakiot user (cargo lives in its home), installed root-owned alongside the
+# bash engine. SAKIOT_DEPLOY_ENGINE in the env files selects which one runs.
+if sudo -u sakiot bash -lc 'command -v cargo' >/dev/null 2>&1; then
+  repo_root="$(cd "${script_dir}/.." && pwd)"
+  sudo -u sakiot bash -lc \
+    "cd '${repo_root}' && CARGO_TARGET_DIR=/var/cache/sakiot/cargo-target \
+     cargo build --release --locked --package sakiot-deploy"
+  install -d -o root -g root -m 0755 "${install_root}/bin"
+  install -o root -g root -m 0755 \
+    /var/cache/sakiot/cargo-target/release/sakiot-deploy \
+    "${install_root}/bin/sakiot-deploy"
+else
+  echo "cargo unavailable for sakiot; Rust deploy engine not installed" >&2
+  echo "(SAKIOT_DEPLOY_ENGINE=rust will refuse to run until ops/update-deploy-engine.sh succeeds)" >&2
+fi
 
 install -m 0644 "${script_dir}/systemd/sakiot-fbi-agent@.service" \
   /etc/systemd/system/sakiot-fbi-agent@.service

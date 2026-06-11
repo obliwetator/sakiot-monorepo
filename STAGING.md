@@ -33,8 +33,9 @@ ops/release vX.Y.Z      # validates clean tree/branch/semver/no-dup + staging ma
 | frontend domain  | patrykstyla.com       | **debug.patrykstyla.com**        |
 | frontend docroot | `/var/www/patrykstyla.com` | `/var/www/debug.patrykstyla.com` |
 
-The deploy engine is target-agnostic: same `ops/deploy-release.sh`, driven by the
-env file plus `SAKIOT_WEB_UNIT` / `SAKIOT_BOT_UNIT_PREFIX`.
+The deploy engine is target-agnostic: same engine (`ops/deploy-release.sh`, or
+the `ops/sakiot-deploy` Rust binary when `SAKIOT_DEPLOY_ENGINE=rust`), driven by
+the env file plus `SAKIOT_WEB_UNIT` / `SAKIOT_BOT_UNIT_PREFIX`.
 
 ## Setup facts / gotchas (learned during cutover)
 

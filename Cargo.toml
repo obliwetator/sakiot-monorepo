@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "FBI-agent",
+    "ops/sakiot-deploy",
     "sakiot-paths",
     "sakiot-proto",
     "web_server",
