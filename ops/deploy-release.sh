@@ -537,6 +537,11 @@ fi
 bot_recovery_required=0
 new_bot_started=0
 old_bot_disabled=0
+# Handoff is complete; a failure past this point (manifest/state writes, prune)
+# must not trigger bot recovery — it would republish the old, shutting-down bot
+# as the active registry entry while the new one keeps serving.
+old_bot_grpc=""
+trap - ERR
 
 components_json="$(printf '%s\n' "${components[@]}" | json_array_from_lines)"
 changed_paths_json="$(
