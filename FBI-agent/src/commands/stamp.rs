@@ -50,10 +50,8 @@ pub async fn handle_stamp(
         match (opt.name.as_str(), &opt.value) {
             ("user", CommandDataOptionValue::User(uid)) => target = Some(*uid),
             ("rewind", CommandDataOptionValue::Integer(i)) => rewind_seconds = *i,
-            ("note", CommandDataOptionValue::String(s)) => {
-                if !s.is_empty() {
-                    note = Some(s.clone());
-                }
+            ("note", CommandDataOptionValue::String(s)) if !s.is_empty() => {
+                note = Some(s.clone());
             }
             _ => {}
         }
