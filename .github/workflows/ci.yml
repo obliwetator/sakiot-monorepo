@@ -38,6 +38,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # sakiot-proto's build script needs protoc; the runner image does not
+      # ship it, and only a warm build cache hides that.
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+
       - name: Check formatting
         run: cargo fmt --all --check
 
