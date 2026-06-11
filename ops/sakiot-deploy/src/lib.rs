@@ -8,6 +8,7 @@ pub mod git;
 pub mod lock;
 pub mod release;
 pub mod runner;
+pub mod status;
 pub mod systemctl;
 pub mod validate;
 pub mod web_api;

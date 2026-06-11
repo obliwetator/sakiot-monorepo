@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use sakiot_proto::fbi_agent::admin_client::AdminClient;
-use sakiot_proto::fbi_agent::{DrainRequest, Empty};
+use sakiot_proto::fbi_agent::{DrainRequest, DrainStatus, Empty};
 use tonic::transport::Endpoint;
 
 pub trait AdminApi {
@@ -15,6 +15,8 @@ pub trait AdminApi {
     fn shutdown_when_empty(&self, address: &str, reason: &str) -> Result<()>;
     /// Readiness probe; failures are expected while the bot boots.
     fn drain_status_ok(&self, address: &str) -> bool;
+    /// Full drain state, for `sakiot-deploy status`.
+    fn drain_status(&self, address: &str) -> Result<DrainStatus>;
 }
 
 pub struct TonicAdmin {
@@ -90,5 +92,14 @@ impl AdminApi for TonicAdmin {
         self.runtime
             .block_on(client.get_drain_status(Empty {}))
             .is_ok()
+    }
+
+    fn drain_status(&self, address: &str) -> Result<DrainStatus> {
+        let mut client = self.connect(address)?;
+        let response = self
+            .runtime
+            .block_on(client.get_drain_status(Empty {}))
+            .with_context(|| format!("GetDrainStatus to {address} failed"))?;
+        Ok(response.into_inner())
     }
 }

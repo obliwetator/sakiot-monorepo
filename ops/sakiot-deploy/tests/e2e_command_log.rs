@@ -97,6 +97,10 @@ impl AdminApi for MockAdmin<'_> {
         *calls += 1;
         *calls > self.status_failures
     }
+
+    fn drain_status(&self, address: &str) -> Result<sakiot_proto::fbi_agent::DrainStatus> {
+        anyhow::bail!("drain_status not used in deploy flows ({address})")
+    }
 }
 
 struct MockWeb<'a> {

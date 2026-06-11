@@ -14,6 +14,24 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Local-only read-only snapshot; not part of the deploy request grammar.
+    if args.first().map(String::as_str) == Some("status") {
+        let target = match args.get(1).map(String::as_str) {
+            Some("production") if args.len() == 2 => sakiot_deploy::config::Target::Production,
+            Some("staging") if args.len() == 2 => sakiot_deploy::config::Target::Staging,
+            _ => {
+                eprintln!("usage: sakiot-deploy status {{production|staging}}");
+                std::process::exit(2);
+            }
+        };
+        if let Err(error) = status(target) {
+            eprintln!("error: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let request = match Request::parse(args) {
         Ok(request) => request,
         Err(UsageError(usage)) => {
@@ -27,6 +45,12 @@ fn main() {
         eprintln!("error: {error:#}");
         std::process::exit(1);
     }
+}
+
+fn status(target: sakiot_deploy::config::Target) -> Result<()> {
+    let config = Config::load(target)?;
+    let admin = TonicAdmin::new()?;
+    sakiot_deploy::status::run(target, &config, &admin)
 }
 
 fn run(request: Request) -> Result<()> {
