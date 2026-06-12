@@ -23,6 +23,11 @@ for arguments in \
   "stop sakiot-staging-fbi-agent@.service" \
   "is-active --quiet sakiot-staging-web.service" \
   "start sakiot-staging-fbi-agent@good.service extra.service" \
+  "kill-bot postgresql.service" \
+  "kill-bot sakiot-web.service" \
+  "kill-bot sakiot-fbi-agent@.service" \
+  "kill-bot sakiot-fbi-agent@good.service extra.service" \
+  "kill-bot" \
   "daemon-reload"; do
   read -r -a argv <<<"${arguments}"
   if "${wrapper}" "${argv[@]}" >/dev/null 2>&1; then

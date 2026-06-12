@@ -79,6 +79,14 @@ pub trait CommandRunner {
 
     /// Run capturing stdout (stderr inherited); error on non-zero exit.
     fn run_capture(&self, cmd: &Cmd) -> Result<String>;
+
+    /// Like run_ok, but gives up after `timeout`, killing the child and
+    /// returning None. The default ignores the timeout so test runners keep
+    /// their exact-argv scripts.
+    fn run_ok_timeout(&self, cmd: &Cmd, timeout: std::time::Duration) -> Option<bool> {
+        let _ = timeout;
+        Some(self.run_ok(cmd))
+    }
 }
 
 pub struct RealRunner;
@@ -115,6 +123,31 @@ impl CommandRunner for RealRunner {
         }
         String::from_utf8(output.stdout)
             .with_context(|| format!("non-UTF-8 output from {}", cmd.rendered()))
+    }
+
+    fn run_ok_timeout(&self, cmd: &Cmd, timeout: std::time::Duration) -> Option<bool> {
+        let Ok(mut child) = cmd
+            .command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return Some(false);
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(status.success()),
+                Ok(None) => {}
+                Err(_) => return Some(false),
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 }
 

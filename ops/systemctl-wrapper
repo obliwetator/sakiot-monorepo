@@ -16,6 +16,12 @@ case "${1:-}" in
     [[ "$2" =~ ${bot_unit_pattern} || "$2" =~ ${web_unit_pattern} ]] || exit 2
     exec /usr/bin/systemctl stop "$2"
     ;;
+  kill-bot)
+    # Deploy-recovery escalation for a bot that ignores SIGTERM: bot units
+    # set TimeoutStopSec=infinity, so a plain stop can block forever.
+    [[ "$#" -eq 2 && "$2" =~ ${bot_unit_pattern} ]] || exit 2
+    exec /usr/bin/systemctl kill -s SIGKILL "$2"
+    ;;
   is-active)
     [[ "$#" -eq 3 && "$2" == "--quiet" && "$3" =~ ${bot_unit_pattern} ]] || exit 2
     exec /usr/bin/systemctl is-active --quiet "$3"

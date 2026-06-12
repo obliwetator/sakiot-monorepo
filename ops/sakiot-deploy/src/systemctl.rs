@@ -38,4 +38,28 @@ impl<'a> Systemctl<'a> {
     pub fn run_ok(&self, args: &[&str]) -> bool {
         self.runner.run_ok(&self.cmd(args))
     }
+
+    /// Best-effort stop with SIGKILL escalation. Bot units set
+    /// TimeoutStopSec=infinity, so a bot that ignores SIGTERM would block a
+    /// plain `systemctl stop` (and deploy recovery with it) forever.
+    pub fn stop_bot_bounded(&self, unit: &str, timeout: std::time::Duration) {
+        match self
+            .runner
+            .run_ok_timeout(&self.cmd(&["stop", unit]), timeout)
+        {
+            Some(_) => {}
+            None => {
+                crate::log(format!(
+                    "{unit} did not stop within {}s; escalating to SIGKILL",
+                    timeout.as_secs()
+                ));
+                let kill = if self.use_sudo {
+                    self.cmd(&["kill-bot", unit])
+                } else {
+                    Cmd::new("systemctl").args(["kill", "-s", "SIGKILL", unit])
+                };
+                let _ = self.runner.run_ok(&kill);
+            }
+        }
+    }
 }
