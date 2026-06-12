@@ -25,6 +25,11 @@ use crate::systemctl::Systemctl;
 use crate::validate;
 use crate::web_api::WebApi;
 
+/// How long recovery waits for a failed new bot to stop before SIGKILL.
+/// A bot without sessions stops in seconds; anything longer is the
+/// SIGTERM-hang failure mode, and bot units never time out on their own.
+const RECOVERY_STOP_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct Deps<'a> {
     pub runner: &'a dyn CommandRunner,
     pub admin: &'a dyn AdminApi,
@@ -101,7 +106,7 @@ impl BotHandoff {
         registry_secret: &str,
     ) {
         if self.new_bot_started && !self.new_bot_unit.is_empty() {
-            let _ = systemctl.run_ok(&["stop", &self.new_bot_unit]);
+            systemctl.stop_bot_bounded(&self.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             let _ = systemctl.run_ok(&["disable", &self.new_bot_unit]);
             let _ = fsx::write_line(&state_dir.join("current-bot.unit"), &self.previous_bot_unit);
             let _ = fsx::write_line(&state_dir.join("current-bot.grpc"), &self.previous_bot_grpc);
@@ -621,7 +626,7 @@ fn deploy_services(
         if !systemctl.run_ok(&["start", &bot.new_bot_unit]) {
             // Bash exits 1 here without the full ERR-trap recovery: stop the
             // unit, cancel the old drain, and leave registry/state untouched.
-            let _ = systemctl.run_ok(&["stop", &bot.new_bot_unit]);
+            systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.cancel_old_drain(deps, systemctl, release_id);
             *bot = BotHandoff::default();
             bail!("failed to start new FBI Agent unit");
@@ -639,7 +644,7 @@ fn deploy_services(
         if !bot_ready {
             // Same shape as the start failure: bash `die`s here, bypassing
             // recover_bot_on_error (state files and registry are untouched).
-            let _ = systemctl.run_ok(&["stop", &bot.new_bot_unit]);
+            systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.new_bot_started = false;
             bot.cancel_old_drain(deps, systemctl, release_id);
             *bot = BotHandoff::default();
@@ -745,6 +750,27 @@ fn deploy_services(
             let _ = systemctl.run_ok(&["stop", &config.web_unit]);
             restore_previous_web(systemctl, legacy_web_stopped);
             bail!("web server failed readiness; previous release restored");
+        }
+
+        // The restart reset the web server's in-memory registry to the
+        // env-file initial (active address only). Republish so the draining
+        // list survives deploys that include the web component.
+        let draining: Vec<String> = if bot.handoff_pending {
+            vec![bot.old_bot_grpc.clone()]
+        } else {
+            Vec::new()
+        };
+        if deps
+            .web
+            .publish_registry(
+                &config.web_registry_url,
+                &config.registry_secret,
+                &grpc_address,
+                &draining,
+            )
+            .is_err()
+        {
+            log("web server registry unavailable after restart; relying on release env");
         }
     }
 

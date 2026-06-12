@@ -359,9 +359,12 @@ fn stage_happy_path_web_only() {
     );
     assert_eq!(
         events.all(),
-        vec![format!(
-            "web health http://127.0.0.1:1/healthz {release_id}"
-        )]
+        vec![
+            format!("web health http://127.0.0.1:1/healthz {release_id}"),
+            // Post-restart republish; no handoff, so active comes from state.
+            "web publish http://127.0.0.1:1/registry active=127.0.0.1:50052 draining=[]"
+                .to_string(),
+        ]
     );
     assert_eq!(clock.sleep_count(), 0);
 }
@@ -472,6 +475,8 @@ fn release_happy_path_first_deploy_all_components() {
             format!("admin drain_status 127.0.0.1:{PORT}"),
             format!("web publish http://127.0.0.1:1/registry active=127.0.0.1:{PORT} draining=[]"),
             format!("web health http://127.0.0.1:1/healthz {release_id}"),
+            // The web restart wiped the in-memory registry; republished.
+            format!("web publish http://127.0.0.1:1/registry active=127.0.0.1:{PORT} draining=[]"),
         ]
     );
 }
@@ -609,6 +614,11 @@ fn rollback_reuses_artifacts_without_building() {
                 "web publish http://127.0.0.1:1/registry active=127.0.0.1:{PORT} draining=[\"127.0.0.1:40000\"]"
             ),
             format!("web health http://127.0.0.1:1/healthz {release_id}"),
+            // The web restart wiped the in-memory registry; republished with
+            // the drain still pending.
+            format!(
+                "web publish http://127.0.0.1:1/registry active=127.0.0.1:{PORT} draining=[\"127.0.0.1:40000\"]"
+            ),
             format!(
                 "admin shutdown_when_empty 127.0.0.1:40000 'release {release_id} is fully ready'"
             ),
