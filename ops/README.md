@@ -163,6 +163,14 @@ single source of truth:
 Merges that do not bump the version deploy staging only; the `auto-tag` job is
 a no-op. A version lower than the latest release fails the job loudly.
 
+**Never `git revert` a commit that bumped the version** (watch for this when
+reverting a feature PR that included a bump). The workspace version would drop
+below the latest release tag, and the `auto-tag` job then fails on every merge
+to `main` until the version is raised again. Staging still deploys, but CI
+stays red. Always roll forward instead: new commit, higher version. To undo a
+bad release in production, use the rollback workflow — not a revert of the
+version bump.
+
 The manual fallback still works — cut a release with the helper, which
 validates before it pushes:
 
