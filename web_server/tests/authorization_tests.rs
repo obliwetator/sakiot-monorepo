@@ -9,6 +9,7 @@ use web_server::audio::{
     download_audio, get_audio, get_waveform_data, live_playlist, live_segment, live_state,
     remove_silence, HashMapContainer, LiveContainer, WaveformProgressContainer,
 };
+use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips};
 use web_server::stamps::get_stamps;
@@ -29,7 +30,7 @@ fn access_cookie_value() -> Result<String, Box<dyn std::error::Error>> {
         CSRF.to_string(),
         &EncodingKey::from_secret(b"test_secret"),
     )?;
-    Ok(format!("access_token={token}"))
+    Ok(format!("{ACCESS_TOKEN_COOKIE}={token}"))
 }
 
 fn access_keys() -> AccessKeys {
