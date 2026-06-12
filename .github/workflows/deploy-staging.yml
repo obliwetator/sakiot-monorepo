@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+    # Docs-only pushes skip CI and the staging deploy entirely. Keep this
+    # list conservative: only files that provably cannot affect the build
+    # or the deploy. Workflow files are deliberately not ignored.
+    paths-ignore:
+      - "**.md"
+      - "LICENSE*"
 
 permissions:
   contents: read

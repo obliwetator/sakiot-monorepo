@@ -127,7 +127,9 @@ secrets to pull-request workflows or use `pull_request_target`.
 ## Staging
 
 Every push to `main` deploys to the staging instance via the
-`Deploy staging` workflow (`staging <sha>` over the restricted SSH). Staging runs
+`Deploy staging` workflow (`staging <sha>` over the restricted SSH). Docs-only
+pushes (`*.md`, `LICENSE`) skip CI and the staging deploy entirely via
+`paths-ignore` on the workflow trigger. Staging runs
 on the same VPS as a fully separate instance: the `sakiot_staging` database, port
 `8901`, the DEBUG Discord bot, `/var/lib/sakiot-staging` + `/srv/sakiot-staging`,
 its own systemd units, and `debug.patrykstyla.com` for the frontend. Its runtime
