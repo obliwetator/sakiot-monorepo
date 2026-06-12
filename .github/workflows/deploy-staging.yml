@@ -48,3 +48,64 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "staging ${STAGING_SHA}"
+
+  # Cuts a production release when the workspace version was bumped: after the
+  # staging deploy verifies, tag v<version>, push it, and dispatch
+  # deploy-release.yml on that tag. The explicit dispatch is needed because a
+  # tag pushed with the default GITHUB_TOKEN does not trigger workflows
+  # (GitHub's recursion guard); workflow_dispatch is exempt from that guard.
+  auto-tag:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release tag
+      actions: write # dispatch deploy-release.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag release if workspace version increased
+        env:
+          STAGING_VERSION_URL: https://debug.patrykstyla.com/version.json
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "fbi_agent") | .version')"
+          tag="v${version}"
+          # Strict semver only, same gate as deploy-release.yml and ops/release.
+          [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "error: invalid workspace version '${version}'"; exit 1; }
+
+          last="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n 1)"
+          if [[ "${tag}" == "${last}" ]]; then
+            echo "version ${version} already released; nothing to do"
+            exit 0
+          fi
+          # Strictly greater than the latest release blocks downgrades and typos.
+          [[ "$(printf '%s\n%s\n' "${last}" "${tag}" | sort -V | tail -n 1)" == "${tag}" ]] \
+            || { echo "error: ${tag} is not above latest release ${last}"; exit 1; }
+          git rev-parse -q --verify "refs/tags/${tag}" >/dev/null \
+            && { echo "error: tag ${tag} already exists"; exit 1; }
+
+          # Staging gate: staging must serve exactly this commit before the
+          # release is cut (mirrors the check in ops/release).
+          sha=""
+          for _ in $(seq 1 30); do
+            sha="$(curl -fsS --connect-timeout 5 --max-time 10 "${STAGING_VERSION_URL}" \
+              | jq -r '.commitSha // empty' || true)"
+            [[ "${sha}" == "${GITHUB_SHA}" ]] && break
+            sleep 10
+          done
+          [[ "${sha}" == "${GITHUB_SHA}" ]] \
+            || { echo "error: staging is on '${sha}', expected ${GITHUB_SHA}"; exit 1; }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "${tag}"
+          git push origin "refs/tags/${tag}"
+          # A GITHUB_TOKEN tag push does not trigger deploy-release.yml on its
+          # own; start it explicitly on the tag we just pushed.
+          gh workflow run deploy-release.yml --ref "${tag}" -R "${GITHUB_REPOSITORY}"
+          echo "pushed ${tag} and dispatched production deploy"

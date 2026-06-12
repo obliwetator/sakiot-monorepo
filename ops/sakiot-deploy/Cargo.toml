@@ -1,6 +1,6 @@
 [package]
 name = "sakiot-deploy"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 # Deploy engine for the VPS. Replaces ops/deploy-release.sh + ops/lib/*.sh.

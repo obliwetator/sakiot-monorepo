@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  # Dispatched by the auto-tag job in deploy-staging.yml on the release tag it
+  # just pushed (a GITHUB_TOKEN tag push cannot trigger the push event above).
+  # Must be run with a v* tag as the ref; the validation step rejects anything
+  # else because github.ref_name will not be strict semver.
+  workflow_dispatch:
 
 permissions:
   contents: read
