@@ -8,9 +8,7 @@ use serenity::{
 use songbird::packet::{Packet, PacketSize, rtp::RtpExtensionPacket};
 
 use super::RecorderCommand;
-use crate::events::voice_receiver::disconnect::{
-    self, recording_channel_has_human_members,
-};
+use crate::events::voice_receiver::disconnect::{self, recording_channel_has_human_members};
 
 pub(in crate::events::voice_receiver) fn extract_opus_payload(
     data: &songbird::events::context_data::VoiceData,

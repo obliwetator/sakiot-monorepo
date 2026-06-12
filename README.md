@@ -84,6 +84,23 @@ bun run test
 bun run build
 ```
 
+## Before Pushing
+
+Enable the repository's pre-push formatting checks once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook runs the same Rust and frontend formatting checks used by CI. To fix
+formatting before committing:
+
+```sh
+cargo fmt --all
+cd sakiot_stage
+bun run format
+```
+
 Generate frontend API types while `web_server` is serving its OpenAPI document:
 
 ```sh
