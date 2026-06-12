@@ -21,6 +21,8 @@ mkdir -p "${temporary}/target/assets"
 chmod 0750 "${temporary}/target/assets"
 touch "${temporary}/target/assets/old-hash.js"
 chmod 0640 "${temporary}/target/assets/old-hash.js"
+touch "${temporary}/target/favicon.svg"
+chmod 0640 "${temporary}/target/favicon.svg"
 touch "${temporary}/dist/assets/app-hash.js" \
   "${temporary}/dist/index.html" \
   "${temporary}/dist/version.json" \
@@ -53,6 +55,7 @@ mapfile -t calls <"${temporary}/calls"
 [[ "$(stat -c '%a' "${temporary}/target")" == "755" ]]
 [[ "$(stat -c '%a' "${temporary}/target/assets")" == "755" ]]
 [[ "$(stat -c '%a' "${temporary}/target/assets/old-hash.js")" == "644" ]]
+[[ "$(stat -c '%a' "${temporary}/target/favicon.svg")" == "644" ]]
 
 mkdir -p "${temporary}/legacy-target/assets"
 touch "${temporary}/legacy-target/assets/old-hash.js"

@@ -20,6 +20,7 @@ export function useAuthBootstrap() {
 		const apiOrigin = new URL(BASE_API_URL, window.location.origin).origin;
 		const handler = (e: MessageEvent) => {
 			if (e.origin !== apiOrigin) return;
+			if (e.data?.type !== "sakiot-auth" && e.data?.success !== 1) return;
 			if (e.data.success !== 1) {
 				console.error("something failed when authenticating");
 				return;

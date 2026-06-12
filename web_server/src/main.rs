@@ -56,6 +56,19 @@ fn cors_subdomain_pattern(allowed: &str) -> Option<(&'static str, String)> {
     None
 }
 
+fn is_cors_origin_allowed(
+    origin: &str,
+    exact: &str,
+    oauth_opener_origins: &[String],
+    subdomain: Option<&(&'static str, String)>,
+) -> bool {
+    if origin == exact || oauth_opener_origins.iter().any(|allowed| origin == allowed) {
+        return true;
+    }
+
+    subdomain.is_some_and(|(scheme, suffix)| origin.starts_with(scheme) && origin.ends_with(suffix))
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
@@ -86,6 +99,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let cors_subdomain = cors_subdomain_pattern(&cfg.cors_allowed_origin);
     let cors_exact = cfg.cors_allowed_origin.clone();
+    let cors_oauth_openers = cfg.oauth_allowed_opener_origins.clone();
     let host = cfg.host.clone();
     let port = cfg.port;
     let cfg_data = web::Data::new(cfg);
@@ -93,18 +107,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server = HttpServer::new(move || {
         let cors_exact = cors_exact.clone();
         let cors_sub = cors_subdomain.clone();
+        let cors_oauth_openers = cors_oauth_openers.clone();
         let cors = Cors::default()
             .allowed_origin_fn(move |origin, _req_head| {
                 let Ok(origin_str) = origin.to_str() else {
                     return false;
                 };
-                if origin_str == cors_exact.as_str() {
-                    return true;
-                }
-                if let Some((scheme, suffix)) = &cors_sub {
-                    return origin_str.starts_with(scheme) && origin_str.ends_with(suffix);
-                }
-                false
+                is_cors_origin_allowed(
+                    origin_str,
+                    &cors_exact,
+                    &cors_oauth_openers,
+                    cors_sub.as_ref(),
+                )
             })
             .allow_any_method()
             .allow_any_header()
@@ -187,4 +201,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     server.await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cors_subdomain_pattern, is_cors_origin_allowed};
+
+    #[test]
+    fn cors_allows_exact_oauth_opener_origin() {
+        let exact = "https://debug.patrykstyla.com";
+        let openers = vec!["https://staging.patrykstyla.com".to_string()];
+        let subdomain = cors_subdomain_pattern(exact);
+
+        assert!(is_cors_origin_allowed(
+            "https://staging.patrykstyla.com",
+            exact,
+            &openers,
+            subdomain.as_ref(),
+        ));
+        assert!(!is_cors_origin_allowed(
+            "https://evil.example",
+            exact,
+            &openers,
+            subdomain.as_ref(),
+        ));
+    }
 }

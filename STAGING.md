@@ -30,8 +30,8 @@ ops/release vX.Y.Z      # validates clean tree/branch/semver/no-dup + staging ma
 | releases         | `/srv/sakiot`         | `/srv/sakiot-staging`            |
 | cache            | `/var/cache/sakiot`   | `/var/cache/sakiot-staging`      |
 | env file         | `/etc/sakiot/production.env` | `/etc/sakiot/staging.env`  |
-| frontend domain  | patrykstyla.com       | **debug.patrykstyla.com**        |
-| frontend docroot | `/var/www/patrykstyla.com` | `/var/www/debug.patrykstyla.com` |
+| frontend domain  | patrykstyla.com       | **staging.patrykstyla.com**        |
+| frontend docroot | `/var/www/patrykstyla.com` | `/var/www/staging.patrykstyla.com` |
 
 The deploy engine is target-agnostic: same engine (`ops/deploy-release.sh`, or
 the `ops/sakiot-deploy` Rust binary when `SAKIOT_DEPLOY_ENGINE=rust`), driven by
@@ -54,20 +54,20 @@ the env file plus `SAKIOT_WEB_UNIT` / `SAKIOT_BOT_UNIT_PREFIX`.
   so `staging.env` puts the **DEBUG** bot's token/app-id in
   `DISCORD_TOKEN_RELEASE` / `APPLICATION_ID_RELEASE`. Don't run a manual debug
   bot with that token while staging is up (one gateway connection per token).
-- **Cutover:** the old dev-login debug web (`web_server-debug.service`, tulipan
-  `--user`, on 8901) was disabled so staging owns 8901 + debug.patrykstyla.com.
+- **Domain roles:** `staging.patrykstyla.com` serves deployed staging;
+  `debug.patrykstyla.com` proxies the Vite server started by `bun run dev`.
 - **Frontend API origin** is baked at build time from `VITE_API_URL` in
   `staging.env` (`https://debug.patrykstyla.com/api/`). Vite reads `VITE_*` from
   the (exported) env. NOTE: `Constants.ts` and `features/metrics/hooks.ts` still
   **hardcode `dev.patrykstyla.com`** — the metrics dashboard websocket streams
   from prod on staging until those move to `VITE_API_URL`.
 
-## nginx (debug.patrykstyla.com vhost)
+## nginx
 
-Must serve the staging docroot and proxy the API to staging web:
+`staging.patrykstyla.com` serves the deployed frontend and staging API:
 
 ```nginx
-root /var/www/debug.patrykstyla.com;          # NOT /var/www/patrykstyla.com
+root /var/www/staging.patrykstyla.com;          # NOT /var/www/patrykstyla.com
 location /api/ { proxy_pass http://127.0.0.1:8901; }
 location /     { try_files $uri /index.html; }
 # don't cache HTML/version.json (assets are hash-named):
@@ -75,11 +75,26 @@ location = /index.html   { add_header Cache-Control "no-store"; }
 location = /version.json { add_header Cache-Control "no-store"; }
 ```
 
+`debug.patrykstyla.com` proxies the API and Vite:
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8901;
+}
+location / {
+    proxy_pass http://127.0.0.1:8081;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+}
+```
+
 ## Login on staging
 
 - **Discord OAuth:** `OAUTH_ALLOWED_OPENER_ORIGINS` in `staging.env` must list the
-  exact browser origin(s), e.g. `https://debug.patrykstyla.com` (no trailing
-  slash). Defaults to `CORS_ALLOWED_ORIGIN` if unset.
+  deployed and debug browser origins, with no trailing slash. Exact opener
+  origins are also allowed credentialed CORS origins. OAuth cookies remain
+  scoped to `debug.patrykstyla.com`, where the staging API is exposed.
 - **Dev login** (skip OAuth) is runtime-gated, works in the release build: set
   `DEV_ACCOUNT_ID` + `DEV_LOGIN_SECRET` in `staging.env` and restart
   `sakiot-staging-web.service`. The frontend shows the button on hosts containing

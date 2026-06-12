@@ -37,7 +37,7 @@ install -d -o sakiot -g sakiot -m 0750 \
   /var/cache/sakiot-staging \
   /srv/sakiot-staging/releases \
   /srv/sakiot-staging/current
-install -d -o sakiot -g sakiot -m 0755 /var/www/debug.patrykstyla.com
+install -d -o sakiot -g sakiot -m 0755 /var/www/staging.patrykstyla.com
 
 rm -rf "${install_root}"
 install -d -o root -g root -m 0755 "${install_root}"

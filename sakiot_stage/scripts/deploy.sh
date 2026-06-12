@@ -45,6 +45,7 @@ rsync -a --no-owner --no-group --no-perms --no-times --delete --checksum \
   --exclude='index.html' \
   --exclude='version.json' \
   "$SRC" "$TARGET/"
+chmod -R u=rwX,go=rX "$TARGET"
 
 INDEX_TEMP="${TARGET}/.index.html.new.$$"
 VERSION_TEMP="${TARGET}/.version.json.new.$$"

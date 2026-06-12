@@ -55,6 +55,7 @@ export default defineConfig({
 	server: {
 		port: 8081,
 		allowedHosts: [
+			"debug.patrykstyla.com",
 			"staging.patrykstyla.com",
 			"dev.patrykstyla.com",
 			"patrykstyla.com",

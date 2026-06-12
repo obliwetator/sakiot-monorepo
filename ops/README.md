@@ -132,7 +132,7 @@ pushes (`*.md`, `LICENSE`) skip CI and the staging deploy entirely via
 `paths-ignore` on the workflow trigger. Staging runs
 on the same VPS as a fully separate instance: the `sakiot_staging` database, port
 `8901`, the DEBUG Discord bot, `/var/lib/sakiot-staging` + `/srv/sakiot-staging`,
-its own systemd units, and `debug.patrykstyla.com` for the frontend. Its runtime
+its own systemd units, and `staging.patrykstyla.com` for the frontend. Its runtime
 profile lives in `/etc/sakiot/staging.env`.
 
 Staging reuses the production deploy engine through `ops/deploy stage <sha>`: it
@@ -182,7 +182,7 @@ ops/release v1.2.3
 
 It refuses a dirty tree, a non-`main` branch, a local/remote that is out of sync,
 a non-strict-semver or already-existing tag, and a commit that has not yet been
-deployed and verified on staging (`debug.patrykstyla.com/version.json`). Override
+deployed and verified on staging (`staging.patrykstyla.com/version.json`). Override
 the staging check only when justified with `--skip-staging-check`.
 
 The raw equivalent (no safety checks) is still:

@@ -215,7 +215,7 @@ pub async fn discord_login(
 (function () {{
     var target = "{escaped_origin}";
     if (window.opener && target) {{
-        window.opener.postMessage({{ success: 1 }}, target);
+        window.opener.postMessage({{ type: "sakiot-auth", success: 1 }}, target);
     }}
     window.close();
 }})();

@@ -166,6 +166,37 @@ async fn db_constraints_reject_negative_cooldown(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn guild_cache_accepts_unknown_discord_channel_types(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = unique_id();
+    let channel_id = guild_id + 1;
+
+    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2)")
+        .bind(guild_id)
+        .bind(guild_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 255, 'future-channel-type')",
+    )
+    .bind(channel_id)
+    .bind(guild_id)
+    .execute(&pool)
+    .await?;
+
+    let channel_type =
+        sqlx::query_scalar::<_, i32>("SELECT type FROM channels WHERE channel_id = $1")
+            .bind(channel_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(channel_type, 255);
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn guild_cache_prune_removes_stale_roles_channels_and_dependents(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

@@ -40,7 +40,7 @@ git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1 \
   && die "tag ${tag} already exists on origin"
 
 # Soft staging gate: the commit should already be deployed on staging.
-staging_url="${SAKIOT_STAGING_VERSION_URL:-https://debug.patrykstyla.com/version.json}"
+staging_url="${SAKIOT_STAGING_VERSION_URL:-https://staging.patrykstyla.com/version.json}"
 if [[ "${skip_staging_check}" == "1" ]]; then
   printf 'WARNING: skipping staging verification (--skip-staging-check)\n' >&2
 else

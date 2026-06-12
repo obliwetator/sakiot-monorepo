@@ -33,6 +33,8 @@ function useBundleUpdateAvailable() {
 	const [updateAvailable, setUpdateAvailable] = useState(false);
 
 	const checkVersion = useCallback(async () => {
+		if (import.meta.env.DEV) return;
+
 		try {
 			const version = await fetchBundleVersion();
 			if (version === null || updateAvailable) return;
