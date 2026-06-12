@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn docs_and_ops_select_nothing() {
         assert_components(&["README.md", "docs/notes.txt", "ops/deploy"], &[]);
-        assert_components(&["STAGING.md", "ops/lib/common.sh"], &[]);
+        assert_components(&["STAGING.md", "ops/systemctl-wrapper"], &[]);
     }
 
     #[test]

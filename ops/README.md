@@ -58,22 +58,14 @@ reviewing deployment-framework changes (`ops/update-deploy-engine.sh` does this
 plus the engine build below). Application release tags cannot modify the
 root-owned SSH bootstrap by themselves.
 
-## Deploy engine (bash → Rust transition)
+## Deploy engine
 
-Two interchangeable deploy engines exist behind `ops/deploy`:
-
-- `ops/deploy-release.sh` + `ops/lib/*.sh` — the original bash engine.
-- `ops/sakiot-deploy/` — a Rust port with identical behavior: same modes,
-  env vars, state files, `manifest.json` schema, and release layout, so
-  releases made by either engine are rollback targets for the other. Both
-  engines take the same `deploy.lock`, so they can never interleave. The
-  binary replaces the bash engine's `grpcurl`, `curl`, `jq`, and `python3`
-  usage with in-process equivalents.
-
-`SAKIOT_DEPLOY_ENGINE` in `/etc/sakiot/{production,staging}.env` selects the
-engine per target (`rust` or `bash`, default `bash`). Flip staging first,
-compare a staging release against a bash-produced one, then flip production.
-Reverting is the same one-line change.
+`ops/deploy` (the SSH forced-command entry point) dispatches to the Rust
+deploy engine in `ops/sakiot-deploy/`. It originated as a behavior-identical
+port of a bash engine that has since been deleted: env vars, state files,
+`manifest.json` schema, and release layout are unchanged, so releases made
+by the old engine remain valid rollback targets. The engine takes an
+exclusive `deploy.lock`, so deploys can never interleave.
 
 The binary is installed out-of-band like the rest of `ops/`:
 `install-production.sh` (and `update-deploy-engine.sh` for later refreshes)

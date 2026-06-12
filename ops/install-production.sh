@@ -54,8 +54,7 @@ chmod 0755 "${install_root}/deploy" "${install_root}/ssh/forced-command"
 chmod 0755 "${install_root}/systemctl-wrapper"
 
 # Rust deploy engine (ops/sakiot-deploy). Built from this checkout as the
-# sakiot user (cargo lives in its home), installed root-owned alongside the
-# bash engine. SAKIOT_DEPLOY_ENGINE in the env files selects which one runs.
+# sakiot user (cargo lives in its home), installed root-owned.
 if sudo -u sakiot bash -lc 'command -v cargo' >/dev/null 2>&1; then
   repo_root="$(cd "${script_dir}/.." && pwd)"
   sudo -u sakiot bash -lc \
@@ -67,7 +66,7 @@ if sudo -u sakiot bash -lc 'command -v cargo' >/dev/null 2>&1; then
     "${install_root}/bin/sakiot-deploy"
 else
   echo "cargo unavailable for sakiot; Rust deploy engine not installed" >&2
-  echo "(SAKIOT_DEPLOY_ENGINE=rust will refuse to run until ops/update-deploy-engine.sh succeeds)" >&2
+  echo "(deploys will fail until ops/update-deploy-engine.sh succeeds)" >&2
 fi
 
 install -m 0644 "${script_dir}/systemd/sakiot-fbi-agent@.service" \

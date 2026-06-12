@@ -1,60 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Entry point for the SSH forced command. Dispatches to the Rust deploy
+# engine (ops/sakiot-deploy), installed out-of-band at bin/ by
+# install-production.sh / update-deploy-engine.sh — never built from the
+# release worktree, so a broken commit cannot brick deploys.
 
-usage_exit() {
-  echo "$1" >&2
-  exit 2
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+binary="${script_dir}/bin/sakiot-deploy"
+
+[[ -x "${binary}" ]] || {
+  echo "error: ${binary} is not installed (run ops/update-deploy-engine.sh)" >&2
+  exit 1
 }
 
-mode="${1:-}"
-case "${mode}" in
-  release)
-    [[ "$#" -eq 3 ]] || usage_exit "usage: ops/deploy release <tag> <sha>"
-    target="production"
-    ;;
-  rollback)
-    [[ "$#" -ge 3 && "$#" -le 4 ]] \
-      || usage_exit "usage: ops/deploy rollback <tag> <sha> [--allow-schema-mismatch]"
-    target="production"
-    ;;
-  stage)
-    [[ "$#" -eq 2 ]] || usage_exit "usage: ops/deploy stage <sha>"
-    target="staging"
-    ;;
-  *)
-    usage_exit "usage: ops/deploy {release|rollback|stage} ..."
-    ;;
-esac
-
-# Engine selection for the bash -> Rust transition. SAKIOT_DEPLOY_ENGINE=rust
-# in the target env file routes deploys through the sakiot-deploy binary;
-# anything else (or no env file) keeps the bash engine. One-line revert.
-env_file="${SAKIOT_ENV_FILE:-/etc/sakiot/${target}.env}"
-engine="bash"
-if [[ -r "${env_file}" ]]; then
-  configured="$(sed -n 's/^SAKIOT_DEPLOY_ENGINE=//p' "${env_file}" | tail -n 1)"
-  [[ -n "${configured}" ]] && engine="${configured}"
-fi
-
-if [[ "${engine}" == "rust" ]]; then
-  binary="${script_dir}/bin/sakiot-deploy"
-  [[ -x "${binary}" ]] || {
-    echo "error: SAKIOT_DEPLOY_ENGINE=rust but ${binary} is not installed" >&2
-    exit 1
-  }
-  exec "${binary}" "$@"
-fi
-
-case "${mode}" in
-  release)
-    exec "${script_dir}/deploy-release.sh" release "$2" "$3"
-    ;;
-  rollback)
-    exec "${script_dir}/deploy-release.sh" rollback "$2" "$3" "${4:-}"
-    ;;
-  stage)
-    exec "${script_dir}/deploy-release.sh" stage "$2"
-    ;;
-esac
+exec "${binary}" "$@"

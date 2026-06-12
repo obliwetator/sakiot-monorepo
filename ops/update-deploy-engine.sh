@@ -55,4 +55,3 @@ visudo -cf "${script_dir}/sudoers/sakiot-deploy"
 install -m 0440 "${script_dir}/sudoers/sakiot-deploy" /etc/sudoers.d/sakiot-deploy
 
 echo "deploy framework updated"
-echo "engine selection: SAKIOT_DEPLOY_ENGINE in /etc/sakiot/{production,staging}.env (rust|bash)"
