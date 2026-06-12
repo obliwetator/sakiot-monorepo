@@ -366,9 +366,13 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
             )?;
         } else {
             log("building web server");
+            let mut args = vec!["build", "--release", "--locked", "--package", "web_server"];
+            if target == Target::Staging {
+                args.extend(["--features", "dev-login"]);
+            }
             deps.runner.run(
                 &Cmd::new("cargo")
-                    .args(["build", "--release", "--locked", "--package", "web_server"])
+                    .args(args)
                     .cwd(worktree.path())
                     .env("SQLX_OFFLINE", "true")
                     .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),
