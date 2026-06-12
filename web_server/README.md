@@ -10,6 +10,21 @@ No support is provided for running, deploying, configuring, or operating it. For
 now, you have to figure that out yourself from the code, environment variables,
 the shared database migrations in `../sakiot-db`, and local setup.
 
+## Local Debug
+
+For a quick local edit loop, `../scripts/dev.sh` starts Postgres, runs
+migrations, seeds a dev account, and runs this server under `cargo watch`
+with the `dev-login` cargo feature (Discord OAuth bypass via
+`GET /api/dev_login` and `DEV_LOGIN_SECRET`). See the root `README.md`.
+
+When running manually, start from the `web_server/` directory so the
+relative `callback.html` path resolves:
+
+```sh
+cd web_server
+cargo run -p web_server --features dev-login
+```
+
 ## Role In The System
 
 Web Server is linked with the other projects in this directory to make the whole

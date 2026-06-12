@@ -16,6 +16,60 @@ stores audio and metadata, and exposes recordings through a web application.
 The Rust services share `sakiot-paths`, `sakiot-proto`, and one database schema.
 Changes spanning these contracts can therefore be committed atomically.
 
+## Local Development
+
+One command brings up a local debug environment for `web_server` on any
+machine (Docker plus `sqlx-cli` required):
+
+```sh
+scripts/dev.sh
+```
+
+On first run it generates a root `.env` with local values (random JWT and dev
+login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
+that points the frontend at the local API. It then starts Postgres via
+`compose.dev.yml`, runs migrations, seeds a dev account and guild, and starts
+`web_server` under `cargo watch` with the `dev-login` feature, so saving a
+Rust file rebuilds and restarts the server. Discord OAuth is not needed:
+the frontend's dev login button calls `/api/dev_login` using
+`VITE_DEV_LOGIN_SECRET`.
+
+Run the frontend against it in another terminal:
+
+```sh
+cd sakiot_stage
+bun dev
+```
+
+Other subcommands:
+
+```sh
+scripts/dev.sh db              # only start Postgres + migrate + seed
+scripts/dev.sh down            # stop Postgres
+scripts/dev.sh reset           # drop the local database volume and re-seed
+scripts/dev.sh fetch-fixtures  # copy real recordings from staging (see below)
+scripts/dev.sh clean           # drop the db volume + delete fetched fixture files
+```
+
+The synthetic seed leaves the recordings list empty. To test the recordings
+UI with real audio, waveforms, and metadata, pull a sample from the staging
+instance over your personal SSH access (read-only on the VPS side; nothing
+is committed to the repository):
+
+```sh
+SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20
+# optionally: --guild <id>; SAKIOT_DEV_REMOTE_PSQL="sudo -u postgres psql"
+# if your VPS user cannot reach the staging database directly
+```
+
+On the VPS itself fetch-fixtures detects `/var/lib/sakiot-staging/data` and
+switches to local mode automatically — no `SAKIOT_DEV_SSH` needed. The shell
+user has no Postgres role there, so the database step needs:
+
+```sh
+SAKIOT_DEV_REMOTE_PSQL="sudo -u postgres psql" scripts/dev.sh fetch-fixtures
+```
+
 ## Environment
 
 Copy the root example once and fill in local credentials:

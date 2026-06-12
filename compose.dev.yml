@@ -8,7 +8,9 @@ services:
     ports:
       - "127.0.0.1:54320:5432"
     volumes:
-      - sakiot-dev-postgres:/var/lib/postgresql/data
+      # postgres:18+ images keep data in a versioned subdirectory; mount the
+      # parent so pg_upgrade --link works across major versions.
+      - sakiot-dev-postgres:/var/lib/postgresql
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres -d sakiot_rouvas" ]
       interval: 2s
