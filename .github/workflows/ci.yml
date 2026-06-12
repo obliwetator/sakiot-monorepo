@@ -2,6 +2,12 @@ name: CI
 
 on:
   pull_request:
+    # Docs-only PRs skip the test suite. Same conservative list as the
+    # deploy-staging push trigger; workflow_call below is unaffected so
+    # deploy workflows always run the full suite.
+    paths-ignore:
+      - "**.md"
+      - "LICENSE*"
   workflow_call:
 
 permissions:
