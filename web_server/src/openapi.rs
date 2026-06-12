@@ -69,7 +69,9 @@ impl Modify for SecurityAddon {
         let components = openapi.components.get_or_insert_with(Default::default);
         components.add_security_scheme(
             "access_token",
-            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new("access_token"))),
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new(
+                "__Host-sakiot-access_token",
+            ))),
         );
         components.add_security_scheme(
             "csrf_token",

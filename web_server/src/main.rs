@@ -124,7 +124,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .allow_any_header()
             // Media element streaming needs these readable from JS / browser
             // internals; not safelisted by default under CORS.
-            .expose_headers(["Content-Length", "Content-Range", "Accept-Ranges"])
+            .expose_headers([
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges",
+                "X-CSRF-Token",
+            ])
             .supports_credentials()
             .max_age(3600);
 

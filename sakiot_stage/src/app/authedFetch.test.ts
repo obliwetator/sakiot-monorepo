@@ -4,6 +4,7 @@ import {
 	BASE_API_URL,
 	getCsrfToken,
 	isLoggedIn,
+	setCsrfToken,
 } from "./authedFetch";
 
 const originalDocument = globalThis.document;
@@ -22,6 +23,7 @@ afterEach(() => {
 		value: originalDocument,
 	});
 	globalThis.fetch = originalFetch;
+	setCsrfToken(null);
 	mock.restore();
 });
 
@@ -38,6 +40,13 @@ describe("auth cookie helpers", () => {
 
 		expect(getCsrfToken()).toBeNull();
 		expect(isLoggedIn()).toBe(false);
+	});
+
+	it("uses an explicitly received csrf token when the API cookie is not readable", () => {
+		setCookie("theme=dark");
+		setCsrfToken("csrf-from-api");
+
+		expect(getCsrfToken()).toBe("csrf-from-api");
 	});
 });
 

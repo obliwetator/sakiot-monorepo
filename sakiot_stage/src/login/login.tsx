@@ -2,6 +2,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import type React from "react";
 import { BASE_API_URL, useLogoutMutation } from "../app/apiSlice";
+import { captureCsrfToken, setCsrfToken } from "../app/authedFetch";
 export default function Login(props: {
 	isLoggedIn: boolean;
 	setIsLoggedIn: React.Dispatch<React.SetStateAction<boolean>>;
@@ -23,6 +24,7 @@ export default function Login(props: {
 		} catch (err) {
 			console.error("logout request failed", err);
 		}
+		setCsrfToken(null);
 		props.setIsLoggedIn(false);
 	};
 
@@ -47,6 +49,7 @@ export default function Login(props: {
 			console.error("dev login failed", res.status);
 			return;
 		}
+		captureCsrfToken(res);
 		window.location.reload();
 	};
 

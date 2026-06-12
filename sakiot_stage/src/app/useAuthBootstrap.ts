@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { useGetAuthDetailsQuery } from "./apiSlice";
-import { BASE_API_URL, isLoggedIn as hasLoggedInCookie } from "./authedFetch";
+import {
+	BASE_API_URL,
+	isLoggedIn as hasLoggedInCookie,
+	setCsrfToken,
+} from "./authedFetch";
 
 export function useAuthBootstrap() {
 	const [hasToken, setHasToken] = useState(hasLoggedInCookie());
@@ -25,6 +29,7 @@ export function useAuthBootstrap() {
 				console.error("something failed when authenticating");
 				return;
 			}
+			if (typeof e.data.csrf === "string") setCsrfToken(e.data.csrf);
 			setHasToken(true);
 			refetch();
 			if (e.source && (e.source as Window).close) {

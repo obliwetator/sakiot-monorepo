@@ -7,7 +7,12 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { components } from "../api/openapi";
 import type { Channels, UserGuilds } from "../Constants";
 import type { JamItRespStatus } from "../features/audio-dashboard/RangeSlider/JamIt";
-import { BASE_API_URL, ensureRefreshed, getCsrfToken } from "./authedFetch";
+import {
+	BASE_API_URL,
+	captureCsrfToken,
+	ensureRefreshed,
+	getCsrfToken,
+} from "./authedFetch";
 
 export { BASE_API_URL };
 
@@ -28,7 +33,11 @@ export type CreateClipResponse = ApiSchema["CreateClipResponse"];
 
 const baseQuery = fetchBaseQuery({
 	baseUrl: BASE_API_URL,
-	fetchFn: (input, init) => fetch(input, { ...init, credentials: "include" }),
+	fetchFn: async (input, init) => {
+		const response = await fetch(input, { ...init, credentials: "include" });
+		captureCsrfToken(response);
+		return response;
+	},
 });
 
 function withCsrfHeader(args: string | FetchArgs): string | FetchArgs {

@@ -1,10 +1,17 @@
 use actix_web::body::EitherBody;
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{http::Method, web, Error, HttpMessage, HttpResponse};
+use actix_web::{
+    http::{
+        header::{HeaderName, HeaderValue},
+        Method,
+    },
+    web, Error, HttpMessage, HttpResponse,
+};
 use futures_util::future::{ready, LocalBoxFuture, Ready};
 use serde_json::json;
 use tracing::warn;
 
+use super::cookies::ACCESS_TOKEN_COOKIE;
 use super::jwt::{Access, AccessKeys, Token};
 
 pub struct AuthMiddleware;
@@ -22,6 +29,18 @@ fn warn_unauthorized_middleware_access(_path: &str, _reason: &str) {
     //     "Unauthorized access attempt to middleware {}: {}",
     //     path, reason
     // );
+}
+
+fn latest_access_token(req: &ServiceRequest, keys: &AccessKeys) -> Option<Token<Access>> {
+    // Browser order is not an authentication boundary; use the newest token
+    // that validates with this environment's signing key.
+    req.cookies().ok().and_then(|cookies| {
+        cookies
+            .iter()
+            .filter(|cookie| cookie.name() == ACCESS_TOKEN_COOKIE)
+            .filter_map(|cookie| Token::<Access>::decode(cookie.value(), keys).ok())
+            .max_by_key(|token| token.exp)
+    })
 }
 
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
@@ -75,20 +94,15 @@ where
             }
         };
 
-        let access_cookie = match req.cookie("access_token") {
-            Some(c) => c,
+        let decoded_access = match latest_access_token(&req, keys) {
+            Some(token) => token,
             None => {
-                warn_unauthorized_middleware_access(req.path(), "missing access_token cookie");
-                let (request, _pl) = req.into_parts();
-                let response = HttpResponse::Unauthorized().finish().map_into_right_body();
-                return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
-            }
-        };
-
-        let decoded_access = match Token::<Access>::decode(access_cookie.value(), keys) {
-            Ok(token) => token,
-            Err(_) => {
-                warn_unauthorized_middleware_access(req.path(), "invalid or expired token");
+                let reason = if req.cookie(ACCESS_TOKEN_COOKIE).is_some() {
+                    "invalid or expired token"
+                } else {
+                    "missing access_token cookie"
+                };
+                warn_unauthorized_middleware_access(req.path(), reason);
                 let (request, _pl) = req.into_parts();
                 let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
@@ -114,15 +128,28 @@ where
             }
         }
 
+        let csrf = decoded_access.csrf.clone();
         req.extensions_mut().insert(decoded_access);
         let res = self.service.call(req);
-        Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) })
+        Box::pin(async move {
+            let mut response = res.await?.map_into_left_body();
+            if let Ok(value) = HeaderValue::from_str(&csrf) {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static("x-csrf-token"), value);
+            }
+            Ok(response)
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_public_api_path;
+    use super::{is_public_api_path, latest_access_token, ACCESS_TOKEN_COOKIE};
+    use actix_web::test as actix_test;
+    use jsonwebtoken::{DecodingKey, EncodingKey};
+
+    use crate::auth::{AccessKeys, AuthKind, Token};
 
     #[test]
     fn public_api_paths_are_explicit() {
@@ -132,5 +159,36 @@ mod tests {
         assert!(is_public_api_path("/api/logout"));
         assert!(!is_public_api_path("/api/users/current"));
         assert!(!is_public_api_path("/api/refresh/extra"));
+    }
+
+    #[test]
+    fn newest_valid_access_cookie_wins_over_invalid_duplicate(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let keys = AccessKeys {
+            access_encode: EncodingKey::from_secret(b"test_secret"),
+            refresh_encode: EncodingKey::from_secret(b"test_secret"),
+            access_decode: DecodingKey::from_secret(b"test_secret"),
+            refresh_decode: DecodingKey::from_secret(b"test_secret"),
+        };
+        let valid = Token::<super::Access>::encode(
+            42,
+            AuthKind::Discord,
+            "csrf-current".into(),
+            &keys.access_encode,
+        )?;
+        let req = actix_test::TestRequest::default()
+            .insert_header((
+                actix_web::http::header::COOKIE,
+                format!(
+                    "access_token=production-token; {ACCESS_TOKEN_COOKIE}=stale-token; \
+                     {ACCESS_TOKEN_COOKIE}={valid}"
+                ),
+            ))
+            .to_srv_request();
+
+        let decoded = latest_access_token(&req, &keys).ok_or("valid duplicate token missing")?;
+        assert_eq!(decoded.user_id, 42);
+        assert_eq!(decoded.csrf, "csrf-current");
+        Ok(())
     }
 }

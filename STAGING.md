@@ -61,6 +61,9 @@ the env file plus `SAKIOT_WEB_UNIT` / `SAKIOT_BOT_UNIT_PREFIX`.
   the (exported) env. NOTE: `Constants.ts` and `features/metrics/hooks.ts` still
   **hardcode `dev.patrykstyla.com`** — the metrics dashboard websocket streams
   from prod on staging until those move to `VITE_API_URL`.
+- **Auth cookies are host-only** `__Host-sakiot-*` cookies. Never add a
+  `Domain` attribute: parent-domain cookies collide across production,
+  staging, and debug hosts.
 
 ## nginx
 

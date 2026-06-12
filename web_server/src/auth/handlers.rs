@@ -1,6 +1,7 @@
 #[cfg(feature = "dev-login")]
 use actix_files::NamedFile;
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
 use tracing::warn;
@@ -14,7 +15,8 @@ use super::cookies::{
     access_token_cookie, clear_access_token_cookie, clear_csrf_cookie, clear_legacy_access_cookie,
     clear_legacy_refresh_cookie, clear_logged_in_cookie, clear_oauth_state_cookie,
     clear_opener_origin_cookie, clear_refresh_token_cookie, csrf_cookie, logged_in_cookie,
-    oauth_state_cookie, opener_origin_cookie, refresh_token_cookie,
+    oauth_state_cookie, refresh_token_cookie, CSRF_COOKIE, OAUTH_STATE_COOKIE,
+    REFRESH_TOKEN_COOKIE,
 };
 use super::discord::{request_access_token, DiscordLoginCode};
 use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
@@ -86,24 +88,46 @@ fn csrf_header(req: &HttpRequest) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
 }
 
+fn cookie_matches(req: &HttpRequest, name: &str, expected: &str) -> bool {
+    req.cookies().is_ok_and(|cookies| {
+        cookies.iter().any(|cookie| {
+            cookie.name() == name
+                && cookie
+                    .value()
+                    .as_bytes()
+                    .ct_eq(expected.as_bytes())
+                    .unwrap_u8()
+                    == 1
+        })
+    })
+}
+
+fn oauth_state(origin: &str) -> String {
+    format!(
+        "{}.{}",
+        Uuid::new_v4(),
+        URL_SAFE_NO_PAD.encode(origin.as_bytes())
+    )
+}
+
+fn origin_from_oauth_state(state: &str) -> Option<String> {
+    let (_, encoded_origin) = state.split_once('.')?;
+    let origin = URL_SAFE_NO_PAD.decode(encoded_origin).ok()?;
+    String::from_utf8(origin).ok()
+}
+
 fn require_csrf(req: &HttpRequest, expected: &str) -> Result<(), AppError> {
     let Some(actual) = csrf_header(req) else {
         warn!("CSRF token missing for {}", req.path());
         return Err(AppError::Forbidden);
     };
-    let Some(cookie) = req.cookie("xsrf_token") else {
+    if !cookie_matches(req, CSRF_COOKIE, expected) {
         warn!("CSRF cookie missing for {}", req.path());
         return Err(AppError::Forbidden);
-    };
+    }
 
     let header_matches = actual.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 1;
-    let cookie_matches = cookie
-        .value()
-        .as_bytes()
-        .ct_eq(expected.as_bytes())
-        .unwrap_u8()
-        == 1;
-    if header_matches && cookie_matches {
+    if header_matches {
         Ok(())
     } else {
         warn!("CSRF token mismatch for {}", req.path());
@@ -116,18 +140,12 @@ fn require_cookie_csrf(req: &HttpRequest) -> Result<(), AppError> {
         warn!("CSRF token missing for {}", req.path());
         return Err(AppError::Forbidden);
     };
-    let Some(cookie) = req.cookie("xsrf_token") else {
+    if !cookie_matches(req, CSRF_COOKIE, actual) {
         warn!("CSRF cookie missing for {}", req.path());
         return Err(AppError::Forbidden);
-    };
+    }
 
-    if !actual.is_empty()
-        && actual
-            .as_bytes()
-            .ct_eq(cookie.value().as_bytes())
-            .unwrap_u8()
-            == 1
-    {
+    if !actual.is_empty() {
         Ok(())
     } else {
         warn!("CSRF token mismatch for {}", req.path());
@@ -144,7 +162,7 @@ pub async fn oauth_start(
         return Err(AppError::BadRequest("Invalid opener origin".into()));
     }
 
-    let state = Uuid::new_v4().to_string();
+    let state = oauth_state(&query.origin);
     let url = format!(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
         urlencoding::encode(&cfg.client_id),
@@ -153,12 +171,10 @@ pub async fn oauth_start(
         urlencoding::encode(&state),
     );
 
-    let d = cfg.cookie_domain.as_str();
     let mut resp = HttpResponse::Found()
         .append_header((actix_web::http::header::LOCATION, url))
         .finish();
-    resp.add_cookie(&oauth_state_cookie(d, &state))?;
-    resp.add_cookie(&opener_origin_cookie(d, &query.origin))?;
+    resp.add_cookie(&oauth_state_cookie(&state))?;
     Ok(resp)
 }
 
@@ -171,23 +187,17 @@ pub async fn discord_login(
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
-    let cookie_state = req
-        .cookie("oauth_state")
-        .ok_or_else(|| AppError::BadRequest("Missing oauth_state cookie".into()))?;
     let query_state = query
         .state
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("Missing state parameter".into()))?;
-    if cookie_state
-        .value()
-        .as_bytes()
-        .ct_eq(query_state.as_bytes())
-        .unwrap_u8()
-        != 1
-    {
+    if !cookie_matches(&req, OAUTH_STATE_COOKIE, query_state) {
         warn!("OAuth state mismatch on /discord_login");
         return Err(AppError::BadRequest("OAuth state mismatch".into()));
     }
+    let opener_origin = origin_from_oauth_state(query_state)
+        .filter(|origin| is_allowed_opener_origin(origin, &cfg))
+        .ok_or_else(|| AppError::BadRequest("Invalid opener origin".into()))?;
 
     let data = request_access_token(&cfg, query.code.to_owned(), client.clone()).await?;
 
@@ -199,10 +209,6 @@ pub async fn discord_login(
     let (access_token, refresh_token) =
         create_jwt_tokens(user.id, AuthKind::Discord, csrf_token.clone(), &keys).await?;
 
-    let opener_origin = req
-        .cookie("opener_origin")
-        .map(|c| c.value().to_string())
-        .unwrap_or_default();
     let escaped_origin = opener_origin
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
@@ -215,7 +221,7 @@ pub async fn discord_login(
 (function () {{
     var target = "{escaped_origin}";
     if (window.opener && target) {{
-        window.opener.postMessage({{ type: "sakiot-auth", success: 1 }}, target);
+        window.opener.postMessage({{ type: "sakiot-auth", success: 1, csrf: "{csrf_token}" }}, target);
     }}
     window.close();
 }})();
@@ -233,11 +239,11 @@ pub async fn discord_login(
     let d = cfg.cookie_domain.as_str();
     html.add_cookie(&clear_legacy_access_cookie(d))?;
     html.add_cookie(&clear_legacy_refresh_cookie(d))?;
-    html.add_cookie(&access_token_cookie(d, &access_token))?;
-    html.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
-    html.add_cookie(&csrf_cookie(d, &csrf_token))?;
-    html.add_cookie(&logged_in_cookie(d))?;
-    html.add_cookie(&clear_oauth_state_cookie(d))?;
+    html.add_cookie(&access_token_cookie(&access_token))?;
+    html.add_cookie(&refresh_token_cookie(&refresh_token))?;
+    html.add_cookie(&csrf_cookie(&csrf_token))?;
+    html.add_cookie(&logged_in_cookie())?;
+    html.add_cookie(&clear_oauth_state_cookie())?;
     html.add_cookie(&clear_opener_origin_cookie(d))?;
 
     Ok(html)
@@ -278,10 +284,15 @@ pub async fn dev_login(
     let d = cfg.cookie_domain.as_str();
     b.add_cookie(&clear_legacy_access_cookie(d))?;
     b.add_cookie(&clear_legacy_refresh_cookie(d))?;
-    b.add_cookie(&access_token_cookie(d, &access_token))?;
-    b.add_cookie(&refresh_token_cookie(d, &refresh_token))?;
-    b.add_cookie(&csrf_cookie(d, &csrf_token))?;
-    b.add_cookie(&logged_in_cookie(d))?;
+    b.add_cookie(&access_token_cookie(&access_token))?;
+    b.add_cookie(&refresh_token_cookie(&refresh_token))?;
+    b.add_cookie(&csrf_cookie(&csrf_token))?;
+    b.add_cookie(&logged_in_cookie())?;
+    b.headers_mut().insert(
+        actix_web::http::header::HeaderName::from_static("x-csrf-token"),
+        actix_web::http::header::HeaderValue::from_str(&csrf_token)
+            .map_err(|_| AppError::InternalError)?,
+    );
 
     Ok(b)
 }
@@ -302,44 +313,71 @@ pub async fn dev_login(
 pub async fn refresh_jwt(
     req: HttpRequest,
     keys: web::Data<AccessKeys>,
-    cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
-    let d = cfg.cookie_domain.as_str();
-    let refresh_cookie = match req.cookie("refresh_token") {
-        Some(c) => c,
-        None => {
-            warn!(
-                "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
-                req.path()
-            );
-            let mut resp = HttpResponse::Unauthorized().finish();
-            resp.add_cookie(&clear_access_token_cookie(d))?;
-            resp.add_cookie(&clear_refresh_token_cookie(d))?;
-            resp.add_cookie(&clear_csrf_cookie(d))?;
-            resp.add_cookie(&clear_logged_in_cookie(d))?;
-            return Ok(resp);
-        }
-    };
+    let refresh_cookies = req
+        .cookies()
+        .ok()
+        .map(|cookies| {
+            cookies
+                .iter()
+                .filter(|cookie| cookie.name() == REFRESH_TOKEN_COOKIE)
+                .map(|cookie| cookie.value().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if refresh_cookies.is_empty() {
+        warn!(
+            "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
+            req.path()
+        );
+        let mut resp = HttpResponse::Unauthorized().finish();
+        resp.add_cookie(&clear_access_token_cookie())?;
+        resp.add_cookie(&clear_refresh_token_cookie())?;
+        resp.add_cookie(&clear_csrf_cookie())?;
+        resp.add_cookie(&clear_logged_in_cookie())?;
+        return Ok(resp);
+    }
 
-    let decoded_refresh = match Token::<Refresh>::decode(refresh_cookie.value(), &keys) {
-        Ok(token) => token,
-        Err(_) => {
-            warn!(
-                "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
-                req.path()
-            );
-            let mut resp = HttpResponse::Unauthorized().json(RefreshTokenError {
-                error: "expired_or_invalid_token",
-                message: "The refresh token is expired or invalid. Please login again.",
-            });
-            resp.add_cookie(&clear_access_token_cookie(d))?;
-            resp.add_cookie(&clear_refresh_token_cookie(d))?;
-            resp.add_cookie(&clear_csrf_cookie(d))?;
-            resp.add_cookie(&clear_logged_in_cookie(d))?;
-            return Ok(resp);
-        }
-    };
+    let valid_refreshes = refresh_cookies
+        .iter()
+        .filter_map(|value| Token::<Refresh>::decode(value, &keys).ok())
+        .collect::<Vec<_>>();
+    if valid_refreshes.is_empty() {
+        warn!(
+            "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
+            req.path()
+        );
+        let mut resp = HttpResponse::Unauthorized().json(RefreshTokenError {
+            error: "expired_or_invalid_token",
+            message: "The refresh token is expired or invalid. Please login again.",
+        });
+        resp.add_cookie(&clear_access_token_cookie())?;
+        resp.add_cookie(&clear_refresh_token_cookie())?;
+        resp.add_cookie(&clear_csrf_cookie())?;
+        resp.add_cookie(&clear_logged_in_cookie())?;
+        return Ok(resp);
+    }
 
+    let Some(actual_csrf) = csrf_header(&req) else {
+        warn!("CSRF token missing for {}", req.path());
+        return Err(AppError::Forbidden);
+    };
+    // Match CSRF before choosing among duplicate cookies from an old path.
+    let decoded_refresh = valid_refreshes
+        .into_iter()
+        .filter(|token| {
+            token
+                .csrf
+                .as_bytes()
+                .ct_eq(actual_csrf.as_bytes())
+                .unwrap_u8()
+                == 1
+        })
+        .max_by_key(|token| token.exp)
+        .ok_or_else(|| {
+            warn!("CSRF token mismatch for {}", req.path());
+            AppError::Forbidden
+        })?;
     require_csrf(&req, &decoded_refresh.csrf)?;
 
     let csrf_token = Uuid::new_v4().to_string();
@@ -353,10 +391,15 @@ pub async fn refresh_jwt(
     .await?;
 
     let mut response = HttpResponse::Ok().json(RefreshTokenResponse { status: "ok" });
-    response.add_cookie(&access_token_cookie(d, &new_access_token))?;
-    response.add_cookie(&refresh_token_cookie(d, &new_refresh_token))?;
-    response.add_cookie(&csrf_cookie(d, &csrf_token))?;
-    response.add_cookie(&logged_in_cookie(d))?;
+    response.add_cookie(&access_token_cookie(&new_access_token))?;
+    response.add_cookie(&refresh_token_cookie(&new_refresh_token))?;
+    response.add_cookie(&csrf_cookie(&csrf_token))?;
+    response.add_cookie(&logged_in_cookie())?;
+    response.headers_mut().insert(
+        actix_web::http::header::HeaderName::from_static("x-csrf-token"),
+        actix_web::http::header::HeaderValue::from_str(&csrf_token)
+            .map_err(|_| AppError::InternalError)?,
+    );
 
     Ok(response)
 }
@@ -372,22 +415,22 @@ pub async fn refresh_jwt(
     security(("csrf_token" = [])),
 )]
 #[post("/logout")]
-pub async fn logout(req: HttpRequest, cfg: web::Data<Config>) -> Result<impl Responder, AppError> {
+pub async fn logout(req: HttpRequest) -> Result<impl Responder, AppError> {
     require_cookie_csrf(&req)?;
 
-    let d = cfg.cookie_domain.as_str();
     let mut resp = HttpResponse::Ok().finish();
-    resp.add_cookie(&clear_access_token_cookie(d))?;
-    resp.add_cookie(&clear_refresh_token_cookie(d))?;
-    resp.add_cookie(&clear_csrf_cookie(d))?;
-    resp.add_cookie(&clear_logged_in_cookie(d))?;
+    resp.add_cookie(&clear_access_token_cookie())?;
+    resp.add_cookie(&clear_refresh_token_cookie())?;
+    resp.add_cookie(&clear_csrf_cookie())?;
+    resp.add_cookie(&clear_logged_in_cookie())?;
     Ok(resp)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_allowed_opener_origin, require_cookie_csrf, require_csrf, RefreshTokenResponse,
+        is_allowed_opener_origin, oauth_state, origin_from_oauth_state, require_cookie_csrf,
+        require_csrf, RefreshTokenResponse, CSRF_COOKIE,
     };
     use crate::config::Config;
     use actix_web::{cookie::Cookie, test as actix_test};
@@ -455,14 +498,39 @@ mod tests {
     }
 
     #[test]
+    fn oauth_state_round_trips_opener_origin() {
+        let state = oauth_state("https://staging.patrykstyla.com");
+
+        assert_eq!(
+            origin_from_oauth_state(&state).as_deref(),
+            Some("https://staging.patrykstyla.com")
+        );
+        assert!(origin_from_oauth_state("invalid").is_none());
+    }
+
+    #[test]
     fn csrf_requires_matching_header_cookie_and_expected_token() {
         let req = actix_test::TestRequest::default()
             .insert_header(("X-CSRF-Token", "csrf-123"))
-            .cookie(Cookie::new("xsrf_token", "csrf-123"))
+            .cookie(Cookie::new(CSRF_COOKIE, "csrf-123"))
             .to_http_request();
 
         assert!(require_csrf(&req, "csrf-123").is_ok());
         assert!(require_csrf(&req, "csrf-456").is_err());
+        assert!(require_cookie_csrf(&req).is_ok());
+    }
+
+    #[test]
+    fn csrf_ignores_stale_duplicate_cookie() {
+        let req = actix_test::TestRequest::default()
+            .insert_header(("X-CSRF-Token", "csrf-current"))
+            .insert_header((
+                actix_web::http::header::COOKIE,
+                format!("xsrf_token=csrf-production; {CSRF_COOKIE}=csrf-current"),
+            ))
+            .to_http_request();
+
+        assert!(require_csrf(&req, "csrf-current").is_ok());
         assert!(require_cookie_csrf(&req).is_ok());
     }
 
