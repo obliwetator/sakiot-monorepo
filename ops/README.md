@@ -142,7 +142,29 @@ touching production. Because the bot binary is built with `cargo build --release
 
 ## Release
 
-Cut a production release with the helper, which validates before it pushes:
+The normal path is version-bump driven. The workspace version in the root
+`Cargo.toml` (`[workspace.package] version`, inherited by every crate) is the
+single source of truth:
+
+1. Bump the version in a PR (e.g. `1.0.6` → `1.0.7`; remember `Cargo.lock`
+   updates with it — run `cargo check`).
+2. Merge to `main`. CI deploys staging as usual.
+3. The `auto-tag` job in `deploy-staging.yml` then compares the workspace
+   version against the latest `v*` tag. If it is strictly higher (strict semver
+   only) and staging is verified to be serving this exact commit, it tags
+   `v<version>`, pushes the tag, and dispatches `deploy-release.yml` on it.
+   The explicit dispatch is needed because a tag pushed with the workflow's
+   own `GITHUB_TOKEN` does not trigger the tag-push event (GitHub's recursion
+   guard); `workflow_dispatch` is exempt. No personal access token is
+   involved, so the release path is not tied to any individual account.
+4. The dispatched run validates the tag and deploys production exactly as a
+   manually pushed tag would.
+
+Merges that do not bump the version deploy staging only; the `auto-tag` job is
+a no-op. A version lower than the latest release fails the job loudly.
+
+The manual fallback still works — cut a release with the helper, which
+validates before it pushes:
 
 ```sh
 ops/release v1.2.3

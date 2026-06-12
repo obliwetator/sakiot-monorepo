@@ -7,3 +7,9 @@ members = [
     "web_server",
 ]
 resolver = "3"
+
+# Single source of truth for the product version. Bumping this in a PR and
+# merging to main is what cuts a release: CI tags v<version> after the staging
+# deploy verifies, and the tag push triggers the production deploy.
+[workspace.package]
+version = "1.0.6"
