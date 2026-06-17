@@ -233,6 +233,18 @@ fn ffmpeg_output_args(out_dir: &Path, live: bool) -> Vec<String> {
     ]
 }
 
+fn drain_child_stderr(child: &mut Child, job_id: String) {
+    let Some(mut stderr) = child.stderr.take() else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        if let Err(error) = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await {
+            warn!(stem = %job_id, ?error, "failed to drain ffmpeg stderr");
+        }
+    });
+}
+
 async fn spawn_job(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
@@ -245,7 +257,8 @@ async fn spawn_job(
         .await
         .map_err(AppError::IoError)?;
 
-    let child = if is_live {
+    let id = key_id(&key);
+    let mut child = if is_live {
         // Shell pipeline so we don't have to wire ChildStdout -> Stdio manually.
         // `exec` on the ffmpeg side means the shell's pid IS ffmpeg's pid once
         // tail starts producing bytes — but tail still runs as a sibling under
@@ -293,6 +306,7 @@ async fn spawn_job(
             .spawn()
             .map_err(AppError::IoError)?
     };
+    drain_child_stderr(&mut child, id.clone());
 
     let state = Arc::new(Mutex::new(JobState {
         finalized: false,
@@ -308,7 +322,6 @@ async fn spawn_job(
     let state_c = state.clone();
     let pool_c = pool.clone();
     let stem = key.stem.clone();
-    let id = key_id(&key);
     let out_dir_c = out_dir.clone();
     tokio::spawn(async move {
         if is_live {
@@ -609,6 +622,26 @@ mod tests {
 
         assert!(flags.contains("omit_endlist"));
         assert!(!flags.contains("append_list"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stderr_drain_allows_noisy_child_to_exit() -> Result<(), Box<dyn std::error::Error>> {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(
+                "i=0; while [ \"$i\" -lt 20000 ]; do \
+                 echo 0123456789012345678901234567890123456789 >&2; \
+                 i=$((i + 1)); done",
+            )
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        drain_child_stderr(&mut child, "stderr-drain-test".into());
+
+        let status = tokio::time::timeout(Duration::from_secs(5), child.wait()).await??;
+
+        assert!(status.success());
         Ok(())
     }
 }

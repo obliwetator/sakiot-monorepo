@@ -39,12 +39,50 @@ pub fn handle_idempotency_key(req: &HttpRequest) -> Result<String, crate::errors
     };
 
     match header.to_str() {
-        Ok(ok) => Ok(ok.to_owned()),
+        Ok(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(crate::errors::AppError::BadRequest(
+                    "Idempotency key is empty".into(),
+                ));
+            }
+            if value.len() > 255 {
+                return Err(crate::errors::AppError::BadRequest(
+                    "Idempotency key exceeds 255 bytes".into(),
+                ));
+            }
+            Ok(value.to_owned())
+        }
         Err(_) => {
             error!("No value in Idempotency header");
             Err(crate::errors::AppError::BadRequest(
                 "No value in Idempotency header".into(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_idempotency_key;
+    use actix_web::test::TestRequest;
+
+    #[test]
+    fn idempotency_key_is_trimmed() -> Result<(), Box<dyn std::error::Error>> {
+        let req = TestRequest::default()
+            .insert_header(("Idempotency-Key", " request-123 "))
+            .to_http_request();
+
+        assert_eq!(handle_idempotency_key(&req)?, "request-123");
+        Ok(())
+    }
+
+    #[test]
+    fn idempotency_key_rejects_empty_values() {
+        let req = TestRequest::default()
+            .insert_header(("Idempotency-Key", "   "))
+            .to_http_request();
+
+        assert!(handle_idempotency_key(&req).is_err());
     }
 }

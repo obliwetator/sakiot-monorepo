@@ -58,16 +58,17 @@ is committed to the repository):
 
 ```sh
 SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20
-# optionally: --guild <id>; SAKIOT_DEV_REMOTE_PSQL="sudo -u postgres psql"
-# if your VPS user cannot reach the staging database directly
+# optionally: --guild <id>
 ```
 
 On the VPS itself fetch-fixtures detects `/var/lib/sakiot-staging/data` and
-switches to local mode automatically — no `SAKIOT_DEV_SSH` needed. The shell
-user has no Postgres role there, so the database step needs:
+switches to local mode automatically — no `SAKIOT_DEV_SSH` needed. By default,
+the export runs on the VPS using `/etc/sakiot/staging.env` when readable,
+then tries `sudo -n -u postgres psql`, then direct `psql`. For a nonstandard
+database setup, override the remote command:
 
 ```sh
-SAKIOT_DEV_REMOTE_PSQL="sudo -u postgres psql" scripts/dev.sh fetch-fixtures
+SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" scripts/dev.sh fetch-fixtures
 ```
 
 ## Environment

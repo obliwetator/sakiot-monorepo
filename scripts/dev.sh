@@ -143,11 +143,52 @@ cmd_reset() {
 
 # --- fetch-fixtures: copy real recordings (rows + files) from staging ---------
 
-fetch_tsv() { # fetch_tsv "<select query>"
+sh_quote() {
+    printf '%q' "$1"
+}
+
+is_uint() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+probe_remote_psql() {
+    local candidate=$1
     if [ "$SAKIOT_DEV_SSH" = local ]; then
-        $REMOTE_PSQL -d "$REMOTE_DB" -v ON_ERROR_STOP=1 -Atc "COPY ($1) TO STDOUT"
+        bash -lc "$candidate -v ON_ERROR_STOP=1 -Atc 'SELECT 1'" >/dev/null 2>&1
     else
-        ssh "$SAKIOT_DEV_SSH" "$REMOTE_PSQL -d $REMOTE_DB -v ON_ERROR_STOP=1 -Atc \"COPY ($1) TO STDOUT\""
+        ssh "$SAKIOT_DEV_SSH" "$candidate -v ON_ERROR_STOP=1 -Atc 'SELECT 1'" >/dev/null 2>&1
+    fi
+}
+
+configure_remote_psql() {
+    if [ -n "${SAKIOT_DEV_REMOTE_PSQL:-}" ]; then
+        REMOTE_PSQL="$SAKIOT_DEV_REMOTE_PSQL -d $(sh_quote "$REMOTE_DB")"
+        return
+    fi
+
+    local candidate env_file
+    env_file=${SAKIOT_DEV_REMOTE_ENV_FILE:-/etc/sakiot/staging.env}
+    for candidate in \
+        "set -a; . $(sh_quote "$env_file"); set +a; psql \"\$DATABASE_URL\"" \
+        "sudo -n -u postgres psql -d $(sh_quote "$REMOTE_DB")" \
+        "psql -d $(sh_quote "$REMOTE_DB")"; do
+        if probe_remote_psql "$candidate"; then
+            REMOTE_PSQL=$candidate
+            return
+        fi
+    done
+
+    die "cannot connect to $REMOTE_DB on $SAKIOT_DEV_SSH.
+      Grant the SSH user read access to $env_file, passwordless 'sudo -n -u postgres psql', or a matching Postgres role.
+      Override with SAKIOT_DEV_REMOTE_PSQL if this VPS uses a different psql command."
+}
+
+fetch_tsv() { # fetch_tsv "<select query>"
+    local copy_sql="COPY ($1) TO STDOUT;"
+    if [ "$SAKIOT_DEV_SSH" = local ]; then
+        printf '%s\n' "$copy_sql" | bash -lc "$REMOTE_PSQL -v ON_ERROR_STOP=1 -At"
+    else
+        printf '%s\n' "$copy_sql" | ssh "$SAKIOT_DEV_SSH" "$REMOTE_PSQL -v ON_ERROR_STOP=1 -At"
     fi
 }
 
@@ -172,19 +213,30 @@ cmd_fetch_fixtures() {
         SAKIOT_DEV_SSH=local
     fi
     : "${SAKIOT_DEV_SSH:?set SAKIOT_DEV_SSH=user@vps-host (personal SSH access to the VPS), or 'local' on the VPS itself}"
-    REMOTE_PSQL=${SAKIOT_DEV_REMOTE_PSQL:-psql}
     REMOTE_DB=${SAKIOT_DEV_REMOTE_DB:-sakiot_staging}
     local remote_data=${SAKIOT_DEV_REMOTE_DATA:-/var/lib/sakiot-staging/data}
     local count=20 guild_filter=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --count) count=$2; shift 2 ;;
-            --guild) guild_filter="AND guild_id = $2"; shift 2 ;;
+            --count)
+                [ $# -ge 2 ] || die "--count needs a value"
+                is_uint "$2" || die "--count must be an unsigned integer"
+                count=$2
+                shift 2
+                ;;
+            --guild)
+                [ $# -ge 2 ] || die "--guild needs a value"
+                is_uint "$2" || die "--guild must be an unsigned integer"
+                guild_filter="AND guild_id = $2"
+                shift 2
+                ;;
             *) die "unknown flag: $1 (supported: --count N, --guild ID)" ;;
         esac
     done
     [ -f "$ROOT/.env" ] || die "run 'scripts/dev.sh db' first"
+    [ "$SAKIOT_DEV_SSH" = local ] || need ssh "for remote database export"
     need rsync "for file transfer"
+    configure_remote_psql
 
     local tmp
     tmp=$(mktemp -d)

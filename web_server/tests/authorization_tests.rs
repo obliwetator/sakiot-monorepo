@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use tokio::sync::RwLock;
 use web_server::audio::{
     download_audio, get_audio, get_waveform_data, live_playlist, live_segment, live_state,
-    remove_silence, HashMapContainer, LiveContainer, WaveformProgressContainer,
+    remove_silence, LiveContainer, SilenceJobContainer, WaveformProgressContainer,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
@@ -128,9 +128,7 @@ async fn forbidden_cross_guild_requests_are_rejected(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
-            .app_data(web::Data::new(HashMapContainer(
-                RwLock::new(HashMap::new()),
-            )))
+            .app_data(web::Data::new(SilenceJobContainer::default()))
             .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
                 HashMap::new(),
             ))))

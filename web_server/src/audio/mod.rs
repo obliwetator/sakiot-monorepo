@@ -18,5 +18,5 @@ pub use paths::{
 pub use peaks::{get_clip_waveform_data, get_waveform_data};
 pub use reaper::spawn_hls_reaper;
 pub use serve::{download_audio, get_audio};
-pub use silence::remove_silence;
-pub use types::{HashMapContainer, StartEnd, WaveformProgressContainer};
+pub use silence::{remove_silence, SilenceJobContainer};
+pub use types::{StartEnd, WaveformProgressContainer};

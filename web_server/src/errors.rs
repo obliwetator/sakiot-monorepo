@@ -36,6 +36,8 @@ pub enum AppError {
     HttpError(#[from] actix_web::error::HttpError),
     #[error("Bad Request: {0}")]
     BadRequest(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
     #[error("Invalid path param: {0}")]
     InvalidParam(String),
     #[error("FFmpeg failed: {0}")]
@@ -58,6 +60,7 @@ impl ResponseError for AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::InvalidToken => StatusCode::UNAUTHORIZED,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,

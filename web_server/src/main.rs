@@ -17,7 +17,7 @@ use web_server::admin::cooldowns::{
 use web_server::audio::{
     download_audio, get_audio, get_clip_waveform_data, get_current_month_permission,
     get_live_stems, get_recording_events, get_waveform_data, live_playlist, live_segment,
-    live_state, remove_silence, spawn_hls_reaper, HashMapContainer, LiveContainer,
+    live_state, remove_silence, spawn_hls_reaper, LiveContainer, SilenceJobContainer,
     WaveformProgressContainer,
 };
 #[cfg(feature = "dev-login")]
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Periodically delete stale per-recording HLS caches (dead after live).
     spawn_hls_reaper();
 
-    let hashmap = web::Data::new(HashMapContainer(RwLock::new(HashMap::new())));
+    let silence_jobs = web::Data::new(SilenceJobContainer::default());
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
     let live_container = web::Data::new(LiveContainer::default());
     let agent_grpc_registry = web::Data::new(AgentGrpcRegistry::new(&cfg.grpc_address));
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(reqwest::Client::new()))
-            .app_data(hashmap.clone())
+            .app_data(silence_jobs.clone())
             .app_data(waveform_progress.clone())
             .app_data(live_container.clone())
             .app_data(agent_grpc_registry.clone())

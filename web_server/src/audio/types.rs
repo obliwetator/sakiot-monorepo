@@ -34,9 +34,4 @@ pub struct StartEnd {
 }
 
 #[derive(Debug)]
-pub struct HashMapContainer(
-    pub tokio::sync::RwLock<HashMap<String, tokio::sync::broadcast::Sender<i32>>>,
-);
-
-#[derive(Debug)]
 pub struct WaveformProgressContainer(pub tokio::sync::RwLock<HashMap<String, i16>>);
