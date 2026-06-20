@@ -1,4 +1,4 @@
-use actix_web::{get, web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, get, web};
 use sakiot_paths::RecordingKey;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};

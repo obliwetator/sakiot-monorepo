@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use actix_files::NamedFile;
-use actix_web::{get, http::header, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, web};
 use sakiot_paths::RecordingKey;
 use serde::Serialize;
 use sqlx::{Pool, Postgres};
@@ -589,8 +589,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hls_cache_action_purges_unfinalized_live_playlist(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn hls_cache_action_purges_unfinalized_live_playlist()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir =
             std::env::temp_dir().join(format!("sakiot-live-test-stale-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&dir).await?;

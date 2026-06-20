@@ -1,13 +1,14 @@
 use actix_web::body::EitherBody;
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::{
+    Error, HttpMessage, HttpResponse,
     http::{
-        header::{HeaderName, HeaderValue},
         Method,
+        header::{HeaderName, HeaderValue},
     },
-    web, Error, HttpMessage, HttpResponse,
+    web,
 };
-use futures_util::future::{ready, LocalBoxFuture, Ready};
+use futures_util::future::{LocalBoxFuture, Ready, ready};
 use serde_json::json;
 use tracing::warn;
 
@@ -145,7 +146,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{is_public_api_path, latest_access_token, ACCESS_TOKEN_COOKIE};
+    use super::{ACCESS_TOKEN_COOKIE, is_public_api_path, latest_access_token};
     use actix_web::test as actix_test;
     use jsonwebtoken::{DecodingKey, EncodingKey};
 
@@ -162,8 +163,8 @@ mod tests {
     }
 
     #[test]
-    fn newest_valid_access_cookie_wins_over_invalid_duplicate(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn newest_valid_access_cookie_wins_over_invalid_duplicate()
+    -> Result<(), Box<dyn std::error::Error>> {
         let keys = AccessKeys {
             access_encode: EncodingKey::from_secret(b"test_secret"),
             refresh_encode: EncodingKey::from_secret(b"test_secret"),

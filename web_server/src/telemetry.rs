@@ -1,7 +1,7 @@
 use opentelemetry_sdk::Resource;
 use std::env;
 use std::io::Write;
-use tracing_subscriber::{layer::SubscriberExt, Layer, Registry};
+use tracing_subscriber::{Layer, Registry, layer::SubscriberExt};
 
 pub const SERVICE_NAME: &str = "web_server";
 

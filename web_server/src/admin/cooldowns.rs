@@ -1,4 +1,4 @@
-use actix_web::{delete, get, put, web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, delete, get, put, web};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 

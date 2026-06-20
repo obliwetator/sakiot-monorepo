@@ -1,5 +1,5 @@
 use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
-use actix_web::{get, web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, get, web};
 use actix_web_actors::ws;
 use std::time::{Duration, Instant};
 use tokio_stream::StreamExt;

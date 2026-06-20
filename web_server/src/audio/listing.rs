@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use actix_web::{get, web, HttpResponse};
+use actix_web::{HttpResponse, get, web};
 use sqlx::{Pool, Postgres};
 use tracing::error;
 

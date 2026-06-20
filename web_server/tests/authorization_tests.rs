@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use actix_web::{http::StatusCode, test, web, App};
+use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use serde_json::json;
 use sqlx::PgPool;
 use tokio::sync::RwLock;
 use web_server::audio::{
-    download_audio, get_audio, get_waveform_data, live_playlist, live_segment, live_state,
-    remove_silence, LiveContainer, SilenceJobContainer, WaveformProgressContainer,
+    LiveContainer, SilenceJobContainer, WaveformProgressContainer, download_audio, get_audio,
+    get_waveform_data, live_playlist, live_segment, live_state, remove_silence,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};

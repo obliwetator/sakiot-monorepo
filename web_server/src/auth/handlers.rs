@@ -1,7 +1,7 @@
 #[cfg(feature = "dev-login")]
 use actix_files::NamedFile;
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
 use tracing::warn;
@@ -12,13 +12,13 @@ use crate::errors::AppError;
 use crate::user::{get_user, get_user_guilds};
 
 use super::cookies::{
-    access_token_cookie, clear_access_token_cookie, clear_csrf_cookie, clear_legacy_access_cookie,
+    CSRF_COOKIE, OAUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE, access_token_cookie,
+    clear_access_token_cookie, clear_csrf_cookie, clear_legacy_access_cookie,
     clear_legacy_refresh_cookie, clear_logged_in_cookie, clear_oauth_state_cookie,
     clear_opener_origin_cookie, clear_refresh_token_cookie, csrf_cookie, logged_in_cookie,
-    oauth_state_cookie, refresh_token_cookie, CSRF_COOKIE, OAUTH_STATE_COOKIE,
-    REFRESH_TOKEN_COOKIE,
+    oauth_state_cookie, refresh_token_cookie,
 };
-use super::discord::{request_access_token, DiscordLoginCode};
+use super::discord::{DiscordLoginCode, request_access_token};
 use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
 use subtle::ConstantTimeEq;
 
@@ -429,8 +429,8 @@ pub async fn logout(req: HttpRequest) -> Result<impl Responder, AppError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_allowed_opener_origin, oauth_state, origin_from_oauth_state, require_cookie_csrf,
-        require_csrf, RefreshTokenResponse, CSRF_COOKIE,
+        CSRF_COOKIE, RefreshTokenResponse, is_allowed_opener_origin, oauth_state,
+        origin_from_oauth_state, require_cookie_csrf, require_csrf,
     };
     use crate::config::Config;
     use actix_web::{cookie::Cookie, test as actix_test};

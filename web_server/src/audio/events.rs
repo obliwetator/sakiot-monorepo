@@ -1,6 +1,6 @@
-use actix_web::{get, web, HttpResponse};
+use actix_web::{HttpResponse, get, web};
 use serde::Serialize;
-use serde_with::{serde_as, DisplayFromStr};
+use serde_with::{DisplayFromStr, serde_as};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};

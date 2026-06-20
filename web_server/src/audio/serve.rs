@@ -1,8 +1,8 @@
 use actix_files::NamedFile;
 use actix_web::{
-    get,
+    HttpRequest, Responder, get,
     http::header::{ContentDisposition, DispositionType},
-    route, web, HttpRequest, Responder,
+    route, web,
 };
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
@@ -14,7 +14,7 @@ use crate::permissions::require_channel_access;
 
 use sakiot_paths::RecordingKey;
 
-use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
+use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {

@@ -2,16 +2,16 @@ use std::collections::HashMap;
 use std::process::{Output, Stdio};
 use std::time::{Duration, Instant};
 
-use actix_web::{post, web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, post, web};
 use sqlx::{Pool, Postgres};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tracing::{error, info};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::permissions::require_channel_access;
 
-use super::paths::{no_silence_recording_path, recording_path, NO_SILENCE_PREFIX};
+use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 use super::util::{file_exists, get_file_path_root, handle_idempotency_key, is_stale};
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -421,8 +421,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idempotency_rejects_key_reuse_for_different_recording(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn idempotency_rejects_key_reuse_for_different_recording()
+    -> Result<(), Box<dyn std::error::Error>> {
         let jobs = SilenceJobContainer::default();
         assert!(matches!(
             jobs.claim(7, "request-1".into(), "recording-a").await?,

@@ -1,4 +1,4 @@
-use actix_web::{get, web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, get, web};
 use base64::prelude::*;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
@@ -10,7 +10,7 @@ use crate::permissions::require_channel_access;
 use crate::waveform::generate_peaks_background;
 
 use super::paths::{
-    clips_path, no_silence_recording_path, recording_path, waveform_path, NO_SILENCE_PREFIX,
+    NO_SILENCE_PREFIX, clips_path, no_silence_recording_path, recording_path, waveform_path,
 };
 use super::serve::AudioQuery;
 use super::types::WaveformProgressContainer;

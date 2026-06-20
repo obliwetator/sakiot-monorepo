@@ -1,4 +1,4 @@
-use actix_web::cookie::{time::Duration, Cookie, SameSite};
+use actix_web::cookie::{Cookie, SameSite, time::Duration};
 
 use super::jwt::JWT_REFRESH_EXPIRY_DAYS;
 
@@ -151,7 +151,7 @@ pub fn clear_legacy_refresh_cookie(domain: &str) -> Cookie<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::{access_token_cookie, ACCESS_TOKEN_COOKIE};
+    use super::{ACCESS_TOKEN_COOKIE, access_token_cookie};
 
     #[test]
     fn auth_cookies_are_host_only() {

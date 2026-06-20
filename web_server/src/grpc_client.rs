@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
-use opentelemetry::metrics::Counter;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use tonic::transport::Channel;
 
 use crate::proto::jammer::dashboard_client::DashboardClient;

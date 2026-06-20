@@ -1,9 +1,8 @@
-use crate::auth::{Access, AuthKind, Token, BASE_URL};
+use crate::auth::{Access, AuthKind, BASE_URL, Token};
 use crate::errors::AppError;
 use actix_web::{
-    get,
+    HttpRequest, HttpResponse, Responder, get,
     web::{self, ReqData},
-    HttpRequest, HttpResponse, Responder,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

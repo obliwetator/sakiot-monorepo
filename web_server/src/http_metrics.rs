@@ -1,13 +1,13 @@
-use std::future::{ready, Ready};
+use std::future::{Ready, ready};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use actix_web::Error;
 use actix_web::body::MessageBody;
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::Error;
 use futures_util::future::LocalBoxFuture;
-use opentelemetry::metrics::Histogram;
 use opentelemetry::KeyValue;
+use opentelemetry::metrics::Histogram;
 
 static LATENCY_HIST: OnceLock<Histogram<f64>> = OnceLock::new();
 

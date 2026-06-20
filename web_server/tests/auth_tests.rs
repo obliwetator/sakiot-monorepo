@@ -84,7 +84,7 @@ fn assert_token_payload_does_not_contain(
     token: &str,
     needle: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     let payload = token
         .split('.')
