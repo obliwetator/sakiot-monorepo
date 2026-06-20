@@ -67,3 +67,13 @@ thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
