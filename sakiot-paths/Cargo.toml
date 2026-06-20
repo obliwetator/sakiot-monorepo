@@ -1,6 +1,6 @@
 [package]
 name = "sakiot-paths"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 
 [dependencies]
