@@ -1,0 +1,6 @@
+# Restriction lints (unwrap_used / expect_used / panic) are denied per-crate
+# for production code. Tests legitimately unwrap/expect/panic to fail loudly,
+# and CI lints --all-targets, so allow them there.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

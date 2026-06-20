@@ -95,18 +95,15 @@ pub async fn generate_peaks_background(
             Ok(_) => {
                 if let Ok(line) = std::str::from_utf8(&buf) {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("Done: ") {
-                        if let Some(pct_str) = trimmed.strip_prefix("Done: ") {
-                            if let Some(pct) = pct_str.strip_suffix("%") {
-                                if let Ok(pct_val) = pct.parse::<i16>() {
-                                    progress_map
-                                        .0
-                                        .write()
-                                        .await
-                                        .insert(file_name.clone(), pct_val.min(99));
-                                }
-                            }
-                        }
+                    if let Some(pct_str) = trimmed.strip_prefix("Done: ")
+                        && let Some(pct) = pct_str.strip_suffix("%")
+                        && let Ok(pct_val) = pct.parse::<i16>()
+                    {
+                        progress_map
+                            .0
+                            .write()
+                            .await
+                            .insert(file_name.clone(), pct_val.min(99));
                     }
                 }
             }

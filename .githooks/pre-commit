@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "Formatting Rust..."
+cargo fmt --all
+
+echo "Formatting frontend..."
+(
+	cd sakiot_stage
+	bunx biome check --write .
+)
+
+# Re-stage only files that were already staged, so formatting fixes
+# land in this commit without sweeping up unstaged changes.
+git diff --cached --name-only | while IFS= read -r f; do
+	[ -e "$f" ] && git add -- "$f"
+done

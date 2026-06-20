@@ -7,6 +7,9 @@ cd "$repo_root"
 echo "Checking Rust formatting..."
 cargo fmt --all --check
 
+echo "Running clippy..."
+cargo clippy --workspace --all-targets -- -D warnings
+
 echo "Checking frontend formatting..."
 (
 	cd sakiot_stage

@@ -64,10 +64,10 @@ pub async fn for_entry(
             display_name: None,
             start_ts_ms: parsed.map(|(ts, _)| ts),
         };
-        if let Some(months) = dirs.months.as_mut() {
-            if let Some(Some(files)) = months.get_mut(&month_as_int) {
-                files.push(file_name);
-            }
+        if let Some(months) = dirs.months.as_mut()
+            && let Some(Some(files)) = months.get_mut(&month_as_int)
+        {
+            files.push(file_name);
         }
     }
 }

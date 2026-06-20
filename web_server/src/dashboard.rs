@@ -176,15 +176,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for DashboardWebSocke
                 self.last_heartbeat = Instant::now();
             }
             Ok(ws::Message::Text(text)) => {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let (Some(action), Some(topic)) =
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let (Some(action), Some(topic)) =
                         (json["action"].as_str(), json["topic"].as_str())
-                    {
-                        if action == "subscribe" {
-                            let _ = self.topic_tx.send(topic.to_string());
-                        } else if action == "unsubscribe" {
-                            let _ = self.topic_tx.send(String::new());
-                        }
+                {
+                    if action == "subscribe" {
+                        let _ = self.topic_tx.send(topic.to_string());
+                    } else if action == "unsubscribe" {
+                        let _ = self.topic_tx.send(String::new());
                     }
                 }
             }
