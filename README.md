@@ -117,11 +117,16 @@ cargo fmt --all
 
 SQLx query metadata is checked into `.sqlx` so rust-analyzer and offline builds
 do not need database credentials. After changing a `query!` macro or the
-database schema, refresh it against a migrated development database:
+database schema, refresh it against a clean, disposable PostgreSQL container:
 
 ```sh
-cargo sqlx prepare --workspace -- --all-targets
+scripts/sqlx-prepare.sh
 ```
+
+The script requires Docker and `sqlx-cli`. It does not use or modify the local
+development or VPS database. The repository's pre-commit hook runs the same
+command in check mode when staged migrations or Rust files containing SQLx
+macros change.
 
 Service-specific commands remain available:
 
@@ -139,16 +144,17 @@ bun run test
 bun run build
 ```
 
-## Before Pushing
+## Git Hooks
 
-Enable the repository's pre-push formatting checks once per clone:
+Enable the repository's checks once per clone:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-The hook runs the same Rust and frontend formatting checks used by CI. To fix
-formatting before committing:
+The pre-commit hook checks SQLx metadata when relevant migrations or Rust files
+change. The pre-push hook runs the same Rust and frontend formatting checks used
+by CI. To fix formatting before committing:
 
 ```sh
 cargo fmt --all
@@ -172,7 +178,7 @@ cd sakiot-db
 sqlx migrate info --source migrations
 sqlx migrate run --source migrations
 cd ..
-cargo sqlx prepare --workspace -- --all-targets
+scripts/sqlx-prepare.sh
 ```
 
 Regenerate and commit `.sqlx` after every database migration so SQLx macros,

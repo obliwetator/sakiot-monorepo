@@ -18,3 +18,35 @@ echo "Formatting frontend..."
 git diff --cached --name-only | while IFS= read -r f; do
 	[ -e "$f" ] && git add -- "$f"
 done
+check_sqlx=false
+for path in $(git diff --cached --name-only --diff-filter=ACMR); do
+	case "$path" in
+		sakiot-db/migrations/*.sql)
+			check_sqlx=true
+			break
+			;;
+		*.rs)
+			if git show ":$path" | grep -Eq 'sqlx::(query|query_as|query_scalar|query_file|query_file_as)!' ||
+				git show "HEAD:$path" 2>/dev/null | grep -Eq 'sqlx::(query|query_as|query_scalar|query_file|query_file_as)!'; then
+				check_sqlx=true
+				break
+			fi
+			;;
+	esac
+done
+
+[ "$check_sqlx" = true ] || exit 0
+
+echo "Checking SQLx metadata against a clean migrated database..."
+if ! scripts/sqlx-prepare.sh check; then
+	echo >&2
+	echo "SQLx metadata is stale. Regenerate and stage it with:" >&2
+	echo "  scripts/sqlx-prepare.sh" >&2
+	echo "  git add .sqlx" >&2
+	exit 1
+fi
+
+if ! git diff --quiet -- .sqlx || [ -n "$(git ls-files --others --exclude-standard .sqlx)" ]; then
+	echo "SQLx metadata has unstaged changes. Stage .sqlx before committing." >&2
+	exit 1
+fi

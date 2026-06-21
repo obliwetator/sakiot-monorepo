@@ -49,6 +49,15 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
 
+      - name: Install SQLx CLI
+        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,native-tls
+
+      - name: Apply database migrations
+        run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations
+
+      - name: Check SQLx metadata
+        run: SQLX_OFFLINE=false cargo sqlx prepare --check --workspace -- --all-targets
+
       - name: Check formatting
         run: cargo fmt --all --check
 
