@@ -28,11 +28,15 @@ scripts/dev.sh
 On first run it generates a root `.env` with local values (random JWT and dev
 login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
 that points the frontend at the local API. It then starts Postgres via
-`compose.dev.yml`, runs migrations, seeds a dev account and guild, and starts
-`web_server` under `cargo watch` with the `dev-login` feature, so saving a
-Rust file rebuilds and restarts the server. Discord OAuth is not needed:
+`compose.dev.yml`, runs migrations, seeds a dev account and guild, asks how many
+staging recordings to copy (`0` skips), and starts `web_server` under
+`cargo watch` with the `dev-login` feature, so saving a Rust file rebuilds and
+restarts the server. Discord OAuth is not needed:
 the frontend's dev login button calls `/api/dev_login` using
 `VITE_DEV_LOGIN_SECRET`.
+
+Stopping the script with Ctrl+C also stops the local PostgreSQL container. Its
+named volume is preserved, so the next run starts with the same database.
 
 Run the frontend against it in another terminal:
 
@@ -54,12 +58,21 @@ scripts/dev.sh clean           # drop the db volume + delete fetched fixture fil
 The synthetic seed leaves the recordings list empty. To test the recordings
 UI with real audio, waveforms, and metadata, pull a sample from the staging
 instance over your personal SSH access (read-only on the VPS side; nothing
-is committed to the repository):
+is committed to the repository). Set `SAKIOT_DEV_SSH` in the git-ignored `.env`
+to avoid entering the SSH target when the startup prompt requests recordings:
 
 ```sh
+SAKIOT_DEV_SSH=user@vps-host
+# Or invoke the standalone command directly:
 SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20
 # optionally: --guild <id>
 ```
+
+A positive count replaces the previously managed fixture recordings and media;
+it does not touch unrelated local data. Entering `0` at startup keeps the
+existing fixture set, whose recording count is shown in the prompt. The remote
+export and media download complete before replacement begins, so a remote
+failure leaves the previous set intact.
 
 On the VPS itself fetch-fixtures detects `/var/lib/sakiot-staging/data` and
 switches to local mode automatically — no `SAKIOT_DEV_SSH` needed. By default,

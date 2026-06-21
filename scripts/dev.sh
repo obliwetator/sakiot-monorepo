@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local debug environment for web_server. Runs on any dev machine.
 #
-#   scripts/dev.sh                 # up: db + migrate + seed + cargo watch
+#   scripts/dev.sh                 # up: db + migrate + seed + optional fixtures + cargo watch
 #   scripts/dev.sh db              # only db + migrate + seed
 #   scripts/dev.sh down            # stop local postgres
 #   scripts/dev.sh reset           # drop local db volume, then db
@@ -21,7 +21,7 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1 ($2)"; }
 
 env_get() { # env_get KEY [default]
     local val
-    val=$(grep -E "^$1=" "$ROOT/.env" 2>/dev/null | head -n1 | cut -d= -f2-)
+    val=$(grep -E "^$1=" "$ROOT/.env" 2>/dev/null | head -n1 | cut -d= -f2- || true)
     printf '%s' "${val:-${2:-}}"
 }
 
@@ -123,7 +123,22 @@ run_server() {
     log "login secret: DEV_LOGIN_SECRET in .env (frontend picks up VITE_DEV_LOGIN_SECRET)"
     # cwd must be web_server/ so the relative callback.html path resolves
     cd "$ROOT/web_server"
-    exec cargo watch -x 'run -p web_server --features dev-login'
+    cargo watch -x 'run -p web_server --features dev-login'
+}
+
+stop_db_on_exit() {
+    local status=$?
+    trap - EXIT
+    log "stopping local postgres (database volume is preserved)"
+    "${COMPOSE[@]}" stop >/dev/null || true
+    exit "$status"
+}
+
+cmd_up() {
+    db_up
+    trap stop_db_on_exit EXIT
+    prompt_fetch_fixtures
+    run_server
 }
 
 cmd_down() {
@@ -138,6 +153,7 @@ cmd_reset() {
         *) die "aborted" ;;
     esac
     "${COMPOSE[@]}" down -v
+    clear_fixture_media
     db_up
 }
 
@@ -207,10 +223,65 @@ import_tsv() { # import_tsv <table> <tsv-file> [fixup-sql run before the insert]
     log "  $1: $(wc -l < "$2") row(s)"
 }
 
-cmd_fetch_fixtures() {
+fixture_count() {
+    local data_dir recordings_manifest manifest
+    data_dir=$(env_get SAKIOT_DATA_DIR "$ROOT/data")
+    recordings_manifest="$data_dir/.dev-fixture-recordings.list"
+    manifest="$data_dir/.dev-fixtures.list"
+    if [ -f "$recordings_manifest" ]; then
+        grep -c . "$recordings_manifest" || true
+    elif [ -f "$manifest" ]; then
+        grep -Ec '^voice_recordings/.+\.ogg$' "$manifest" || true
+    else
+        echo 0
+    fi
+}
+
+clear_fixture_media() {
+    local data_dir manifest recordings_manifest
+    data_dir=$(env_get SAKIOT_DATA_DIR "$ROOT/data")
+    manifest="$data_dir/.dev-fixtures.list"
+    recordings_manifest="$data_dir/.dev-fixture-recordings.list"
+    if [ -f "$manifest" ]; then
+        while IFS= read -r f; do
+            rm -f "$data_dir/$f"
+        done < "$manifest"
+        log "deleted $(wc -l < "$manifest") managed fixture file(s)"
+    fi
+    rm -f "$manifest" "$recordings_manifest"
+    find "$data_dir" -depth -type d -empty -delete 2>/dev/null || true
+}
+
+replace_audio_fixtures() { # replace_audio_fixtures <old-names> <new-audio-tsv>
+    {
+        echo "BEGIN;"
+        echo "CREATE TEMP TABLE _old_fixture_recordings (file_name text PRIMARY KEY);"
+        echo "COPY _old_fixture_recordings FROM STDIN;"
+        cat "$1"
+        echo "\."
+        echo "CREATE TEMP TABLE _imp (LIKE audio_files INCLUDING DEFAULTS);"
+        echo "COPY _imp FROM STDIN;"
+        cat "$2"
+        echo "\."
+        echo "UPDATE _imp SET recording_owner_instance_id = NULL, recording_heartbeat_at = NULL;"
+        echo "DELETE FROM audio_files USING _old_fixture_recordings old WHERE audio_files.file_name = old.file_name AND NOT EXISTS (SELECT 1 FROM _imp new WHERE new.file_name = old.file_name);"
+        echo "INSERT INTO audio_files SELECT * FROM _imp ON CONFLICT DO NOTHING;"
+        echo "COMMIT;"
+    } | psql_local >/dev/null
+    log "  audio_files: replaced managed fixtures with $(wc -l < "$2") row(s)"
+}
+
+cmd_fetch_fixtures() (
+    if [ -z "${SAKIOT_DEV_SSH:-}" ]; then
+        SAKIOT_DEV_SSH=$(env_get SAKIOT_DEV_SSH)
+    fi
     if [ -z "${SAKIOT_DEV_SSH:-}" ] && [ -d /var/lib/sakiot-staging/data ]; then
         log "staging data found on this machine, using local mode (no SSH)"
         SAKIOT_DEV_SSH=local
+    fi
+    if [ -z "${SAKIOT_DEV_SSH:-}" ] && [ -t 0 ]; then
+        printf 'Staging SSH target (user@host): '
+        read -r SAKIOT_DEV_SSH
     fi
     : "${SAKIOT_DEV_SSH:?set SAKIOT_DEV_SSH=user@vps-host (personal SSH access to the VPS), or 'local' on the VPS itself}"
     REMOTE_DB=${SAKIOT_DEV_REMOTE_DB:-sakiot_staging}
@@ -265,6 +336,48 @@ cmd_fetch_fixtures() {
     fetch_tsv "SELECT * FROM user_name_event_types" > "$tmp/user_name_event_types.tsv"
     fetch_tsv "SELECT * FROM channel_type" > "$tmp/channel_type.tsv"
 
+    # On-disk layout (sakiot-paths): voice_recordings/{g}/{c}/{YYYY}/{MM}/{stem}.ogg,
+    # _no_silence_{stem}.ogg next to it, waveform_data/{stem}.dat (flat).
+    awk -F'\t' '{
+        dir = sprintf("%s/%s/%04d/%02d", $2, $3, $5, $6)
+        printf "voice_recordings/%s/%s.ogg\n", dir, $1
+        printf "no_silence_voice_recordings/%s/_no_silence_%s.ogg\n", dir, $1
+        printf "waveform_data/%s.dat\n", $1
+    }' "$tmp/audio_files.tsv" > "$tmp/files.list"
+    cut -f1 "$tmp/audio_files.tsv" | sort -u > "$tmp/new-recordings.list"
+
+    local data_dir manifest recordings_manifest src
+    data_dir=$(env_get SAKIOT_DATA_DIR "$ROOT/data")
+    manifest="$data_dir/.dev-fixtures.list"
+    recordings_manifest="$data_dir/.dev-fixture-recordings.list"
+    ensure_data_dirs
+
+    # Download completely before changing the currently managed fixture set.
+    mkdir -p "$tmp/media"
+    src="$SAKIOT_DEV_SSH:$remote_data/"
+    [ "$SAKIOT_DEV_SSH" = local ] && src="$remote_data/"
+    log "downloading media files before replacing local fixtures"
+    rsync -a --info=stats1 --ignore-missing-args \
+        --files-from="$tmp/files.list" "$src" "$tmp/media/"
+
+    while IFS= read -r f; do
+        [ -f "$tmp/media/$f" ] && printf '%s\n' "$f"
+    done < "$tmp/files.list" | sort -u > "$tmp/new-files.list"
+
+    if [ -f "$recordings_manifest" ]; then
+        sort -u "$recordings_manifest" > "$tmp/old-recordings.list"
+    elif [ -f "$manifest" ]; then
+        sed -n 's#^voice_recordings/.*/\([^/]*\)\.ogg$#\1#p' "$manifest" \
+            | sort -u > "$tmp/old-recordings.list"
+    else
+        : > "$tmp/old-recordings.list"
+    fi
+    if [ -f "$manifest" ]; then
+        sort -u "$manifest" > "$tmp/old-files.list"
+    else
+        : > "$tmp/old-files.list"
+    fi
+
     log "importing rows into local db"
     import_tsv audio_file_finalize_reasons "$tmp/audio_file_finalize_reasons.tsv"
     import_tsv user_name_event_types "$tmp/user_name_event_types.tsv"
@@ -275,10 +388,9 @@ cmd_fetch_fixtures() {
     import_tsv user_names "$tmp/user_names.tsv"
     import_tsv user_nicknames "$tmp/user_nicknames.tsv"
     import_tsv user_name_history "$tmp/user_name_history.tsv"
-    # finalized recordings have no live owner; the staging bot_instances row
-    # does not exist locally and would violate the FK
-    import_tsv audio_files "$tmp/audio_files.tsv" \
-        "UPDATE _imp SET recording_owner_instance_id = NULL, recording_heartbeat_at = NULL;"
+    # Deleting the old managed rows and inserting the new rows is one transaction.
+    # Finalized recordings have no local live owner, so clear the staging owner.
+    replace_audio_fixtures "$tmp/old-recordings.list" "$tmp/audio_files.tsv"
 
     local dev_id
     dev_id=$(env_get DEV_ACCOUNT_ID "$DEFAULT_DEV_ACCOUNT_ID")
@@ -291,33 +403,39 @@ INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)
 SELECT setval('audio_files_id_seq', (SELECT COALESCE(MAX(id), 1) FROM audio_files));
 SQL
 
-    # On-disk layout (sakiot-paths): voice_recordings/{g}/{c}/{YYYY}/{MM}/{stem}.ogg,
-    # _no_silence_{stem}.ogg next to it, waveform_data/{stem}.dat (flat).
-    awk -F'\t' '{
-        dir = sprintf("%s/%s/%04d/%02d", $2, $3, $5, $6)
-        printf "voice_recordings/%s/%s.ogg\n", dir, $1
-        printf "no_silence_voice_recordings/%s/_no_silence_%s.ogg\n", dir, $1
-        printf "waveform_data/%s.dat\n", $1
-    }' "$tmp/audio_files.tsv" > "$tmp/files.list"
-
-    local data_dir
-    data_dir=$(env_get SAKIOT_DATA_DIR "$ROOT/data")
-    ensure_data_dirs
-    log "rsyncing media files into $data_dir"
-    local src="$SAKIOT_DEV_SSH:$remote_data/"
-    [ "$SAKIOT_DEV_SSH" = local ] && src="$remote_data/"
-    rsync -a --info=stats1 --ignore-missing-args \
-        --files-from="$tmp/files.list" "$src" "$data_dir/"
-
-    # record what actually landed so 'clean' can delete fixtures without
-    # touching unrelated local media
-    local manifest="$data_dir/.dev-fixtures.list"
+    log "installing replacement media files into $data_dir"
+    rsync -a "$tmp/media/" "$data_dir/"
     while IFS= read -r f; do
-        [ -f "$data_dir/$f" ] && printf '%s\n' "$f"
-    done < "$tmp/files.list" >> "$manifest"
-    sort -u -o "$manifest" "$manifest"
+        rm -f "$data_dir/$f"
+    done < <(comm -23 "$tmp/old-files.list" "$tmp/new-files.list")
+    find "$data_dir" -depth -type d -empty -delete 2>/dev/null || true
+
+    mv "$tmp/new-files.list" "$manifest"
+    mv "$tmp/new-recordings.list" "$recordings_manifest"
 
     log "done: $(wc -l < "$tmp/audio_files.tsv") recording(s) from guild(s) $guild_ids"
+)
+
+prompt_fetch_fixtures() {
+    [ -t 0 ] || return
+
+    local count existing
+    existing=$(fixture_count)
+    while true; do
+        printf 'Recordings to copy from staging (%s currently available; 0 keeps them) [0]: ' "$existing"
+        read -r count
+        count=${count:-0}
+        if is_uint "$count"; then
+            break
+        fi
+        echo "Enter an unsigned number, or 0 to skip." >&2
+    done
+
+    if [ "$count" -eq 0 ]; then
+        log "skipping staging fixtures"
+        return
+    fi
+    cmd_fetch_fixtures --count "$count"
 }
 
 cmd_clean() {
@@ -338,20 +456,14 @@ cmd_clean() {
         *) die "aborted" ;;
     esac
     "${COMPOSE[@]}" down -v
-    if [ -f "$manifest" ]; then
-        while IFS= read -r f; do
-            rm -f "$data_dir/$f"
-        done < "$manifest"
-        rm -f "$manifest"
-        log "deleted fetched fixture files"
-    fi
+    clear_fixture_media
     rmdir "$data_dir/voice_recordings/111111111111111111" 2>/dev/null || true
     find "$data_dir" -depth -type d -empty -delete 2>/dev/null || true
     log "clean done"
 }
 
 case "${1:-up}" in
-    up) db_up; run_server ;;
+    up) cmd_up ;;
     db) db_up ;;
     down) cmd_down ;;
     reset) cmd_reset ;;
