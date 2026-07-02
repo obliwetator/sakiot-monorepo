@@ -72,7 +72,7 @@ The shared gRPC contract lives in the sibling `sakiot-proto` crate:
 ../sakiot-proto/proto/fbi_agent.proto
 ```
 
-Both `FBI-agent` and `web_server` depend on `sakiot-proto` for generated Rust
+Both `fbi-agent` and `web-server` depend on `sakiot-proto` for generated Rust
 types instead of using a repo-local proto symlink.
 
 ## Current Expected State

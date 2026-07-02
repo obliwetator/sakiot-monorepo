@@ -49,7 +49,7 @@ serves both targets, driven by the env file plus `SAKIOT_WEB_UNIT` /
   applies migrations without the encrypted pre-migrate backup (staging DB is
   disposable; no `age` key needed). The migration phase still seeds the DB on
   first deploy. Reset anytime: `dropdb sakiot_staging && createdb -O sakiot sakiot_staging`.
-- **Discord bot token is selected at compile time** (`FBI-agent/src/config.rs`,
+- **Discord bot token is selected at compile time** (`fbi-agent/src/config.rs`,
   `#[cfg(debug_assertions)]`). A `--release` build reads the `*_RELEASE*` slots,
   so `staging.env` puts the **DEBUG** bot's token/app-id in
   `DISCORD_TOKEN_RELEASE` / `APPLICATION_ID_RELEASE`. Don't run a manual debug
@@ -101,7 +101,7 @@ location / {
 - **Dev login** (skip OAuth) is runtime-gated, works in the release build: set
   `DEV_ACCOUNT_ID` + `DEV_LOGIN_SECRET` in `staging.env` and restart
   `sakiot-staging-web.service`. The frontend shows the button on hosts containing
-  `debug`/`dev`/`staging` (`sakiot_stage/src/login/login.tsx`); leave
+  `debug`/`dev`/`staging` (`sakiot-stage/src/login/login.tsx`); leave
   `VITE_DEV_LOGIN_SECRET` unset so the secret is prompted, not baked into the
   public bundle.
 

@@ -116,13 +116,13 @@ run_server() {
         read -r -p "Install with 'cargo install cargo-watch'? [y/N] " yn
         case "$yn" in
             [Yy]*) cargo install cargo-watch ;;
-            *) die "install cargo-watch or run manually: cd web_server && cargo run -p web_server --features dev-login" ;;
+            *) die "install cargo-watch or run manually: cd web-server && cargo run -p web_server --features dev-login" ;;
         esac
     fi
     log "starting web_server with dev-login on http://localhost:$(env_get PORT 8900) (cargo watch)"
     log "login secret: DEV_LOGIN_SECRET in .env (frontend picks up VITE_DEV_LOGIN_SECRET)"
-    # cwd must be web_server/ so the relative callback.html path resolves
-    cd "$ROOT/web_server"
+    # cwd must be web-server/ so the relative callback.html path resolves
+    cd "$ROOT/web-server"
     cargo watch -x 'run -p web_server --features dev-login'
 }
 

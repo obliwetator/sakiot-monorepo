@@ -38,18 +38,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Installs the toolchain pinned in rust-toolchain.toml (including its
+      # components) and provides rust-cache keyed against that toolchain.
+      # rustflags must stay empty: the action's default -D warnings would
+      # change build behavior; the clippy step opts in explicitly instead.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
+          rustflags: ""
 
       # sakiot-proto's build script needs protoc; the runner image does not
       # ship it, and only a warm build cache hides that.
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
 
+      # rust-cache does not cover ~/.cargo/bin, so cache the two installed
+      # binaries directly (cargo sqlx dispatches to cargo-sqlx). Bump the key
+      # together with the pinned version below and in scripts/sqlx-prepare.sh.
+      - name: Cache SQLx CLI
+        id: cache-sqlx
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/sqlx
+            ~/.cargo/bin/cargo-sqlx
+          key: sqlx-cli-0.9.0-postgres-native-tls-${{ runner.os }}
+
       - name: Install SQLx CLI
+        if: steps.cache-sqlx.outputs.cache-hit != 'true'
         run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,native-tls
 
       - name: Apply database migrations
@@ -71,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sakiot_stage
+        working-directory: sakiot-stage
     steps:
       - uses: actions/checkout@v4
 

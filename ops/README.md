@@ -131,7 +131,7 @@ Staging reuses the production deploy engine through `ops/deploy stage <sha>`: it
 builds, runs `sakiot_staging` migrations, performs the same drain-aware bot
 handoff and health-gated web cutover, and prunes old staging releases — without
 touching production. Because the bot binary is built with `cargo build --release`
-(which reads the `*_RELEASE*` credential slots, see `FBI-agent/src/config.rs`),
+(which reads the `*_RELEASE*` credential slots, see `fbi-agent/src/config.rs`),
 `staging.env` puts the DEBUG bot's token/application id in those slots.
 
 ## Release

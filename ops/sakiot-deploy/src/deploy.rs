@@ -400,7 +400,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         } else {
             (deps.require_command)("bun")?;
             log("testing and building frontend");
-            let stage_dir = worktree.path().join("sakiot_stage");
+            let stage_dir = worktree.path().join("sakiot-stage");
             deps.runner.run(
                 &Cmd::new("bun")
                     .args(["install", "--frozen-lockfile"])
@@ -781,7 +781,7 @@ fn deploy_services(
     if component_selected(Component::Frontend, components) {
         fsx::ensure_dir_mode(&config.frontend_root, 0o755)?;
         log("publishing frontend assets, HTML, then version metadata");
-        let script = worktree_path.join("sakiot_stage/scripts/deploy.sh");
+        let script = worktree_path.join("sakiot-stage/scripts/deploy.sh");
         deps.runner.run(
             &Cmd::new(script.display().to_string())
                 .env(

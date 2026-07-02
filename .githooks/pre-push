@@ -12,6 +12,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 echo "Checking frontend formatting..."
 (
-	cd sakiot_stage
+	cd sakiot-stage
 	bunx biome check .
 )

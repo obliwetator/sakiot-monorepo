@@ -19,10 +19,10 @@ Local development defaults to `../data`. Container deployments should set
 Sakiot Paths is linked with the other projects in this directory to make the
 whole Sakiot application:
 
-- `FBI-agent` uses it when writing recordings.
-- `web_server` uses it when reading recordings, serving media, and building
+- `fbi-agent` uses it when writing recordings.
+- `web-server` uses it when reading recordings, serving media, and building
   media URLs.
-- `sakiot_stage` depends on the backend behavior that comes from these shared
+- `sakiot-stage` depends on the backend behavior that comes from these shared
   conventions.
 
 ## What It Does

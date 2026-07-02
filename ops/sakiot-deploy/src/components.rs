@@ -59,11 +59,14 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
         let path = path.as_ref();
         if path.ends_with(".md") || path.starts_with("docs/") || path.starts_with("ops/") {
             // deploy framework / documentation: no component
-        } else if path.starts_with("FBI-agent/") {
+        } else if path.starts_with("fbi-agent/") || path.starts_with("FBI-agent/") {
+            // Legacy prefixes stay recognized so a diff spanning the
+            // kebab-case rename commit classifies its delete-side paths
+            // instead of falling back to all_components().
             select(&[Component::Bot]);
-        } else if path.starts_with("web_server/") {
+        } else if path.starts_with("web-server/") || path.starts_with("web_server/") {
             select(&[Component::Web]);
-        } else if path.starts_with("sakiot_stage/") {
+        } else if path.starts_with("sakiot-stage/") || path.starts_with("sakiot_stage/") {
             select(&[Component::Frontend]);
         } else if path.starts_with("sakiot-paths/")
             || path.starts_with("sakiot-proto/")
@@ -131,6 +134,13 @@ mod tests {
 
     #[test]
     fn service_paths_map_to_their_component() {
+        assert_components(&["fbi-agent/src/main.rs"], &[Bot]);
+        assert_components(&["web-server/src/main.rs"], &[Web]);
+        assert_components(&["sakiot-stage/src/App.tsx"], &[Frontend]);
+    }
+
+    #[test]
+    fn legacy_service_prefixes_still_classify() {
         assert_components(&["FBI-agent/src/main.rs"], &[Bot]);
         assert_components(&["web_server/src/main.rs"], &[Web]);
         assert_components(&["sakiot_stage/src/App.tsx"], &[Frontend]);
@@ -181,11 +191,11 @@ mod tests {
     #[test]
     fn combinations_accumulate_in_canonical_order() {
         assert_components(
-            &["web_server/src/main.rs", "FBI-agent/src/main.rs"],
+            &["web-server/src/main.rs", "fbi-agent/src/main.rs"],
             &[Bot, Web],
         );
         assert_components(
-            &["sakiot_stage/src/App.tsx", "sakiot-db/migrations/0001.sql"],
+            &["sakiot-stage/src/App.tsx", "sakiot-db/migrations/0001.sql"],
             &[Database, Bot, Web, Frontend],
         );
     }
