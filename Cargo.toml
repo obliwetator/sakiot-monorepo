@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "FBI-agent",
+    "fbi-agent",
     "ops/sakiot-deploy",
     "sakiot-paths",
     "sakiot-proto",
-    "web_server",
+    "web-server",
 ]
 resolver = "3"
 

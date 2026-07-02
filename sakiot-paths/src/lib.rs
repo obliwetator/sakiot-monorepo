@@ -1,6 +1,6 @@
 //! Canonical on-disk / object-store layout for sakiot voice recordings.
 //!
-//! One source of truth shared by FBI-agent (writer) and web_server (reader).
+//! One source of truth shared by fbi_agent (writer) and web_server (reader).
 //! Change the scheme here and both ends stay in sync.
 
 use std::{

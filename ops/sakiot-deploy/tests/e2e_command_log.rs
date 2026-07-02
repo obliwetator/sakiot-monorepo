@@ -290,7 +290,7 @@ fn stage_happy_path_web_only() {
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
-            "web_server/src/main.rs\n",
+            "web-server/src/main.rs\n",
         ),
         ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
         ScriptEntry::ok(git(
@@ -337,7 +337,7 @@ fn stage_happy_path_web_only() {
     assert_eq!(manifest["components"], serde_json::json!(["web"]));
     assert_eq!(
         manifest["changed_paths"],
-        serde_json::json!(["web_server/src/main.rs"])
+        serde_json::json!(["web-server/src/main.rs"])
     );
     assert_eq!(manifest["database"]["migrations_ran"], false);
     assert_eq!(manifest["database"]["migration_head"], "0001_init.sql");
@@ -409,7 +409,7 @@ fn release_happy_path_first_deploy_all_components() {
         ScriptEntry::ok("bun run test"),
         ScriptEntry::ok("bun run build"),
         ScriptEntry::ok(format!(
-            "cp -a {worktree}/sakiot_stage/dist {}/frontend/dist",
+            "cp -a {worktree}/sakiot-stage/dist {}/frontend/dist",
             world.config.release_root.join(&release_id).display()
         )),
         ScriptEntry::ok(format!("sqlx migrate info --source {migrations}")),
@@ -418,7 +418,7 @@ fn release_happy_path_first_deploy_all_components() {
         ScriptEntry::ok(format!("systemctl enable {new_unit}")),
         ScriptEntry::ok("systemctl restart sakiot-web.service"),
         ScriptEntry::ok("systemctl enable-web sakiot-web.service"),
-        ScriptEntry::ok(format!("{worktree}/sakiot_stage/scripts/deploy.sh")),
+        ScriptEntry::ok(format!("{worktree}/sakiot-stage/scripts/deploy.sh")),
         ScriptEntry::ok(git(&repo, &format!("worktree remove --force {worktree}"))),
     ]);
     let events = Events::default();
@@ -560,7 +560,7 @@ fn rollback_reuses_artifacts_without_building() {
         ScriptEntry::ok(format!("systemctl enable {new_unit}")),
         ScriptEntry::ok("systemctl restart sakiot-web.service"),
         ScriptEntry::ok("systemctl enable-web sakiot-web.service"),
-        ScriptEntry::ok(format!("{worktree}/sakiot_stage/scripts/deploy.sh")),
+        ScriptEntry::ok(format!("{worktree}/sakiot-stage/scripts/deploy.sh")),
         ScriptEntry::ok(format!("systemctl disable {old_unit}")),
         ScriptEntry::ok(format!("systemctl disable {prior_unit}")),
         ScriptEntry::ok(git(&repo, &format!("worktree remove --force {worktree}"))),
@@ -653,7 +653,7 @@ fn bot_readiness_failure_cancels_drain_and_keeps_state() {
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
-            "FBI-agent/src/main.rs\n",
+            "fbi-agent/src/main.rs\n",
         ),
         ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
         ScriptEntry::ok(git(
@@ -739,7 +739,7 @@ fn web_readiness_failure_restores_previous_symlink() {
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
-            "web_server/src/main.rs\n",
+            "web-server/src/main.rs\n",
         ),
         ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
         ScriptEntry::ok(git(

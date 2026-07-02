@@ -9,7 +9,7 @@ cargo fmt --all
 
 echo "Formatting frontend..."
 (
-	cd sakiot_stage
+	cd sakiot-stage
 	bunx biome check --write .
 )
 

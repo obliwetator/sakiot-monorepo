@@ -15,9 +15,9 @@ types, and local setup.
 Sakiot Stage is linked with the other projects in this directory to make the
 whole Sakiot application:
 
-- `web_server` provides the authenticated HTTP API and media endpoints this UI
+- `web-server` provides the authenticated HTTP API and media endpoints this UI
   consumes.
-- `FBI-agent` records the Discord voice data that eventually appears in the UI.
+- `fbi-agent` records the Discord voice data that eventually appears in the UI.
 - `sakiot-paths` defines shared path conventions used by the backend pieces that
   serve the data shown here.
 

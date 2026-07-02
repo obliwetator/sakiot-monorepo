@@ -5,9 +5,9 @@ stores audio and metadata, and exposes recordings through a web application.
 
 ## Repository Layout
 
-- `FBI-agent` - Discord bot and voice recorder.
-- `web_server` - HTTP API, authentication, media serving, and gRPC client.
-- `sakiot_stage` - React frontend consuming the HTTP API.
+- `fbi-agent` - Discord bot and voice recorder.
+- `web-server` - HTTP API, authentication, media serving, and gRPC client.
+- `sakiot-stage` - React frontend consuming the HTTP API.
 - `sakiot-paths` - Shared Rust crate for filesystem and URL conventions.
 - `sakiot-proto` - Shared gRPC contract and generated Rust types.
 - `sakiot-db` - Canonical PostgreSQL migrations and backup tooling.
@@ -18,7 +18,7 @@ Changes spanning these contracts can therefore be committed atomically.
 
 ## Local Development
 
-One command brings up a local debug environment for `web_server` on any
+One command brings up a local debug environment for `web-server` on any
 machine (Docker plus `sqlx-cli` required):
 
 ```sh
@@ -29,7 +29,7 @@ On first run it generates a root `.env` with local values (random JWT and dev
 login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
 that points the frontend at the local API. It then starts Postgres via
 `compose.dev.yml`, runs migrations, seeds a dev account and guild, asks how many
-staging recordings to copy (`0` skips), and starts `web_server` under
+staging recordings to copy (`0` skips), and starts `web-server` under
 `cargo watch` with the `dev-login` feature, so saving a Rust file rebuilds and
 restarts the server. Discord OAuth is not needed:
 the frontend's dev login button calls `/api/dev_login` using
@@ -41,7 +41,7 @@ named volume is preserved, so the next run starts with the same database.
 Run the frontend against it in another terminal:
 
 ```sh
-cd sakiot_stage
+cd sakiot-stage
 bun dev
 ```
 
@@ -151,7 +151,7 @@ cargo run -p web_server
 ## Frontend
 
 ```sh
-cd sakiot_stage
+cd sakiot-stage
 bun install
 bun run test
 bun run build
@@ -171,14 +171,14 @@ by CI. To fix formatting before committing:
 
 ```sh
 cargo fmt --all
-cd sakiot_stage
+cd sakiot-stage
 bun run format
 ```
 
-Generate frontend API types while `web_server` is serving its OpenAPI document:
+Generate frontend API types while `web-server` is serving its OpenAPI document:
 
 ```sh
-cd sakiot_stage
+cd sakiot-stage
 bun run generate:api-types
 ```
 

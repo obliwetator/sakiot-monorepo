@@ -17,11 +17,11 @@ migrations, seeds a dev account, and runs this server under `cargo watch`
 with the `dev-login` cargo feature (Discord OAuth bypass via
 `GET /api/dev_login` and `DEV_LOGIN_SECRET`). See the root `README.md`.
 
-When running manually, start from the `web_server/` directory so the
+When running manually, start from the `web-server/` directory so the
 relative `callback.html` path resolves:
 
 ```sh
-cd web_server
+cd web-server
 cargo run -p web_server --features dev-login
 ```
 
@@ -30,14 +30,14 @@ cargo run -p web_server --features dev-login
 Web Server is linked with the other projects in this directory to make the whole
 Sakiot application:
 
-- `FBI-agent` records Discord voice audio and writes the metadata this server
+- `fbi-agent` records Discord voice audio and writes the metadata this server
   reads.
-- `sakiot_stage` is the frontend that consumes this server's API.
+- `sakiot-stage` is the frontend that consumes this server's API.
 - `sakiot-paths` provides the shared path layout used to find recordings,
   waveform data, live streams, and clips.
 - `sakiot-proto` provides the shared gRPC contract and generated Rust types used
   to talk to FBI Agent instances.
-- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `FBI-agent`.
+- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `fbi-agent`.
 
 ## What It Does
 

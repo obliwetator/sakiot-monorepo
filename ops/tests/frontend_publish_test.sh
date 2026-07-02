@@ -43,7 +43,7 @@ CALL_LOG="${temporary}/calls" \
 PATH="${temporary}/bin:${PATH}" \
 SAKIOT_FRONTEND_ROOT="${temporary}/target" \
 SAKIOT_FRONTEND_DIST="${temporary}/dist" \
-  "${test_dir}/../../sakiot_stage/scripts/deploy.sh"
+  "${test_dir}/../../sakiot-stage/scripts/deploy.sh"
 
 mapfile -t calls <"${temporary}/calls"
 [[ "${calls[0]}" == rsync*"--no-owner --no-group --no-perms --no-times"*"dist/assets/"* ]]
@@ -66,7 +66,7 @@ CALL_LOG="${temporary}/calls" \
 PATH="${temporary}/bin:${PATH}" \
 SAKIOT_FRONTEND_ROOT="${temporary}/legacy-target" \
 SAKIOT_FRONTEND_DIST="${temporary}/dist" \
-  "${test_dir}/../../sakiot_stage/scripts/deploy.sh"
+  "${test_dir}/../../sakiot-stage/scripts/deploy.sh"
 
 mapfile -t calls <"${temporary}/calls"
 [[ "${calls[0]}" == rsync*"assets.legacy-"*"legacy-target/assets/"* ]]

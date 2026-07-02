@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sakiot_stage
+        working-directory: sakiot-stage
     steps:
       - uses: actions/checkout@v4
 

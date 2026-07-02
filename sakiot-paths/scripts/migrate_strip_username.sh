@@ -8,7 +8,7 @@
 # Reads DATABASE_URL from .env. Expects base dirs relative to pwd:
 #   ./voice_recordings            (source of truth; may be a symlink)
 #   ./no_silence_voice_recordings
-#   ./waveform_data               (present on both web_server and FBI-agent;
+#   ./waveform_data               (present on both web_server and fbi-agent;
 #                                  script updates whichever exists at this cwd)
 
 set -euo pipefail

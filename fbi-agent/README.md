@@ -16,14 +16,14 @@ deployment scripts, local setup, and the shared database migrations in
 FBI Agent is linked with the other projects in this directory to make the whole
 Sakiot application:
 
-- `web_server` reads the recordings and metadata produced by this bot and
+- `web-server` reads the recordings and metadata produced by this bot and
   exposes them through HTTP APIs.
-- `sakiot_stage` is the web UI that talks to `web_server`.
+- `sakiot-stage` is the web UI that talks to `web-server`.
 - `sakiot-paths` provides the shared recording path layout used by the bot and
   server.
 - `sakiot-proto` provides the shared gRPC contract and generated Rust types used
   by the bot and server.
-- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `web_server`.
+- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `web-server`.
 
 ## What It Does
 
