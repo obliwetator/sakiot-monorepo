@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiWebSocketUrl } from "../../app/authedFetch";
 import { useWebSocketStream } from "../../app/useWebSocketStream";
 import type { Metrics, RecordingMetrics, VoiceState } from "./types";
 
@@ -9,7 +10,7 @@ export function useMetricsStream(enabled: boolean) {
 
 	useWebSocketStream({
 		enabled,
-		url: "wss://dev.patrykstyla.com/api/dashboard/stream?name=global",
+		url: apiWebSocketUrl("dashboard/stream?name=global"),
 		subscribe: { action: "subscribe", topic: "global" },
 		unsubscribe: { action: "unsubscribe", topic: "global" },
 		onMessage: (data) => {
@@ -60,7 +61,7 @@ export function useGuildVoiceStream(
 	useWebSocketStream({
 		enabled: enabled && !!guildId,
 		url: guildId
-			? `wss://dev.patrykstyla.com/api/dashboard/stream?name=guild_voice_${guildId}`
+			? apiWebSocketUrl(`dashboard/stream?name=guild_voice_${guildId}`)
 			: null,
 		subscribe: {
 			action: "subscribe",

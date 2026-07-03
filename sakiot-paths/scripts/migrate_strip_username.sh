@@ -108,10 +108,11 @@ while IFS=$'\t' read -r stem guild channel year month; do
     if [[ -n "$wf_src" ]]; then
       mv -n "$wf_src" "$wf_dst"
     fi
-    # DB update inside its own tx
-    run_sql <<SQL
+    # DB update inside its own tx. psql's :'var' quoting escapes the
+    # DB-derived stems; never interpolate them into the SQL text.
+    run_sql -v new_stem="$new_stem" -v stem="$stem" <<'SQL'
 BEGIN;
-UPDATE audio_files SET file_name = '$new_stem' WHERE file_name = '$stem';
+UPDATE audio_files SET file_name = :'new_stem' WHERE file_name = :'stem';
 COMMIT;
 SQL
   fi

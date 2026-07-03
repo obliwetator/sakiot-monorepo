@@ -1,4 +1,4 @@
-import type { Dirs, IndividualFile, months } from "../../../Constants";
+import type { Dirs, IndividualFile, MonthNumber } from "../../../Constants";
 import { LiveDot } from "./LiveDot";
 import { StyledTreeItem } from "./StyledTreeItem";
 import { TreeViewMonths } from "./TreeViewMonths";
@@ -17,13 +17,13 @@ export function TreeViewYears(props: {
 
 	const allFiles: IndividualFile[] = [];
 	for (const m of safe_months) {
-		const f = props.el.months[m as months];
+		const f = props.el.months[m as MonthNumber];
 		if (f) allFiles.push(...f);
 	}
 	const hasLive = anyLive(allFiles, props.liveSet);
 
 	const result = safe_months.map((month_name, index) => {
-		const month = month_name as months;
+		const month = month_name as MonthNumber;
 		const files = props.el.months[month] ?? [];
 		return (
 			<TreeViewMonths

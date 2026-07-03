@@ -3,18 +3,18 @@ import type {
 	Dirs,
 	IndividualFile,
 	IndividualFileArray,
-	months,
+	MonthNumber,
 } from "../../Constants";
 
 interface Super {
 	channel_id: string;
 	year: number;
 	file: IndividualFile;
-	month: months;
+	month: MonthNumber;
 }
 
-// TODO: We get the data organized by channels. The data is more easier to work with when it is organized by years and the channel_id is used as metadata of sorts
-// FIXME: There should definetly be a better way to do it
+// TODO: We get the data organized by channels. The data is easier to work with when it is organized by years and the channel_id is used as metadata of sorts
+// FIXME: There should definitely be a better way to do it
 export function transform_to_months(data: Channels[]) {
 	const all_stuff: Super[] = [];
 
@@ -28,7 +28,7 @@ export function transform_to_months(data: Channels[]) {
 			const months_obj = Object.keys(months);
 			// Loops over the months in the year of the channel
 			months_obj.forEach((month_name) => {
-				const month = parseInt(month_name, 10) as months;
+				const month = parseInt(month_name, 10) as MonthNumber;
 				// In JavaScript, object keys are strings. Using month_name works reliably.
 				const files = months[month];
 
@@ -58,9 +58,9 @@ export function transform_to_months(data: Channels[]) {
 
 	const hashmap3 = new Map<
 		number,
-		Partial<Record<months, IndividualFileArray>>
+		Partial<Record<MonthNumber, IndividualFileArray>>
 	>();
-	const hashmap_month: Partial<Record<months, IndividualFileArray>> = {};
+	const hashmap_month: Partial<Record<MonthNumber, IndividualFileArray>> = {};
 
 	const sorted_by_year: Dirs[] = [];
 

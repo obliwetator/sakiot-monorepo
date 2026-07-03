@@ -6,7 +6,7 @@ import {
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
 } from "../../../app/apiSlice";
-import type { Dirs, months, UserGuilds } from "../../../Constants";
+import type { Dirs, MonthNumber, UserGuilds } from "../../../Constants";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
 
@@ -44,7 +44,7 @@ function getTopmostExpansion(data: Dirs[]): string[] {
 		.sort((a, b) => b - a)[0];
 	if (topMonth === undefined) return [`${year.year}`];
 
-	const files = year.months[topMonth as months] ?? [];
+	const files = year.months[topMonth as MonthNumber] ?? [];
 	let topDay: number | undefined;
 	for (const f of files) {
 		const day = new Date(parseInt(f.file.slice(0, 13), 10)).getDate();

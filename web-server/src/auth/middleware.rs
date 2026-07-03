@@ -25,13 +25,6 @@ fn is_public_api_path(path: &str) -> bool {
         || path == "/api/logout"
 }
 
-fn warn_unauthorized_middleware_access(_path: &str, _reason: &str) {
-    // warn!(
-    //     "Unauthorized access attempt to middleware {}: {}",
-    //     path, reason
-    // );
-}
-
 fn latest_access_token(req: &ServiceRequest, keys: &AccessKeys) -> Option<Token<Access>> {
     // Browser order is not an authentication boundary; use the newest token
     // that validates with this environment's signing key.
@@ -98,12 +91,6 @@ where
         let decoded_access = match latest_access_token(&req, keys) {
             Some(token) => token,
             None => {
-                let reason = if req.cookie(ACCESS_TOKEN_COOKIE).is_some() {
-                    "invalid or expired token"
-                } else {
-                    "missing access_token cookie"
-                };
-                warn_unauthorized_middleware_access(req.path(), reason);
                 let (request, _pl) = req.into_parts();
                 let response = HttpResponse::Unauthorized().finish().map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
