@@ -780,6 +780,93 @@ fn web_readiness_failure_restores_previous_symlink() {
     assert_eq!(world.state("current.sha").as_deref(), Some(SHA_A));
 }
 
+/// A failure after the bot handoff unwinds through BotHandoff::recover; the
+/// drain cancel must carry the actual failure, not claim bot readiness.
+#[test]
+fn recovery_after_bot_handoff_cancels_drain_with_actual_reason() {
+    let world = World::new();
+    let repo = world.repo();
+    let release_id = format!("staging-bbbbbbbbbbbb-{STAMP}");
+    let worktree = world.worktree(&release_id).display().to_string();
+    world.fake_worktree(&release_id);
+
+    let old_unit = "sakiot-fbi-agent@old-release.service";
+    world.write_state("current.sha", SHA_A);
+    world.write_state("current.tag", "main");
+    world.write_state("current-bot.unit", old_unit);
+    world.write_state("current-bot.grpc", "127.0.0.1:40000");
+
+    let new_unit = format!("sakiot-fbi-agent@{release_id}.service");
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
+        )),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        ScriptEntry::ok_with(
+            git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
+            "fbi-agent/src/main.rs\nweb-server/src/main.rs\n",
+        ),
+        ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
+        ScriptEntry::ok(git(
+            &repo,
+            &format!("worktree add --detach {worktree} {SHA_B}"),
+        )),
+        ScriptEntry::ok("cargo test --workspace --locked"),
+        ScriptEntry::ok("cargo build --release --locked --package fbi_agent"),
+        ScriptEntry::ok("cargo build --release --locked --package web_server --features dev-login"),
+        ScriptEntry::ok(format!("systemctl is-active --quiet {old_unit}")),
+        ScriptEntry::ok(format!("systemctl start {new_unit}")),
+        ScriptEntry::ok(format!("systemctl enable {new_unit}")),
+        // The web swap fails after the bot handoff committed, forcing the
+        // full recovery unwind.
+        ScriptEntry::fail("systemctl restart sakiot-web.service"),
+        ScriptEntry::ok(format!("systemctl stop {new_unit}")),
+        ScriptEntry::ok(format!("systemctl disable {new_unit}")),
+        ScriptEntry::ok(git(&repo, &format!("worktree remove --force {worktree}"))),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    let error = world
+        .run(&["stage", SHA_B], &runner, &admin, &web, &clock)
+        .unwrap_err();
+    assert_eq!(error.to_string(), "web server restart failed");
+    runner.assert_exhausted().unwrap();
+
+    // Recovery restored the old bot as the recorded current instance.
+    assert_eq!(world.state("current-bot.unit").as_deref(), Some(old_unit));
+    assert_eq!(
+        world.state("current-bot.grpc").as_deref(),
+        Some("127.0.0.1:40000")
+    );
+    assert_eq!(world.state("current.sha").as_deref(), Some(SHA_A));
+
+    assert_eq!(
+        events.all(),
+        vec![
+            format!("admin start_drain 127.0.0.1:40000 'deploy {release_id}'"),
+            "admin drain_status 127.0.0.1:40123".to_string(),
+            "web publish http://127.0.0.1:1/registry active=127.0.0.1:40123 draining=[\"127.0.0.1:40000\"]"
+                .to_string(),
+            format!(
+                "admin cancel_drain 127.0.0.1:40000 'release {release_id} failed: web server restart failed'"
+            ),
+            "web publish http://127.0.0.1:1/registry active=127.0.0.1:40000 draining=[]"
+                .to_string(),
+        ]
+    );
+}
+
 #[test]
 fn rollback_crossing_migrations_is_rejected() {
     let world = World::new();

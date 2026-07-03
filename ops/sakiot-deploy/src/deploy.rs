@@ -1,7 +1,8 @@
-//! The deploy orchestrator: a line-for-line port of ops/deploy-release.sh
-//! lines 36-601. Phase order, log lines, error messages, state files, and
-//! the manifest stay byte-compatible with the bash engine so releases made
-//! by either engine remain valid rollback targets for the other.
+//! The deploy orchestrator, ported from the retired bash engine
+//! (ops/deploy-release.sh lines 36-601, since deleted). State files and the
+//! manifest stay byte-compatible with releases the bash engine produced so
+//! they remain valid rollback targets; log lines and error messages may
+//! diverge where accuracy requires.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -76,14 +77,14 @@ struct BotHandoff {
 }
 
 impl BotHandoff {
-    /// cancel_old_bot_drain() from deploy-release.sh.
-    fn cancel_old_drain(&self, deps: &Deps, systemctl: &Systemctl, release_id: &str) {
+    /// cancel_old_bot_drain() from deploy-release.sh. `reason` names the
+    /// actual failure; it is logged and sent as the CancelDrain reason.
+    fn cancel_old_drain(&self, deps: &Deps, systemctl: &Systemctl, reason: &str) {
         if !self.recovery_required || self.old_bot_grpc.is_empty() {
             return;
         }
-        log("new FBI Agent failed readiness; cancelling old instance drain");
-        let reason = format!("release {release_id} failed readiness");
-        if deps.admin.cancel_drain(&self.old_bot_grpc, &reason).is_ok() {
+        log(format!("{reason}; cancelling old FBI Agent drain"));
+        if deps.admin.cancel_drain(&self.old_bot_grpc, reason).is_ok() {
             return;
         }
         if self.old_bot_is_legacy {
@@ -95,13 +96,14 @@ impl BotHandoff {
     }
 
     /// recover_bot_on_error() from deploy-release.sh. Best-effort: every step
-    /// runs even if earlier ones fail.
+    /// runs even if earlier ones fail. `reason` names the failure that
+    /// triggered the unwind.
     fn recover(
         &self,
         deps: &Deps,
         systemctl: &Systemctl,
         state_dir: &Path,
-        release_id: &str,
+        reason: &str,
         registry_url: &str,
         registry_secret: &str,
     ) {
@@ -118,7 +120,7 @@ impl BotHandoff {
                 let _ = systemctl.run_ok(&["enable", &self.old_bot_unit]);
             }
         }
-        self.cancel_old_drain(deps, systemctl, release_id);
+        self.cancel_old_drain(deps, systemctl, reason);
         if !self.old_bot_grpc.is_empty()
             && deps
                 .web
@@ -485,7 +487,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
             deps,
             &systemctl,
             &config.state_dir,
-            &release_id,
+            &format!("release {release_id} failed: {error}"),
             &config.web_registry_url,
             &config.registry_secret,
         );
@@ -631,7 +633,11 @@ fn deploy_services(
             // Bash exits 1 here without the full ERR-trap recovery: stop the
             // unit, cancel the old drain, and leave registry/state untouched.
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
-            bot.cancel_old_drain(deps, systemctl, release_id);
+            bot.cancel_old_drain(
+                deps,
+                systemctl,
+                &format!("release {release_id} failed to start"),
+            );
             *bot = BotHandoff::default();
             bail!("failed to start new FBI Agent unit");
         }
@@ -650,7 +656,11 @@ fn deploy_services(
             // recover_bot_on_error (state files and registry are untouched).
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.new_bot_started = false;
-            bot.cancel_old_drain(deps, systemctl, release_id);
+            bot.cancel_old_drain(
+                deps,
+                systemctl,
+                &format!("release {release_id} failed readiness"),
+            );
             *bot = BotHandoff::default();
             bail!("new FBI Agent failed readiness");
         }
