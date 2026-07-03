@@ -51,9 +51,13 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
 
+      # scripts/sqlx-cli-version is the single source of truth for the pin;
+      # scripts/sqlx-prepare.sh reads the same file.
+      - name: Read pinned sqlx-cli version
+        run: echo "SQLX_CLI_VERSION=$(tr -d '[:space:]' <scripts/sqlx-cli-version)" >> "$GITHUB_ENV"
+
       # rust-cache does not cover ~/.cargo/bin, so cache the two installed
-      # binaries directly (cargo sqlx dispatches to cargo-sqlx). Bump the key
-      # together with the pinned version below and in scripts/sqlx-prepare.sh.
+      # binaries directly (cargo sqlx dispatches to cargo-sqlx).
       - name: Cache SQLx CLI
         id: cache-sqlx
         uses: actions/cache@v4
@@ -61,11 +65,11 @@ jobs:
           path: |
             ~/.cargo/bin/sqlx
             ~/.cargo/bin/cargo-sqlx
-          key: sqlx-cli-0.9.0-postgres-native-tls-${{ runner.os }}
+          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}-postgres-native-tls-${{ runner.os }}
 
       - name: Install SQLx CLI
         if: steps.cache-sqlx.outputs.cache-hit != 'true'
-        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,native-tls
+        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --locked --no-default-features --features postgres,native-tls
 
       - name: Apply database migrations
         run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations
@@ -81,6 +85,20 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  # The SSH forced command and systemctl sudo wrapper are installed
+  # out-of-band on the VPS, so deploys never rebuild them; without this job
+  # their bash suites only run there (ops/update-deploy-engine.sh) and a PR
+  # could regress the shims unnoticed. The suites are hermetic (mktemp
+  # sandboxes, stub binaries, no root/systemd) and finish in seconds, so run
+  # them unconditionally rather than path-filtering.
+  ops-shims:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ops shim test suites
+        run: ops/tests/run.sh
 
   frontend:
     runs-on: ubuntu-latest
@@ -98,6 +116,10 @@ jobs:
       - name: Test
         run: bun run test
 
-      # Runs biome check and tsc before vite build.
+      # Runs biome check and tsc before vite build. This is a smoke build
+      # (the artifact is never shipped); real deploys bake VITE_API_URL from
+      # the target's env file, and vite.config.ts refuses to build without it.
       - name: Build
         run: bun run build
+        env:
+          VITE_API_URL: https://ci.sakiot.test/api/

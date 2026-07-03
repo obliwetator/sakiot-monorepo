@@ -1,7 +1,12 @@
-use opentelemetry::KeyValue;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
+
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::Meter;
 
 use super::bot::BotMetrics;
+use super::recording::GuildRecordingMetrics;
+use crate::runtime::RuntimeState;
 
 fn deployment_release_id(instance_id: &str) -> String {
     std::env::var("RELEASE_ID")
@@ -15,7 +20,7 @@ fn deployment_release_id(instance_id: &str) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn deployment_labels(runtime: &crate::runtime::RuntimeState, release_id: &str) -> Vec<KeyValue> {
+fn deployment_labels(runtime: &RuntimeState, release_id: &str) -> Vec<KeyValue> {
     vec![
         KeyValue::new("instance_id", runtime.config().instance_id.clone()),
         KeyValue::new("release_id", release_id.to_string()),
@@ -23,379 +28,312 @@ fn deployment_labels(runtime: &crate::runtime::RuntimeState, release_id: &str) -
     ]
 }
 
-impl BotMetrics {
-    /// Registers standard BotMetrics instruments to OpenTelemetry.
-    pub fn register_otel_metrics(metrics: Arc<Self>, runtime: Arc<crate::runtime::RuntimeState>) {
-        let meter = opentelemetry::global::meter(crate::config::SERVICE_NAME);
-        let release_id = deployment_release_id(runtime.config().instance_id.as_str());
+/// Shared handles that every instrument callback captures.
+struct Instruments {
+    meter: Meter,
+    metrics: Arc<BotMetrics>,
+    runtime: Arc<RuntimeState>,
+    release_id: String,
+}
 
-        macro_rules! u32_counter {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_counter($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        let labels = deployment_labels(&r, release_id.as_str());
-                        observer.observe(
-                            m.$field.load(std::sync::atomic::Ordering::Relaxed) as u64,
-                            &labels,
-                        );
-                    })
-                    .build();
-            };
-        }
+impl Instruments {
+    fn context(&self) -> (Arc<BotMetrics>, Arc<RuntimeState>, String) {
+        (
+            self.metrics.clone(),
+            self.runtime.clone(),
+            self.release_id.clone(),
+        )
+    }
 
-        macro_rules! u64_counter {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_counter($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        let labels = deployment_labels(&r, release_id.as_str());
-                        observer
-                            .observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &labels);
-                    })
-                    .build();
-            };
-        }
+    fn counter(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&BotMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_counter(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                let labels = deployment_labels(&runtime, release_id.as_str());
+                observer.observe(read(&metrics), &labels);
+            })
+            .build();
+    }
 
-        macro_rules! u32_gauge {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_gauge($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        let labels = deployment_labels(&r, release_id.as_str());
-                        observer.observe(
-                            m.$field.load(std::sync::atomic::Ordering::Relaxed) as u64,
-                            &labels,
-                        );
-                    })
-                    .build();
-            };
-        }
+    fn gauge(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&BotMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_gauge(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                let labels = deployment_labels(&runtime, release_id.as_str());
+                observer.observe(read(&metrics), &labels);
+            })
+            .build();
+    }
 
-        macro_rules! u64_gauge {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_gauge($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        let labels = deployment_labels(&r, release_id.as_str());
-                        observer
-                            .observe(m.$field.load(std::sync::atomic::Ordering::Relaxed), &labels);
-                    })
-                    .build();
-            };
-        }
+    fn guild_counter(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&GuildRecordingMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_counter(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                for entry in metrics.guild_recording_metrics.iter() {
+                    let mut labels = deployment_labels(&runtime, release_id.as_str());
+                    labels.push(KeyValue::new("guild_id", entry.key().to_string()));
+                    observer.observe(read(entry.value()), &labels);
+                }
+            })
+            .build();
+    }
 
-        macro_rules! guild_counter {
-            ($name:literal, $desc:literal, $field:ident, $map:expr) => {{
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_counter($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        for entry in m.guild_recording_metrics.iter() {
-                            let guild_id = entry.key();
-                            let guild_metrics = entry.value();
-                            let mut labels = deployment_labels(&r, release_id.as_str());
-                            labels.push(opentelemetry::KeyValue::new(
-                                "guild_id",
-                                guild_id.to_string(),
-                            ));
-                            observer.observe(
-                                $map(
-                                    guild_metrics
-                                        .$field
-                                        .load(std::sync::atomic::Ordering::Relaxed),
-                                ),
-                                &labels,
-                            );
-                        }
-                    })
-                    .build();
-            }};
-        }
+    fn guild_gauge(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&GuildRecordingMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_gauge(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                for entry in metrics.guild_recording_metrics.iter() {
+                    let mut labels = deployment_labels(&runtime, release_id.as_str());
+                    labels.push(KeyValue::new("guild_id", entry.key().to_string()));
+                    observer.observe(read(entry.value()), &labels);
+                }
+            })
+            .build();
+    }
 
-        macro_rules! guild_gauge {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_gauge($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        for entry in m.guild_recording_metrics.iter() {
-                            let guild_id = entry.key();
-                            let guild_metrics = entry.value();
-                            let mut labels = deployment_labels(&r, release_id.as_str());
-                            labels.push(opentelemetry::KeyValue::new(
-                                "guild_id",
-                                guild_id.to_string(),
-                            ));
-                            observer.observe(
-                                guild_metrics
-                                    .$field
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    as u64,
-                                &labels,
-                            );
-                        }
-                    })
-                    .build();
-            };
-        }
+    fn channel_counter(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&GuildRecordingMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_counter(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                for entry in metrics.channel_recording_metrics.iter() {
+                    let (guild_id, channel_id) = entry.key();
+                    let mut labels = deployment_labels(&runtime, release_id.as_str());
+                    labels.push(KeyValue::new("guild_id", guild_id.to_string()));
+                    labels.push(KeyValue::new("channel_id", channel_id.to_string()));
+                    observer.observe(read(entry.value()), &labels);
+                }
+            })
+            .build();
+    }
 
-        macro_rules! channel_counter {
-            ($name:literal, $desc:literal, $field:ident, $map:expr) => {{
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_counter($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        for entry in m.channel_recording_metrics.iter() {
-                            let (guild_id, channel_id) = entry.key();
-                            let channel_metrics = entry.value();
-                            let mut labels = deployment_labels(&r, release_id.as_str());
-                            labels.push(opentelemetry::KeyValue::new(
-                                "guild_id",
-                                guild_id.to_string(),
-                            ));
-                            labels.push(opentelemetry::KeyValue::new(
-                                "channel_id",
-                                channel_id.to_string(),
-                            ));
-                            observer.observe(
-                                $map(
-                                    channel_metrics
-                                        .$field
-                                        .load(std::sync::atomic::Ordering::Relaxed),
-                                ),
-                                &labels,
-                            );
-                        }
-                    })
-                    .build();
-            }};
-        }
-
-        macro_rules! channel_gauge {
-            ($name:literal, $desc:literal, $field:ident) => {
-                let m = metrics.clone();
-                let r = runtime.clone();
-                let release_id = release_id.clone();
-                meter
-                    .u64_observable_gauge($name)
-                    .with_description($desc)
-                    .with_callback(move |observer| {
-                        for entry in m.channel_recording_metrics.iter() {
-                            let (guild_id, channel_id) = entry.key();
-                            let channel_metrics = entry.value();
-                            let mut labels = deployment_labels(&r, release_id.as_str());
-                            labels.push(opentelemetry::KeyValue::new(
-                                "guild_id",
-                                guild_id.to_string(),
-                            ));
-                            labels.push(opentelemetry::KeyValue::new(
-                                "channel_id",
-                                channel_id.to_string(),
-                            ));
-                            observer.observe(
-                                channel_metrics
-                                    .$field
-                                    .load(std::sync::atomic::Ordering::Relaxed)
-                                    as u64,
-                                &labels,
-                            );
-                        }
-                    })
-                    .build();
-            };
-        }
-
-        register_voice_presence_gauges(&meter, &metrics, &runtime, &release_id);
-        register_deployment_gauges(&meter, &metrics, &runtime, &release_id);
-
-        u64_gauge!(
-            "process_rss_bytes",
-            "RSS memory usage in bytes",
-            process_rss_bytes
-        );
-        u32_gauge!(
-            "process_open_fds",
-            "Open file descriptors",
-            process_open_fds
-        );
-        u32_gauge!(
-            "tokio_active_tasks",
-            "Tokio runtime active tasks",
-            tokio_active_tasks
-        );
-        u32_gauge!(
-            "grpc_active_streams",
-            "Current active gRPC dashboard streams",
-            grpc_active_streams
-        );
-        u32_gauge!(
-            "active_voice_connections",
-            "Current active voice connections",
-            active_voice_connections
-        );
-        u32_gauge!(
-            "active_recordings",
-            "Current active recordings",
-            active_recordings
-        );
-        guild_gauge!(
-            "guild_active_recordings",
-            "Number of active recordings per guild",
-            active_recordings
-        );
-        channel_gauge!(
-            "channel_active_recordings",
-            "Number of active recordings per channel",
-            active_recordings
-        );
-
-        u32_counter!(
-            "commands_executed",
-            "Total commands executed",
-            commands_executed
-        );
-        u32_counter!(
-            "messages_received",
-            "Total regular messages received",
-            messages_received
-        );
-        u64_counter!(
-            "voice_state_updates_received",
-            "Total Discord voice state updates received",
-            voice_state_updates_received
-        );
-        u64_counter!(
-            "recordings_started",
-            "Total recording writers opened",
-            recordings_started
-        );
-        u64_counter!(
-            "recordings_finished",
-            "Total recording writers closed",
-            recordings_finished
-        );
-        u64_counter!(
-            "recording_finalize_errors",
-            "Total recording writer finalization failures",
-            recording_finalize_errors
-        );
-        u64_counter!(
-            "audio_packets_received",
-            "Total audio packets received",
-            audio_packets_received
-        );
-        u64_counter!(
-            "audio_packets_dropped",
-            "Total audio packets dropped globally",
-            audio_packets_dropped
-        );
-        u32_counter!(
-            "writer_setup_failures",
-            "Total file writer setup failures",
-            writer_setup_failures
-        );
-        u32_counter!(
-            "gateway_reconnects",
-            "Total Discord gateway reconnects",
-            gateway_reconnects
-        );
-        u32_counter!(
-            "gateway_disconnects",
-            "Total Discord gateway disconnects",
-            gateway_disconnects
-        );
-        u32_counter!(
-            "driver_reconnects",
-            "Total Songbird driver reconnects",
-            driver_reconnects
-        );
-        u32_counter!(
-            "driver_disconnects",
-            "Total Songbird driver disconnects",
-            driver_disconnects
-        );
-        u32_counter!(
-            "db_query_errors",
-            "Total database query errors",
-            db_query_errors
-        );
-        u32_counter!(
-            "db_insert_failures",
-            "Total database insert failures",
-            db_insert_failures
-        );
-
-        guild_counter!(
-            "guild_audio_packets_received",
-            "Total audio packets received per guild",
-            audio_packets_received,
-            std::convert::identity
-        );
-        channel_counter!(
-            "channel_audio_packets_received",
-            "Total audio packets received per channel",
-            audio_packets_received,
-            std::convert::identity
-        );
-        guild_counter!(
-            "guild_audio_packets_dropped",
-            "Total audio packets dropped per guild",
-            audio_packets_dropped,
-            std::convert::identity
-        );
-        channel_counter!(
-            "channel_audio_packets_dropped",
-            "Total audio packets dropped per channel",
-            audio_packets_dropped,
-            std::convert::identity
-        );
-        guild_counter!(
-            "guild_writer_setup_failures",
-            "Total file writer setup failures per guild",
-            writer_setup_failures,
-            |v| v as u64
-        );
-        channel_counter!(
-            "channel_writer_setup_failures",
-            "Total file writer setup failures per channel",
-            writer_setup_failures,
-            |v| v as u64
-        );
+    fn channel_gauge(
+        &self,
+        name: &'static str,
+        description: &'static str,
+        read: impl Fn(&GuildRecordingMetrics) -> u64 + Send + Sync + 'static,
+    ) {
+        let (metrics, runtime, release_id) = self.context();
+        self.meter
+            .u64_observable_gauge(name)
+            .with_description(description)
+            .with_callback(move |observer| {
+                for entry in metrics.channel_recording_metrics.iter() {
+                    let (guild_id, channel_id) = entry.key();
+                    let mut labels = deployment_labels(&runtime, release_id.as_str());
+                    labels.push(KeyValue::new("guild_id", guild_id.to_string()));
+                    labels.push(KeyValue::new("channel_id", channel_id.to_string()));
+                    observer.observe(read(entry.value()), &labels);
+                }
+            })
+            .build();
     }
 }
 
-fn register_voice_presence_gauges(
-    meter: &opentelemetry::metrics::Meter,
-    metrics: &Arc<BotMetrics>,
-    runtime: &Arc<crate::runtime::RuntimeState>,
-    release_id: &str,
-) {
+impl BotMetrics {
+    /// Registers standard BotMetrics instruments to OpenTelemetry.
+    pub fn register_otel_metrics(metrics: Arc<Self>, runtime: Arc<RuntimeState>) {
+        let meter = opentelemetry::global::meter(crate::config::SERVICE_NAME);
+        let release_id = deployment_release_id(runtime.config().instance_id.as_str());
+        let instruments = Instruments {
+            meter,
+            metrics,
+            runtime,
+            release_id,
+        };
+
+        register_voice_presence_gauges(&instruments);
+        register_deployment_gauges(&instruments);
+        register_process_gauges(&instruments);
+        register_event_counters(&instruments);
+        register_recording_counters(&instruments);
+    }
+}
+
+fn register_process_gauges(instruments: &Instruments) {
+    instruments.gauge("process_rss_bytes", "RSS memory usage in bytes", |m| {
+        m.process_rss_bytes.load(Relaxed)
+    });
+    instruments.gauge("process_open_fds", "Open file descriptors", |m| {
+        u64::from(m.process_open_fds.load(Relaxed))
+    });
+    instruments.gauge("tokio_active_tasks", "Tokio runtime active tasks", |m| {
+        u64::from(m.tokio_active_tasks.load(Relaxed))
+    });
+    instruments.gauge(
+        "grpc_active_streams",
+        "Current active gRPC dashboard streams",
+        |m| u64::from(m.grpc_active_streams.load(Relaxed)),
+    );
+    instruments.gauge(
+        "active_voice_connections",
+        "Current active voice connections",
+        |m| u64::from(m.active_voice_connections.load(Relaxed)),
+    );
+    instruments.gauge("active_recordings", "Current active recordings", |m| {
+        u64::from(m.active_recordings.load(Relaxed))
+    });
+    instruments.guild_gauge(
+        "guild_active_recordings",
+        "Number of active recordings per guild",
+        |g| u64::from(g.active_recordings.load(Relaxed)),
+    );
+    instruments.channel_gauge(
+        "channel_active_recordings",
+        "Number of active recordings per channel",
+        |c| u64::from(c.active_recordings.load(Relaxed)),
+    );
+}
+
+fn register_event_counters(instruments: &Instruments) {
+    instruments.counter("commands_executed", "Total commands executed", |m| {
+        u64::from(m.commands_executed.load(Relaxed))
+    });
+    instruments.counter(
+        "messages_received",
+        "Total regular messages received",
+        |m| u64::from(m.messages_received.load(Relaxed)),
+    );
+    instruments.counter(
+        "voice_state_updates_received",
+        "Total Discord voice state updates received",
+        |m| m.voice_state_updates_received.load(Relaxed),
+    );
+    instruments.counter(
+        "gateway_reconnects",
+        "Total Discord gateway reconnects",
+        |m| u64::from(m.gateway_reconnects.load(Relaxed)),
+    );
+    instruments.counter(
+        "gateway_disconnects",
+        "Total Discord gateway disconnects",
+        |m| u64::from(m.gateway_disconnects.load(Relaxed)),
+    );
+    instruments.counter(
+        "driver_reconnects",
+        "Total Songbird driver reconnects",
+        |m| u64::from(m.driver_reconnects.load(Relaxed)),
+    );
+    instruments.counter(
+        "driver_disconnects",
+        "Total Songbird driver disconnects",
+        |m| u64::from(m.driver_disconnects.load(Relaxed)),
+    );
+    instruments.counter("db_query_errors", "Total database query errors", |m| {
+        u64::from(m.db_query_errors.load(Relaxed))
+    });
+    instruments.counter(
+        "db_insert_failures",
+        "Total database insert failures",
+        |m| u64::from(m.db_insert_failures.load(Relaxed)),
+    );
+}
+
+fn register_recording_counters(instruments: &Instruments) {
+    instruments.counter(
+        "recordings_started",
+        "Total recording writers opened",
+        |m| m.recordings_started.load(Relaxed),
+    );
+    instruments.counter(
+        "recordings_finished",
+        "Total recording writers closed",
+        |m| m.recordings_finished.load(Relaxed),
+    );
+    instruments.counter(
+        "recording_finalize_errors",
+        "Total recording writer finalization failures",
+        |m| m.recording_finalize_errors.load(Relaxed),
+    );
+    instruments.counter(
+        "audio_packets_received",
+        "Total audio packets received",
+        |m| m.audio_packets_received.load(Relaxed),
+    );
+    instruments.counter(
+        "audio_packets_dropped",
+        "Total audio packets dropped globally",
+        |m| m.audio_packets_dropped.load(Relaxed),
+    );
+    instruments.counter(
+        "writer_setup_failures",
+        "Total file writer setup failures",
+        |m| u64::from(m.writer_setup_failures.load(Relaxed)),
+    );
+    instruments.guild_counter(
+        "guild_audio_packets_received",
+        "Total audio packets received per guild",
+        |g| g.audio_packets_received.load(Relaxed),
+    );
+    instruments.channel_counter(
+        "channel_audio_packets_received",
+        "Total audio packets received per channel",
+        |c| c.audio_packets_received.load(Relaxed),
+    );
+    instruments.guild_counter(
+        "guild_audio_packets_dropped",
+        "Total audio packets dropped per guild",
+        |g| g.audio_packets_dropped.load(Relaxed),
+    );
+    instruments.channel_counter(
+        "channel_audio_packets_dropped",
+        "Total audio packets dropped per channel",
+        |c| c.audio_packets_dropped.load(Relaxed),
+    );
+    instruments.guild_counter(
+        "guild_writer_setup_failures",
+        "Total file writer setup failures per guild",
+        |g| u64::from(g.writer_setup_failures.load(Relaxed)),
+    );
+    instruments.channel_counter(
+        "channel_writer_setup_failures",
+        "Total file writer setup failures per channel",
+        |c| u64::from(c.writer_setup_failures.load(Relaxed)),
+    );
+}
+
+fn register_voice_presence_gauges(instruments: &Instruments) {
+    let Instruments {
+        meter,
+        metrics,
+        runtime,
+        release_id,
+    } = instruments;
+
     {
         let m = metrics.clone();
         let r = runtime.clone();
@@ -524,12 +462,14 @@ fn register_voice_presence_gauges(
     }
 }
 
-fn register_deployment_gauges(
-    meter: &opentelemetry::metrics::Meter,
-    metrics: &Arc<BotMetrics>,
-    runtime: &Arc<crate::runtime::RuntimeState>,
-    release_id: &str,
-) {
+fn register_deployment_gauges(instruments: &Instruments) {
+    let Instruments {
+        meter,
+        metrics,
+        runtime,
+        release_id,
+    } = instruments;
+
     meter
         .u64_observable_gauge("bot_up")
         .with_description("Bot process health: 1 while the process exports metrics")
@@ -580,11 +520,7 @@ fn register_deployment_gauges(
             .with_description("Current active voice connections for this deployment instance")
             .with_callback(move |observer| {
                 let labels = deployment_labels(&r, release_id.as_str());
-                observer.observe(
-                    m.active_voice_connections
-                        .load(std::sync::atomic::Ordering::Relaxed) as u64,
-                    &labels,
-                );
+                observer.observe(u64::from(m.active_voice_connections.load(Relaxed)), &labels);
             })
             .build();
     }
@@ -598,11 +534,7 @@ fn register_deployment_gauges(
             .with_description("Current active recordings for this deployment instance")
             .with_callback(move |observer| {
                 let labels = deployment_labels(&r, release_id.as_str());
-                observer.observe(
-                    m.active_recordings
-                        .load(std::sync::atomic::Ordering::Relaxed) as u64,
-                    &labels,
-                );
+                observer.observe(u64::from(m.active_recordings.load(Relaxed)), &labels);
             })
             .build();
     }
@@ -671,9 +603,7 @@ fn register_deployment_gauges(
             .with_unit("s")
             .with_callback(move |observer| {
                 let labels = deployment_labels(&r, release_id.as_str());
-                let ms = m
-                    .last_voice_packet_time
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let ms = m.last_voice_packet_time.load(Relaxed);
                 observer.observe(ms / 1000, &labels);
             })
             .build();
@@ -689,9 +619,7 @@ fn register_deployment_gauges(
             .with_unit("s")
             .with_callback(move |observer| {
                 let labels = deployment_labels(&r, release_id.as_str());
-                let last_ms = m
-                    .last_voice_packet_time
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let last_ms = m.last_voice_packet_time.load(Relaxed);
                 if last_ms > 0 {
                     let now_ms = chrono::Utc::now().timestamp_millis();
                     observer.observe(((now_ms - last_ms).max(0) / 1000) as u64, &labels);

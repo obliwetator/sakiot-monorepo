@@ -1,7 +1,6 @@
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import { useState } from "react";
-import { valuetext } from "../../../Constants";
 
 export function PlaybackSpeedSlider(props: { audioRef: HTMLAudioElement }) {
 	const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -24,11 +23,11 @@ export function PlaybackSpeedSlider(props: { audioRef: HTMLAudioElement }) {
 			<Slider
 				max={10}
 				step={0.1}
-				getAriaLabel={() => "Minimum distance"}
+				getAriaLabel={() => "Playback speed"}
 				value={playbackSpeed}
 				onChange={handleChangePlaybackSpeed}
 				valueLabelDisplay="auto"
-				getAriaValueText={valuetext}
+				getAriaValueText={(value) => `${value}x`}
 			/>
 		</Stack>
 	);

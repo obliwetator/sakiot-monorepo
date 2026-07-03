@@ -4,7 +4,6 @@ import { styled } from "@mui/material/styles";
 import Typography from "@mui/material/Typography";
 import type React from "react";
 import type { VoiceEvent } from "../../../app/apiSlice";
-import { valuetext } from "../../../Constants";
 import { formatDuration } from "../../../utils/formatTime";
 import { VoiceEventMarkers } from "./VoiceEventMarkers";
 
@@ -39,12 +38,12 @@ export function DoubleSlider(props: {
 						},
 					}}
 					max={props.durationSec}
-					getAriaLabel={() => "Minimum distance"}
+					getAriaLabel={() => "Playback range"}
 					value={props.startEnd}
 					onChange={props.handleChange}
 					valueLabelDisplay="auto"
 					valueLabelFormat={(value) => <div>{formatDuration(value)}</div>}
-					getAriaValueText={valuetext}
+					getAriaValueText={(value) => formatDuration(value)}
 					disableSwap
 				/>
 				{props.voiceEvents && props.voiceEvents.length > 0 && (

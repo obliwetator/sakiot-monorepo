@@ -1,6 +1,20 @@
-export const BASE_API_URL =
-	(import.meta.env.VITE_API_URL as string | undefined) ||
-	"https://dev.patrykstyla.com/api/";
+const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+if (!configuredApiUrl) {
+	throw new Error(
+		"VITE_API_URL is not set. Every build must provide the API origin (see .env.example); there is no fallback.",
+	);
+}
+export const BASE_API_URL = configuredApiUrl;
+
+// WebSocket endpoints share the API origin; only the scheme differs.
+export function apiWebSocketUrl(pathWithQuery: string): string {
+	const url = new URL(
+		pathWithQuery,
+		new URL(BASE_API_URL, window.location.origin),
+	);
+	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+	return url.toString();
+}
 
 const CSRF_STORAGE_KEY = "sakiot.csrf";
 let csrfOverride: string | null = null;

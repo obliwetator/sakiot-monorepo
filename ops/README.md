@@ -73,7 +73,10 @@ builds `--package sakiot-deploy` from the checkout as the `sakiot` user and
 installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
 never built from the release worktree, so a broken commit cannot brick
 deploys. Engine tests run in CI (`cargo test --workspace`) and on the VPS
-during the deploy-time workspace test step.
+during the deploy-time workspace test step. The bash suites for the
+out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
+frontend publish) run in CI on every PR and on the VPS via
+`update-deploy-engine.sh`.
 
 `sakiot-deploy --dry-run {release|rollback|stage} ...` (local only, not
 reachable through the SSH forced command) reports component selection and

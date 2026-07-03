@@ -1,7 +1,6 @@
-// import react from '@vitejs/plugin-react';
 import react from "@vitejs/plugin-react";
 import { visualizer } from "rollup-plugin-visualizer";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const bundleBuiltAt = new Date().toISOString();
 const releaseTag = process.env.SAKIOT_RELEASE_TAG ?? "development";
@@ -34,53 +33,66 @@ function bundleVersionPlugin(): Plugin {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig({
-	envDir: "..",
-	define: {
-		__BUNDLE_VERSION__: JSON.stringify(bundleVersion),
-	},
-	plugins: [
-		bundleVersionPlugin(),
-		react({
-			babel: {
-				plugins: [["babel-plugin-react-compiler", {}]],
-			},
-		}),
-		visualizer({
-			filename: "dist/stats.html",
-			gzipSize: true,
-			brotliSize: true,
-		}),
-	],
-	server: {
-		port: 8081,
-		allowedHosts: [
-			"debug.patrykstyla.com",
-			"staging.patrykstyla.com",
-			"dev.patrykstyla.com",
-			"patrykstyla.com",
+export default defineConfig(({ command, mode }) => {
+	// The bundle refuses to start without an API origin (src/app/authedFetch.ts);
+	// surface a missing VITE_API_URL at build time instead of on first page load.
+	if (
+		command === "build" &&
+		!process.env.VITE_API_URL &&
+		!loadEnv(mode, "..", "VITE_").VITE_API_URL
+	) {
+		throw new Error(
+			"VITE_API_URL is not set (env file or environment); refusing to build a bundle without an API origin.",
+		);
+	}
+	return {
+		envDir: "..",
+		define: {
+			__BUNDLE_VERSION__: JSON.stringify(bundleVersion),
+		},
+		plugins: [
+			bundleVersionPlugin(),
+			react({
+				babel: {
+					plugins: [["babel-plugin-react-compiler", {}]],
+				},
+			}),
+			visualizer({
+				filename: "dist/stats.html",
+				gzipSize: true,
+				brotliSize: true,
+			}),
 		],
-	},
-	build: {
-		rolldownOptions: {
-			output: {
-				codeSplitting: {
-					groups: [
-						{
-							name: "react",
-							test: /node_modules\/(react|react-dom|react-router|react-router-dom|scheduler)\//,
-						},
-						{
-							name: "redux",
-							test: /node_modules\/(@reduxjs\/toolkit|react-redux|redux|reselect|immer)\//,
-						},
-						{
-							name: "mui",
-							test: /node_modules\/(@mui|@emotion)\//,
-						},
-					],
+		server: {
+			port: 8081,
+			allowedHosts: [
+				"debug.patrykstyla.com",
+				"staging.patrykstyla.com",
+				"dev.patrykstyla.com",
+				"patrykstyla.com",
+			],
+		},
+		build: {
+			rolldownOptions: {
+				output: {
+					codeSplitting: {
+						groups: [
+							{
+								name: "react",
+								test: /node_modules\/(react|react-dom|react-router|react-router-dom|scheduler)\//,
+							},
+							{
+								name: "redux",
+								test: /node_modules\/(@reduxjs\/toolkit|react-redux|redux|reselect|immer)\//,
+							},
+							{
+								name: "mui",
+								test: /node_modules\/(@mui|@emotion)\//,
+							},
+						],
+					},
 				},
 			},
 		},
-	},
+	};
 });

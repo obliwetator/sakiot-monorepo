@@ -7,6 +7,9 @@ MODE="${1:-prepare}"
 POSTGRES_IMAGE="${SQLX_POSTGRES_IMAGE:-postgres:18-alpine}"
 CONTAINER_NAME="sakiot-sqlx-prepare-$$"
 CONTAINER_ID=""
+# Single source of truth for the pinned sqlx-cli version; CI reads the same
+# file for its install step and cache key.
+SQLX_CLI_VERSION="$(tr -d '[:space:]' <"$ROOT/scripts/sqlx-cli-version")"
 
 case "$MODE" in
     prepare) prepare_args=() ;;
@@ -32,10 +35,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 need docker "https://docs.docker.com/engine/install/"
-if ! cargo sqlx --version >/dev/null 2>&1; then
+if ! installed_sqlx="$(cargo sqlx --version 2>/dev/null)"; then
     echo "error: sqlx-cli is required" >&2
-    echo "install it with: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features postgres,native-tls" >&2
+    echo "install it with: cargo install sqlx-cli --version ${SQLX_CLI_VERSION} --locked --no-default-features --features postgres,native-tls" >&2
     exit 1
+fi
+if [ "${installed_sqlx##* }" != "$SQLX_CLI_VERSION" ]; then
+    echo "warning: installed ${installed_sqlx} does not match the pinned ${SQLX_CLI_VERSION} (scripts/sqlx-cli-version); metadata may differ from CI" >&2
 fi
 
 echo "Starting disposable PostgreSQL container..."

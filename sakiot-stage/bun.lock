@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "sakiot_stage",
+      "name": "sakiot-stage",
       "dependencies": {
         "@emotion/react": "^11.10.4",
         "@emotion/styled": "^11.10.4",

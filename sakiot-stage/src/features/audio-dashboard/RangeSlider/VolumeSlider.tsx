@@ -3,7 +3,6 @@ import VolumeMute from "@mui/icons-material/VolumeMute";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import { useState } from "react";
-import { valuetext } from "../../../Constants";
 
 export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 	const [volume, setVolume] = useState(0.5);
@@ -39,11 +38,11 @@ export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 			<Slider
 				max={1}
 				step={0.01}
-				getAriaLabel={() => "Minimum distance"}
+				getAriaLabel={() => "Volume"}
 				value={volume}
 				onChange={handleChangeVolume}
 				valueLabelDisplay="auto"
-				getAriaValueText={valuetext}
+				getAriaValueText={(value) => `${Math.round(value * 100)}%`}
 			/>
 		</Stack>
 	);

@@ -8,145 +8,119 @@ pub const CSRF_COOKIE: &str = "__Host-sakiot-xsrf_token";
 pub const LOGGED_IN_COOKIE: &str = "__Host-sakiot-logged_in";
 pub const OAUTH_STATE_COOKIE: &str = "__Host-sakiot-oauth_state";
 
-pub fn csrf_cookie(value: &str) -> Cookie<'static> {
-    Cookie::build(CSRF_COOKIE, value.to_string())
+// All auth cookies are host-only (`__Host-` prefix: Secure, Path=/, no
+// Domain). A zero max_age clears the cookie.
+fn host_cookie(
+    name: &'static str,
+    value: String,
+    http_only: bool,
+    max_age: Duration,
+) -> Cookie<'static> {
+    Cookie::build(name, value)
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
-        .http_only(false)
-        .max_age(Duration::days(JWT_REFRESH_EXPIRY_DAYS))
+        .http_only(http_only)
+        .max_age(max_age)
         .finish()
+}
+
+const SESSION_LIFETIME: Duration = Duration::days(JWT_REFRESH_EXPIRY_DAYS);
+const CLEAR: Duration = Duration::seconds(0);
+
+pub fn csrf_cookie(value: &str) -> Cookie<'static> {
+    host_cookie(CSRF_COOKIE, value.to_string(), false, SESSION_LIFETIME)
 }
 
 pub fn clear_csrf_cookie() -> Cookie<'static> {
-    Cookie::build(CSRF_COOKIE, "")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(false)
-        .max_age(Duration::seconds(0))
-        .finish()
+    host_cookie(CSRF_COOKIE, String::new(), false, CLEAR)
 }
 
 pub fn access_token_cookie(value: &str) -> Cookie<'static> {
-    Cookie::build(ACCESS_TOKEN_COOKIE, value.to_string())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::days(JWT_REFRESH_EXPIRY_DAYS))
-        .finish()
+    host_cookie(
+        ACCESS_TOKEN_COOKIE,
+        value.to_string(),
+        true,
+        SESSION_LIFETIME,
+    )
 }
 
 pub fn refresh_token_cookie(value: &str) -> Cookie<'static> {
-    Cookie::build(REFRESH_TOKEN_COOKIE, value.to_string())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::days(JWT_REFRESH_EXPIRY_DAYS))
-        .finish()
+    host_cookie(
+        REFRESH_TOKEN_COOKIE,
+        value.to_string(),
+        true,
+        SESSION_LIFETIME,
+    )
 }
 
 pub fn clear_access_token_cookie() -> Cookie<'static> {
-    Cookie::build(ACCESS_TOKEN_COOKIE, "")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::seconds(0))
-        .finish()
+    host_cookie(ACCESS_TOKEN_COOKIE, String::new(), true, CLEAR)
 }
 
 pub fn clear_refresh_token_cookie() -> Cookie<'static> {
-    Cookie::build(REFRESH_TOKEN_COOKIE, "")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::seconds(0))
-        .finish()
+    host_cookie(REFRESH_TOKEN_COOKIE, String::new(), true, CLEAR)
 }
 
 pub fn logged_in_cookie() -> Cookie<'static> {
-    Cookie::build(LOGGED_IN_COOKIE, "1")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(false)
-        .max_age(Duration::days(JWT_REFRESH_EXPIRY_DAYS))
-        .finish()
+    host_cookie(LOGGED_IN_COOKIE, "1".to_string(), false, SESSION_LIFETIME)
 }
 
 pub fn clear_logged_in_cookie() -> Cookie<'static> {
-    Cookie::build(LOGGED_IN_COOKIE, "")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(false)
-        .max_age(Duration::seconds(0))
-        .finish()
+    host_cookie(LOGGED_IN_COOKIE, String::new(), false, CLEAR)
 }
 
 pub fn oauth_state_cookie(value: &str) -> Cookie<'static> {
-    Cookie::build(OAUTH_STATE_COOKIE, value.to_string())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::minutes(10))
-        .finish()
+    host_cookie(
+        OAUTH_STATE_COOKIE,
+        value.to_string(),
+        true,
+        Duration::minutes(10),
+    )
 }
 
 pub fn clear_oauth_state_cookie() -> Cookie<'static> {
-    Cookie::build(OAUTH_STATE_COOKIE, "")
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(true)
-        .max_age(Duration::seconds(0))
-        .finish()
+    host_cookie(OAUTH_STATE_COOKIE, String::new(), true, CLEAR)
 }
 
-pub fn opener_origin_cookie(domain: &str, value: &str) -> Cookie<'static> {
+// The opener-origin cookie is intentionally domain-scoped (OAuth popup and
+// opener may live on different subdomains) and JS-readable.
+fn opener_origin(domain: &str, value: &str, max_age: Duration) -> Cookie<'static> {
     Cookie::build("opener_origin", value.to_string())
         .domain(domain.to_string())
         .path("/")
         .same_site(SameSite::Lax)
         .secure(true)
         .http_only(false)
-        .max_age(Duration::minutes(10))
+        .max_age(max_age)
         .finish()
 }
 
+pub fn opener_origin_cookie(domain: &str, value: &str) -> Cookie<'static> {
+    opener_origin(domain, value, Duration::minutes(10))
+}
+
 pub fn clear_opener_origin_cookie(domain: &str) -> Cookie<'static> {
-    Cookie::build("opener_origin", "")
-        .domain(domain.to_string())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(false)
-        .max_age(Duration::seconds(0))
-        .finish()
+    opener_origin(domain, "", CLEAR)
 }
 
 // Clear legacy cookies stored under Path=/api from pre-fix server versions.
 // Same name + different Path = separate browser entries; without this the
 // stale ones shadow the new Path=/ cookies on every /api/* request.
-pub fn clear_legacy_access_cookie(domain: &str) -> Cookie<'static> {
-    Cookie::build("access_token", "")
+fn clear_legacy_api_cookie(name: &'static str, domain: &str) -> Cookie<'static> {
+    Cookie::build(name, "")
         .domain(domain.to_string())
         .path("/api")
-        .max_age(Duration::seconds(0))
+        .max_age(CLEAR)
         .finish()
 }
 
+pub fn clear_legacy_access_cookie(domain: &str) -> Cookie<'static> {
+    clear_legacy_api_cookie("access_token", domain)
+}
+
 pub fn clear_legacy_refresh_cookie(domain: &str) -> Cookie<'static> {
-    Cookie::build("refresh_token", "")
-        .domain(domain.to_string())
-        .path("/api")
-        .max_age(Duration::seconds(0))
-        .finish()
+    clear_legacy_api_cookie("refresh_token", domain)
 }
 
 #[cfg(test)]
