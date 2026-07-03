@@ -70,11 +70,16 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
             select(&[Component::Frontend]);
         } else if path.starts_with("sakiot-paths/")
             || path.starts_with("sakiot-proto/")
-            || path == "Cargo.toml"
-            || path == "Cargo.lock"
             || path.starts_with(".sqlx/")
         {
             select(&[Component::Bot, Component::Web]);
+        } else if path == "Cargo.toml" || path == "Cargo.lock" {
+            // Workspace manifests carry the release version. Rebuild the
+            // frontend too so its version.json is stamped with the release
+            // commit: the auto-tag staging gate polls it, and a version-bump
+            // -only commit would otherwise reuse a bundle carrying the
+            // previous SHA and never pass its own gate.
+            select(&[Component::Bot, Component::Web, Component::Frontend]);
         } else if path.starts_with("sakiot-db/migrations/") {
             select(&[Component::Database, Component::Bot, Component::Web]);
         } else if path.starts_with("sakiot-db/ops/")
@@ -151,11 +156,16 @@ mod tests {
         for path in [
             "sakiot-paths/src/lib.rs",
             "sakiot-proto/proto/fbi_agent.proto",
-            "Cargo.toml",
-            "Cargo.lock",
             ".sqlx/query-abc.json",
         ] {
             assert_components(&[path], &[Bot, Web]);
+        }
+    }
+
+    #[test]
+    fn workspace_manifests_also_rebuild_frontend_version_stamp() {
+        for path in ["Cargo.toml", "Cargo.lock"] {
+            assert_components(&[path], &[Bot, Web, Frontend]);
         }
     }
 
