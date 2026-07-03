@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-login")]
-use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::Client;
@@ -277,9 +275,9 @@ pub async fn dev_login(
 
     let (access_token, refresh_token) =
         create_jwt_tokens(dev_account_id, AuthKind::Dev, csrf_token.clone(), &keys).await?;
-    let mut b = NamedFile::open_async("callback.html")
-        .await?
-        .into_response(&req);
+    let mut b = HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(include_str!("../../callback.html"));
 
     let d = cfg.cookie_domain.as_str();
     b.add_cookie(&clear_legacy_access_cookie(d))?;

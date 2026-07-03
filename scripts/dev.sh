@@ -121,7 +121,6 @@ run_server() {
     fi
     log "starting web_server with dev-login on http://localhost:$(env_get PORT 8900) (cargo watch)"
     log "login secret: DEV_LOGIN_SECRET in .env (frontend picks up VITE_DEV_LOGIN_SECRET)"
-    # cwd must be web-server/ so the relative callback.html path resolves
     cd "$ROOT/web-server"
     cargo watch -x 'run -p web_server --features dev-login'
 }

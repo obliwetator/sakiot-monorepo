@@ -17,11 +17,9 @@ migrations, seeds a dev account, and runs this server under `cargo watch`
 with the `dev-login` cargo feature (Discord OAuth bypass via
 `GET /api/dev_login` and `DEV_LOGIN_SECRET`). See the root `README.md`.
 
-When running manually, start from the `web-server/` directory so the
-relative `callback.html` path resolves:
+When running manually:
 
 ```sh
-cd web-server
 cargo run -p web_server --features dev-login
 ```
 
