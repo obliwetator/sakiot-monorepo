@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The legacy-assets case relies on a 0555 directory being non-writable, which
-# is never true for root.
+# The rescue cases rely on 0555 directories and 0444 files being non-writable,
+# which is never true for root. (The foreign-ownership leg of the rescue
+# trigger cannot be simulated without root; these cases exercise the
+# not-writable leg of the same predicate.)
 if [[ "${EUID}" -eq 0 ]]; then
   echo "frontend_publish_test must not run as root" >&2
   exit 1
@@ -73,3 +75,32 @@ mapfile -t calls <"${temporary}/calls"
 [[ "${calls[1]}" == rsync*"dist/assets/"*"legacy-target/assets/"* ]]
 [[ -d "${temporary}/legacy-target/assets" ]]
 compgen -G "${temporary}/legacy-target/assets.legacy-*" >/dev/null
+
+# The v1.0.7 wedge: a writable tree containing files the deploy user cannot
+# control (0444 stands in for root-owned). The assets rescue must trigger,
+# stale top-level files must be reclaimed, index.html must stay present, and
+# the final chmod must not touch the moved-aside legacy dir.
+mkdir -p "${temporary}/wedged-target/assets"
+touch "${temporary}/wedged-target/assets/rooted-hash.js"
+chmod 0444 "${temporary}/wedged-target/assets/rooted-hash.js"
+touch "${temporary}/wedged-target/stale.css"
+chmod 0444 "${temporary}/wedged-target/stale.css"
+touch "${temporary}/wedged-target/index.html"
+chmod 0444 "${temporary}/wedged-target/index.html"
+: >"${temporary}/calls"
+
+CALL_LOG="${temporary}/calls" \
+PATH="${temporary}/bin:${PATH}" \
+SAKIOT_FRONTEND_ROOT="${temporary}/wedged-target" \
+SAKIOT_FRONTEND_DIST="${temporary}/dist" \
+  "${test_dir}/../../sakiot-stage/scripts/deploy.sh"
+
+mapfile -t calls <"${temporary}/calls"
+[[ "${calls[0]}" == rsync*"assets.legacy-"*"wedged-target/assets/"* ]]
+[[ "${calls[1]}" == rsync*"dist/assets/"*"wedged-target/assets/"* ]]
+wedged_legacy="$(compgen -G "${temporary}/wedged-target/assets.legacy-*")"
+[[ "$(stat -c '%a' "${wedged_legacy}/rooted-hash.js")" == "444" ]]
+[[ "$(stat -c '%a' "${temporary}/wedged-target/assets")" == "755" ]]
+[[ ! -e "${temporary}/wedged-target/stale.css" ]]
+[[ -f "${temporary}/wedged-target/index.html" ]]
+[[ "$(stat -c '%a' "${temporary}/wedged-target/index.html")" == "644" ]]
