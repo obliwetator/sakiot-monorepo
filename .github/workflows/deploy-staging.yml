@@ -73,7 +73,10 @@ jobs:
 
       - name: Tag release if workspace version increased
         env:
-          STAGING_VERSION_URL: https://debug.patrykstyla.com/version.json
+          # Must be the deployed staging frontend (nginx serves version.json
+          # with no-store there); debug.patrykstyla.com proxies the Vite dev
+          # server and 502s when it is not running.
+          STAGING_VERSION_URL: https://staging.patrykstyla.com/version.json
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
