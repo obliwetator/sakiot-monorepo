@@ -37,6 +37,10 @@ pub struct Deps<'a> {
     pub web: &'a dyn WebApi,
     pub clock: &'a dyn Clock,
     pub hostname: String,
+    /// ops/sakiot-deploy tree OID stamped when the running engine was
+    /// installed (ops/update-deploy-engine.sh). None disables the
+    /// engine-staleness warning.
+    pub engine_src_tree: Option<String>,
     pub free_port: &'a dyn Fn() -> Result<u16>,
     /// `command -v` parity; injectable so tests don't depend on host PATH.
     pub require_command: &'a dyn Fn(&str) -> Result<()>,
@@ -57,6 +61,29 @@ pub fn require_command(name: &str) -> Result<()> {
         bail!("required command not found: {name}");
     }
     Ok(())
+}
+
+/// The engine binary is installed out-of-band and never built from the
+/// release worktree (see ops/README.md), so a release that changes
+/// ops/sakiot-deploy still runs on the previously installed engine. Compare
+/// the install-time stamp against the release's tree and warn on drift; the
+/// deploy itself proceeds, because running on the older engine is the
+/// documented behavior.
+fn warn_if_engine_stale(deps: &Deps, source_repo: &Path, sha: &str) {
+    let Some(installed) = deps.engine_src_tree.as_deref() else {
+        return;
+    };
+    match git::tree_oid(deps.runner, source_repo, sha, "ops/sakiot-deploy") {
+        Ok(release_tree) if release_tree == installed => {}
+        Ok(release_tree) => {
+            log(format!(
+                "WARNING: deploy engine is stale: installed from ops/sakiot-deploy tree {installed}, this release carries {release_tree}"
+            ));
+            log("WARNING: engine changes in this release are NOT running; \
+                 refresh with `sudo ops/update-deploy-engine.sh` on the VPS");
+        }
+        Err(error) => log(format!("engine drift check skipped: {error:#}")),
+    }
 }
 
 /// Bot blue/green handoff state, shared with the recovery path. Mirrors the
@@ -191,6 +218,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         git::fetch_staging(deps.runner, &source_repo)?;
     }
     git::require_commit(deps.runner, &source_repo, sha)?;
+    warn_if_engine_stale(deps, &source_repo, sha);
 
     let tag_record = config.state_dir.join("tags").join(tag);
     if target == Target::Production {

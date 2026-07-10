@@ -51,6 +51,21 @@ install -o root -g root -m 0755 \
   /var/cache/sakiot/cargo-target/release/sakiot-deploy \
   "${install_root}/bin/sakiot-deploy"
 
+# Stamp the ops/sakiot-deploy tree the engine was built from; every deploy
+# compares it against the release commit and warns when the release carries
+# engine changes this install predates (deploy.rs warn_if_engine_stale).
+# root already executes this checkout's scripts, so safe.directory is fine.
+if [[ -n "$(git -c safe.directory="${repo_root}" -C "${repo_root}" \
+      status --porcelain -- ops/sakiot-deploy 2>/dev/null)" ]]; then
+  echo "warning: ops/sakiot-deploy has uncommitted changes; not stamping engine-src-tree" >&2
+elif tree_oid="$(git -c safe.directory="${repo_root}" -C "${repo_root}" \
+      rev-parse HEAD:ops/sakiot-deploy 2>/dev/null)"; then
+  printf '%s\n' "${tree_oid}" > "${install_root}/engine-src-tree"
+  chmod 0644 "${install_root}/engine-src-tree"
+else
+  echo "warning: could not resolve HEAD:ops/sakiot-deploy; not stamping engine-src-tree" >&2
+fi
+
 visudo -cf "${script_dir}/sudoers/sakiot-deploy"
 install -m 0440 "${script_dir}/sudoers/sakiot-deploy" /etc/sudoers.d/sakiot-deploy
 

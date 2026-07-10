@@ -8,8 +8,9 @@
 //! While the recording is still being written (DB row has `end_ts IS NULL`
 //! and a fresh recording heartbeat), ffmpeg consumes a `tail -F` of the source
 //! so the playlist grows in real time. A background task polls the DB; when
-//! the row is no longer live it kills the shell pipeline (tail's parent),
-//! ffmpeg drains, then we append `ENDLIST`.
+//! the row is no longer live it waits for tail to reach the end of the (now
+//! complete) source, stops tail so ffmpeg drains to EOF and exits, then we
+//! append `ENDLIST`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,6 +32,16 @@ use crate::errors::AppError;
 use crate::permissions::require_channel_access;
 
 use super::paths::recording_path;
+
+/// How long the drain waits for tail to reach the end of the finalized
+/// source file before terminating it anyway.
+const TAIL_CATCHUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// Poll interval for the tail catch-up wait.
+const TAIL_CATCHUP_POLL: Duration = Duration::from_millis(250);
+/// How long the pipeline gets to drain and exit after tail terminates.
+const PIPELINE_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long after a group SIGTERM before escalating to SIGKILL.
+const PIPELINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default, Debug)]
 pub struct LiveContainer(pub RwLock<HashMap<String, Arc<Mutex<JobState>>>>);
@@ -245,6 +256,160 @@ fn drain_child_stderr(child: &mut Child, job_id: String) {
     });
 }
 
+/// Parses `/proc/<pid>/stat` into (comm, pgrp). The comm field is
+/// parenthesized and may itself contain spaces or parentheses, so it ends at
+/// the *last* `)`.
+fn parse_stat_comm_pgrp(stat: &str) -> Option<(&str, i64)> {
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let comm = stat.get(open + 1..close)?;
+    // Fields after the comm: state, ppid, pgrp, ...
+    let pgrp = stat.get(close + 1..)?.split_whitespace().nth(2)?;
+    Some((comm, pgrp.parse().ok()?))
+}
+
+/// The `pos:` line of a /proc fdinfo file.
+fn parse_fdinfo_pos(fdinfo: &str) -> Option<u64> {
+    fdinfo.lines().find_map(|line| {
+        line.strip_prefix("pos:")
+            .and_then(|v| v.trim().parse().ok())
+    })
+}
+
+/// Finds a process in group `pgid` with command name `comm` by scanning
+/// /proc. procfs reads are memory-backed and never wait on storage, so plain
+/// std::fs is fine on the runtime here and below.
+fn find_group_member(pgid: u32, comm: &str) -> Option<u32> {
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        if let Some((proc_comm, proc_pgrp)) = parse_stat_comm_pgrp(&stat)
+            && proc_comm == comm
+            && proc_pgrp == i64::from(pgid)
+        {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+/// The read offset of `pid`'s open fd on `canonical` (a canonicalized path),
+/// from /proc fdinfo. None when the process or fd is gone.
+fn proc_read_pos(pid: u32, canonical: &Path) -> Option<u64> {
+    for entry in std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?.flatten() {
+        let Ok(target) = std::fs::read_link(entry.path()) else {
+            continue;
+        };
+        if target != canonical {
+            continue;
+        }
+        let fd = entry.file_name();
+        let fdinfo =
+            std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", fd.to_string_lossy())).ok()?;
+        return parse_fdinfo_pos(&fdinfo);
+    }
+    None
+}
+
+/// Waits until `tail_pid` has read `src` to the end twice in a row (the
+/// second observation gives tail time to flush the final chunk into the
+/// pipe), bounded by TAIL_CATCHUP_TIMEOUT.
+async fn wait_for_tail_catchup(tail_pid: u32, src: &Path, job_id: &str) {
+    let Ok(canonical) = tokio::fs::canonicalize(src).await else {
+        warn!(stem = %job_id, "cannot canonicalize source; skipping tail catch-up wait");
+        return;
+    };
+    let deadline = std::time::Instant::now() + TAIL_CATCHUP_TIMEOUT;
+    let mut caught_up_once = false;
+    loop {
+        let len = tokio::fs::metadata(src).await.ok().map(|meta| meta.len());
+        match (proc_read_pos(tail_pid, &canonical), len) {
+            (Some(pos), Some(len)) if pos >= len => {
+                if caught_up_once {
+                    return;
+                }
+                caught_up_once = true;
+            }
+            (None, _) if !Path::new(&format!("/proc/{tail_pid}")).exists() => {
+                // tail already exited; nothing left to wait for.
+                return;
+            }
+            _ => caught_up_once = false,
+        }
+        if std::time::Instant::now() >= deadline {
+            warn!(stem = %job_id, "tail did not catch up with the source before timeout");
+            return;
+        }
+        tokio::time::sleep(TAIL_CATCHUP_POLL).await;
+    }
+}
+
+/// Terminates the live `tail -F | ffmpeg` pipeline without truncating the
+/// output. The source is already complete (the bot closes its writer before
+/// the DB row stops being live), so wait for tail to read to EOF, then
+/// SIGTERM tail alone: ffmpeg sees EOF on stdin, flushes the final partial
+/// segment, and the pipeline exits on its own. The process group is signalled
+/// only as an escalation. Replaces a fixed 2-second sleep that could truncate
+/// the end of a recording on a slow host.
+async fn drain_live_pipeline(child: &mut Child, src: &Path, job_id: &str) {
+    let Some(pgid) = child.id() else {
+        // Already exited; just reap it.
+        let _ = child.wait().await;
+        return;
+    };
+
+    // The pipeline is `setsid sh -c "tail -F … | ffmpeg …"`: tail and ffmpeg
+    // run as siblings in the group whose pgid is child.id() (setsid makes the
+    // leader's pid the pgid). tokio's Child::kill would only signal the
+    // shell, orphaning both — hence raw kill(2) here and below.
+    if let Some(tail_pid) = find_group_member(pgid, "tail") {
+        wait_for_tail_catchup(tail_pid, src, job_id).await;
+        // SAFETY: SIGTERM to the single pid located above; if it exited in
+        // the meantime the signal is a harmless ESRCH.
+        unsafe {
+            libc::kill(tail_pid as i32, libc::SIGTERM);
+        }
+    } else {
+        warn!(stem = %job_id, "tail not found in pipeline group; terminating whole group");
+        // SAFETY: negative pid signals the whole process group; ffmpeg
+        // treats SIGTERM as a graceful quit and still writes its trailer.
+        unsafe {
+            libc::kill(-(pgid as i32), libc::SIGTERM);
+        }
+    }
+
+    if tokio::time::timeout(PIPELINE_EXIT_TIMEOUT, child.wait())
+        .await
+        .is_ok()
+    {
+        return;
+    }
+    warn!(stem = %job_id, "pipeline did not exit after drain; terminating group");
+    // SAFETY: group SIGTERM, as above.
+    unsafe {
+        libc::kill(-(pgid as i32), libc::SIGTERM);
+    }
+    if tokio::time::timeout(PIPELINE_KILL_TIMEOUT, child.wait())
+        .await
+        .is_err()
+    {
+        warn!(stem = %job_id, "pipeline ignored SIGTERM; killing group");
+        // SAFETY: last-resort group SIGKILL.
+        unsafe {
+            libc::kill(-(pgid as i32), libc::SIGKILL);
+        }
+        let _ = child.wait().await;
+    }
+}
+
 async fn spawn_job(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
@@ -337,23 +502,9 @@ async fn spawn_job(
                     }
                 }
             }
-            // Give ffmpeg a moment to consume tail's last writes.
-            tokio::time::sleep(Duration::from_secs(2)).await;
             let mut g = state_c.lock().await;
             if let Some(mut child) = g.child.take() {
-                // Kill the whole process group, not just the shell. The live
-                // pipeline is `setsid sh -c "tail -F … | ffmpeg …"`, so tail
-                // and ffmpeg run as siblings under the shell's pgid (setsid
-                // makes child.id() == pgid). tokio's Child::kill only signals
-                // the direct child (the shell), which would orphan tail +
-                // ffmpeg. `kill(-pgid, SIGTERM)` signals every process in the
-                // group — that's what `libc` is here for.
-                if let Some(pid) = child.id() {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGTERM);
-                    }
-                }
-                let _ = child.wait().await;
+                drain_live_pipeline(&mut child, &src, &id).await;
             }
             drop(g);
             let pl = out_dir_c.join("playlist.m3u8");
@@ -622,6 +773,74 @@ mod tests {
 
         assert!(flags.contains("omit_endlist"));
         assert!(!flags.contains("append_list"));
+        Ok(())
+    }
+
+    #[test]
+    fn stat_parser_handles_awkward_comm_names() {
+        let stat = "1234 (tail) S 1 5678 5678 0 -1 4194304 0";
+        assert_eq!(parse_stat_comm_pgrp(stat), Some(("tail", 5678)));
+
+        // comm may contain spaces and parentheses; it ends at the last ')'.
+        let nested = "99 ((sd-pam) x) S 1 42 42 0 -1";
+        assert_eq!(parse_stat_comm_pgrp(nested), Some(("(sd-pam) x", 42)));
+
+        assert_eq!(parse_stat_comm_pgrp("garbage"), None);
+    }
+
+    #[test]
+    fn fdinfo_parser_reads_pos() {
+        let fdinfo = "pos:\t123456\nflags:\t0100000\nmnt_id:\t29\n";
+        assert_eq!(parse_fdinfo_pos(fdinfo), Some(123456));
+        assert_eq!(parse_fdinfo_pos("flags:\t0\n"), None);
+    }
+
+    #[tokio::test]
+    async fn drain_live_pipeline_preserves_all_source_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("sakiot-live-test-drain-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await?;
+        let src = dir.join("src.ogg");
+        let out = dir.join("out.bin");
+        let payload = vec![7u8; 300_000];
+        tokio::fs::write(&src, &payload).await?;
+
+        // Same shape as the production pipeline, with cat standing in for
+        // ffmpeg so the assertion is byte-exact.
+        let cmd = format!(
+            "tail -F -c +0 -- '{}' | cat > '{}'",
+            src.display(),
+            out.display()
+        );
+        let mut child = Command::new("setsid")
+            .arg("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+
+        // Let the pipeline start, then append the "last writes" the old
+        // fixed 2s sleep used to race against.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        {
+            use tokio::io::AsyncWriteExt;
+            let mut f = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&src)
+                .await?;
+            f.write_all(&payload).await?;
+            f.flush().await?;
+        }
+
+        drain_live_pipeline(&mut child, &src, "drain-test").await;
+
+        let written = tokio::fs::read(&out).await?;
+        assert_eq!(written.len(), payload.len() * 2);
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
         Ok(())
     }
 

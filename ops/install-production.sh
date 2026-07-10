@@ -64,6 +64,19 @@ if sudo -u sakiot bash -lc 'command -v cargo' >/dev/null 2>&1; then
   install -o root -g root -m 0755 \
     /var/cache/sakiot/cargo-target/release/sakiot-deploy \
     "${install_root}/bin/sakiot-deploy"
+  # Stamp the ops/sakiot-deploy tree the engine was built from; deploys
+  # warn when a release carries engine changes this install predates
+  # (deploy.rs warn_if_engine_stale). See ops/update-deploy-engine.sh.
+  if [[ -n "$(git -c safe.directory="${repo_root}" -C "${repo_root}" \
+        status --porcelain -- ops/sakiot-deploy 2>/dev/null)" ]]; then
+    echo "warning: ops/sakiot-deploy has uncommitted changes; not stamping engine-src-tree" >&2
+  elif tree_oid="$(git -c safe.directory="${repo_root}" -C "${repo_root}" \
+        rev-parse HEAD:ops/sakiot-deploy 2>/dev/null)"; then
+    printf '%s\n' "${tree_oid}" > "${install_root}/engine-src-tree"
+    chmod 0644 "${install_root}/engine-src-tree"
+  else
+    echo "warning: could not resolve HEAD:ops/sakiot-deploy; not stamping engine-src-tree" >&2
+  fi
 else
   echo "cargo unavailable for sakiot; Rust deploy engine not installed" >&2
   echo "(deploys will fail until ops/update-deploy-engine.sh succeeds)" >&2

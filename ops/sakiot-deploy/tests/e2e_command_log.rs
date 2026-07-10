@@ -159,6 +159,9 @@ impl Clock for MockClock {
 struct World {
     _root: tempfile::TempDir,
     config: Config,
+    /// Install-time engine stamp; None (the default) skips the drift check
+    /// so the golden sequences below stay unchanged.
+    engine_src_tree: Option<String>,
 }
 
 impl World {
@@ -206,6 +209,7 @@ impl World {
         World {
             _root: root,
             config,
+            engine_src_tree: None,
         }
     }
 
@@ -257,6 +261,7 @@ impl World {
             web,
             clock,
             hostname: "testhost".into(),
+            engine_src_tree: self.engine_src_tree.clone(),
             free_port: &free_port,
             require_command: &require_command,
         };
@@ -927,5 +932,65 @@ fn rollback_crossing_migrations_is_rejected() {
     assert!(events.all().is_empty());
     // Nothing was written: no release dir, unchanged state.
     assert_eq!(fs::read_dir(&world.config.release_root).unwrap().count(), 0);
+    assert_eq!(world.state("current.sha").as_deref(), Some(SHA_B));
+}
+
+/// The engine is installed out-of-band, so a release that changes
+/// ops/sakiot-deploy runs on an engine that predates it. With an install
+/// stamp present the engine must run the tree comparison (one extra git
+/// rev-parse) and the deploy must proceed despite the mismatch.
+#[test]
+fn stale_engine_warns_and_deploy_continues() {
+    let mut world = World::new();
+    world.engine_src_tree = Some("1111111111111111111111111111111111111111".into());
+    let repo = world.repo();
+    let release_id = format!("staging-bbbbbbbbbbbb-{STAMP}");
+    let worktree = world.worktree(&release_id).display().to_string();
+    world.fake_worktree(&release_id);
+    world.write_state("current.sha", SHA_A);
+    world.write_state("current.tag", "main");
+
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
+        )),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        // Drift check: the release carries a different ops/sakiot-deploy tree.
+        ScriptEntry::ok_with(
+            git(&repo, &format!("rev-parse {SHA_B}:ops/sakiot-deploy")),
+            "2222222222222222222222222222222222222222\n",
+        ),
+        ScriptEntry::ok_with(
+            git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
+            "web-server/src/main.rs\n",
+        ),
+        ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
+        ScriptEntry::ok(git(
+            &repo,
+            &format!("worktree add --detach {worktree} {SHA_B}"),
+        )),
+        ScriptEntry::ok("cargo test --workspace --locked"),
+        ScriptEntry::ok("cargo build --release --locked --package web_server --features dev-login"),
+        ScriptEntry::ok("systemctl restart sakiot-web.service"),
+        ScriptEntry::ok("systemctl enable-web sakiot-web.service"),
+        ScriptEntry::ok(git(&repo, &format!("worktree remove --force {worktree}"))),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    world
+        .run(&["stage", SHA_B], &runner, &admin, &web, &clock)
+        .unwrap();
+    runner.assert_exhausted().unwrap();
     assert_eq!(world.state("current.sha").as_deref(), Some(SHA_B));
 }

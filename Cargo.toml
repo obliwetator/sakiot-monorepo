@@ -13,3 +13,17 @@ resolver = "3"
 # deploy verifies, and the tag push triggers the production deploy.
 [workspace.package]
 version = "1.0.8"
+
+# Restriction lints for production code, inherited by every crate via
+# `lints.workspace = true`. Tests are exempted in clippy.toml
+# (allow-unwrap-in-tests etc.); intentional prints in the deploy CLI carry
+# scoped `#[expect]`s. CI enforces with
+# `cargo clippy --workspace --all-targets -- -D warnings`.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"

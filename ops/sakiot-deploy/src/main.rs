@@ -1,3 +1,8 @@
+#![expect(
+    clippy::print_stderr,
+    reason = "usage and fatal errors go to stderr: `die` parity with the bash engine"
+)]
+
 use anyhow::{Context, Result};
 use sakiot_deploy::admin_api::TonicAdmin;
 use sakiot_deploy::clock::{self, SystemClock};
@@ -53,6 +58,20 @@ fn status(target: sakiot_deploy::config::Target) -> Result<()> {
     sakiot_deploy::status::run(target, &config, &admin)
 }
 
+/// ops/update-deploy-engine.sh stamps the ops/sakiot-deploy tree OID it
+/// built from next to the installed binary (<install root>/engine-src-tree).
+/// A missing or unreadable stamp disables the deploy-time drift warning.
+fn engine_src_tree() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let stamp = exe.parent()?.parent()?.join("engine-src-tree");
+    let content = std::fs::read_to_string(stamp).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 fn run(request: Request) -> Result<()> {
     let config = Config::load(request.target)?;
     let runner = RealRunner;
@@ -72,6 +91,7 @@ fn run(request: Request) -> Result<()> {
         web: &web,
         clock: &clock,
         hostname: clock::hostname(),
+        engine_src_tree: engine_src_tree(),
         free_port: &free_port,
         require_command: &require_command,
     };

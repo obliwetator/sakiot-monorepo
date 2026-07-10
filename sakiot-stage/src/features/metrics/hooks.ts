@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiWebSocketUrl } from "../../app/authedFetch";
 import { useWebSocketStream } from "../../app/useWebSocketStream";
+import { parseGuildVoicePayload, parseMetricsPayload } from "./guards";
 import type { Metrics, RecordingMetrics, VoiceState } from "./types";
 
 export function useMetricsStream(enabled: boolean) {
@@ -15,7 +16,11 @@ export function useMetricsStream(enabled: boolean) {
 		unsubscribe: { action: "unsubscribe", topic: "global" },
 		onMessage: (data) => {
 			if (data.event_type === "METRICS_UPDATE" && data.payload) {
-				const m: Metrics = JSON.parse(data.payload);
+				const m = parseMetricsPayload(data.payload);
+				if (m === null) {
+					console.error("METRICS_UPDATE payload has an unexpected shape");
+					return;
+				}
 				setMetrics(m);
 				setLocalUptime(m.uptime_seconds);
 			}
@@ -73,7 +78,11 @@ export function useGuildVoiceStream(
 		},
 		onMessage: (data) => {
 			if (data.event_type === "GUILD_VOICE_UPDATE" && data.payload) {
-				const p = JSON.parse(data.payload);
+				const p = parseGuildVoicePayload(data.payload);
+				if (p === null) {
+					console.error("GUILD_VOICE_UPDATE payload has an unexpected shape");
+					return;
+				}
 				setVoiceUsers(p.voice_states);
 				setUserStartTimes(p.user_start_times);
 				if (p.recording_metrics) setGuildRecordingMetrics(p.recording_metrics);

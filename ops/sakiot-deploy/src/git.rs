@@ -60,6 +60,19 @@ pub fn require_commit(runner: &dyn CommandRunner, source_repo: &Path, sha: &str)
     runner.run(&git(source_repo).args(["cat-file", "-e", &format!("{sha}^{{commit}}")]))
 }
 
+/// `git rev-parse <rev>:<path>`: the tree OID of `path` at `rev`. Content
+/// addressed, so equal OIDs mean byte-identical directory contents.
+pub fn tree_oid(
+    runner: &dyn CommandRunner,
+    source_repo: &Path,
+    rev: &str,
+    path: &str,
+) -> Result<String> {
+    let output =
+        runner.run_capture(&git(source_repo).args(["rev-parse", &format!("{rev}:{path}")]))?;
+    Ok(output.trim().to_string())
+}
+
 /// `git diff --name-only <from> <to> [-- <pathspec>]`.
 pub fn diff_names(
     runner: &dyn CommandRunner,

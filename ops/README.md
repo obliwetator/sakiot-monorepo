@@ -78,6 +78,13 @@ out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
 frontend publish) run in CI on every PR and on the VPS via
 `update-deploy-engine.sh`.
 
+Both installers also stamp `/usr/local/lib/sakiot-deploy/engine-src-tree`
+with the `ops/sakiot-deploy` tree OID they built from (skipped with a warning
+when the checkout is dirty). Every deploy compares that stamp against the
+release commit and prints a `WARNING:` when the release carries engine
+changes the installed binary predates — the deploy still runs, on the old
+engine. When you see it, refresh with `sudo ops/update-deploy-engine.sh`.
+
 `sakiot-deploy --dry-run {release|rollback|stage} ...` (local only, not
 reachable through the SSH forced command) reports component selection and
 reuse decisions, then stops before any build, migration, or service change.

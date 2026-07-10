@@ -36,6 +36,12 @@ export interface RecordingMetrics {
 	last_voice_packet_time?: number;
 }
 
+export interface GuildVoicePayload {
+	voice_states: VoiceState[];
+	user_start_times: Record<string, number>;
+	recording_metrics?: RecordingMetrics | null;
+}
+
 export interface VoiceState {
 	user_id: string;
 	channel_id: string;
