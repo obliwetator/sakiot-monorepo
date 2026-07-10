@@ -16,7 +16,7 @@
 	"dependencies": {
 		"@emotion/react": "^11.10.4",
 		"@emotion/styled": "^11.10.4",
-		"@mui/icons-material": "^7",
+		"@mui/icons-material": "^9",
 		"@mui/material": "^7",
 		"@mui/x-tree-view": "^8.3.1",
 		"@react-spring/web": "^10",
