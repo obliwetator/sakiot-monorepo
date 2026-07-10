@@ -60,7 +60,7 @@ jobs:
       # binaries directly (cargo sqlx dispatches to cargo-sqlx).
       - name: Cache SQLx CLI
         id: cache-sqlx
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/sqlx
