@@ -37,7 +37,7 @@
 		"@biomejs/biome": "^2.4.12",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
-		"@vitejs/devtools": "^0.1.8",
+		"@vitejs/devtools": "^0.3.4",
 		"@vitejs/plugin-react": "^6.0.1",
 		"autoprefixer": "^10.4.8",
 		"babel-plugin-react-compiler": "^1.0.0",
