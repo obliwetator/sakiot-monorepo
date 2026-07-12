@@ -117,6 +117,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		[manifest],
 	);
 	const [positionMs, setPositionMs] = useState(0);
+	const [seekPreviewMs, setSeekPreviewMs] = useState<number | null>(null);
 	const [playing, setPlaying] = useState(false);
 	const [selection, setSelection] = useState<[number, number]>([0, 0]);
 	const [volume, setVolume] = useState(1);
@@ -171,6 +172,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			return current;
 		});
 		setPositionMs((current) => Math.min(current, manifest.duration_ms));
+		setSeekPreviewMs((current) =>
+			current === null ? null : Math.min(current, manifest.duration_ms),
+		);
 	}, [manifest]);
 
 	const stopSource = useCallback(() => {
@@ -416,8 +420,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	}
 
 	const durationSeconds = manifest.duration_ms / 1_000;
+	const displayedPositionMs = seekPreviewMs ?? positionMs;
 	const currentSegment = segments.find(
-		(segment) => positionMs >= segment.start_ms && positionMs < segment.end_ms,
+		(segment) =>
+			displayedPositionMs >= segment.start_ms &&
+			displayedPositionMs < segment.end_ms,
 	);
 	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
 
@@ -448,7 +455,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 			<SessionWaveform
 				sessionId={props.sessionId}
-				positionMs={positionMs}
+				positionMs={displayedPositionMs}
 				durationMs={manifest.duration_ms}
 				onSeek={seek}
 			/>
@@ -458,9 +465,13 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				min={0}
 				max={Math.max(0.001, durationSeconds)}
 				step={0.01}
-				value={Math.min(durationSeconds, positionMs / 1_000)}
-				onChange={(_event, value) => setPositionMs(Number(value) * 1_000)}
-				onChangeCommitted={(_event, value) => seek(Number(value) * 1_000)}
+				value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
+				onChange={(_event, value) => setSeekPreviewMs(Number(value) * 1_000)}
+				onChangeCommitted={(_event, value) => {
+					const nextPositionMs = Number(value) * 1_000;
+					setSeekPreviewMs(null);
+					seek(nextPositionMs);
+				}}
 				valueLabelDisplay="auto"
 				valueLabelFormat={formatDuration}
 			/>
@@ -471,7 +482,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				sx={{ mt: -1, mb: 1 }}
 			>
 				<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-					Recording {formatDuration(positionMs / 1_000)} /{" "}
+					Recording {formatDuration(displayedPositionMs / 1_000)} /{" "}
 					{formatDuration(durationSeconds)}
 				</Typography>
 				<Typography
@@ -480,7 +491,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					sx={{ fontVariantNumeric: "tabular-nums" }}
 				>
 					Real time{" "}
-					{new Date(manifest.started_at_ms + positionMs).toLocaleString()}
+					{new Date(
+						manifest.started_at_ms + displayedPositionMs,
+					).toLocaleString()}
 				</Typography>
 			</Stack>
 			<TimelineMarkers manifest={manifest} onSeek={seek} />

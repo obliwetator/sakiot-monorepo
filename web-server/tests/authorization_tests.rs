@@ -12,8 +12,8 @@ use web_server::audio::{
     LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
     download_audio, download_session, get_audio, get_recording_events, get_session_events,
     get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
-    live_playlist, live_segment, live_state, remove_session_silence, remove_silence,
-    session_live_playlist, session_live_segment,
+    live_playlist, live_segment, live_state, rebuild_session_waveform, remove_session_silence,
+    remove_silence, session_live_playlist, session_live_segment,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
@@ -124,6 +124,7 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
                     .service(get_session_manifest)
                     .service(get_session_events)
                     .service(get_session_waveform)
+                    .service(rebuild_session_waveform)
                     .service(download_session)
                     .service(create_session_clip)
                     .service(remove_session_silence)
@@ -183,6 +184,7 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
     }
 
     for uri in [
+        format!("/api/audio/sessions/{session_id}/waveform/rebuild"),
         format!("/api/audio/sessions/{session_id}/clips"),
         format!("/api/audio/sessions/{session_id}/remove-silence"),
         format!(

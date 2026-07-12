@@ -76,6 +76,8 @@ export type SessionSegment = ApiSchema["SessionSegmentDto"];
 export type SessionTimelineEvent = ApiSchema["SessionTimelineEventDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 
+export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
+
 export interface WaveformResponse {
 	progress: number;
 	data?: string;
@@ -147,9 +149,15 @@ export const apiSlice = createApi({
 			query: (recording_session_id) =>
 				`audio/sessions/${recording_session_id}/manifest`,
 		}),
-		getSessionWaveform: builder.query<WaveformResponse, string>({
+		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
 			query: (recording_session_id) =>
 				`audio/sessions/${recording_session_id}/waveform`,
+		}),
+		rebuildSessionWaveform: builder.mutation<SessionWaveformResponse, string>({
+			query: (recording_session_id) => ({
+				url: `audio/sessions/${recording_session_id}/waveform/rebuild`,
+				method: "POST",
+			}),
 		}),
 		createSessionClip: builder.mutation<
 			CreateClipResponse,
@@ -418,6 +426,7 @@ export const {
 	useGetLiveStemsQuery,
 	useGetSessionManifestQuery,
 	useGetSessionWaveformQuery,
+	useRebuildSessionWaveformMutation,
 	useCreateSessionClipMutation,
 	useGetClipsQuery,
 	useDeleteClipMutation,

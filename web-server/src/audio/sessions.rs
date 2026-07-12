@@ -693,6 +693,7 @@ pub struct SessionDownloadQuery {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SessionWaveformResponse {
     pub progress: i16,
+    pub building: bool,
     pub data: Option<String>,
 }
 
@@ -908,17 +909,9 @@ pub async fn get_session_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
-    let revision = if access.state == "finalized" {
-        access.ended_at_ms.unwrap_or(access.started_at_ms)
-    } else {
-        chrono::Utc::now().timestamp_millis() / 10_000
-    };
-    let cache_key = format!("session-{session_id}-{revision}");
+    require_session_access(&pool, session_id, token.user_id).await?;
+    let cache_key = format!("logical-session-{session_id}");
     let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
-    if tokio::fs::try_exists(&output).await.unwrap_or(false) {
-        return waveform_file_response(&output).await;
-    }
 
     {
         let mut map = progress.0.write().await;
@@ -929,16 +922,70 @@ pub async fn get_session_waveform(
             }
             return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
                 progress: value.min(99),
+                building: true,
                 data: None,
             }));
+        }
+    }
+
+    if tokio::fs::try_exists(&output).await.unwrap_or(false) {
+        return waveform_file_response(&output).await;
+    }
+
+    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+        progress: 0,
+        building: false,
+        data: None,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/audio/sessions/{recording_session_id}/waveform/rebuild",
+    tag = "audio",
+    params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
+    responses(
+        (status = 200, description = "Combined waveform rebuild started or already running", body = SessionWaveformResponse),
+        (status = 401, description = "Missing access token", body = crate::errors::ApiError),
+        (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
+        (status = 404, description = "Session not found", body = crate::errors::ApiError),
+        (status = 500, description = "Waveform generation failed", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
+#[post("/audio/sessions/{recording_session_id}/waveform/rebuild")]
+pub async fn rebuild_session_waveform(
+    path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<Pool<Postgres>>,
+    progress: web::Data<WaveformProgressContainer>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let session_id = path.into_inner();
+    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let cache_key = format!("logical-session-{session_id}");
+    let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
+    if let Some(parent) = output.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    {
+        let mut map = progress.0.write().await;
+        if let Some(value) = map.get(&cache_key).copied() {
+            if value >= 0 {
+                return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+                    progress: value.min(99),
+                    building: true,
+                    data: None,
+                }));
+            }
+            map.remove(&cache_key);
         }
         map.insert(cache_key.clone(), 0);
     }
 
-    let composite = PathBuf::from(waveform_path()).join(format!("{cache_key}.ogg"));
-    if let Some(parent) = output.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
+    let composite =
+        PathBuf::from(waveform_path()).join(format!("{cache_key}-{}.ogg", uuid::Uuid::new_v4()));
     let pool_clone = pool.clone();
     let progress_clone = progress.clone();
     let cache_key_clone = cache_key.clone();
@@ -967,6 +1014,7 @@ pub async fn get_session_waveform(
 
     Ok(HttpResponse::Ok().json(SessionWaveformResponse {
         progress: 0,
+        building: true,
         data: None,
     }))
 }
@@ -975,6 +1023,7 @@ async fn waveform_file_response(path: &Path) -> Result<HttpResponse, AppError> {
     let bytes = tokio::fs::read(path).await?;
     Ok(HttpResponse::Ok().json(SessionWaveformResponse {
         progress: 100,
+        building: false,
         data: Some(BASE64_STANDARD.encode(bytes)),
     }))
 }

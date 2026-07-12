@@ -22,8 +22,8 @@ use web_server::audio::{
     download_audio, download_session, get_audio, get_clip_waveform_data,
     get_current_month_permission, get_live_stems, get_recording_events, get_session_events,
     get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
-    live_playlist, live_segment, live_state, remove_session_silence, remove_silence,
-    session_live_playlist, session_live_segment, spawn_hls_reaper,
+    live_playlist, live_segment, live_state, rebuild_session_waveform, remove_session_silence,
+    remove_silence, session_live_playlist, session_live_segment, spawn_hls_reaper,
 };
 #[cfg(feature = "dev-login")]
 use web_server::auth::dev_login;
@@ -165,6 +165,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_session_manifest)
             .service(get_session_events)
             .service(get_session_waveform)
+            .service(rebuild_session_waveform)
             .service(download_session)
             .service(create_session_clip)
             .service(remove_session_silence)

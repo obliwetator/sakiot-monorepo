@@ -38,6 +38,7 @@ use utoipa::{
         crate::audio::sessions::get_session_events,
         crate::audio::sessions::get_session_manifest,
         crate::audio::sessions::get_session_waveform,
+        crate::audio::sessions::rebuild_session_waveform,
         crate::audio::sessions::remove_session_silence,
         crate::auth::handlers::refresh_jwt,
         crate::auth::handlers::logout,

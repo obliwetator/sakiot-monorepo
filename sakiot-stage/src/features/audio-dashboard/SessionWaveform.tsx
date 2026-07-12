@@ -1,8 +1,12 @@
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
-import { useEffect, useRef } from "react";
-import { useGetSessionWaveformQuery } from "../../app/apiSlice";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	useGetSessionWaveformQuery,
+	useRebuildSessionWaveformMutation,
+} from "../../app/apiSlice";
 
 function decodePeaks(base64: string): number[] {
 	const binary = atob(base64);
@@ -35,9 +39,44 @@ export function SessionWaveform(props: {
 	onSeek: (positionMs: number) => void;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const { data, isError } = useGetSessionWaveformQuery(props.sessionId, {
-		pollingInterval: 1_000,
-	});
+	const [rebuilding, setRebuilding] = useState(false);
+	const [rebuildProgress, setRebuildProgress] = useState(0);
+	const { data, isError, refetch } = useGetSessionWaveformQuery(
+		props.sessionId,
+	);
+	const [rebuildWaveform, rebuildState] = useRebuildSessionWaveformMutation();
+
+	const pollRebuild = useCallback(async () => {
+		const result = await refetch();
+		if (result.data) setRebuildProgress(result.data.progress);
+		if (result.error || result.data?.building === false) {
+			setRebuilding(false);
+		}
+	}, [refetch]);
+
+	useEffect(() => {
+		if (data?.building) {
+			setRebuildProgress(data.progress);
+			setRebuilding(true);
+		}
+	}, [data?.building, data?.progress]);
+
+	useEffect(() => {
+		if (!rebuilding) return;
+		void pollRebuild();
+		const interval = window.setInterval(() => void pollRebuild(), 1_000);
+		return () => window.clearInterval(interval);
+	}, [pollRebuild, rebuilding]);
+
+	const startRebuild = async () => {
+		setRebuildProgress(0);
+		try {
+			await rebuildWaveform(props.sessionId).unwrap();
+			setRebuilding(true);
+		} catch {
+			setRebuilding(false);
+		}
+	};
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -83,6 +122,9 @@ export function SessionWaveform(props: {
 		props.durationMs > 0
 			? Math.min(100, Math.max(0, (props.positionMs / props.durationMs) * 100))
 			: 0;
+	const buildInProgress =
+		rebuilding || rebuildState.isLoading || data?.building === true;
+	const waveformError = isError || rebuildState.isError;
 
 	return (
 		<Box
@@ -95,7 +137,7 @@ export function SessionWaveform(props: {
 				bgcolor: "rgba(168, 85, 247, 0.18)",
 			}}
 		>
-			{data?.progress !== 100 && !isError && (
+			{buildInProgress && !waveformError && (
 				<Box
 					sx={{
 						position: "absolute",
@@ -110,12 +152,28 @@ export function SessionWaveform(props: {
 					}}
 				>
 					<Typography variant="caption">
-						Building combined waveform ({data?.progress ?? 0}%)
+						Building combined waveform ({rebuildProgress}%)
 					</Typography>
-					<LinearProgress variant="determinate" value={data?.progress ?? 0} />
+					<LinearProgress variant="determinate" value={rebuildProgress} />
 				</Box>
 			)}
-			{isError && (
+			{!data?.data && !buildInProgress && !waveformError && (
+				<Box
+					sx={{
+						position: "absolute",
+						inset: 0,
+						display: "grid",
+						placeItems: "center",
+						zIndex: 1,
+						pointerEvents: "none",
+					}}
+				>
+					<Typography color="text.secondary" variant="caption">
+						Combined waveform has not been built.
+					</Typography>
+				</Box>
+			)}
+			{waveformError && (
 				<Box
 					sx={{
 						position: "absolute",
@@ -148,6 +206,15 @@ export function SessionWaveform(props: {
 					borderRadius: 6,
 				}}
 			/>
+			<Button
+				size="small"
+				variant="contained"
+				onClick={() => void startRebuild()}
+				disabled={buildInProgress}
+				sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
+			>
+				{data?.data ? "Rebuild waveform" : "Build waveform"}
+			</Button>
 			<Box
 				sx={{
 					position: "absolute",

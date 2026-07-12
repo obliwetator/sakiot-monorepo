@@ -252,6 +252,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/sessions/{recording_session_id}/waveform/rebuild": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["rebuild_session_waveform"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/current/{guild_id}": {
 		parameters: {
 			query?: never;
@@ -535,6 +551,7 @@ export interface components {
 			source: string;
 		};
 		SessionWaveformResponse: {
+			building: boolean;
 			data?: string | null;
 			/** Format: int32 */
 			progress: number;
@@ -1717,6 +1734,65 @@ export interface operations {
 		requestBody?: never;
 		responses: {
 			/** @description Combined peaks; explicit gaps are zero-valued */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionWaveformResponse"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Waveform generation failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	rebuild_session_waveform: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Combined waveform rebuild started or already running */
 			200: {
 				headers: {
 					[name: string]: unknown;
