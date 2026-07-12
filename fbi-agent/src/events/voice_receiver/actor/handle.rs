@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use serenity::{
     client::Context,
@@ -21,6 +27,7 @@ pub(in crate::events::voice_receiver) struct RecorderHandle {
     metrics: Arc<crate::BotMetrics>,
     guild_metrics: Arc<crate::GuildRecordingMetrics>,
     channel_metrics: Arc<crate::GuildRecordingMetrics>,
+    current_channel_id: Arc<AtomicU64>,
 }
 
 impl RecorderHandle {
@@ -42,6 +49,7 @@ impl RecorderHandle {
                 })
         };
         let stats = Arc::new(RecorderStats::default());
+        let current_channel_id = Arc::new(AtomicU64::new(channel_id.get()));
         let (tx, rx) = mpsc::channel(COMMAND_CAPACITY);
         let actor = RecorderActor {
             pool,
@@ -54,9 +62,12 @@ impl RecorderHandle {
             recording_owner_instance_id,
             stats: stats.clone(),
             recordings: Recordings::new(stats.clone()),
-            paused_token: 1,
             disconnected_at_ms: 0,
             recoverable_disconnect_deadline_ms: 0,
+            current_channel_id: current_channel_id.clone(),
+            planned_handoff: None,
+            has_afk_channel: false,
+            pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
         };
         tokio::spawn(actor.run(rx));
 
@@ -66,11 +77,16 @@ impl RecorderHandle {
             metrics,
             guild_metrics,
             channel_metrics,
+            current_channel_id,
         }
     }
 
     pub(in crate::events::voice_receiver) fn stats(&self) -> &RecorderStats {
         &self.stats
+    }
+
+    pub(in crate::events::voice_receiver) fn current_channel_id(&self) -> ChannelId {
+        ChannelId::new(self.current_channel_id.load(Ordering::Relaxed).max(1))
     }
 
     pub(in crate::events::voice_receiver) async fn send_control(&self, command: RecorderCommand) {
@@ -145,6 +161,26 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     },
     DriverConnected {
         reconnect: bool,
+        at_ms: i64,
+    },
+    BeginHandoff {
+        from_channel_id: ChannelId,
+        to_channel_id: Option<ChannelId>,
+        has_afk_channel: bool,
+        pending_cap_seconds: i64,
+    },
+    CancelHandoff,
+    CompleteHandoff {
+        channel_id: ChannelId,
+        connected_at_ms: i64,
+        has_afk_channel: bool,
+        pending_cap_seconds: i64,
+    },
+    UserVoiceTransition {
+        user_id: u64,
+        old_channel_id: Option<ChannelId>,
+        new_channel_id: Option<ChannelId>,
+        afk_channel_id: Option<ChannelId>,
         at_ms: i64,
     },
 }

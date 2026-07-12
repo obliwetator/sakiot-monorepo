@@ -1,8 +1,8 @@
 //! Owns the SSRC <-> user <-> recording bookkeeping for one voice channel.
 //!
 //! The recorder tracks the same fact through several maps at once: which writer
-//! is open for which SSRC, which SSRC a user currently speaks on, which users
-//! are paused waiting to rejoin, and which SSRCs belong to bots. Keeping those
+//! is open for which SSRC, which SSRC a user currently speaks on, and which
+//! SSRCs belong to bots. Keeping those
 //! in sync by hand at every call site is how ghost recordings leak (an `active`
 //! writer whose user already left, or a `user_ssrcs` entry with no writer).
 //!
@@ -10,7 +10,6 @@
 //! related collections together, so the invariants below hold by construction:
 //!
 //! - `user_ssrcs[uid] == ssrc`  <=>  `active[ssrc]` exists and belongs to `uid`.
-//! - a user is active, or paused, or neither — never both.
 //! - `bots.user_ssrcs[uid] == ssrc`  =>  `bots.ssrcs` contains `ssrc`.
 //! - `stats.active_user_count == active.len()` (synced on every active mutation).
 
@@ -24,7 +23,7 @@ use std::{
     },
 };
 
-use super::state::{PausedRecording, UserRecording};
+use super::state::UserRecording;
 
 /// Cross-task snapshot read by the `RecorderHandle` (drop accounting) and by the
 /// metrics layer. The actor writes it; other tasks only read.
@@ -103,7 +102,6 @@ pub(super) enum RemapOutcome {
 pub(super) struct Recordings {
     active: HashMap<u32, UserRecording>,
     user_ssrcs: HashMap<u64, u32>,
-    paused: HashMap<u64, PausedRecording>,
     bots: Bots,
     stats: Arc<RecorderStats>,
 }
@@ -113,7 +111,6 @@ impl Recordings {
         Self {
             active: HashMap::new(),
             user_ssrcs: HashMap::new(),
-            paused: HashMap::new(),
             bots: Bots::default(),
             stats,
         }
@@ -146,6 +143,7 @@ impl Recordings {
 
     // --- active users -----------------------------------------------------
 
+    #[cfg(test)]
     pub(super) fn ssrc_for_user(&self, user_id: u64) -> Option<u32> {
         self.user_ssrcs.get(&user_id).copied()
     }
@@ -200,6 +198,7 @@ impl Recordings {
     }
 
     /// Remove an active writer by SSRC, also dropping its `user_ssrcs` entry.
+    #[cfg(test)]
     pub(super) fn remove_active_by_ssrc(&mut self, ssrc: u32) -> Option<UserRecording> {
         let recording = self.active.remove(&ssrc);
         if let Some(recording) = &recording {
@@ -218,10 +217,6 @@ impl Recordings {
         recording
     }
 
-    pub(super) fn user_ids(&self) -> Vec<u64> {
-        self.user_ssrcs.keys().copied().collect()
-    }
-
     pub(super) fn user_ssrc_pairs(&self) -> Vec<(u64, u32)> {
         self.user_ssrcs
             .iter()
@@ -229,44 +224,16 @@ impl Recordings {
             .collect()
     }
 
-    // --- paused users -----------------------------------------------------
-
-    /// Park a recording for a rejoin. Returns any recording it displaced (a user
-    /// that was already paused), which the caller must finalize.
-    pub(super) fn insert_paused(
-        &mut self,
-        user_id: u64,
-        paused: PausedRecording,
-    ) -> Option<PausedRecording> {
-        self.paused.insert(user_id, paused)
-    }
-
-    pub(super) fn take_paused(&mut self, user_id: u64) -> Option<PausedRecording> {
-        self.paused.remove(&user_id)
-    }
-
-    pub(super) fn expired_paused_user_ids(&self, now_ms: i64) -> Vec<u64> {
-        self.paused
-            .iter()
-            .filter_map(|(user_id, paused)| (now_ms >= paused.deadline_ms).then_some(*user_id))
-            .collect()
-    }
-
     // --- finalize / heartbeat --------------------------------------------
 
-    /// Audio file ids for every active and paused recording (deduped) — the set
-    /// the heartbeat must keep alive in the database.
+    /// Audio file ids for every active recording — the set the heartbeat must
+    /// keep alive in the database.
     pub(super) fn tracked_audio_file_ids(&self) -> Vec<i64> {
-        let mut ids: HashSet<i64> = self
+        let ids: HashSet<i64> = self
             .active
             .values()
             .map(|recording| recording.audio_file_id)
             .collect();
-        ids.extend(
-            self.paused
-                .values()
-                .map(|paused| paused.recording.audio_file_id),
-        );
         ids.into_iter().collect()
     }
 
@@ -278,17 +245,11 @@ impl Recordings {
         active.into_iter().collect()
     }
 
-    /// Drain every paused recording.
-    pub(super) fn take_all_paused(&mut self) -> Vec<PausedRecording> {
-        std::mem::take(&mut self.paused).into_values().collect()
-    }
-
-    /// Drop all tracked state. Only safe after active/paused have been drained
-    /// and finalized; any leftover writers would be lost.
+    /// Drop all tracked state. Only safe after active recordings have been
+    /// drained and finalized; any leftover writers would be lost.
     pub(super) fn clear(&mut self) {
         self.active.clear();
         self.user_ssrcs.clear();
-        self.paused.clear();
         self.bots.clear();
         self.sync_count();
     }
@@ -307,6 +268,7 @@ mod tests {
         UserRecording {
             writer,
             audio_file_id: ssrc.to_i64(),
+            recording_session_id: ssrc.to_i64(),
             file_name: format!("rec-{user_id}"),
             start_time: chrono::Utc::now(),
             user_id,
@@ -377,48 +339,6 @@ mod tests {
         rec.insert_active(7, 100, dummy_recording(7, 100));
         let _orphan = rec.take_all_active(); // clears active + user_ssrcs together
         assert_eq!(rec.ssrc_for_user(7), None);
-    }
-
-    #[test]
-    fn pause_then_resume_round_trips() {
-        let (mut rec, stats) = new_recordings();
-        rec.insert_active(7, 100, dummy_recording(7, 100));
-
-        let recording = rec.remove_active_by_user(7).unwrap();
-        assert_eq!(stats.active_user_count(), 0);
-        let paused = PausedRecording {
-            recording,
-            ssrc: 100,
-            paused_at: chrono::Utc::now(),
-            token: 1,
-            deadline_ms: 1_000,
-        };
-        assert!(rec.insert_paused(7, paused).is_none());
-
-        // resume on a new ssrc
-        let mut resumed = rec.take_paused(7).unwrap();
-        resumed.recording.ssrc = 200;
-        rec.insert_active(7, 200, resumed.recording);
-        assert_eq!(stats.active_user_count(), 1);
-        assert_eq!(rec.ssrc_for_user(7), Some(200));
-    }
-
-    #[test]
-    fn expired_paused_user_ids_respects_deadline() {
-        let (mut rec, _stats) = new_recordings();
-        let recording = dummy_recording(7, 100);
-        rec.insert_paused(
-            7,
-            PausedRecording {
-                recording,
-                ssrc: 100,
-                paused_at: chrono::Utc::now(),
-                token: 1,
-                deadline_ms: 500,
-            },
-        );
-        assert!(rec.expired_paused_user_ids(499).is_empty());
-        assert_eq!(rec.expired_paused_user_ids(500), vec![7]);
     }
 
     #[test]

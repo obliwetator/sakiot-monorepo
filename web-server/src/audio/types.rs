@@ -19,6 +19,12 @@ pub struct File {
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_journey: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
     #[serde(skip)]
     #[schema(ignore)]
     pub start_ts_ms: Option<i64>,

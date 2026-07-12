@@ -5,9 +5,15 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use serde_json::json;
 use sqlx::PgPool;
 use tokio::sync::RwLock;
+use web_server::admin::voice_settings::{
+    delete_voice_settings, get_voice_settings, put_voice_settings,
+};
 use web_server::audio::{
-    LiveContainer, SilenceJobContainer, WaveformProgressContainer, download_audio, get_audio,
-    get_waveform_data, live_playlist, live_segment, live_state, remove_silence,
+    LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
+    download_audio, download_session, get_audio, get_recording_events, get_session_events,
+    get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
+    live_playlist, live_segment, live_state, remove_session_silence, remove_silence,
+    session_live_playlist, session_live_segment,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
@@ -31,6 +37,259 @@ fn access_cookie_value() -> Result<String, Box<dyn std::error::Error>> {
         &EncodingKey::from_secret(b"test_secret"),
     )?;
     Ok(format!("{ACCESS_TOKEN_COOKIE}={token}"))
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn one_inaccessible_fragment_denies_every_session_endpoint(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // One denied fragment must fail the session atomically: never return a
+    // permitted subset of its audio, metadata, or derived media.
+    seed_authorization_data(&pool).await?;
+    let denied_channel_id = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'denied-in-session')",
+    )
+    .bind(denied_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions
+            (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(denied_channel_id)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(&pool)
+    .await?;
+
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $4, 'finalized',
+                 to_timestamp(1), to_timestamp(3), 'test', 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(denied_channel_id)
+    .fetch_one(&pool)
+    .await?;
+    let first_audio_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('session-allowed-fragment', $1, $2, $3, 1970, 1,
+                 1000, 2000, $4, 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('session-denied-fragment', $1, $2, $3, 1970, 1,
+                 2000, 3000, $4, 1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(denied_channel_id)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let cookie = access_cookie_value()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
+                HashMap::new(),
+            ))))
+            .app_data(web::Data::new(LiveContainer::default()))
+            .app_data(web::Data::new(SilenceJobContainer::default()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_session_manifest)
+                    .service(get_session_events)
+                    .service(get_session_waveform)
+                    .service(download_session)
+                    .service(create_session_clip)
+                    .service(remove_session_silence)
+                    .service(session_live_playlist)
+                    .service(session_live_segment)
+                    .service(get_session_segment)
+                    .service(get_audio)
+                    .service(download_audio)
+                    .service(get_waveform_data)
+                    .service(get_recording_events)
+                    .service(remove_silence)
+                    .service(live_playlist)
+                    .service(live_state)
+                    .service(live_segment)
+                    .service(create_clip),
+            ),
+    )
+    .await;
+
+    let forbidden_gets = [
+        format!("/api/audio/sessions/{session_id}/manifest"),
+        format!("/api/audio/sessions/{session_id}/events"),
+        format!("/api/audio/sessions/{session_id}/waveform"),
+        format!("/api/audio/sessions/{session_id}/download"),
+        format!("/api/audio/sessions/{session_id}/segments/{first_audio_id}"),
+        format!("/api/audio/sessions/{session_id}/live/{first_audio_id}/playlist.m3u8"),
+        format!("/api/audio/sessions/{session_id}/live/{first_audio_id}/seg_00000.m4s"),
+        format!(
+            "/api/audio/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+        format!(
+            "/api/download/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+        format!(
+            "/api/audio/waveform/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+        format!(
+            "/api/audio/events/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+        format!(
+            "/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment/playlist.m3u8"
+        ),
+        format!(
+            "/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment/state"
+        ),
+        format!(
+            "/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment/seg_00000.m4s"
+        ),
+    ];
+    for uri in forbidden_gets {
+        let request = test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
+
+    for uri in [
+        format!("/api/audio/sessions/{session_id}/clips"),
+        format!("/api/audio/sessions/{session_id}/remove-silence"),
+        format!(
+            "/api/audio/clips/create/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+        format!(
+            "/api/remove_silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+        ),
+    ] {
+        let request = test::TestRequest::post()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .insert_header(("Idempotency-Key", "session-auth-test"))
+            .set_json(json!({"start": 0.0, "end": 1.0}))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn voice_settings_require_manager_and_restore_default(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    sqlx::query("UPDATE user_guilds SET permissions = $1 WHERE id = $2 AND user_id = $3")
+        .bind(1_i64 << 5)
+        .bind(ALLOWED_GUILD_ID)
+        .bind(USER_ID)
+        .execute(&pool)
+        .await?;
+    let cookie = access_cookie_value()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_voice_settings)
+                    .service(put_voice_settings)
+                    .service(delete_voice_settings),
+            ),
+    )
+    .await;
+    let uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/voice-settings");
+
+    let request = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .to_request();
+    let response: serde_json::Value = test::call_and_read_body_json(&app, request).await;
+    assert_eq!(response["pending_cap_seconds"], 21_600);
+    assert_eq!(response["is_default"], true);
+
+    let request = test::TestRequest::put()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"pending_cap_seconds": 59}))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, request).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let request = test::TestRequest::put()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"pending_cap_seconds": 120}))
+        .to_request();
+    let response: serde_json::Value = test::call_and_read_body_json(&app, request).await;
+    assert_eq!(response["pending_cap_seconds"], 120);
+    assert_eq!(response["is_default"], false);
+
+    let request = test::TestRequest::delete()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .to_request();
+    let response: serde_json::Value = test::call_and_read_body_json(&app, request).await;
+    assert_eq!(response["pending_cap_seconds"], 21_600);
+    assert_eq!(response["is_default"], true);
+    let overrides: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM guild_voice_settings WHERE guild_id = $1")
+            .bind(ALLOWED_GUILD_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(overrides, 0);
+
+    sqlx::query("UPDATE user_guilds SET permissions = 0 WHERE id = $1 AND user_id = $2")
+        .bind(ALLOWED_GUILD_ID)
+        .bind(USER_ID)
+        .execute(&pool)
+        .await?;
+    let request = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, request).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    Ok(())
 }
 
 fn access_keys() -> AccessKeys {

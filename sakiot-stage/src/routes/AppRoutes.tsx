@@ -21,6 +21,11 @@ const GuildAdminCooldowns = React.lazy(() =>
 		default: m.GuildAdminCooldowns,
 	})),
 );
+const GuildVoiceSettingsPage = React.lazy(() =>
+	import("../features/admin-voice-settings").then((m) => ({
+		default: m.GuildVoiceSettingsPage,
+	})),
+);
 
 const lazyRoute = (node: React.ReactNode) => (
 	<Suspense fallback={<Box p={2}>Loading Route</Box>}>{node}</Suspense>
@@ -47,6 +52,10 @@ export function AppRoutes() {
 						<Route path="audio">
 							<Route path="" element={lazyRoute(<YearSelection />)} />
 							<Route
+								path="session/:session_id"
+								element={lazyRoute(<YearSelection />)}
+							/>
+							<Route
 								path=":channel_id/:year/:month/:file_name"
 								element={lazyRoute(<YearSelection />)}
 							/>
@@ -59,6 +68,10 @@ export function AppRoutes() {
 							<Route
 								path="cooldowns"
 								element={lazyRoute(<GuildAdminCooldowns />)}
+							/>
+							<Route
+								path="voice-settings"
+								element={lazyRoute(<GuildVoiceSettingsPage />)}
 							/>
 						</Route>
 					</Route>

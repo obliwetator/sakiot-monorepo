@@ -66,6 +66,25 @@ pub async fn release_voice_session(
     Ok(())
 }
 
+pub async fn update_voice_session_channel(
+    pool: &Pool<Postgres>,
+    runtime: &RuntimeState,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) -> DbResult<()> {
+    let rows = database::runtime::update_voice_session_channel(pool, runtime, guild_id, channel_id)
+        .await?;
+    if rows == 1 {
+        Ok(())
+    } else {
+        Err(crate::database::DbError::UnexpectedRows {
+            operation: "update voice lease channel",
+            expected: 1,
+            actual: rows,
+        })
+    }
+}
+
 pub async fn active_lease_owner(
     pool: &Pool<Postgres>,
     guild_id: GuildId,

@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use serenity::{
     client::Context,
@@ -9,7 +12,10 @@ use songbird::{CoreEvent, SongbirdKey};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
+use crate::cast::ToI64;
 use crate::{BotMetricsKey, events::voice_receiver::Receiver};
+
+static FALLBACK_OPERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum VoiceConnectOutcome {
@@ -40,6 +46,10 @@ impl VoiceConnectOutcome {
             Self::Failed(err) => format!("Failed to join voice: {}", err),
         }
     }
+
+    pub(crate) fn should_retry_routing(&self) -> bool {
+        matches!(self, Self::Failed(_))
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -62,6 +72,37 @@ impl VoiceDisconnectOutcome {
 
     pub fn success(&self) -> bool {
         matches!(self, Self::Disconnected)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct VoiceOperation {
+    pub(crate) operation_id: String,
+    pub(crate) trigger: String,
+    pub(crate) started_at_ms: i64,
+    pub(crate) population_snapshot: serde_json::Value,
+    pub(crate) has_afk_channel: bool,
+    pub(crate) pending_cap_seconds: i64,
+}
+
+impl VoiceOperation {
+    pub(crate) fn ad_hoc(ctx: &Context, guild_id: GuildId, trigger: &str) -> Self {
+        let started_at_ms = chrono::Utc::now().timestamp_millis();
+        let counter = FALLBACK_OPERATION_COUNTER.fetch_add(1, Ordering::SeqCst);
+        Self {
+            operation_id: format!(
+                "adhoc-{}-{}-{}-{}",
+                ctx.cache.current_user().id.get(),
+                guild_id.get(),
+                started_at_ms,
+                counter
+            ),
+            trigger: trigger.to_string(),
+            started_at_ms,
+            population_snapshot: serde_json::json!([]),
+            has_afk_channel: false,
+            pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+        }
     }
 }
 
@@ -102,6 +143,18 @@ pub(crate) async fn teardown_voice_session(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
 ) -> VoiceTeardownReport {
+    teardown_voice_session_with_operation(data, pool, guild_id, None).await
+}
+
+pub(crate) async fn teardown_voice_session_with_operation(
+    data: &Arc<RwLock<TypeMap>>,
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    operation: Option<&VoiceOperation>,
+) -> VoiceTeardownReport {
+    let started_at_ms = operation
+        .map(|operation| operation.started_at_ms)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let (manager, runtime) = {
         let data_read = data.read().await;
         (
@@ -123,6 +176,7 @@ pub(crate) async fn teardown_voice_session(
     };
 
     let call_before = manager.get(guild_id);
+    let from_channel = current_songbird_channel(call_before.clone()).await;
     let had_call = call_before.is_some();
     let remove_error = if had_call {
         manager.remove(guild_id).await.err().map(|err| {
@@ -141,6 +195,56 @@ pub(crate) async fn teardown_voice_session(
     }
 
     refresh_active_voice_connection_gauge(data, Some(&manager)).await;
+    let completed_at_ms = chrono::Utc::now().timestamp_millis();
+    let owner = runtime
+        .as_ref()
+        .map(|runtime| runtime.config().instance_id.as_str());
+    let generated_operation_id = format!(
+        "disconnect-{}-{}-{}",
+        guild_id.get(),
+        started_at_ms,
+        FALLBACK_OPERATION_COUNTER.fetch_add(1, Ordering::SeqCst)
+    );
+    let operation_id = operation
+        .map(|operation| operation.operation_id.as_str())
+        .unwrap_or(&generated_operation_id);
+    let trigger = operation
+        .map(|operation| operation.trigger.as_str())
+        .unwrap_or("disconnect");
+    let outcome = if !had_call {
+        "not_connected"
+    } else if connected_after {
+        "disconnect_failed"
+    } else {
+        "disconnected"
+    };
+    let empty_snapshot = serde_json::json!([]);
+    let population_snapshot = operation
+        .map(|operation| &operation.population_snapshot)
+        .unwrap_or(&empty_snapshot);
+    if let Err(err) = crate::database::voice_events::insert_voice_connection_event(
+        pool,
+        crate::database::voice_events::VoiceConnectionEvent {
+            operation_id,
+            guild_id: guild_id.to_i64(),
+            owner_instance_id: owner,
+            release_id: release_id().as_deref(),
+            trigger,
+            started_at_ms,
+            completed_at_ms,
+            from_channel_id: from_channel.map(ToI64::to_i64),
+            to_channel_id: None,
+            population_snapshot,
+            outcome,
+            error: remove_error.as_deref(),
+            fallback_outcome: None,
+            fallback_error: None,
+        },
+    )
+    .await
+    {
+        warn!("failed to record voice disconnect event: {}", err);
+    }
 
     VoiceTeardownReport {
         manager_missing: false,
@@ -151,9 +255,19 @@ pub(crate) async fn teardown_voice_session(
 }
 
 async fn current_channel_is_some(call: Option<Arc<tokio::sync::Mutex<songbird::Call>>>) -> bool {
+    current_songbird_channel(call).await.is_some()
+}
+
+async fn current_songbird_channel(
+    call: Option<Arc<tokio::sync::Mutex<songbird::Call>>>,
+) -> Option<ChannelId> {
     match call {
-        Some(call) => call.lock().await.current_channel().is_some(),
-        None => false,
+        Some(call) => call
+            .lock()
+            .await
+            .current_channel()
+            .map(|channel| ChannelId::new(channel.0.get())),
+        None => None,
     }
 }
 
@@ -180,23 +294,43 @@ pub async fn connect_to_voice_channel(
     guild_id: GuildId,
     channel_id: ChannelId,
 ) -> VoiceConnectOutcome {
+    let operation = VoiceOperation::ad_hoc(ctx, guild_id, "manual");
+    connect_to_voice_channel_with_operation(pool, ctx, guild_id, channel_id, operation).await
+}
+
+pub(crate) async fn connect_to_voice_channel_with_operation(
+    pool: Pool<Postgres>,
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    operation: VoiceOperation,
+) -> VoiceConnectOutcome {
     if crate::runtime::is_draining_ctx(ctx).await {
         info!(
             guild_id = guild_id.get(),
             channel_id = channel_id.get(),
             "skipping voice connect while instance is draining"
         );
-        return VoiceConnectOutcome::SkippedDraining;
+        let report =
+            ConnectReport::simple(VoiceConnectOutcome::SkippedDraining, "skipped_draining");
+        record_connect_event(&pool, ctx, guild_id, None, channel_id, &operation, &report).await;
+        return report.outcome;
     }
 
     let Some(manager) = songbird::get(ctx).await else {
         error!("Songbird manager missing while connecting to voice channel");
         refresh_active_voice_connection_gauge(&ctx.data, None).await;
-        return VoiceConnectOutcome::VoiceSystemMissing;
+        let report = ConnectReport::simple(
+            VoiceConnectOutcome::VoiceSystemMissing,
+            "voice_system_missing",
+        );
+        record_connect_event(&pool, ctx, guild_id, None, channel_id, &operation, &report).await;
+        return report.outcome;
     };
     let manager = manager.clone();
 
-    if let Some(runtime) = crate::runtime::state_from_ctx(ctx).await {
+    let runtime = crate::runtime::state_from_ctx(ctx).await;
+    if let Some(runtime) = &runtime {
         match crate::deployment::active_lease_owner(&pool, guild_id).await {
             Ok(Some(owner)) if owner != runtime.config().instance_id => {
                 info!(
@@ -205,7 +339,23 @@ pub async fn connect_to_voice_channel(
                     owner = %owner,
                     "skipping voice connect because another instance owns lease"
                 );
-                return VoiceConnectOutcome::SkippedLeaseOwned { owner };
+                let report = ConnectReport::simple(
+                    VoiceConnectOutcome::SkippedLeaseOwned {
+                        owner: owner.clone(),
+                    },
+                    "skipped_lease_owned",
+                );
+                record_connect_event(
+                    &pool,
+                    ctx,
+                    guild_id,
+                    actual_bot_channel(ctx, guild_id, manager.get(guild_id)).await,
+                    channel_id,
+                    &operation,
+                    &report,
+                )
+                .await;
+                return report.outcome;
             }
             Ok(_) => {}
             Err(err) => {
@@ -217,160 +367,392 @@ pub async fn connect_to_voice_channel(
         }
     }
 
-    if let Some(arc_call) = manager.get(guild_id) {
-        let current = arc_call.lock().await.current_channel();
-
-        match current {
-            Some(ch) if ch.0.get() == channel_id.get() => {
-                refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
-                VoiceConnectOutcome::AlreadyInChannel
-            }
-            Some(ch) => switch_channel(pool, manager, guild_id, channel_id, ctx, ch.0.get()).await,
-            None => {
-                info!("Call exists but disconnected, rejoining");
-                join_ch(
-                    pool,
-                    manager,
-                    guild_id,
-                    channel_id,
-                    ctx,
-                    JoinMode::RejoinDisconnected,
-                )
-                .await
-            }
-        }
+    let from_channel = actual_bot_channel(ctx, guild_id, manager.get(guild_id)).await;
+    let connection = ConnectionContext {
+        pool: &pool,
+        manager: &manager,
+        guild_id,
+        ctx,
+        runtime: runtime.as_deref(),
+        operation: &operation,
+    };
+    let report = if from_channel == Some(channel_id) {
+        refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
+        crate::events::voice_receiver::complete_handoff(
+            ctx,
+            guild_id,
+            channel_id,
+            chrono::Utc::now().timestamp_millis(),
+            operation.has_afk_channel,
+            operation.pending_cap_seconds,
+        )
+        .await;
+        ConnectReport::simple(VoiceConnectOutcome::AlreadyInChannel, "already_in_channel")
+    } else if let Some(old_channel) = from_channel {
+        switch_channel(&connection, old_channel, channel_id).await
     } else {
-        join_ch(pool, manager, guild_id, channel_id, ctx, JoinMode::Fresh).await
-    }
+        join_fresh(&connection, channel_id, manager.get(guild_id).is_some()).await
+    };
+
+    record_connect_event(
+        &pool,
+        ctx,
+        guild_id,
+        from_channel,
+        channel_id,
+        &operation,
+        &report,
+    )
+    .await;
+    report.outcome
 }
 
-enum JoinMode {
-    Fresh,
-    RejoinDisconnected,
-    SwitchFresh { _old_channel: u64 },
+#[derive(Clone, Copy)]
+struct ConnectionContext<'a> {
+    pool: &'a Pool<Postgres>,
+    manager: &'a Arc<songbird::Songbird>,
+    guild_id: GuildId,
+    ctx: &'a Context,
+    runtime: Option<&'a crate::runtime::RuntimeState>,
+    operation: &'a VoiceOperation,
+}
+
+#[derive(Debug)]
+struct ConnectReport {
+    outcome: VoiceConnectOutcome,
+    audit_outcome: &'static str,
+    error: Option<String>,
+    fallback_outcome: Option<&'static str>,
+    fallback_error: Option<String>,
+}
+
+impl ConnectReport {
+    fn simple(outcome: VoiceConnectOutcome, audit_outcome: &'static str) -> Self {
+        Self {
+            outcome,
+            audit_outcome,
+            error: None,
+            fallback_outcome: None,
+            fallback_error: None,
+        }
+    }
+
+    fn failed(error: String, audit_outcome: &'static str) -> Self {
+        Self {
+            outcome: VoiceConnectOutcome::Failed(error.clone()),
+            audit_outcome,
+            error: Some(error),
+            fallback_outcome: None,
+            fallback_error: None,
+        }
+    }
 }
 
 async fn switch_channel(
-    pool: Pool<Postgres>,
-    manager: Arc<songbird::Songbird>,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    ctx: &Context,
-    old_channel: u64,
-) -> VoiceConnectOutcome {
-    let report = teardown_voice_session(&ctx.data, &pool, guild_id).await;
-    if let Some(remove_error) = report.remove_error {
-        return VoiceConnectOutcome::Failed(remove_error);
-    }
-    if report.connected_after {
-        return VoiceConnectOutcome::Failed(
-            "voice connection remained locally connected".to_string(),
-        );
-    }
-
-    join_ch(
+    connection: &ConnectionContext<'_>,
+    old_channel: ChannelId,
+    target_channel: ChannelId,
+) -> ConnectReport {
+    let ConnectionContext {
         pool,
         manager,
         guild_id,
-        channel_id,
         ctx,
-        JoinMode::SwitchFresh {
-            _old_channel: old_channel,
-        },
+        runtime,
+        operation,
+    } = *connection;
+    crate::events::voice_receiver::begin_handoff(
+        ctx,
+        guild_id,
+        old_channel,
+        Some(target_channel),
+        operation.has_afk_channel,
+        operation.pending_cap_seconds,
     )
-    .await
+    .await;
+
+    let Some(call) = manager.get(guild_id) else {
+        crate::events::voice_receiver::cancel_handoff(ctx, guild_id).await;
+        return ConnectReport::failed(
+            "voice call disappeared before handoff".to_string(),
+            "switch_failed",
+        );
+    };
+
+    match issue_join(&call, target_channel).await {
+        Ok(()) => {
+            update_lease_after_handoff(pool, runtime, guild_id, target_channel).await;
+            crate::events::voice_receiver::complete_handoff(
+                ctx,
+                guild_id,
+                target_channel,
+                chrono::Utc::now().timestamp_millis(),
+                operation.has_afk_channel,
+                operation.pending_cap_seconds,
+            )
+            .await;
+            refresh_active_voice_connection_gauge(&ctx.data, Some(manager)).await;
+            ConnectReport::simple(VoiceConnectOutcome::Switched, "switched")
+        }
+        Err(target_error) => {
+            warn!(
+                guild_id = guild_id.get(),
+                from_channel_id = old_channel.get(),
+                to_channel_id = target_channel.get(),
+                "target voice handoff failed: {}",
+                target_error
+            );
+            let actual = actual_bot_channel(ctx, guild_id, Some(call.clone())).await;
+            if actual == Some(target_channel) {
+                update_lease_after_handoff(pool, runtime, guild_id, target_channel).await;
+                crate::events::voice_receiver::complete_handoff(
+                    ctx,
+                    guild_id,
+                    target_channel,
+                    chrono::Utc::now().timestamp_millis(),
+                    operation.has_afk_channel,
+                    operation.pending_cap_seconds,
+                )
+                .await;
+                return ConnectReport {
+                    outcome: VoiceConnectOutcome::Switched,
+                    audit_outcome: "switched_after_join_error",
+                    error: Some(target_error),
+                    fallback_outcome: Some("not_needed_target_connected"),
+                    fallback_error: None,
+                };
+            }
+
+            let previous_occupied = cached_human_member_count(ctx, guild_id, old_channel)
+                .map(|count| count > 0)
+                .unwrap_or(true);
+            if previous_occupied {
+                crate::events::voice_receiver::begin_handoff(
+                    ctx,
+                    guild_id,
+                    actual.unwrap_or(target_channel),
+                    Some(old_channel),
+                    operation.has_afk_channel,
+                    operation.pending_cap_seconds,
+                )
+                .await;
+                match issue_join(&call, old_channel).await {
+                    Ok(()) => {
+                        update_lease_after_handoff(pool, runtime, guild_id, old_channel).await;
+                        crate::events::voice_receiver::complete_handoff(
+                            ctx,
+                            guild_id,
+                            old_channel,
+                            chrono::Utc::now().timestamp_millis(),
+                            operation.has_afk_channel,
+                            operation.pending_cap_seconds,
+                        )
+                        .await;
+                        refresh_active_voice_connection_gauge(&ctx.data, Some(manager)).await;
+                        return ConnectReport {
+                            outcome: VoiceConnectOutcome::Failed(format!(
+                                "target handoff failed: {target_error}; previous channel restored"
+                            )),
+                            audit_outcome: "switch_failed_fallback_succeeded",
+                            error: Some(target_error),
+                            fallback_outcome: Some("rejoined_previous"),
+                            fallback_error: None,
+                        };
+                    }
+                    Err(fallback_error) => {
+                        let actual_after =
+                            actual_bot_channel(ctx, guild_id, Some(call.clone())).await;
+                        retain_or_release_after_failure(
+                            pool,
+                            manager,
+                            ctx,
+                            runtime,
+                            guild_id,
+                            actual_after,
+                            operation,
+                        )
+                        .await;
+                        return ConnectReport {
+                            outcome: VoiceConnectOutcome::Failed(format!(
+                                "target handoff failed: {target_error}; fallback failed: {fallback_error}"
+                            )),
+                            audit_outcome: "switch_and_fallback_failed",
+                            error: Some(target_error),
+                            fallback_outcome: Some("failed"),
+                            fallback_error: Some(fallback_error),
+                        };
+                    }
+                }
+            }
+
+            crate::events::voice_receiver::cancel_handoff(ctx, guild_id).await;
+            retain_or_release_after_failure(
+                pool, manager, ctx, runtime, guild_id, actual, operation,
+            )
+            .await;
+            ConnectReport {
+                outcome: VoiceConnectOutcome::Failed(format!(
+                    "target handoff failed: {target_error}"
+                )),
+                audit_outcome: "switch_failed_previous_empty",
+                error: Some(target_error),
+                fallback_outcome: Some("skipped_previous_empty"),
+                fallback_error: None,
+            }
+        }
+    }
 }
 
-async fn join_ch(
-    pool: Pool<Postgres>,
-    manager: Arc<songbird::Songbird>,
-    guild_id: GuildId,
-    channel_id: ChannelId,
+async fn retain_or_release_after_failure(
+    pool: &Pool<Postgres>,
+    manager: &Arc<songbird::Songbird>,
     ctx: &Context,
-    mode: JoinMode,
-) -> VoiceConnectOutcome {
-    let runtime = crate::runtime::state_from_ctx(ctx).await;
-    let claimed_lease = if let Some(runtime) = &runtime {
-        match crate::deployment::claim_voice_session(&pool, runtime, guild_id, channel_id).await {
+    runtime: Option<&crate::runtime::RuntimeState>,
+    guild_id: GuildId,
+    actual_channel: Option<ChannelId>,
+    operation: &VoiceOperation,
+) {
+    if let Some(actual_channel) = actual_channel {
+        update_lease_after_handoff(pool, runtime, guild_id, actual_channel).await;
+        crate::events::voice_receiver::complete_handoff(
+            ctx,
+            guild_id,
+            actual_channel,
+            chrono::Utc::now().timestamp_millis(),
+            operation.has_afk_channel,
+            operation.pending_cap_seconds,
+        )
+        .await;
+        return;
+    }
+
+    if let Some(runtime) = runtime
+        && let Err(err) = crate::deployment::release_voice_session(pool, runtime, guild_id).await
+    {
+        warn!(
+            guild_id = guild_id.get(),
+            "failed to release stale lease: {}", err
+        );
+    }
+    if let Err(err) = manager.remove(guild_id).await {
+        warn!(
+            guild_id = guild_id.get(),
+            "failed to remove disconnected call: {}", err
+        );
+    }
+    refresh_active_voice_connection_gauge(&ctx.data, Some(manager)).await;
+}
+
+async fn join_fresh(
+    connection: &ConnectionContext<'_>,
+    channel_id: ChannelId,
+    rejoin_disconnected: bool,
+) -> ConnectReport {
+    let ConnectionContext {
+        pool,
+        manager,
+        guild_id,
+        ctx,
+        runtime,
+        operation,
+    } = *connection;
+    let claimed_lease = if let Some(runtime) = runtime {
+        match crate::deployment::claim_voice_session(pool, runtime, guild_id, channel_id).await {
             Ok(crate::deployment::VoiceLeaseClaim::Claimed) => true,
             Ok(crate::deployment::VoiceLeaseClaim::OwnedByOther(owner)) => {
-                info!(
-                    guild_id = guild_id.get(),
-                    channel_id = channel_id.get(),
-                    owner = %owner,
-                    "skipping voice connect because another instance won lease claim"
+                return ConnectReport::simple(
+                    VoiceConnectOutcome::SkippedLeaseOwned { owner },
+                    "skipped_lease_owned",
                 );
-                return VoiceConnectOutcome::SkippedLeaseOwned { owner };
             }
             Err(err) => {
-                error!(
-                    guild_id = guild_id.get(),
-                    channel_id = channel_id.get(),
-                    "voice lease claim failed: {}",
-                    err
+                return ConnectReport::failed(
+                    format!("voice lease claim failed: {err}"),
+                    "join_failed",
                 );
-                return VoiceConnectOutcome::Failed(format!("voice lease claim failed: {}", err));
             }
         }
     } else {
         false
     };
 
-    let handler_lock = manager.get_or_insert(guild_id);
-    let result = {
-        let mut handler = handler_lock.lock().await;
-        if matches!(mode, JoinMode::Fresh | JoinMode::SwitchFresh { .. }) {
-            register_voice_receiver(&mut handler, pool.clone(), ctx, guild_id, channel_id, true)
-                .await;
-        }
-        handler.join(channel_id).await
-    };
+    let call = manager.get_or_insert(guild_id);
+    {
+        let mut handler = call.lock().await;
+        register_voice_receiver(&mut handler, pool.clone(), ctx, guild_id, channel_id, true).await;
+    }
 
-    match result {
-        Ok(join) => match join.await {
-            Ok(()) => {
-                refresh_active_voice_connection_gauge(&ctx.data, Some(&manager)).await;
-                match mode {
-                    JoinMode::Fresh => VoiceConnectOutcome::Joined,
-                    JoinMode::RejoinDisconnected => VoiceConnectOutcome::Rejoined,
-                    JoinMode::SwitchFresh { .. } => VoiceConnectOutcome::Switched,
-                }
+    match issue_join(&call, channel_id).await {
+        Ok(()) => {
+            crate::events::voice_receiver::complete_handoff(
+                ctx,
+                guild_id,
+                channel_id,
+                chrono::Utc::now().timestamp_millis(),
+                operation.has_afk_channel,
+                operation.pending_cap_seconds,
+            )
+            .await;
+            refresh_active_voice_connection_gauge(&ctx.data, Some(manager)).await;
+            if rejoin_disconnected {
+                ConnectReport::simple(VoiceConnectOutcome::Rejoined, "rejoined")
+            } else {
+                ConnectReport::simple(VoiceConnectOutcome::Joined, "joined")
             }
-            Err(err) => {
-                error!("cannot join channel {}: {}", channel_id, err);
-                if claimed_lease
-                    && let Some(runtime) = &runtime
-                    && let Err(release_err) =
-                        crate::deployment::release_voice_session(&pool, runtime, guild_id).await
-                {
-                    warn!(
-                        guild_id = guild_id.get(),
-                        "voice lease release failed after join error: {}", release_err
-                    );
-                }
-                cleanup_failed_join(&ctx.data, &manager, guild_id).await;
-                VoiceConnectOutcome::Failed(err.to_string())
-            }
-        },
+        }
         Err(err) => {
-            error!("cannot join channel {}: {}", channel_id, err);
             if claimed_lease
-                && let Some(runtime) = &runtime
+                && let Some(runtime) = runtime
                 && let Err(release_err) =
-                    crate::deployment::release_voice_session(&pool, runtime, guild_id).await
+                    crate::deployment::release_voice_session(pool, runtime, guild_id).await
             {
                 warn!(
                     guild_id = guild_id.get(),
                     "voice lease release failed after join error: {}", release_err
                 );
             }
-            cleanup_failed_join(&ctx.data, &manager, guild_id).await;
-            VoiceConnectOutcome::Failed(err.to_string())
+            cleanup_failed_fresh_join(&ctx.data, manager, guild_id).await;
+            ConnectReport::failed(err, "join_failed")
         }
     }
 }
 
-async fn cleanup_failed_join(
+async fn issue_join(
+    call: &Arc<tokio::sync::Mutex<songbird::Call>>,
+    channel_id: ChannelId,
+) -> Result<(), String> {
+    let join = {
+        let mut handler = call.lock().await;
+        handler
+            .join(channel_id)
+            .await
+            .map_err(|err| err.to_string())?
+    };
+    join.await.map_err(|err| err.to_string())
+}
+
+async fn update_lease_after_handoff(
+    pool: &Pool<Postgres>,
+    runtime: Option<&crate::runtime::RuntimeState>,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) {
+    let Some(runtime) = runtime else {
+        return;
+    };
+    if let Err(err) =
+        crate::deployment::update_voice_session_channel(pool, runtime, guild_id, channel_id).await
+    {
+        warn!(
+            guild_id = guild_id.get(),
+            channel_id = channel_id.get(),
+            "voice lease channel update failed after successful handoff: {}",
+            err
+        );
+    }
+}
+
+async fn cleanup_failed_fresh_join(
     data: &Arc<RwLock<TypeMap>>,
     manager: &Arc<songbird::Songbird>,
     guild_id: GuildId,
@@ -412,6 +794,98 @@ async fn register_voice_receiver(
     handler.add_global_event(CoreEvent::DriverConnect.into(), receiver.clone());
     handler.add_global_event(CoreEvent::DriverReconnect.into(), receiver.clone());
     handler.add_global_event(CoreEvent::DriverDisconnect.into(), receiver.clone());
+}
+
+async fn actual_bot_channel(
+    ctx: &Context,
+    guild_id: GuildId,
+    call: Option<Arc<tokio::sync::Mutex<songbird::Call>>>,
+) -> Option<ChannelId> {
+    if let Some(guild) = ctx.cache.guild(guild_id) {
+        return guild
+            .voice_states
+            .get(&ctx.cache.current_user().id)
+            .and_then(|state| state.channel_id);
+    }
+    let call = call?;
+    call.lock()
+        .await
+        .current_connection()
+        .map(|connection| ChannelId::new(connection.channel_id.0.get()))
+}
+
+fn cached_human_member_count(
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) -> Option<usize> {
+    let guild = ctx.cache.guild(guild_id)?;
+    let mut count = 0;
+    for (user_id, voice_state) in &guild.voice_states {
+        if voice_state.channel_id != Some(channel_id) || *user_id == ctx.cache.current_user().id {
+            continue;
+        }
+        let is_bot = voice_state
+            .member
+            .as_ref()
+            .map(|member| member.user.bot)
+            .or_else(|| guild.members.get(user_id).map(|member| member.user.bot));
+        match is_bot {
+            Some(false) => count += 1,
+            Some(true) => {}
+            None => return None,
+        }
+    }
+    Some(count)
+}
+
+async fn record_connect_event(
+    pool: &Pool<Postgres>,
+    ctx: &Context,
+    guild_id: GuildId,
+    from_channel_id: Option<ChannelId>,
+    to_channel_id: ChannelId,
+    operation: &VoiceOperation,
+    report: &ConnectReport,
+) {
+    let runtime = crate::runtime::state_from_ctx(ctx).await;
+    let release = release_id();
+    if let Err(err) = crate::database::voice_events::insert_voice_connection_event(
+        pool,
+        crate::database::voice_events::VoiceConnectionEvent {
+            operation_id: &operation.operation_id,
+            guild_id: guild_id.to_i64(),
+            owner_instance_id: runtime
+                .as_ref()
+                .map(|runtime| runtime.config().instance_id.as_str()),
+            release_id: release.as_deref(),
+            trigger: &operation.trigger,
+            started_at_ms: operation.started_at_ms,
+            completed_at_ms: chrono::Utc::now().timestamp_millis(),
+            from_channel_id: from_channel_id.map(ToI64::to_i64),
+            to_channel_id: Some(to_channel_id.to_i64()),
+            population_snapshot: &operation.population_snapshot,
+            outcome: report.audit_outcome,
+            error: report.error.as_deref(),
+            fallback_outcome: report.fallback_outcome,
+            fallback_error: report.fallback_error.as_deref(),
+        },
+    )
+    .await
+    {
+        warn!(
+            guild_id = guild_id.get(),
+            operation_id = operation.operation_id,
+            "failed to record voice connection operation: {}",
+            err
+        );
+    }
+}
+
+fn release_id() -> Option<String> {
+    std::env::var("BOT_RELEASE_ID")
+        .or_else(|_| std::env::var("RELEASE_ID"))
+        .ok()
 }
 
 pub async fn refresh_active_voice_connection_gauge(
@@ -463,6 +937,12 @@ mod tests {
             VoiceConnectOutcome::Failed("boom".to_string()).user_message(),
             "Failed to join voice: boom"
         );
+    }
+
+    #[test]
+    fn routing_retries_only_connection_failures() {
+        assert!(VoiceConnectOutcome::Failed("boom".to_string()).should_retry_routing());
+        assert!(!VoiceConnectOutcome::AlreadyInChannel.should_retry_routing());
     }
 
     #[test]

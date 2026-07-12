@@ -52,6 +52,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/voice-settings": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_voice_settings"];
+		put: operations["put_voice_settings"];
+		post?: never;
+		delete: operations["delete_voice_settings"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/clips/create/{guild_id}/{channel_id}/{year}/{month}/{file_name}": {
 		parameters: {
 			query?: never;
@@ -132,6 +148,102 @@ export interface paths {
 			cookie?: never;
 		};
 		get: operations["live_state"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/clips": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["create_session_clip"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/download": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["download_session"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/events": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_events"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/manifest": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_manifest"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/remove-silence": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["remove_session_silence"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/waveform": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_waveform"];
 		put?: never;
 		post?: never;
 		delete?: never;
@@ -320,8 +432,11 @@ export interface components {
 			year: number;
 		};
 		File: {
+			channel_journey?: string[] | null;
 			display_name?: string | null;
 			file: string;
+			recording_session_id?: string | null;
+			state?: string | null;
 			user_id?: string | null;
 		};
 		GuildCooldown: {
@@ -337,12 +452,24 @@ export interface components {
 			/** @example 268435456 */
 			permissions: string;
 		};
+		GuildVoiceSettings: {
+			is_default: boolean;
+			/** Format: int32 */
+			pending_cap_seconds: number;
+		};
+		GuildVoiceSettingsBody: {
+			/** Format: int32 */
+			pending_cap_seconds: number;
+		};
 		HashMap: {
 			[key: string]:
 				| null
 				| {
+						channel_journey?: string[] | null;
 						display_name?: string | null;
 						file: string;
+						recording_session_id?: string | null;
+						state?: string | null;
 						user_id?: string | null;
 				  }[];
 		};
@@ -356,6 +483,61 @@ export interface components {
 		RemoveSilenceResponse: {
 			message: string;
 			url: string;
+		};
+		SessionDownloadQuery: {
+			/** Format: double */
+			end?: number | null;
+			remove_silence?: boolean | null;
+			/** Format: double */
+			start?: number | null;
+		};
+		SessionManifestDto: {
+			channel_journey: string[];
+			current_channel_id?: string | null;
+			/** Format: int64 */
+			duration_ms: number;
+			/** Format: int64 */
+			ended_at_ms?: number | null;
+			events: components["schemas"]["SessionTimelineEventDto"][];
+			guild_id: string;
+			recording_session_id: string;
+			segments: components["schemas"]["SessionSegmentDto"][];
+			/** Format: int64 */
+			started_at_ms: number;
+			starting_channel_id: string;
+			state: string;
+			user_id: string;
+		};
+		SessionSegmentDto: {
+			audio_file_id?: string | null;
+			channel_id?: string | null;
+			/** Format: int64 */
+			end_ms: number;
+			file_name?: string | null;
+			from_channel_id?: string | null;
+			hls_playlist_url?: string | null;
+			kind: string;
+			media_url?: string | null;
+			reason?: string | null;
+			/** Format: int32 */
+			segment_index?: number | null;
+			/** Format: int64 */
+			start_ms: number;
+			to_channel_id?: string | null;
+		};
+		SessionTimelineEventDto: {
+			channel_id?: string | null;
+			details: unknown;
+			event_type: string;
+			/** Format: int64 */
+			offset_ms: number;
+			previous_channel_id?: string | null;
+			source: string;
+		};
+		SessionWaveformResponse: {
+			data?: string | null;
+			/** Format: int32 */
+			progress: number;
 		};
 		StampInfo: {
 			/** Format: int64 */
@@ -714,6 +896,169 @@ export interface operations {
 			};
 		};
 	};
+	get_voice_settings: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Effective guild voice settings */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildVoiceSettings"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_voice_settings: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["GuildVoiceSettingsBody"];
+			};
+		};
+		responses: {
+			/** @description Updated guild voice settings */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildVoiceSettings"];
+				};
+			};
+			/** @description Pending cap below 60 seconds */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	delete_voice_settings: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Default guild voice settings restored */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildVoiceSettings"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	create_clip: {
 		parameters: {
 			query?: never;
@@ -1030,6 +1375,384 @@ export interface operations {
 				};
 			};
 			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	create_session_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["StartEnd"];
+			};
+		};
+		responses: {
+			/** @description Cross-fragment clip created */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["CreateClipResponse"];
+				};
+			};
+			/** @description Clip must be 1-20 seconds */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Composition failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	download_session: {
+		parameters: {
+			query?: {
+				/** @description Range start in logical seconds */
+				start?: number;
+				/** @description Range end in logical seconds */
+				end?: number;
+				/** @description Run FFmpeg silence removal after composition */
+				remove_silence?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Composed Ogg/Opus download */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Invalid range */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Composition failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_events: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Unified logical timeline events */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionTimelineEventDto"][];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_manifest: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Logical recording manifest */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionManifestDto"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	remove_session_silence: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["StartEnd"];
+			};
+		};
+		responses: {
+			/** @description Composed silence-free Ogg/Opus */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Invalid range */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Composition failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_waveform: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Combined peaks; explicit gaps are zero-valued */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionWaveformResponse"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Waveform generation failed */
 			500: {
 				headers: {
 					[name: string]: unknown;

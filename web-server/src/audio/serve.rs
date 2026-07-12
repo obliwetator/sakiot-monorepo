@@ -10,7 +10,6 @@ use tracing::info;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::require_channel_access;
 
 use sakiot_paths::RecordingKey;
 
@@ -40,7 +39,14 @@ pub async fn get_audio(
     }
 
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        &file_name,
+        token.user_id,
+    )
+    .await?;
 
     let (root, leaf) = if query_param.silence.is_some() {
         (
@@ -79,7 +85,14 @@ pub async fn download_audio(
     }
 
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        &file_name_from_url,
+        token.user_id,
+    )
+    .await?;
 
     let (root, leaf) = if is_silence.silence.is_some() {
         (

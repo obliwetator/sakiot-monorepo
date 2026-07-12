@@ -8,6 +8,10 @@ use crate::database;
 use crate::event_handler::Handler;
 
 pub async fn cache_ready(handler: &Handler, ctx: Context, guilds: Vec<GuildId>) {
+    {
+        let mut data = ctx.data.write().await;
+        data.insert::<crate::events::voice::VoiceContextKey>(ctx.clone());
+    }
     let guild_cached: Vec<Guild> = guilds
         .iter()
         .filter_map(|guild| {

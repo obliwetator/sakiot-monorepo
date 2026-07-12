@@ -11,15 +11,15 @@ export function TreeViewDays(props: {
 	month_name: number;
 	liveSet: Set<string>;
 }) {
-	const hasLive = props.files.some((f) =>
-		props.liveSet.has(f.file.slice(0, -4)),
+	const hasLive = props.files.some(
+		(f) => f.state === "active" || props.liveSet.has(f.file.slice(0, -4)),
 	);
 	const itemsEl = props.files.map((el) => (
 		<ItemsEl
 			file={el}
 			month_name={props.month_name}
 			year={props.year}
-			isLive={props.liveSet.has(el.file.slice(0, -4))}
+			isLive={el.state === "active" || props.liveSet.has(el.file.slice(0, -4))}
 			key={el.file}
 		/>
 	));

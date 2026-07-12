@@ -10,6 +10,7 @@ export type AudioParams =
 	| "guild_id"
 	| "channel_id"
 	| "file_name"
+	| "session_id"
 	| "month"
 	| "year";
 

@@ -45,16 +45,9 @@ impl RecordingFinalizeReason {
 pub(in crate::events) struct UserRecording {
     pub(in crate::events) writer: OggOpusWriter<BufWriter<File>>,
     pub(in crate::events) audio_file_id: i64,
+    pub(in crate::events) recording_session_id: i64,
     pub(in crate::events) file_name: String,
     pub(in crate::events) start_time: chrono::DateTime<chrono::Utc>,
     pub(in crate::events) user_id: u64,
     pub(in crate::events) ssrc: u32,
-}
-
-pub(in crate::events) struct PausedRecording {
-    pub(in crate::events) recording: UserRecording,
-    pub(in crate::events) ssrc: u32,
-    pub(in crate::events) paused_at: chrono::DateTime<chrono::Utc>,
-    pub(in crate::events) token: u64,
-    pub(in crate::events) deadline_ms: i64,
 }

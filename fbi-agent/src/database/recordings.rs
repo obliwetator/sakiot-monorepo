@@ -1,9 +1,7 @@
-use chrono::Datelike;
-use sakiot_paths::{DataRoots, RecordingKey};
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, Row};
 
-use crate::database::DbResult;
 use crate::database::error::expect_rows;
+use crate::database::{DbError, DbResult};
 
 #[cfg(test)]
 pub const FINALIZE_REASON_WRITER_CLOSE: i32 = 1;
@@ -12,8 +10,12 @@ pub const FINALIZE_REASON_ZOMBIE_REAPED: i32 = 3;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RecordingHandle {
     pub audio_file_id: i64,
+    pub recording_session_id: i64,
+    pub segment_index: i32,
     pub file_name: String,
     pub path: String,
+    pub start_time: chrono::DateTime<chrono::Utc>,
+    pub initial_silence_ms: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -33,65 +35,15 @@ pub async fn create_recording(
     now: chrono::DateTime<chrono::Utc>,
     owner_instance_id: &str,
 ) -> DbResult<RecordingHandle> {
-    let recording_root = DataRoots::from_env().recordings;
-    create_recording_in(
+    crate::database::logical_recordings::create_fragment(
         pool,
         guild_id,
         channel_id,
         user_id,
         now,
         owner_instance_id,
-        &recording_root,
     )
     .await
-}
-
-async fn create_recording_in(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    channel_id: i64,
-    user_id: i64,
-    now: chrono::DateTime<chrono::Utc>,
-    owner_instance_id: &str,
-    recording_root: &std::path::Path,
-) -> DbResult<RecordingHandle> {
-    let file_name = RecordingKey::stem_for(now.timestamp_millis(), user_id);
-    let key = RecordingKey::new(
-        guild_id,
-        channel_id,
-        now.year(),
-        now.month(),
-        file_name.clone(),
-    );
-
-    let dir_path = recording_root.join(key.dir_suffix());
-    let combined_path = dir_path.join(&file_name);
-    std::fs::create_dir_all(&dir_path)?;
-
-    let row = sqlx::query!(
-        "INSERT INTO audio_files
-            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-             recording_owner_instance_id, recording_heartbeat_at)
-         VALUES
-            ($1, $2, $3, $4, $5, $6, $7, NULL, $8, now())
-         RETURNING id",
-        file_name,
-        guild_id,
-        channel_id,
-        user_id,
-        now.year(),
-        now.month() as i32,
-        now.timestamp_millis(),
-        owner_instance_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(RecordingHandle {
-        audio_file_id: row.id,
-        file_name,
-        path: combined_path.to_string_lossy().into_owned(),
-    })
 }
 
 #[cfg(test)]
@@ -104,7 +56,7 @@ pub async fn create_recording_for_test(
     owner_instance_id: &str,
     recording_root: &std::path::Path,
 ) -> DbResult<RecordingHandle> {
-    create_recording_in(
+    crate::database::logical_recordings::create_fragment_in(
         pool,
         guild_id,
         channel_id,
@@ -150,7 +102,8 @@ pub async fn mark_recording_setup_failed(
     owner_instance_id: &str,
     finalize_reason_id: i32,
 ) -> DbResult<()> {
-    let result = sqlx::query!(
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
         "UPDATE audio_files
             SET end_ts = COALESCE(end_ts, start_ts),
                 reaped = TRUE,
@@ -158,15 +111,39 @@ pub async fn mark_recording_setup_failed(
                 finalize_reason_id = $3
           WHERE id = $1
             AND recording_owner_instance_id = $2
-            AND end_ts IS NULL",
-        audio_file_id,
-        owner_instance_id,
-        finalize_reason_id,
+            AND end_ts IS NULL
+         RETURNING recording_session_id, segment_index, channel_id, end_ts",
     )
-    .execute(pool)
+    .bind(audio_file_id)
+    .bind(owner_instance_id)
+    .bind(finalize_reason_id)
+    .fetch_optional(&mut *tx)
     .await?;
-
-    expect_rows(result, 1, "mark recording setup failed")?;
+    let row = row.ok_or(DbError::UnexpectedRows {
+        operation: "mark recording setup failed",
+        expected: 1,
+        actual: 0,
+    })?;
+    if let Some(recording_session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
+        let end_ts = row.try_get::<Option<i64>, _>("end_ts")?.unwrap_or(0);
+        crate::database::logical_recordings::insert_fragment_close_event(
+            &mut tx,
+            recording_session_id,
+            end_ts,
+            row.try_get("channel_id")?,
+            audio_file_id,
+            row.try_get("segment_index")?,
+            "setup_failed",
+        )
+        .await?;
+        crate::database::logical_recordings::finalize_setup_failed_session(
+            &mut tx,
+            recording_session_id,
+            end_ts,
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -177,24 +154,54 @@ pub async fn finalize_recording(
     duration_ms: i64,
     finalize_reason_id: i32,
 ) -> DbResult<()> {
-    let result = sqlx::query!(
+    let duration_ms = duration_ms.max(0);
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
         "UPDATE audio_files
             SET end_ts = audio_files.start_ts + $1,
                 recording_heartbeat_at = NULL,
                 finalize_reason_id = $4
           WHERE id = $2
             AND recording_owner_instance_id = $3
-            AND end_ts IS NULL",
-        duration_ms.max(0),
-        audio_file_id,
-        owner_instance_id,
-        finalize_reason_id,
+            AND end_ts IS NULL
+         RETURNING recording_session_id, segment_index, channel_id, end_ts",
     )
-    .execute(pool)
+    .bind(duration_ms)
+    .bind(audio_file_id)
+    .bind(owner_instance_id)
+    .bind(finalize_reason_id)
+    .fetch_optional(&mut *tx)
     .await?;
-
-    expect_rows(result, 1, "finalize recording")?;
+    let row = row.ok_or(DbError::UnexpectedRows {
+        operation: "finalize recording",
+        expected: 1,
+        actual: 0,
+    })?;
+    if let Some(recording_session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
+        crate::database::logical_recordings::insert_fragment_close_event(
+            &mut tx,
+            recording_session_id,
+            row.try_get::<Option<i64>, _>("end_ts")?.unwrap_or(0),
+            row.try_get("channel_id")?,
+            audio_file_id,
+            row.try_get("segment_index")?,
+            finalize_reason_name(finalize_reason_id),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
+}
+
+fn finalize_reason_name(finalize_reason_id: i32) -> &'static str {
+    match finalize_reason_id {
+        1 => "writer_close",
+        2 => "writer_error",
+        3 => "zombie_reaped",
+        4 => "file_create",
+        5 => "writer_init",
+        _ => "unknown",
+    }
 }
 
 pub async fn last_reap_ts(pool: &Pool<Postgres>) -> DbResult<i64> {

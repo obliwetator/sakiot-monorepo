@@ -29,7 +29,6 @@ use tracing::{error, info, warn};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::require_channel_access;
 
 use super::paths::recording_path;
 
@@ -538,7 +537,7 @@ async fn spawn_job(
     Ok(state)
 }
 
-async fn ensure_job(
+pub(crate) async fn ensure_job(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
     key: RecordingKey,
@@ -612,7 +611,8 @@ pub async fn live_playlist(
     let (guild_id, channel_id, year, month, stem) = path.into_inner();
     validate_stem(&stem)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
+        .await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
     let pl = key.live_playlist_path(&recording_path());
@@ -662,7 +662,8 @@ pub async fn live_state(
     let (guild_id, channel_id, _y, _m, stem) = path.into_inner();
     validate_stem(&stem)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
+        .await?;
     let db = db_state(&pool, &stem).await?;
     let ended_at = db.end_ts.or(if db.live { None } else { db.start_ts });
     Ok(HttpResponse::Ok().json(StateResponse {
@@ -683,7 +684,8 @@ pub async fn live_segment(
     validate_stem(&stem)?;
     validate_seg(&seg)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
+        .await?;
     if seg == "playlist.m3u8" || seg == "state" {
         return Err(AppError::BadRequest("reserved name".into()));
     }

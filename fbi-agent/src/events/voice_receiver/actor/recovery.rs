@@ -1,133 +1,340 @@
-//! Disconnect and rejoin recovery: pausing recordings while a user or the
-//! driver is briefly gone, resuming with gap silence, enforcing recovery
-//! deadlines, and reaping writers for users who left without a clean event.
+//! Guild-scoped logical recording recovery.
+//!
+//! Physical writers close at real user/bot departure timestamps. Logical
+//! sessions remain pending in PostgreSQL and resume as a new channel-bound
+//! fragment with an explicit silence gap.
 
 use std::sync::atomic::Ordering;
 
-use serenity::model::id::UserId;
-use tracing::{error, info, warn};
+use serenity::model::id::{ChannelId, UserId};
+use tracing::{info, warn};
 
 use super::RecorderActor;
 use crate::cast::ToI64;
 use crate::events::voice_receiver::{
-    disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS,
-    pause::{USER_REJOIN_RESUME_TIMEOUT_MS, paused_timeout_matches, silence_frames_for_gap_ms},
-    state::{PausedRecording, VoiceEventType},
+    disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
 };
 
 impl RecorderActor {
     pub(super) async fn handle_client_disconnect(&mut self, user_id: u64, at_ms: i64) {
-        info!("client disconnected id: {}", user_id);
-
+        info!(user_id, "voice client disconnected");
         if let Some(bot_ssrc) = self.recordings.remove_bot_user(user_id) {
-            warn!("Removed bot with id: {} and ssrc: {}", user_id, bot_ssrc);
+            info!(user_id, bot_ssrc, "removed bot SSRC mapping");
             return;
         }
 
-        let Some(ssrc) = self.recordings.ssrc_for_user(user_id) else {
-            warn!("tried to remove bot");
-            return;
-        };
-
-        self.pause_recording_for_rejoin(user_id, ssrc, at_ms).await;
+        self.pause_user_recording(user_id, None, "disconnect", true, at_ms)
+            .await;
     }
 
-    async fn pause_recording_for_rejoin(&mut self, user_id: u64, ssrc: u32, at_ms: i64) {
+    pub(super) async fn handle_user_voice_transition(
+        &mut self,
+        user_id: u64,
+        old_channel_id: Option<ChannelId>,
+        new_channel_id: Option<ChannelId>,
+        afk_channel_id: Option<ChannelId>,
+        at_ms: i64,
+    ) {
+        if self.recordings.remove_bot_user(user_id).is_some() {
+            return;
+        }
+
+        let current = self.channel_id;
+        let left_current = old_channel_id == Some(current) && new_channel_id != Some(current);
+        let reached_current = new_channel_id == Some(current) && old_channel_id != Some(current);
+        let entered_afk = new_channel_id.is_some() && new_channel_id == afk_channel_id;
+        let disconnected = new_channel_id.is_none();
+
+        if left_current {
+            let (reason, starts_grace) = if disconnected {
+                ("disconnect", true)
+            } else if entered_afk {
+                ("afk", true)
+            } else {
+                ("user_moved", false)
+            };
+            self.pause_user_recording(user_id, new_channel_id, reason, starts_grace, at_ms)
+                .await;
+            return;
+        }
+
+        if reached_current {
+            self.resume_pending_user(user_id, current, at_ms).await;
+            return;
+        }
+
+        if disconnected || entered_afk {
+            let reason = if entered_afk { "afk" } else { "disconnect" };
+            if let Err(err) = crate::database::logical_recordings::mark_pending_user_unavailable(
+                &self.pool,
+                crate::database::logical_recordings::PendingUserUnavailableRequest {
+                    guild_id: self.guild_id.to_i64(),
+                    user_id: user_id.to_i64(),
+                    at_ms,
+                    reason,
+                    channel_id: new_channel_id.map(ToI64::to_i64),
+                    has_afk_channel: self.has_afk_channel,
+                    pending_cap_seconds: self.pending_cap_seconds,
+                    owner_instance_id: &self.recording_owner_instance_id,
+                },
+            )
+            .await
+            {
+                warn!(user_id, "failed to start pending grace: {}", err);
+            }
+        }
+    }
+
+    async fn pause_user_recording(
+        &mut self,
+        user_id: u64,
+        to_channel_id: Option<ChannelId>,
+        reason: &str,
+        starts_grace: bool,
+        at_ms: i64,
+    ) {
+        let current_channel = self.channel_id;
         let Some(recording) = self.recordings.remove_active_by_user(user_id) else {
-            warn!(
-                user_id,
-                ssrc, "ClientDisconnect had no active writer to pause"
-            );
+            let paused = match crate::database::logical_recordings::pause_active_user(
+                &self.pool,
+                crate::database::logical_recordings::PauseActiveUserRequest {
+                    guild_id: self.guild_id.to_i64(),
+                    user_id: user_id.to_i64(),
+                    at_ms,
+                    reason,
+                    from_channel_id: Some(current_channel.to_i64()),
+                    to_channel_id: to_channel_id.map(ToI64::to_i64),
+                    has_afk_channel: self.has_afk_channel,
+                    starts_grace,
+                    pending_cap_seconds: self.pending_cap_seconds,
+                    owner_instance_id: &self.recording_owner_instance_id,
+                },
+            )
+            .await
+            {
+                Ok(paused) => paused,
+                Err(err) => {
+                    warn!(user_id, "failed to pause silent logical session: {}", err);
+                    false
+                }
+            };
+            if !paused
+                && starts_grace
+                && let Err(err) =
+                    crate::database::logical_recordings::mark_pending_user_unavailable(
+                        &self.pool,
+                        crate::database::logical_recordings::PendingUserUnavailableRequest {
+                            guild_id: self.guild_id.to_i64(),
+                            user_id: user_id.to_i64(),
+                            at_ms,
+                            reason,
+                            channel_id: to_channel_id.map(ToI64::to_i64),
+                            has_afk_channel: self.has_afk_channel,
+                            pending_cap_seconds: self.pending_cap_seconds,
+                            owner_instance_id: &self.recording_owner_instance_id,
+                        },
+                    )
+                    .await
+            {
+                warn!(user_id, "failed to update pending user state: {}", err);
+            }
+            if paused {
+                crate::events::voice::insert_voice_event(
+                    &self.pool,
+                    self.guild_id.to_i64(),
+                    Some(current_channel.to_i64()),
+                    user_id.to_i64(),
+                    crate::events::voice::EVT_USER_RECORDING_PAUSE,
+                )
+                .await;
+            }
             return;
         };
 
-        let paused_at =
-            chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now);
-        let token = self.paused_token;
-        self.paused_token = self.paused_token.saturating_add(1);
-        let paused = PausedRecording {
-            recording,
+        let ssrc = recording.ssrc;
+        let recording_session_id = recording.recording_session_id;
+        self.finalize_recording(
             ssrc,
-            paused_at,
-            token,
-            deadline_ms: at_ms.saturating_add(USER_REJOIN_RESUME_TIMEOUT_MS.to_i64()),
-        };
+            recording,
+            VoiceEventType::WriterClose,
+            timestamp(at_ms),
+        )
+        .await;
 
-        if let Some(previous) = self.recordings.insert_paused(user_id, paused) {
+        if let Err(err) = crate::database::logical_recordings::pause_session(
+            &self.pool,
+            crate::database::logical_recordings::PauseRequest {
+                recording_session_id,
+                at_ms,
+                reason,
+                from_channel_id: Some(current_channel.to_i64()),
+                to_channel_id: to_channel_id.map(ToI64::to_i64),
+                has_afk_channel: self.has_afk_channel,
+                starts_grace,
+                pending_cap_seconds: self.pending_cap_seconds,
+                owner_instance_id: &self.recording_owner_instance_id,
+            },
+        )
+        .await
+        {
             warn!(
                 user_id,
-                previous_ssrc = previous.ssrc,
-                "Replacing existing paused recording for user"
+                recording_session_id, "failed to pause logical recording: {}", err
             );
-            self.finalize_recording(
-                previous.ssrc,
-                previous.recording,
-                VoiceEventType::WriterClose,
-                previous.paused_at,
-            )
-            .await;
         }
 
         crate::events::voice::insert_voice_event(
             &self.pool,
             self.guild_id.to_i64(),
-            Some(self.channel_id.to_i64()),
+            Some(current_channel.to_i64()),
             user_id.to_i64(),
             crate::events::voice::EVT_USER_RECORDING_PAUSE,
         )
         .await;
-
-        info!(
-            user_id,
-            ssrc,
-            timeout_ms = USER_REJOIN_RESUME_TIMEOUT_MS,
-            "Paused recording for user rejoin"
-        );
     }
 
-    pub(super) async fn resume_paused_recording(&mut self, user_id: u64, ssrc: u32) -> bool {
-        let Some(mut paused) = self.recordings.take_paused(user_id) else {
-            return false;
-        };
+    async fn pause_all_for_departure(
+        &mut self,
+        from_channel_id: ChannelId,
+        to_channel_id: Option<ChannelId>,
+        reason: &str,
+        starts_grace: bool,
+        at_ms: i64,
+    ) {
+        let recordings = self.recordings.take_all_active();
+        for (ssrc, recording) in recordings {
+            let user_id = recording.user_id;
+            let recording_session_id = recording.recording_session_id;
+            self.finalize_recording(
+                ssrc,
+                recording,
+                VoiceEventType::WriterClose,
+                timestamp(at_ms),
+            )
+            .await;
 
-        let now = chrono::Utc::now();
-        let gap_ms = now
-            .signed_duration_since(paused.paused_at)
-            .num_milliseconds();
-        let frames = silence_frames_for_gap_ms(gap_ms);
+            if let Err(err) = crate::database::logical_recordings::pause_session(
+                &self.pool,
+                crate::database::logical_recordings::PauseRequest {
+                    recording_session_id,
+                    at_ms,
+                    reason,
+                    from_channel_id: Some(from_channel_id.to_i64()),
+                    to_channel_id: to_channel_id.map(ToI64::to_i64),
+                    has_afk_channel: self.has_afk_channel,
+                    starts_grace,
+                    pending_cap_seconds: self.pending_cap_seconds,
+                    owner_instance_id: &self.recording_owner_instance_id,
+                },
+            )
+            .await
+            {
+                warn!(
+                    user_id,
+                    recording_session_id,
+                    "failed to pause logical recording at bot departure: {}",
+                    err
+                );
+            }
 
-        if let Err(err) = paused.recording.writer.write_silence(frames) {
-            error!(
-                user_id,
-                old_ssrc = paused.ssrc,
-                new_ssrc = ssrc,
-                "Failed to write user rejoin silence: {}",
-                err
-            );
+            crate::events::voice::insert_voice_event(
+                &self.pool,
+                self.guild_id.to_i64(),
+                Some(from_channel_id.to_i64()),
+                user_id.to_i64(),
+                crate::events::voice::EVT_RECORDING_PAUSE,
+            )
+            .await;
         }
-        paused.recording.ssrc = ssrc;
-
-        self.recordings
-            .insert_active(user_id, ssrc, paused.recording);
-
-        crate::events::voice::insert_voice_event(
+        match crate::database::logical_recordings::owned_active_sessions(
             &self.pool,
             self.guild_id.to_i64(),
-            Some(self.channel_id.to_i64()),
-            user_id.to_i64(),
-            crate::events::voice::EVT_USER_RECORDING_RESUME,
+            &self.recording_owner_instance_id,
         )
-        .await;
+        .await
+        {
+            Ok(sessions) => {
+                for (recording_session_id, user_id) in sessions {
+                    if let Err(err) = crate::database::logical_recordings::pause_session(
+                        &self.pool,
+                        crate::database::logical_recordings::PauseRequest {
+                            recording_session_id,
+                            at_ms,
+                            reason,
+                            from_channel_id: Some(from_channel_id.to_i64()),
+                            to_channel_id: to_channel_id.map(ToI64::to_i64),
+                            has_afk_channel: self.has_afk_channel,
+                            starts_grace,
+                            pending_cap_seconds: self.pending_cap_seconds,
+                            owner_instance_id: &self.recording_owner_instance_id,
+                        },
+                    )
+                    .await
+                    {
+                        warn!(
+                            user_id,
+                            recording_session_id,
+                            "failed to pause silent logical session at bot departure: {}",
+                            err
+                        );
+                        continue;
+                    }
+                    crate::events::voice::insert_voice_event(
+                        &self.pool,
+                        self.guild_id.to_i64(),
+                        Some(from_channel_id.to_i64()),
+                        user_id,
+                        crate::events::voice::EVT_RECORDING_PAUSE,
+                    )
+                    .await;
+                }
+            }
+            Err(err) => warn!(
+                guild_id = self.guild_id.get(),
+                "failed to find silent logical sessions at bot departure: {}", err
+            ),
+        }
+        self.recordings.clear();
+    }
 
-        info!(
-            user_id,
-            old_ssrc = paused.ssrc,
-            new_ssrc = ssrc,
-            gap_ms,
-            frames,
-            "Resumed paused user recording"
-        );
-        true
+    async fn resume_pending_user(&self, user_id: u64, channel_id: ChannelId, at_ms: i64) {
+        match crate::database::logical_recordings::resume_pending_user(
+            &self.pool,
+            self.guild_id.to_i64(),
+            user_id.to_i64(),
+            channel_id.to_i64(),
+            at_ms,
+            &self.recording_owner_instance_id,
+        )
+        .await
+        {
+            Ok(Some(recording_session_id)) => {
+                crate::events::voice::insert_voice_event(
+                    &self.pool,
+                    self.guild_id.to_i64(),
+                    Some(channel_id.to_i64()),
+                    user_id.to_i64(),
+                    crate::events::voice::EVT_USER_RECORDING_RESUME,
+                )
+                .await;
+                crate::events::voice::insert_voice_event(
+                    &self.pool,
+                    self.guild_id.to_i64(),
+                    Some(channel_id.to_i64()),
+                    user_id.to_i64(),
+                    crate::events::voice::EVT_RECORDING_RESUME,
+                )
+                .await;
+                info!(
+                    user_id,
+                    recording_session_id,
+                    channel_id = channel_id.get(),
+                    "logical recording resumed"
+                );
+            }
+            Ok(None) => {}
+            Err(err) => warn!(user_id, "failed to resume logical recording: {}", err),
+        }
     }
 
     pub(super) async fn handle_driver_disconnect(
@@ -138,108 +345,93 @@ impl RecorderActor {
         at_ms: i64,
     ) {
         info!(recoverable, finalize_empty_channel, "driver disconnected");
-
         if should_count_disconnect {
             self.metrics
                 .driver_disconnects
                 .fetch_add(1, Ordering::Relaxed);
         }
 
+        if let Some(planned) = self.planned_handoff {
+            self.pause_all_for_departure(
+                planned.from_channel_id,
+                planned.to_channel_id,
+                if planned.to_channel_id.is_some() {
+                    "handoff"
+                } else {
+                    "bot_departure"
+                },
+                false,
+                at_ms,
+            )
+            .await;
+            if planned.to_channel_id.is_some() {
+                self.disconnected_at_ms = at_ms;
+                self.recoverable_disconnect_deadline_ms =
+                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
+            }
+            return;
+        }
+
         if recoverable {
             if self.disconnected_at_ms == 0 {
                 self.disconnected_at_ms = at_ms;
                 self.recoverable_disconnect_deadline_ms =
-                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS.to_i64());
-                info!("Recoverable disconnect recorded at {}", at_ms);
-                for user_id in self.recordings.user_ids() {
-                    crate::events::voice::insert_voice_event(
-                        &self.pool,
-                        self.guild_id.to_i64(),
-                        Some(self.channel_id.to_i64()),
-                        user_id.to_i64(),
-                        crate::events::voice::EVT_RECORDING_PAUSE,
-                    )
-                    .await;
-                }
+                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
+                self.pause_all_for_departure(
+                    self.channel_id,
+                    Some(self.channel_id),
+                    "network",
+                    true,
+                    at_ms,
+                )
+                .await;
             }
             return;
         }
 
-        if finalize_empty_channel {
-            info!(
-                "Intentional disconnect with no human users in channel. Closing active recordings."
-            );
-        }
-
-        self.disconnected_at_ms = 0;
-        self.recoverable_disconnect_deadline_ms = 0;
-        self.finalize_all_active_recordings(
-            VoiceEventType::WriterClose,
-            chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now),
+        self.pause_all_for_departure(
+            self.channel_id,
+            None,
+            if finalize_empty_channel {
+                "empty_channel"
+            } else {
+                "bot_departure"
+            },
+            false,
+            at_ms,
         )
         .await;
-        self.clear_receiver_state();
+        self.disconnected_at_ms = 0;
+        self.recoverable_disconnect_deadline_ms = 0;
     }
 
     pub(super) async fn handle_driver_connected(&mut self, reconnect: bool, at_ms: i64) {
         if reconnect {
-            info!("Reconnected");
             self.metrics
                 .driver_reconnects
                 .fetch_add(1, Ordering::Relaxed);
-        } else {
-            info!("Connected");
         }
-        self.resume_after_recoverable_disconnect(at_ms).await;
+        let channel_id = self
+            .planned_handoff
+            .and_then(|planned| planned.to_channel_id)
+            .unwrap_or(self.channel_id);
+        self.complete_handoff(channel_id, at_ms).await;
     }
 
-    async fn resume_after_recoverable_disconnect(&mut self, at_ms: i64) {
-        let disconnected_at_ms = self.disconnected_at_ms;
-        if disconnected_at_ms == 0 {
-            return;
-        }
-
+    pub(super) async fn complete_handoff(&mut self, channel_id: ChannelId, connected_at_ms: i64) {
+        self.channel_id = channel_id;
+        self.current_channel_id
+            .store(channel_id.get(), Ordering::Relaxed);
+        self.channel_metrics = self
+            .metrics
+            .channel_metrics(self.guild_id.get(), channel_id.get());
+        self.planned_handoff = None;
         self.disconnected_at_ms = 0;
         self.recoverable_disconnect_deadline_ms = 0;
-        let reconnect_time =
-            chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now);
-        let frames = silence_frames_for_gap_ms(at_ms - disconnected_at_ms);
-        info!(
-            "Resuming recordings after {}ms disconnect with {} silence frames",
-            at_ms - disconnected_at_ms,
-            frames
-        );
 
-        for user_id in self.recordings.user_ids() {
-            crate::events::voice::insert_voice_event(
-                &self.pool,
-                self.guild_id.to_i64(),
-                Some(self.channel_id.to_i64()),
-                user_id.to_i64(),
-                crate::events::voice::EVT_RECORDING_RESUME,
-            )
-            .await;
-        }
-
-        let active_ssrcs = self.recordings.active_non_bot_ssrcs();
-        for ssrc in active_ssrcs {
-            let Some(recording) = self.recordings.active_get_mut(ssrc) else {
-                continue;
-            };
-            if let Err(err) = recording.writer.write_silence(frames) {
-                error!(
-                    "Failed to write reconnect gap silence for ssrc {}: {}",
-                    ssrc, err
-                );
-            }
-        }
-
-        for (uid, ssrc) in self.scan_users_no_longer_in_voice_state() {
-            warn!(
-                "User {} (SSRC {}) is no longer in voice after reconnect. Closing writer.",
-                uid, ssrc
-            );
-            self.finalize_writer_at(ssrc, VoiceEventType::WriterClose, reconnect_time)
+        let users = self.human_users_in_channel(channel_id);
+        for user_id in users {
+            self.resume_pending_user(user_id, channel_id, connected_at_ms)
                 .await;
         }
     }
@@ -251,14 +443,12 @@ impl RecorderActor {
             now_ms,
         ) {
             warn!(
-                "Recoverable disconnect timed out after {}ms. Closing active recordings.",
-                RECOVERABLE_DISCONNECT_TIMEOUT_MS
+                guild_id = self.guild_id.get(),
+                "voice recovery timed out; tearing down stale call"
             );
             self.disconnected_at_ms = 0;
             self.recoverable_disconnect_deadline_ms = 0;
-            self.finalize_all_active_recordings(VoiceEventType::WriterClose, chrono::Utc::now())
-                .await;
-            self.clear_receiver_state();
+            self.planned_handoff = None;
             let report = crate::events::voice::teardown_voice_session(
                 &self.ctx.data,
                 &self.pool,
@@ -274,28 +464,14 @@ impl RecorderActor {
             }
         }
 
-        let expired = self.recordings.expired_paused_user_ids(now_ms);
-
-        for user_id in expired {
-            let Some(paused) = self.recordings.take_paused(user_id) else {
-                continue;
-            };
-            if !paused_timeout_matches(Some(paused.token), paused.token) {
-                continue;
-            }
-            warn!(
-                user_id,
-                ssrc = paused.ssrc,
-                timeout_ms = USER_REJOIN_RESUME_TIMEOUT_MS,
-                "User rejoin resume timed out. Closing recording."
-            );
-            self.finalize_recording(
-                paused.ssrc,
-                paused.recording,
-                VoiceEventType::WriterClose,
-                paused.paused_at,
-            )
-            .await;
+        if let Err(err) = crate::database::logical_recordings::expire_pending_sessions_for_guild(
+            &self.pool,
+            self.guild_id.to_i64(),
+            now_ms,
+        )
+        .await
+        {
+            warn!("pending logical recording expiry failed: {}", err);
         }
     }
 
@@ -304,27 +480,55 @@ impl RecorderActor {
             return;
         }
 
-        for (uid, ssrc) in self.scan_users_no_longer_in_voice_state() {
-            warn!(
-                "Reaper: User {} (SSRC {}) is no longer in voice state. Closing writer.",
-                uid, ssrc
-            );
-            self.finalize_writer_at(ssrc, VoiceEventType::ZombieReaped, chrono::Utc::now())
-                .await;
+        for (uid, ssrc) in self.scan_users_no_longer_in_recorded_channel() {
+            warn!(uid, ssrc, "recording user no longer in recorded channel");
+            self.pause_user_recording(
+                uid,
+                None,
+                "disconnect",
+                true,
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .await;
         }
     }
 
-    fn scan_users_no_longer_in_voice_state(&self) -> Vec<(u64, u32)> {
+    fn scan_users_no_longer_in_recorded_channel(&self) -> Vec<(u64, u32)> {
         let mut users_to_remove = Vec::new();
         if let Some(guild) = self.ctx.cache.guild(self.guild_id) {
             for (uid, ssrc) in self.recordings.user_ssrc_pairs() {
-                if !guild.voice_states.contains_key(&UserId::new(uid)) {
+                let still_here = guild
+                    .voice_states
+                    .get(&UserId::new(uid))
+                    .is_some_and(|voice| voice.channel_id == Some(self.channel_id));
+                if !still_here {
                     users_to_remove.push((uid, ssrc));
                 }
             }
         }
         users_to_remove
     }
+
+    fn human_users_in_channel(&self, channel_id: ChannelId) -> Vec<u64> {
+        let Some(guild) = self.ctx.cache.guild(self.guild_id) else {
+            return Vec::new();
+        };
+        guild
+            .voice_states
+            .iter()
+            .filter_map(|(user_id, voice)| {
+                if voice.channel_id != Some(channel_id) {
+                    return None;
+                }
+                let member = guild.members.get(user_id)?;
+                (!member.user.bot).then_some(user_id.get())
+            })
+            .collect()
+    }
+}
+
+fn timestamp(at_ms: i64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now)
 }
 
 fn recoverable_disconnect_timed_out(

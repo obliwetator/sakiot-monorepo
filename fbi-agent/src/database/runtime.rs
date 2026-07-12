@@ -129,6 +129,25 @@ pub async fn release_voice_session(
     Ok(result.rows_affected())
 }
 
+pub async fn update_voice_session_channel(
+    pool: &Pool<Postgres>,
+    runtime: &RuntimeState,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) -> DbResult<u64> {
+    let result = sqlx::query(
+        "UPDATE voice_session_leases
+            SET channel_id = $3, heartbeat_at = now(), updated_at = now()
+          WHERE guild_id = $1 AND owner_instance_id = $2",
+    )
+    .bind(guild_id.to_i64())
+    .bind(&runtime.config().instance_id)
+    .bind(channel_id.to_i64())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn active_lease_owner(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
@@ -178,6 +197,35 @@ pub async fn mark_instance_stopped(
     .execute(pool)
     .await?
     .rows_affected();
+
+    sqlx::query(
+        "UPDATE recording_sessions rs
+            SET state = 'finalized',
+                ended_at = COALESCE(
+                    (
+                        SELECT to_timestamp(COALESCE(MAX(af.end_ts), MAX(af.start_ts))::double precision / 1000.0)
+                          FROM audio_files af
+                         WHERE af.recording_session_id = rs.id
+                    ),
+                    rs.started_at
+                ),
+                owner_instance_id = NULL,
+                end_reason = COALESCE(end_reason, 'instance_stopped'),
+                updated_at = now()
+          WHERE rs.owner_instance_id = $1 AND rs.state = 'active'",
+    )
+    .bind(&runtime.config().instance_id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE recording_sessions
+            SET owner_instance_id = NULL, updated_at = now()
+          WHERE owner_instance_id = $1 AND state = 'pending'",
+    )
+    .bind(&runtime.config().instance_id)
+    .execute(pool)
+    .await?;
 
     let instances_updated = sqlx::query!(
         "UPDATE bot_instances

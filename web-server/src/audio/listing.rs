@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{HttpResponse, get, web};
-use sqlx::{Pool, Postgres};
+use chrono::Datelike;
+use sqlx::{Pool, Postgres, Row};
 use tracing::error;
 
 use crate::auth::{Access, Token};
@@ -62,6 +63,9 @@ pub async fn for_entry(
             file: file_name_str,
             user_id: parsed.map(|(_, u)| u.to_string()),
             display_name: None,
+            recording_session_id: None,
+            channel_journey: None,
+            state: None,
             start_ts_ms: parsed.map(|(ts, _)| ts),
         };
         if let Some(months) = dirs.months.as_mut()
@@ -271,6 +275,157 @@ pub async fn get_channels_dir(
     Ok(dirs_vec)
 }
 
+#[derive(Debug)]
+struct SessionListing {
+    logical: bool,
+    user_id: i64,
+    starting_channel_id: i64,
+    started_at_ms: i64,
+    state: String,
+    first_file_name: Option<String>,
+    channel_journey: Vec<i64>,
+}
+
+async fn get_session_tree(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    permitted: &HashSet<i64>,
+) -> Result<Vec<Channels>, AppError> {
+    let rows = sqlx::query(
+        "WITH listed AS (
+            SELECT rs.id AS listing_id,
+                   TRUE AS logical,
+                   rs.user_id,
+                   rs.starting_channel_id,
+                   rs.state,
+                   (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS started_at_ms,
+                   af.channel_id AS fragment_channel_id,
+                   af.file_name,
+                   af.segment_index,
+                   af.id AS audio_file_id
+              FROM recording_sessions rs
+              LEFT JOIN audio_files af ON af.recording_session_id = rs.id
+             WHERE rs.guild_id = $1
+            UNION ALL
+            SELECT -af.id AS listing_id,
+                   FALSE AS logical,
+                   af.user_id,
+                   af.channel_id AS starting_channel_id,
+                   CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END AS state,
+                   COALESCE(af.start_ts, 0) AS started_at_ms,
+                   af.channel_id AS fragment_channel_id,
+                   af.file_name,
+                   0 AS segment_index,
+                   af.id AS audio_file_id
+              FROM audio_files af
+             WHERE af.guild_id = $1 AND af.recording_session_id IS NULL
+        )
+        SELECT *
+          FROM listed
+         ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id",
+    )
+    .bind(guild_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut listings: HashMap<i64, SessionListing> = HashMap::new();
+    for row in rows {
+        let listing_id: i64 = row.try_get("listing_id")?;
+        let fragment_channel_id: Option<i64> = row.try_get("fragment_channel_id")?;
+        let file_name: Option<String> = row.try_get("file_name")?;
+        let starting_channel_id: i64 = row.try_get("starting_channel_id")?;
+        let entry = listings.entry(listing_id).or_insert(SessionListing {
+            logical: row.try_get("logical")?,
+            user_id: row.try_get("user_id")?,
+            starting_channel_id,
+            started_at_ms: row.try_get("started_at_ms")?,
+            state: row.try_get("state")?,
+            first_file_name: None,
+            channel_journey: vec![starting_channel_id],
+        });
+        if entry.first_file_name.is_none() {
+            entry.first_file_name = file_name;
+        }
+        if let Some(channel_id) = fragment_channel_id
+            && entry.channel_journey.last() != Some(&channel_id)
+        {
+            entry.channel_journey.push(channel_id);
+        }
+    }
+
+    let mut grouped: HashMap<i64, HashMap<i32, HashMap<i32, Vec<File>>>> = HashMap::new();
+    for (listing_id, listing) in listings {
+        let audible: HashSet<i64> = if listing.channel_journey.is_empty() {
+            HashSet::from([listing.starting_channel_id])
+        } else {
+            listing.channel_journey.iter().copied().collect()
+        };
+        if !audible.iter().all(|channel| permitted.contains(channel)) {
+            continue;
+        }
+        let Some(started_at) =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(listing.started_at_ms)
+        else {
+            continue;
+        };
+        let file_name = listing
+            .first_file_name
+            .unwrap_or_else(|| format!("{}-{}", listing.started_at_ms, listing.user_id));
+        let file_name = if file_name.ends_with(".ogg") {
+            file_name
+        } else {
+            format!("{file_name}.ogg")
+        };
+        grouped
+            .entry(listing.starting_channel_id)
+            .or_default()
+            .entry(started_at.year())
+            .or_default()
+            .entry(started_at.month() as i32)
+            .or_default()
+            .push(File {
+                file: file_name,
+                user_id: Some(listing.user_id.to_string()),
+                display_name: None,
+                recording_session_id: listing.logical.then(|| listing_id.to_string()),
+                channel_journey: Some(
+                    listing
+                        .channel_journey
+                        .into_iter()
+                        .map(|channel| channel.to_string())
+                        .collect(),
+                ),
+                state: Some(listing.state),
+                start_ts_ms: Some(listing.started_at_ms),
+            });
+    }
+
+    let mut channels = Vec::new();
+    for (channel_id, years) in grouped {
+        let mut dirs = Vec::new();
+        for (year, months) in years {
+            let months = months
+                .into_iter()
+                .map(|(month, mut files)| {
+                    files.sort_by_key(|file| std::cmp::Reverse(file.start_ts_ms));
+                    (month, Some(files))
+                })
+                .collect();
+            dirs.push(Directories {
+                year,
+                months: Some(months),
+            });
+        }
+        dirs.sort_by_key(|directory| std::cmp::Reverse(directory.year));
+        channels.push(Channels {
+            channel_id: channel_id.to_string(),
+            dirs,
+        });
+    }
+    channels.sort_by_key(|channel| channel.channel_id.parse::<i64>().unwrap_or_default());
+    Ok(channels)
+}
+
 pub async fn for_channel_ids(
     guild_id: String,
     dirs_vec: &mut Vec<Channels>,
@@ -452,7 +607,8 @@ pub async fn get_live_stems(
     let permitted =
         crate::permissions::visible_channels_for_user(&pool, guild_id, token.user_id).await?;
 
-    let rows = sqlx::query!(
+    let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
+    let rows = sqlx::query(
         "SELECT af.file_name, af.channel_id
            FROM audio_files af
           WHERE af.guild_id = $1
@@ -465,16 +621,31 @@ pub async fn get_live_stems(
                    AND af.recording_heartbeat_at > now() - interval '120 seconds'
                    AND bi.heartbeat_at > now() - interval '120 seconds'
                    AND bi.state <> 'stopped'
+            )
+            AND (
+                af.recording_session_id IS NULL
+                OR NOT EXISTS (
+                    SELECT 1
+                      FROM audio_files sibling
+                     WHERE sibling.recording_session_id = af.recording_session_id
+                       AND NOT (sibling.channel_id = ANY($2))
+                )
             )",
-        guild_id
     )
+    .bind(guild_id)
+    .bind(&permitted_channels)
     .fetch_all(pool.get_ref())
     .await?;
 
     let stems: Vec<String> = rows
         .into_iter()
-        .filter(|r| permitted.contains(&r.channel_id))
-        .map(|r| r.file_name)
+        .filter_map(|row| {
+            let channel_id = row.try_get::<i64, _>("channel_id").ok()?;
+            permitted
+                .contains(&channel_id)
+                .then(|| row.try_get::<String, _>("file_name").ok())
+                .flatten()
+        })
         .collect();
 
     Ok(HttpResponse::Ok().json(stems))
@@ -511,7 +682,7 @@ pub async fn get_current_month_permission(
         crate::permissions::visible_channels_for_user(&pool, guild_id_as_int, token.user_id)
             .await?;
 
-    let mut dirs_vec = get_channels_dir(guild_id, permission_hashset).await?;
+    let mut dirs_vec = get_session_tree(&pool, guild_id_as_int, &permission_hashset).await?;
 
     if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
         tracing::error!("enrich_display_names failed: {}", e);

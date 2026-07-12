@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, HttpResponse, get, web};
 use base64::prelude::*;
 use serde_json::json;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, Row};
 use tracing::{error, info};
 
 use crate::auth::{Access, Token};
@@ -90,7 +90,8 @@ pub async fn get_waveform_data(
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, path.0, path.1, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, path.0, path.1, &path.4, token.user_id)
+        .await?;
 
     // Silence-free version is a separate static file: distinct input,
     // distinct cache/progress key. No DB cache marker — the file is final
@@ -253,20 +254,28 @@ pub async fn get_clip_waveform_data(
     let (guild_id, clip_id) = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
 
-    let row = sqlx::query!(
-        "SELECT saved_file_name, channel_id FROM clips \
-         WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
-        guild_id,
-        clip_id
+    let row = sqlx::query(
+        "SELECT saved_file_name, channel_id, recording_session_id
+           FROM clips
+          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
     )
+    .bind(guild_id)
+    .bind(&clip_id)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
+    if let Some(session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
+        super::sessions::require_session_access(&pool, session_id, token.user_id).await?;
+    } else {
+        let channel_id = row
+            .try_get::<Option<i64>, _>("channel_id")?
+            .ok_or(AppError::ClipNotFound)?;
+        require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    }
 
-    let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
-
-    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
+    let saved_file_name = row
+        .try_get::<Option<String>, _>("saved_file_name")?
+        .ok_or(AppError::ClipNotFound)?;
     let input_file = format!("{}{}", clips_path(), saved_file_name);
 
     // Prefix the cache/progress key so it never collides with recording stems

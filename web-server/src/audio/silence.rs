@@ -9,7 +9,6 @@ use tracing::{error, info};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::require_channel_access;
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 use super::util::{file_exists, get_file_path_root, handle_idempotency_key, is_stale};
@@ -266,7 +265,8 @@ pub async fn remove_silence(
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_channel_access(&pool, path.0, path.1, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, path.0, path.1, &path.4, token.user_id)
+        .await?;
 
     let file_path: String = get_file_path_root(&recording_path(), &path);
     let no_silence_file_path = get_file_path_root(&no_silence_recording_path(), &path);

@@ -42,6 +42,9 @@ export function transform_to_months(data: Channels[]) {
 						file: file.file,
 						user_id: file.user_id,
 						display_name: file.display_name,
+						recording_session_id: file.recording_session_id,
+						channel_journey: file.channel_journey,
+						state: file.state,
 					};
 					all_file.push(indi);
 
@@ -74,6 +77,9 @@ export function transform_to_months(data: Channels[]) {
 			file: value.file.file,
 			user_id: value.file.user_id,
 			display_name: value.file.display_name,
+			recording_session_id: value.file.recording_session_id,
+			channel_journey: value.file.channel_journey,
+			state: value.file.state,
 		});
 
 		const dirs = hashmap3.get(value.year);
@@ -86,6 +92,9 @@ export function transform_to_months(data: Channels[]) {
 			file: value.file.file,
 			user_id: value.file.user_id,
 			display_name: value.file.display_name,
+			recording_session_id: value.file.recording_session_id,
+			channel_journey: value.file.channel_journey,
+			state: value.file.state,
 		});
 	});
 

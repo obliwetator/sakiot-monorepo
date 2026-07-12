@@ -14,10 +14,16 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
+use web_server::admin::voice_settings::{
+    delete_voice_settings, get_voice_settings, put_voice_settings,
+};
 use web_server::audio::{
-    LiveContainer, SilenceJobContainer, WaveformProgressContainer, download_audio, get_audio,
-    get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
-    get_waveform_data, live_playlist, live_segment, live_state, remove_silence, spawn_hls_reaper,
+    LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
+    download_audio, download_session, get_audio, get_clip_waveform_data,
+    get_current_month_permission, get_live_stems, get_recording_events, get_session_events,
+    get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
+    live_playlist, live_segment, live_state, remove_session_silence, remove_silence,
+    session_live_playlist, session_live_segment, spawn_hls_reaper,
 };
 #[cfg(feature = "dev-login")]
 use web_server::auth::dev_login;
@@ -156,6 +162,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_stamps)
             .service(play_clip)
             .service(create_clip)
+            .service(get_session_manifest)
+            .service(get_session_events)
+            .service(get_session_waveform)
+            .service(download_session)
+            .service(create_session_clip)
+            .service(remove_session_silence)
+            .service(session_live_playlist)
+            .service(session_live_segment)
+            .service(get_session_segment)
             // Live HLS routes — register before get_audio to avoid pattern fallback churn.
             .service(live_playlist)
             .service(live_state)
@@ -169,6 +184,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(list_user_overrides)
             .service(set_user_override)
             .service(delete_user_override);
+        let api_scope = api_scope
+            .service(get_voice_settings)
+            .service(put_voice_settings)
+            .service(delete_voice_settings);
 
         App::new()
             .app_data(web::Data::new(pool.clone()))

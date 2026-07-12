@@ -17,7 +17,9 @@ export function ItemsEl(props: {
 	const params = useParams();
 
 	const fileId = props.file.file.slice(0, -4);
-	const targetPath = `${PATH_PREFIX_FOR_LOGGED_USERS}/${params.guild_id}/audio/${props.file.channel_id}/${props.year}/${props.month_name}/${fileId}`;
+	const targetPath = props.file.recording_session_id
+		? `${PATH_PREFIX_FOR_LOGGED_USERS}/${params.guild_id}/audio/session/${props.file.recording_session_id}`
+		: `${PATH_PREFIX_FOR_LOGGED_USERS}/${params.guild_id}/audio/${props.file.channel_id}/${props.year}/${props.month_name}/${fileId}`;
 	const isActive = location.pathname === targetPath;
 
 	const baseColor = "bg-violet-600";
@@ -42,10 +44,19 @@ export function ItemsEl(props: {
 					if (!isActive) navigate(targetPath + location.search);
 				}
 			}}
-			title={props.file.file}
+			title={
+				props.file.channel_journey?.length
+					? `${props.file.file} · channels ${props.file.channel_journey.join(" → ")}`
+					: props.file.file
+			}
 		>
 			<span className="font-mono">{time}</span>
 			{username && <span className="ml-2">{username}</span>}
+			{props.file.channel_journey && props.file.channel_journey.length > 1 && (
+				<span className="ml-2 text-xs opacity-75">
+					{props.file.channel_journey.join(" → ")}
+				</span>
+			)}
 			{props.isLive && <LivePill />}
 		</button>
 	);

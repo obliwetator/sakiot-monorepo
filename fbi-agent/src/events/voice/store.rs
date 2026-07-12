@@ -47,6 +47,7 @@ pub(in crate::events) async fn insert_voice_event(
         channel_id,
         user_id,
         event_type_id,
+        None,
     )
     .await
     {
@@ -224,14 +225,18 @@ pub(super) async fn record_voice_events(
             if log_changes {
                 info!("User switched voice channels: {} -> {}", from, to);
             }
-            insert_voice_event(
+            if let Err(err) = crate::database::voice_events::insert_voice_state_event(
                 pool,
                 guild_id,
                 Some(to.to_i64()),
                 user_id,
                 EVT_CHANNEL_SWITCH,
+                Some(from.to_i64()),
             )
-            .await;
+            .await
+            {
+                warn!("Failed to insert voice_state_event: {}", err);
+            }
         }
         ChannelTransition::Unchanged => {}
     }

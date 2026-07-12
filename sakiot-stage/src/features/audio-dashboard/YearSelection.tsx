@@ -12,6 +12,7 @@ import { useGetAuthDetailsQuery } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import { AudioInterface } from "./AudioInterface";
+import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
 import CustomizedTreeView from "./TreeView";
 
 export function YearSelection() {
@@ -97,7 +98,9 @@ export function YearSelection() {
 					"&::-webkit-scrollbar": { display: "none" },
 				}}
 			>
-				{params.year && (
+				{params.session_id ? (
+					<LogicalSessionPlayer sessionId={params.session_id} />
+				) : params.year ? (
 					<>
 						<Tabs
 							value={activeTab}
@@ -132,7 +135,7 @@ export function YearSelection() {
 							</Box>
 						)}
 					</>
-				)}
+				) : null}
 			</Box>
 		</Box>
 	);

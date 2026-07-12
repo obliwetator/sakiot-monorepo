@@ -71,6 +71,10 @@ const baseQueryWithReauth: BaseQueryFn<
 export type ClipData = ApiSchema["ClipInfo"];
 
 export type VoiceEvent = ApiSchema["VoiceEventDto"];
+export type SessionManifest = ApiSchema["SessionManifestDto"];
+export type SessionSegment = ApiSchema["SessionSegmentDto"];
+export type SessionTimelineEvent = ApiSchema["SessionTimelineEventDto"];
+export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 
 export interface WaveformResponse {
 	progress: number;
@@ -83,7 +87,7 @@ export type StampData = ApiSchema["StampInfo"];
 export const apiSlice = createApi({
 	reducerPath: "api",
 	baseQuery: baseQueryWithReauth,
-	tagTypes: ["Clips", "GuildCooldown", "UserOverrides"],
+	tagTypes: ["Clips", "GuildCooldown", "UserOverrides", "GuildVoiceSettings"],
 	endpoints: (builder) => ({
 		jamIt: builder.mutation<
 			{ code: JamItRespStatus },
@@ -138,6 +142,31 @@ export const apiSlice = createApi({
 		}),
 		getLiveStems: builder.query<string[], string>({
 			query: (guild_id) => `current/${guild_id}/live-stems`,
+		}),
+		getSessionManifest: builder.query<SessionManifest, string>({
+			query: (recording_session_id) =>
+				`audio/sessions/${recording_session_id}/manifest`,
+		}),
+		getSessionWaveform: builder.query<WaveformResponse, string>({
+			query: (recording_session_id) =>
+				`audio/sessions/${recording_session_id}/waveform`,
+		}),
+		createSessionClip: builder.mutation<
+			CreateClipResponse,
+			{
+				recording_session_id: string;
+				start: number;
+				end: number;
+				name?: string;
+			}
+		>({
+			query: ({ recording_session_id, start, end, name }) => ({
+				url: `audio/sessions/${recording_session_id}/clips`,
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: { start, end, name },
+			}),
+			invalidatesTags: ["Clips"],
 		}),
 		getClips: builder.query<ClipData[], string>({
 			query: (guild_id) => ({
@@ -328,6 +357,35 @@ export const apiSlice = createApi({
 				{ type: "UserOverrides", id: guild_id },
 			],
 		}),
+		getGuildVoiceSettings: builder.query<GuildVoiceSettings, string>({
+			query: (guild_id) => `admin/guilds/${guild_id}/voice-settings`,
+			providesTags: (_result, _error, guild_id) => [
+				{ type: "GuildVoiceSettings", id: guild_id },
+			],
+		}),
+		setGuildVoiceSettings: builder.mutation<
+			GuildVoiceSettings,
+			{ guild_id: string; pending_cap_seconds: number }
+		>({
+			query: ({ guild_id, pending_cap_seconds }) => ({
+				url: `admin/guilds/${guild_id}/voice-settings`,
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: { pending_cap_seconds },
+			}),
+			invalidatesTags: (_result, _error, { guild_id }) => [
+				{ type: "GuildVoiceSettings", id: guild_id },
+			],
+		}),
+		deleteGuildVoiceSettings: builder.mutation<GuildVoiceSettings, string>({
+			query: (guild_id) => ({
+				url: `admin/guilds/${guild_id}/voice-settings`,
+				method: "DELETE",
+			}),
+			invalidatesTags: (_result, _error, guild_id) => [
+				{ type: "GuildVoiceSettings", id: guild_id },
+			],
+		}),
 		// Combine all 3 requests into a single query to emulate the existing Promise.all behavior
 		getAuthDetails: builder.query<AuthDetails, void>({
 			async queryFn(_arg, _queryApi, _extraOptions, fetchWithBQ) {
@@ -358,6 +416,9 @@ export const {
 	useGetAuthDetailsQuery,
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
+	useGetSessionManifestQuery,
+	useGetSessionWaveformQuery,
+	useCreateSessionClipMutation,
 	useGetClipsQuery,
 	useDeleteClipMutation,
 	useJamItMutation,
@@ -377,4 +438,7 @@ export const {
 	useListUserOverridesQuery,
 	useSetUserOverrideMutation,
 	useDeleteUserOverrideMutation,
+	useGetGuildVoiceSettingsQuery,
+	useSetGuildVoiceSettingsMutation,
+	useDeleteGuildVoiceSettingsMutation,
 } = apiSlice;

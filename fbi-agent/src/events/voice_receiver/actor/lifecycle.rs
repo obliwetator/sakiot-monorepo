@@ -55,10 +55,6 @@ impl RecorderActor {
             return;
         }
 
-        if self.resume_paused_recording(user_id, ssrc).await {
-            return;
-        }
-
         if self.recordings.has_active_ssrc(ssrc) {
             debug!("Writer already active for ssrc {}", ssrc);
             return;
@@ -113,7 +109,7 @@ impl RecorderActor {
             }
         };
 
-        let writer = match OggOpusWriter::new(BufWriter::new(file), ssrc, 0) {
+        let mut writer = match OggOpusWriter::new(BufWriter::new(file), ssrc, 0) {
             Ok(writer) => writer,
             Err(err) => {
                 error!("Failed to init OggOpusWriter for ssrc {}: {}", ssrc, err);
@@ -128,14 +124,37 @@ impl RecorderActor {
             }
         };
 
+        let initial_silence_frames =
+            super::super::pause::silence_frames_for_gap_ms(recording_handle.initial_silence_ms);
+        if initial_silence_frames > 0
+            && let Err(err) = writer.write_silence(initial_silence_frames)
+        {
+            error!(
+                user_id,
+                ssrc,
+                initial_silence_frames,
+                "Failed to write logical-fragment leading silence: {}",
+                err
+            );
+            self.metrics
+                .track_writer_setup_failure(&self.guild_metrics, &self.channel_metrics);
+            self.mark_recording_setup_failed(
+                recording_handle.audio_file_id,
+                RecordingFinalizeReason::WriterInit,
+            )
+            .await;
+            return;
+        }
+
         self.recordings.insert_active(
             user_id,
             ssrc,
             UserRecording {
                 writer,
                 audio_file_id: recording_handle.audio_file_id,
+                recording_session_id: recording_handle.recording_session_id,
                 file_name: recording_handle.file_name,
-                start_time: now,
+                start_time: recording_handle.start_time,
                 user_id,
                 ssrc,
             },
@@ -230,24 +249,6 @@ impl RecorderActor {
             self.finalize_recording(ssrc, recording, event_type, close_time)
                 .await;
         }
-
-        for paused in self.recordings.take_all_paused() {
-            self.finalize_recording(paused.ssrc, paused.recording, event_type, paused.paused_at)
-                .await;
-        }
-    }
-
-    pub(super) async fn finalize_writer_at(
-        &mut self,
-        ssrc: u32,
-        event_type: VoiceEventType,
-        close_time: chrono::DateTime<chrono::Utc>,
-    ) {
-        let Some(recording) = self.recordings.remove_active_by_ssrc(ssrc) else {
-            return;
-        };
-        self.finalize_recording(ssrc, recording, event_type, close_time)
-            .await;
     }
 
     pub(super) async fn finalize_recording(

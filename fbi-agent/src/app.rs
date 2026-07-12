@@ -20,6 +20,19 @@ pub(crate) async fn run() -> AppResult<()> {
     crate::reaper::reap_zombie_recordings(&pool).await?;
 
     let runtime = crate::runtime::RuntimeState::new(crate::runtime::RuntimeConfig::from_env());
+    let recovery = crate::database::logical_recordings::recover_stale_sessions(
+        &pool,
+        chrono::Utc::now().timestamp_millis(),
+        crate::heartbeat::STALE_AFTER_SECONDS,
+        Some(&runtime.config().instance_id),
+    )
+    .await?;
+    info!(
+        stale_pending_released = recovery.stale_pending_released,
+        stale_active_finalized = recovery.stale_active_finalized,
+        overdue_finalized = recovery.overdue_finalized,
+        "logical recording startup recovery complete"
+    );
     deployment::upsert_instance(&pool, &runtime).await?;
     info!(
         instance_id = %runtime.config().instance_id,
@@ -365,6 +378,12 @@ async fn insert_typemap_state(client: &mut Client, runtime: Arc<crate::runtime::
     data.insert::<HasBossMusic>(HashMap::new());
     data.insert::<BotMetricsKey>(Arc::new(BotMetrics::default()));
     data.insert::<crate::runtime::RuntimeStateKey>(runtime);
+    data.insert::<crate::events::voice_receiver::RecordingCoordinatorRegistryKey>(Arc::new(
+        crate::events::voice_receiver::RecordingCoordinatorRegistry::default(),
+    ));
+    data.insert::<crate::events::voice::coordinator::VoiceCoordinatorRegistryKey>(Arc::new(
+        crate::events::voice::coordinator::VoiceCoordinatorRegistry::default(),
+    ));
 }
 
 async fn process_metrics(client: &Client) -> AppResult<Arc<BotMetrics>> {

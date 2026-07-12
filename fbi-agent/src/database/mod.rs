@@ -1,6 +1,7 @@
 pub mod clips;
 pub mod error;
 pub mod guild_cache;
+pub mod logical_recordings;
 pub mod recordings;
 pub mod runtime;
 pub mod stamps;

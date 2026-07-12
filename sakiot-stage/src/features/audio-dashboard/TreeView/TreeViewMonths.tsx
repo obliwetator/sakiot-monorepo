@@ -11,7 +11,9 @@ export function TreeViewMonths(props: {
 	liveSet: Set<string>;
 }) {
 	const safeFiles = props.files || [];
-	const hasLive = safeFiles.some((f) => props.liveSet.has(f.file.slice(0, -4)));
+	const hasLive = safeFiles.some(
+		(f) => f.state === "active" || props.liveSet.has(f.file.slice(0, -4)),
+	);
 
 	const byDay = new Map<number, IndividualFileArray>();
 	for (const el of safeFiles) {

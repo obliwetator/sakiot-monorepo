@@ -6,7 +6,8 @@ use serenity::{
 };
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler};
 use sqlx::{Pool, Postgres};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::warn;
 
 mod actor;
@@ -28,9 +29,42 @@ pub fn clips_file_path() -> std::path::PathBuf {
 #[derive(Clone)]
 pub struct Receiver {
     guild_id: GuildId,
-    channel_id: ChannelId,
     ctx: Arc<Context>,
     actor: actor::RecorderHandle,
+}
+
+#[derive(Default)]
+pub(crate) struct RecordingCoordinatorRegistry {
+    actors: Mutex<HashMap<u64, actor::RecorderHandle>>,
+}
+
+pub(crate) struct RecordingCoordinatorRegistryKey;
+
+impl serenity::prelude::TypeMapKey for RecordingCoordinatorRegistryKey {
+    type Value = Arc<RecordingCoordinatorRegistry>;
+}
+
+impl RecordingCoordinatorRegistry {
+    async fn get_or_create(
+        &self,
+        pool: Pool<Postgres>,
+        ctx: Arc<Context>,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+        metrics: Arc<crate::BotMetrics>,
+    ) -> actor::RecorderHandle {
+        let mut actors = self.actors.lock().await;
+        if let Some(actor) = actors.get(&guild_id.get()) {
+            return actor.clone();
+        }
+        let actor = actor::RecorderHandle::new(pool, ctx, guild_id, channel_id, metrics).await;
+        actors.insert(guild_id.get(), actor.clone());
+        actor
+    }
+
+    async fn get(&self, guild_id: GuildId) -> Option<actor::RecorderHandle> {
+        self.actors.lock().await.get(&guild_id.get()).cloned()
+    }
 }
 
 impl Receiver {
@@ -41,11 +75,26 @@ impl Receiver {
         channel_id: ChannelId,
         metrics: Arc<crate::BotMetrics>,
     ) -> Self {
-        let actor =
-            actor::RecorderHandle::new(pool, ctx.clone(), guild_id, channel_id, metrics).await;
+        let registry = {
+            let data = ctx.data.read().await;
+            data.get::<RecordingCoordinatorRegistryKey>().cloned()
+        };
+        let actor = match registry {
+            Some(registry) => {
+                registry
+                    .get_or_create(pool, ctx.clone(), guild_id, channel_id, metrics)
+                    .await
+            }
+            None => {
+                warn!(
+                    guild_id = guild_id.get(),
+                    "recording coordinator registry missing; using unregistered actor"
+                );
+                actor::RecorderHandle::new(pool, ctx.clone(), guild_id, channel_id, metrics).await
+            }
+        };
         Self {
             guild_id,
-            channel_id,
             ctx,
             actor,
         }
@@ -90,7 +139,7 @@ impl VoiceEventHandler for Receiver {
                 let command = actor::disconnect_command(
                     &self.ctx,
                     self.guild_id,
-                    self.channel_id,
+                    self.actor.current_channel_id(),
                     data,
                     now_ms,
                 );
@@ -129,12 +178,90 @@ impl VoiceEventHandler for Receiver {
     }
 }
 
+async fn coordinator_from_ctx(ctx: &Context, guild_id: GuildId) -> Option<actor::RecorderHandle> {
+    let registry = {
+        let data = ctx.data.read().await;
+        data.get::<RecordingCoordinatorRegistryKey>().cloned()
+    }?;
+    registry.get(guild_id).await
+}
+
+pub(crate) async fn begin_handoff(
+    ctx: &Context,
+    guild_id: GuildId,
+    from_channel_id: ChannelId,
+    to_channel_id: Option<ChannelId>,
+    has_afk_channel: bool,
+    pending_cap_seconds: i64,
+) {
+    if let Some(actor) = coordinator_from_ctx(ctx, guild_id).await {
+        actor
+            .send_control(actor::RecorderCommand::BeginHandoff {
+                from_channel_id,
+                to_channel_id,
+                has_afk_channel,
+                pending_cap_seconds,
+            })
+            .await;
+    }
+}
+
+pub(crate) async fn cancel_handoff(ctx: &Context, guild_id: GuildId) {
+    if let Some(actor) = coordinator_from_ctx(ctx, guild_id).await {
+        actor
+            .send_control(actor::RecorderCommand::CancelHandoff)
+            .await;
+    }
+}
+
+pub(crate) async fn complete_handoff(
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    connected_at_ms: i64,
+    has_afk_channel: bool,
+    pending_cap_seconds: i64,
+) {
+    if let Some(actor) = coordinator_from_ctx(ctx, guild_id).await {
+        actor
+            .send_control(actor::RecorderCommand::CompleteHandoff {
+                channel_id,
+                connected_at_ms,
+                has_afk_channel,
+                pending_cap_seconds,
+            })
+            .await;
+    }
+}
+
+pub(crate) async fn user_voice_transition(
+    ctx: &Context,
+    guild_id: GuildId,
+    user_id: u64,
+    old_channel_id: Option<ChannelId>,
+    new_channel_id: Option<ChannelId>,
+    afk_channel_id: Option<ChannelId>,
+    at_ms: i64,
+) -> bool {
+    if let Some(actor) = coordinator_from_ctx(ctx, guild_id).await {
+        actor
+            .send_control(actor::RecorderCommand::UserVoiceTransition {
+                user_id,
+                old_channel_id,
+                new_channel_id,
+                afk_channel_id,
+                at_ms,
+            })
+            .await;
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pause::{
-        USER_REJOIN_RESUME_TIMEOUT_MS, paused_timeout_matches, silence_frames_for_gap_ms,
-    };
-    use crate::cast::ToI64;
+    use super::pause::silence_frames_for_gap_ms;
 
     #[test]
     fn gap_ms_rounds_up_to_20ms_silence_frames() {
@@ -145,21 +272,6 @@ mod tests {
         assert_eq!(silence_frames_for_gap_ms(21), 2);
         assert_eq!(silence_frames_for_gap_ms(40), 2);
         assert_eq!(silence_frames_for_gap_ms(41), 3);
-    }
-
-    #[test]
-    fn ten_minute_user_rejoin_gap_maps_to_silence_frames() {
-        assert_eq!(
-            silence_frames_for_gap_ms(USER_REJOIN_RESUME_TIMEOUT_MS.to_i64()),
-            30_000
-        );
-    }
-
-    #[test]
-    fn stale_user_rejoin_timeout_does_not_match_new_pause_token() {
-        assert!(paused_timeout_matches(Some(7), 7));
-        assert!(!paused_timeout_matches(Some(8), 7));
-        assert!(!paused_timeout_matches(None, 7));
     }
 
     #[test]

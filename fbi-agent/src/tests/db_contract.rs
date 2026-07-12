@@ -7,11 +7,14 @@ use serenity::{
     model::id::{ChannelId, GuildId},
     prelude::{RwLock, TypeMap},
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, migrate::Migrator};
 
 use crate::cooldown::JamCooldown;
-use crate::database::{DbError, recordings};
+use crate::database::{DbError, logical_recordings, recordings};
 use crate::runtime::{BotRole, RuntimeConfig, RuntimeState};
+
+static FULL_MIGRATOR: Migrator = sqlx::migrate!("../sakiot-db/migrations");
+const LOGICAL_RECORDINGS_MIGRATION: i64 = 20_260_712_000_000;
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -109,6 +112,425 @@ async fn recording_create_heartbeat_finalize_uses_audio_file_id(
         .execute(&pool)
         .await?;
 
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn logical_recording_resumes_with_one_gap_and_next_fragment(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use chrono::TimeZone;
+
+    let temporary = tempfile::tempdir()?;
+    let base = unique_id();
+    let owner = format!("test-logical-resume-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let start_ms = 1_700_000_000_000;
+    let first = logical_recordings::create_fragment_in(
+        &pool,
+        base,
+        base + 1,
+        base + 2,
+        chrono::Utc.timestamp_millis_opt(start_ms).single().unwrap(),
+        &owner,
+        temporary.path(),
+    )
+    .await?;
+    recordings::finalize_recording(
+        &pool,
+        first.audio_file_id,
+        &owner,
+        1_000,
+        recordings::FINALIZE_REASON_WRITER_CLOSE,
+    )
+    .await?;
+
+    assert!(
+        logical_recordings::pause_session(
+            &pool,
+            logical_recordings::PauseRequest {
+                recording_session_id: first.recording_session_id,
+                at_ms: start_ms + 1_000,
+                reason: "handoff",
+                from_channel_id: Some(base + 1),
+                to_channel_id: Some(base + 3),
+                has_afk_channel: false,
+                starts_grace: false,
+                pending_cap_seconds: logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+                owner_instance_id: &owner,
+            },
+        )
+        .await?
+    );
+    assert_eq!(
+        logical_recordings::resume_pending_user(
+            &pool,
+            base,
+            base + 2,
+            base + 3,
+            start_ms + 4_000,
+            &owner,
+        )
+        .await?,
+        Some(first.recording_session_id)
+    );
+
+    let second = logical_recordings::create_fragment_in(
+        &pool,
+        base,
+        base + 3,
+        base + 2,
+        chrono::Utc
+            .timestamp_millis_opt(start_ms + 4_000)
+            .single()
+            .unwrap(),
+        &owner,
+        temporary.path(),
+    )
+    .await?;
+    assert_eq!(second.recording_session_id, first.recording_session_id);
+    assert_eq!(second.segment_index, 1);
+    assert_eq!(second.initial_silence_ms, 0);
+
+    let gap = sqlx::query_as::<_, (i64, i64, String, Option<i64>, Option<i64>)>(
+        "SELECT
+            (EXTRACT(EPOCH FROM started_at) * 1000)::bigint,
+            (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint,
+            reason,
+            from_channel_id,
+            to_channel_id
+           FROM recording_gaps
+          WHERE recording_session_id = $1",
+    )
+    .bind(first.recording_session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        gap,
+        (
+            start_ms + 1_000,
+            start_ms + 4_000,
+            "handoff".to_string(),
+            Some(base + 1),
+            Some(base + 3),
+        )
+    );
+
+    let (state, channel_id, cap_is_null): (String, Option<i64>, bool) = sqlx::query_as(
+        "SELECT state, current_channel_id, absolute_cap_deadline_at IS NULL
+           FROM recording_sessions
+          WHERE id = $1",
+    )
+    .bind(first.recording_session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(state, "active");
+    assert_eq!(channel_id, Some(base + 3));
+    assert!(cap_is_null);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn unavailable_grace_expiry_ends_at_departure_without_silence(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use chrono::TimeZone;
+
+    let temporary = tempfile::tempdir()?;
+    let base = unique_id();
+    let owner = format!("test-logical-timeout-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let start_ms = 1_700_100_000_000;
+    let pause_ms = start_ms + 1_000;
+    let unavailable_ms = pause_ms + 1_000;
+    let handle = logical_recordings::create_fragment_in(
+        &pool,
+        base,
+        base + 1,
+        base + 2,
+        chrono::Utc.timestamp_millis_opt(start_ms).single().unwrap(),
+        &owner,
+        temporary.path(),
+    )
+    .await?;
+    recordings::finalize_recording(
+        &pool,
+        handle.audio_file_id,
+        &owner,
+        pause_ms - start_ms,
+        recordings::FINALIZE_REASON_WRITER_CLOSE,
+    )
+    .await?;
+    logical_recordings::pause_session(
+        &pool,
+        logical_recordings::PauseRequest {
+            recording_session_id: handle.recording_session_id,
+            at_ms: pause_ms,
+            reason: "handoff",
+            from_channel_id: Some(base + 1),
+            to_channel_id: Some(base + 3),
+            has_afk_channel: true,
+            starts_grace: false,
+            pending_cap_seconds: logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+            owner_instance_id: &owner,
+        },
+    )
+    .await?;
+    logical_recordings::mark_pending_user_unavailable(
+        &pool,
+        logical_recordings::PendingUserUnavailableRequest {
+            guild_id: base,
+            user_id: base + 2,
+            at_ms: unavailable_ms,
+            reason: "disconnect",
+            channel_id: None,
+            has_afk_channel: true,
+            pending_cap_seconds: logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+            owner_instance_id: &owner,
+        },
+    )
+    .await?;
+    let deadline_ms =
+        unavailable_ms + logical_recordings::USER_UNAVAILABLE_GRACE_SECONDS.saturating_mul(1_000);
+    assert_eq!(
+        logical_recordings::expire_pending_sessions(&pool, deadline_ms).await?,
+        1
+    );
+
+    let row: (String, i64, Option<String>) = sqlx::query_as(
+        "SELECT state,
+                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint,
+                end_reason
+           FROM recording_sessions
+          WHERE id = $1",
+    )
+    .bind(handle.recording_session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        row,
+        (
+            "finalized".to_string(),
+            pause_ms,
+            Some("pending_grace_expired".to_string())
+        )
+    );
+    let gaps: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM recording_gaps WHERE recording_session_id = $1")
+            .bind(handle.recording_session_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(gaps, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn silent_resumed_session_can_pause_before_next_fragment(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let base = unique_id();
+    let owner = format!("test-silent-resume-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let departure_ms = 1_700_200_010_000;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, resumed_at, next_fragment_start_at, owner_instance_id)
+         VALUES
+            ($1, $2, $3, $3, 'active',
+             to_timestamp(1700200000), to_timestamp(1700200005),
+             to_timestamp(1700200005), $4)
+         RETURNING id",
+    )
+    .bind(base)
+    .bind(base + 1)
+    .bind(base + 2)
+    .bind(&owner)
+    .fetch_one(&pool)
+    .await?;
+
+    assert!(
+        logical_recordings::pause_active_user(
+            &pool,
+            logical_recordings::PauseActiveUserRequest {
+                guild_id: base,
+                user_id: base + 1,
+                at_ms: departure_ms,
+                reason: "handoff",
+                from_channel_id: Some(base + 2),
+                to_channel_id: Some(base + 3),
+                has_afk_channel: false,
+                starts_grace: false,
+                pending_cap_seconds: logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+                owner_instance_id: &owner,
+            },
+        )
+        .await?
+    );
+    let (state, pause_ms, cap_ms): (String, i64, i64) = sqlx::query_as(
+        "SELECT state,
+                (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint,
+                (EXTRACT(EPOCH FROM absolute_cap_deadline_at) * 1000)::bigint
+           FROM recording_sessions
+          WHERE id = $1",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(state, "pending");
+    assert_eq!(pause_ms, departure_ms);
+    assert_eq!(
+        cap_ms,
+        departure_ms + logical_recordings::DEFAULT_PENDING_CAP_SECONDS * 1_000
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn startup_recovery_reclaims_same_instance_even_with_fresh_heartbeat(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let base = unique_id();
+    let owner = format!("test-restarted-owner-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let active_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, owner_instance_id)
+         VALUES ($1, $2, $3, $3, 'active', to_timestamp(1700300000), $4)
+         RETURNING id",
+    )
+    .bind(base)
+    .bind(base + 1)
+    .bind(base + 2)
+    .bind(&owner)
+    .fetch_one(&pool)
+    .await?;
+    let pending_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, pause_started_at, owner_instance_id)
+         VALUES ($1, $2, $3, $3, 'pending', to_timestamp(1700300000),
+                 to_timestamp(1700300010), $4)
+         RETURNING id",
+    )
+    .bind(base)
+    .bind(base + 4)
+    .bind(base + 2)
+    .bind(&owner)
+    .fetch_one(&pool)
+    .await?;
+
+    let report =
+        logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
+            .await?;
+    assert_eq!(report.stale_active_finalized, 1);
+    assert_eq!(report.stale_pending_released, 1);
+    let active: (String, Option<String>) =
+        sqlx::query_as("SELECT state, end_reason FROM recording_sessions WHERE id = $1")
+            .bind(active_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(active.0, "finalized");
+    assert_eq!(active.1.as_deref(), Some("owner_lost"));
+    let pending: (String, Option<String>) =
+        sqlx::query_as("SELECT state, owner_instance_id FROM recording_sessions WHERE id = $1")
+            .bind(pending_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pending, ("pending".to_string(), None));
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn logical_recording_migration_backfills_one_session_per_file(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prior = Migrator::with_migrations(
+        FULL_MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < LOGICAL_RECORDINGS_MIGRATION)
+            .cloned()
+            .collect(),
+    );
+    prior.run(&pool).await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts)
+         VALUES
+            ('historical-finalized', 1, 10, 100, 2026, 7, 1000, 2000),
+            ('historical-active', 1, 11, 100, 2026, 7, 3000, NULL)",
+    )
+    .execute(&pool)
+    .await?;
+
+    FULL_MIGRATOR.run(&pool).await?;
+
+    let rows = sqlx::query_as::<_, (String, i64, i32, String, Option<String>)>(
+        "SELECT af.file_name,
+                af.recording_session_id,
+                af.segment_index,
+                rs.state,
+                rs.end_reason
+           FROM audio_files af
+           JOIN recording_sessions rs ON rs.id = af.recording_session_id
+          WHERE af.file_name LIKE 'historical-%'
+          ORDER BY af.file_name",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(rows.len(), 2);
+    assert_ne!(rows[0].1, rows[1].1);
+    assert!(rows.iter().all(|row| row.2 == 0));
+    assert_eq!(rows[0].3, "active");
+    assert_eq!(rows[0].4, None);
+    assert_eq!(rows[1].3, "finalized");
+    assert_eq!(rows[1].4.as_deref(), Some("historical_backfill"));
+
+    let events: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT event_type, COUNT(*)
+           FROM recording_session_events
+          GROUP BY event_type
+          ORDER BY event_type",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        events,
+        vec![
+            ("fragment_close".to_string(), 1),
+            ("fragment_open".to_string(), 2),
+        ]
+    );
+
+    // Nullable link remains accepted for old draining writers during phase one.
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month)
+         VALUES ('rolling-old-writer', 1, 10, 100, 2026, 7)",
+    )
+    .execute(&pool)
+    .await?;
+    let nullable_link: Option<i64> = sqlx::query_scalar(
+        "SELECT recording_session_id
+           FROM audio_files
+          WHERE file_name = 'rolling-old-writer'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(nullable_link, None);
+
+    let (fk_validated, index_exists): (bool, bool) = sqlx::query_as(
+        "SELECT
+            (SELECT convalidated
+               FROM pg_constraint
+              WHERE conname = 'audio_files_recording_session_id_fkey'),
+            to_regclass('public.audio_files_session_segment_idx') IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!fk_validated);
+    assert!(index_exists);
     Ok(())
 }
 

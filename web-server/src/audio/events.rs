@@ -5,7 +5,6 @@ use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::require_channel_access;
 
 fn validate_stem(s: &str) -> Result<(), AppError> {
     if s.is_empty() || s.contains('/') || s.contains("..") || s.contains('\\') || s.contains('\'') {
@@ -67,7 +66,8 @@ pub async fn get_recording_events(
     let (guild_id, channel_id, _year, _month, stem) = path.into_inner();
     validate_stem(&stem)?;
 
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
+        .await?;
 
     let row = sqlx::query!(
         "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",

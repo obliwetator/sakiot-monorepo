@@ -1,0 +1,578 @@
+import PauseIcon from "@mui/icons-material/Pause";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import Alert from "@mui/material/Alert";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import Paper from "@mui/material/Paper";
+import Slider from "@mui/material/Slider";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import type Hls from "hls.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	BASE_API_URL,
+	type SessionManifest,
+	useCreateSessionClipMutation,
+	useGetSessionManifestQuery,
+} from "../../app/apiSlice";
+import { authedFetch } from "../../app/authedFetch";
+import { formatDuration } from "../../utils/formatTime";
+import {
+	normalizeSessionSegments,
+	type PlaybackSegment,
+} from "./logicalSessionTimeline";
+import { SessionWaveform } from "./SessionWaveform";
+
+function absoluteMediaUrl(path: string): string {
+	return new URL(
+		path,
+		new URL(BASE_API_URL, window.location.origin),
+	).toString();
+}
+
+function saveBlob(blob: Blob, fileName: string) {
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = fileName;
+	anchor.click();
+	URL.revokeObjectURL(url);
+}
+
+function markerColor(source: string, eventType: string): string {
+	if (source === "voice_connection") {
+		return eventType.includes("failed") ? "#ef4444" : "#0ea5e9";
+	}
+	if (eventType.includes("pause") || eventType.includes("disconnect"))
+		return "#f97316";
+	if (eventType.includes("resume")) return "#22c55e";
+	if (eventType.includes("mute") || eventType.includes("deaf"))
+		return "#a855f7";
+	if (eventType.includes("expiry") || eventType.includes("timeout"))
+		return "#ef4444";
+	return "#9ca3af";
+}
+
+function TimelineMarkers(props: {
+	manifest: SessionManifest;
+	onSeek: (positionMs: number) => void;
+}) {
+	if (props.manifest.duration_ms <= 0) return null;
+	return (
+		<Box sx={{ position: "relative", height: 30, mt: -1, mb: 1 }}>
+			{props.manifest.events.map((event, index) => {
+				const position = Math.min(
+					100,
+					Math.max(0, (event.offset_ms / props.manifest.duration_ms) * 100),
+				);
+				const details =
+					event.details && typeof event.details === "object"
+						? ` · ${JSON.stringify(event.details)}`
+						: "";
+				return (
+					<Tooltip
+						key={`${event.source}-${event.offset_ms}-${event.event_type}-${event.channel_id ?? "none"}-${event.previous_channel_id ?? "none"}`}
+						title={`${event.event_type} @ ${formatDuration(event.offset_ms / 1000)}${details}`}
+					>
+						<Box
+							component="button"
+							type="button"
+							aria-label={`Seek to ${event.event_type}`}
+							onClick={() => props.onSeek(event.offset_ms)}
+							sx={{
+								position: "absolute",
+								left: `${position}%`,
+								top: index % 2 === 0 ? 4 : 15,
+								transform: "translateX(-50%)",
+								width: 10,
+								height: 10,
+								borderRadius: "50%",
+								border: "1px solid white",
+								bgcolor: markerColor(event.source, event.event_type),
+								cursor: "pointer",
+								p: 0,
+							}}
+						/>
+					</Tooltip>
+				);
+			})}
+		</Box>
+	);
+}
+
+export function LogicalSessionPlayer(props: { sessionId: string }) {
+	const {
+		data: manifest,
+		isLoading,
+		isError,
+	} = useGetSessionManifestQuery(props.sessionId, {
+		pollingInterval: 5_000,
+		refetchOnMountOrArgChange: true,
+	});
+	const segments = useMemo(
+		() => (manifest ? normalizeSessionSegments(manifest) : []),
+		[manifest],
+	);
+	const [positionMs, setPositionMs] = useState(0);
+	const [playing, setPlaying] = useState(false);
+	const [selection, setSelection] = useState<[number, number]>([0, 0]);
+	const [volume, setVolume] = useState(1);
+	const [playbackRate, setPlaybackRate] = useState(1);
+	const [actionMessage, setActionMessage] = useState<string | null>(null);
+	const [actionError, setActionError] = useState<string | null>(null);
+	const [clipName, setClipName] = useState("");
+	const [createClip, clipState] = useCreateSessionClipMutation();
+
+	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const hlsRef = useRef<Hls | null>(null);
+	const animationRef = useRef<number | null>(null);
+	const generationRef = useRef(0);
+	const positionRef = useRef(0);
+	const playingRef = useRef(false);
+	const selectionRef = useRef<[number, number]>([0, 0]);
+	const segmentsRef = useRef<PlaybackSegment[]>([]);
+	const rateRef = useRef(1);
+	const volumeRef = useRef(1);
+	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
+		() => {},
+	);
+
+	useEffect(() => {
+		positionRef.current = positionMs;
+	}, [positionMs]);
+	useEffect(() => {
+		playingRef.current = playing;
+	}, [playing]);
+	useEffect(() => {
+		selectionRef.current = selection;
+	}, [selection]);
+	useEffect(() => {
+		segmentsRef.current = segments;
+	}, [segments]);
+	useEffect(() => {
+		rateRef.current = playbackRate;
+		if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+	}, [playbackRate]);
+	useEffect(() => {
+		volumeRef.current = volume;
+		if (audioRef.current) audioRef.current.volume = volume;
+	}, [volume]);
+
+	useEffect(() => {
+		if (!manifest) return;
+		setSelection((current) => {
+			if (current[1] === 0 || current[1] > manifest.duration_ms) {
+				return [
+					Math.min(current[0], manifest.duration_ms),
+					manifest.duration_ms,
+				];
+			}
+			return current;
+		});
+		setPositionMs((current) => Math.min(current, manifest.duration_ms));
+	}, [manifest]);
+
+	const stopSource = useCallback(() => {
+		if (animationRef.current !== null) {
+			cancelAnimationFrame(animationRef.current);
+			animationRef.current = null;
+		}
+		hlsRef.current?.destroy();
+		hlsRef.current = null;
+		if (audioRef.current) {
+			audioRef.current.pause();
+			audioRef.current.removeAttribute("src");
+			audioRef.current.load();
+			audioRef.current = null;
+		}
+	}, []);
+
+	const startAt = (requestedPosition: number, autoplay: boolean) => {
+		generationRef.current += 1;
+		const generation = generationRef.current;
+		stopSource();
+		const selectionEnd = selectionRef.current[1];
+		const selectionStart = selectionRef.current[0];
+		const position = Math.max(
+			selectionStart,
+			Math.min(requestedPosition, selectionEnd),
+		);
+		positionRef.current = position;
+		setPositionMs(position);
+
+		if (!autoplay || position >= selectionEnd) {
+			playingRef.current = false;
+			setPlaying(false);
+			return;
+		}
+		const segment = segmentsRef.current.find(
+			(candidate) =>
+				position >= candidate.start_ms && position < candidate.end_ms,
+		);
+		if (!segment) {
+			playingRef.current = false;
+			setPlaying(false);
+			return;
+		}
+		playingRef.current = true;
+		setPlaying(true);
+
+		const segmentLimit = Math.min(segment.end_ms, selectionEnd);
+		if (segment.kind === "silence") {
+			const wallStart = performance.now();
+			const logicalStart = position;
+			const tick = (wallNow: number) => {
+				if (generationRef.current !== generation || !playingRef.current) return;
+				const next = logicalStart + (wallNow - wallStart) * rateRef.current;
+				if (next >= segmentLimit) {
+					startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+					return;
+				}
+				positionRef.current = next;
+				setPositionMs(next);
+				animationRef.current = requestAnimationFrame(tick);
+			};
+			animationRef.current = requestAnimationFrame(tick);
+			return;
+		}
+
+		const mediaUrl = segment.media_url;
+		if (!mediaUrl) {
+			startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+			return;
+		}
+		const audio = new Audio();
+		audio.crossOrigin = "use-credentials";
+		audio.preload = "auto";
+		audio.volume = volumeRef.current;
+		audio.playbackRate = rateRef.current;
+		audioRef.current = audio;
+
+		const begin = () => {
+			if (generationRef.current !== generation) return;
+			const localSeconds = Math.max(0, (position - segment.start_ms) / 1_000);
+			if (Number.isFinite(audio.duration)) {
+				audio.currentTime = Math.min(
+					localSeconds,
+					Math.max(0, audio.duration - 0.01),
+				);
+			} else {
+				audio.currentTime = localSeconds;
+			}
+			void audio.play().catch(() => {
+				setActionError("Browser blocked or failed audio playback.");
+				playingRef.current = false;
+				setPlaying(false);
+			});
+		};
+		audio.addEventListener("timeupdate", () => {
+			if (generationRef.current !== generation) return;
+			const logical = segment.start_ms + audio.currentTime * 1_000;
+			if (logical >= segmentLimit - 20) {
+				startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+				return;
+			}
+			positionRef.current = logical;
+			setPositionMs(logical);
+		});
+		audio.addEventListener("ended", () => {
+			if (generationRef.current === generation) {
+				startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+			}
+		});
+		audio.addEventListener("error", () => {
+			if (generationRef.current === generation) {
+				setActionError(
+					`Could not load segment ${segment.segment_index ?? ""}.`,
+				);
+				playingRef.current = false;
+				setPlaying(false);
+			}
+		});
+
+		if (segment.kind === "active_hls" && segment.hls_playlist_url) {
+			const hlsUrl = absoluteMediaUrl(segment.hls_playlist_url);
+			if (audio.canPlayType("application/vnd.apple.mpegurl") === "probably") {
+				audio.src = hlsUrl;
+				audio.addEventListener("loadedmetadata", begin, { once: true });
+			} else {
+				void import("hls.js").then(({ default: HlsClass }) => {
+					if (generationRef.current !== generation) return;
+					if (!HlsClass.isSupported()) {
+						audio.src = absoluteMediaUrl(mediaUrl);
+						audio.addEventListener("loadedmetadata", begin, { once: true });
+						return;
+					}
+					const hls = new HlsClass({
+						xhrSetup: (request) => {
+							request.withCredentials = true;
+						},
+						liveSyncDuration: 2,
+						liveMaxLatencyDuration: Number.MAX_SAFE_INTEGER,
+					});
+					hlsRef.current = hls;
+					hls.on(HlsClass.Events.MANIFEST_PARSED, begin);
+					hls.loadSource(hlsUrl);
+					hls.attachMedia(audio);
+				});
+			}
+		} else {
+			audio.src = absoluteMediaUrl(mediaUrl);
+			audio.addEventListener("loadedmetadata", begin, { once: true });
+		}
+	};
+	startAtRef.current = startAt;
+
+	useEffect(
+		() => () => {
+			generationRef.current += 1;
+			stopSource();
+		},
+		[stopSource],
+	);
+
+	const seek = (nextPositionMs: number) => {
+		startAtRef.current(nextPositionMs, playingRef.current);
+	};
+
+	const togglePlay = () => {
+		if (playingRef.current) {
+			generationRef.current += 1;
+			stopSource();
+			playingRef.current = false;
+			setPlaying(false);
+			return;
+		}
+		const start =
+			positionRef.current >= selectionRef.current[1]
+				? selectionRef.current[0]
+				: positionRef.current;
+		startAtRef.current(start, true);
+	};
+
+	const downloadRange = async (removeSilence: boolean) => {
+		setActionError(null);
+		setActionMessage(null);
+		const query = new URLSearchParams({
+			start: String(selection[0] / 1_000),
+			end: String(selection[1] / 1_000),
+		});
+		if (removeSilence) query.set("remove_silence", "true");
+		const response = await authedFetch(
+			`audio/sessions/${props.sessionId}/download?${query}`,
+		);
+		if (!response.ok) {
+			setActionError(`Composition failed (${response.status}).`);
+			return;
+		}
+		saveBlob(
+			await response.blob(),
+			`session-${props.sessionId}${removeSilence ? "-silence-free" : ""}.ogg`,
+		);
+	};
+
+	const removeSilenceRange = async () => {
+		setActionError(null);
+		const response = await authedFetch(
+			`audio/sessions/${props.sessionId}/remove-silence`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					start: selection[0] / 1_000,
+					end: selection[1] / 1_000,
+				}),
+			},
+		);
+		if (!response.ok) {
+			setActionError(`Silence removal failed (${response.status}).`);
+			return;
+		}
+		saveBlob(
+			await response.blob(),
+			`session-${props.sessionId}-silence-free.ogg`,
+		);
+	};
+
+	const createSelectedClip = async () => {
+		setActionError(null);
+		setActionMessage(null);
+		try {
+			const response = await createClip({
+				recording_session_id: props.sessionId,
+				start: selection[0] / 1_000,
+				end: selection[1] / 1_000,
+				name: clipName.trim() || undefined,
+			}).unwrap();
+			setActionMessage(`Clip created: ${response.name}`);
+			setClipName("");
+		} catch {
+			setActionError("Clip creation failed. Select 1-20 seconds.");
+		}
+	};
+
+	if (isLoading) return <Typography>Loading logical recording…</Typography>;
+	if (isError || !manifest) {
+		return (
+			<Alert severity="error">
+				Logical recording unavailable or forbidden.
+			</Alert>
+		);
+	}
+
+	const durationSeconds = manifest.duration_ms / 1_000;
+	const currentSegment = segments.find(
+		(segment) => positionMs >= segment.start_ms && positionMs < segment.end_ms,
+	);
+
+	return (
+		<Box sx={{ pb: 4 }}>
+			<Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 2 }}>
+				<Chip label={`Session ${manifest.recording_session_id}`} />
+				<Chip
+					label={manifest.state}
+					color={manifest.state === "active" ? "error" : "default"}
+				/>
+				<Chip label={`User ${manifest.user_id}`} />
+				{currentSegment && (
+					<Chip
+						label={
+							currentSegment.kind === "silence"
+								? `Silence · ${currentSegment.reason ?? "gap"}`
+								: `Channel ${currentSegment.channel_id ?? "?"}`
+						}
+						color={currentSegment.kind === "silence" ? "warning" : "primary"}
+					/>
+				)}
+			</Stack>
+
+			<SessionWaveform
+				sessionId={props.sessionId}
+				positionMs={positionMs}
+				durationMs={manifest.duration_ms}
+				onSeek={seek}
+			/>
+
+			<Slider
+				aria-label="Logical playback position"
+				min={0}
+				max={Math.max(0.001, durationSeconds)}
+				step={0.01}
+				value={Math.min(durationSeconds, positionMs / 1_000)}
+				onChange={(_event, value) => setPositionMs(Number(value) * 1_000)}
+				onChangeCommitted={(_event, value) => seek(Number(value) * 1_000)}
+				valueLabelDisplay="auto"
+				valueLabelFormat={formatDuration}
+			/>
+			<TimelineMarkers manifest={manifest} onSeek={seek} />
+
+			<Stack
+				direction={{ xs: "column", md: "row" }}
+				spacing={2}
+				alignItems="center"
+			>
+				<Button
+					variant="contained"
+					onClick={togglePlay}
+					startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}
+				>
+					{playing ? "Pause" : "Play"}
+				</Button>
+				<Box sx={{ minWidth: 180, flex: 1 }}>
+					<Typography variant="caption">Volume</Typography>
+					<Slider
+						min={0}
+						max={1}
+						step={0.05}
+						value={volume}
+						onChange={(_event, value) => setVolume(Number(value))}
+					/>
+				</Box>
+				<Box sx={{ minWidth: 180, flex: 1 }}>
+					<Typography variant="caption">
+						Speed {playbackRate.toFixed(2)}×
+					</Typography>
+					<Slider
+						min={0.5}
+						max={2}
+						step={0.25}
+						value={playbackRate}
+						onChange={(_event, value) => setPlaybackRate(Number(value))}
+					/>
+				</Box>
+			</Stack>
+
+			<Paper sx={{ p: 2, my: 2 }}>
+				<Typography gutterBottom>
+					Selected range: {formatDuration(selection[0] / 1_000)} –{" "}
+					{formatDuration(selection[1] / 1_000)}
+				</Typography>
+				<Slider
+					aria-label="Logical action range"
+					min={0}
+					max={Math.max(1, manifest.duration_ms)}
+					step={100}
+					value={selection}
+					onChange={(_event, value) => {
+						if (Array.isArray(value)) setSelection([value[0], value[1]]);
+					}}
+					valueLabelDisplay="auto"
+					valueLabelFormat={(value) => formatDuration(value / 1_000)}
+					disableSwap
+				/>
+				<Stack
+					direction={{ xs: "column", sm: "row" }}
+					spacing={1}
+					flexWrap="wrap"
+				>
+					<Button variant="outlined" onClick={() => void downloadRange(false)}>
+						Download range
+					</Button>
+					<Button variant="outlined" onClick={() => void downloadRange(true)}>
+						Download without silence
+					</Button>
+					<Button variant="outlined" onClick={() => void removeSilenceRange()}>
+						Remove silence
+					</Button>
+					<TextField
+						size="small"
+						label="Clip name"
+						value={clipName}
+						onChange={(event) => setClipName(event.target.value)}
+					/>
+					<Button
+						variant="contained"
+						onClick={() => void createSelectedClip()}
+						disabled={clipState.isLoading}
+					>
+						Create clip
+					</Button>
+				</Stack>
+				{actionMessage && (
+					<Alert severity="success" sx={{ mt: 2 }}>
+						{actionMessage}
+					</Alert>
+				)}
+				{actionError && (
+					<Alert severity="error" sx={{ mt: 2 }}>
+						{actionError}
+					</Alert>
+				)}
+			</Paper>
+
+			<Paper sx={{ p: 2 }}>
+				<Typography variant="h6">Channel journey</Typography>
+				<Typography>
+					{manifest.channel_journey.join(" → ") || manifest.starting_channel_id}
+				</Typography>
+				<Typography variant="body2" color="text.secondary">
+					Started {new Date(manifest.started_at_ms).toLocaleString()} · duration{" "}
+					{formatDuration(durationSeconds)}
+				</Typography>
+			</Paper>
+		</Box>
+	);
+}

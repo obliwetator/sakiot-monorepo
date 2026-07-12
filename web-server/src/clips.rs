@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use serde_with::{As, DisplayFromStr};
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, Row};
 use tracing::{error, info};
 
 use crate::permissions::{
@@ -69,19 +69,33 @@ pub async fn get_clip(
     let (guild_id, clip_id) = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
 
-    let row = sqlx::query!(
-        "SELECT saved_file_name, channel_id FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
-        guild_id,
-        clip_id
+    let row = sqlx::query(
+        "SELECT saved_file_name, channel_id, recording_session_id
+           FROM clips
+          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
     )
+    .bind(guild_id)
+    .bind(&clip_id)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
+    let recording_session_id: Option<i64> = row.try_get("recording_session_id")?;
+    if let Some(recording_session_id) = recording_session_id {
+        crate::audio::sessions::require_session_access(&pool, recording_session_id, token.user_id)
+            .await?;
+    } else {
+        let channel_id: Option<i64> = row.try_get("channel_id")?;
+        require_channel_access(
+            &pool,
+            guild_id,
+            channel_id.ok_or(AppError::ClipNotFound)?,
+            token.user_id,
+        )
+        .await?;
+    }
 
-    let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
-    require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
-
-    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
+    let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
+    let saved_file_name = saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = format!("{}{}", clips_path(), saved_file_name);
 
     let file = NamedFile::open_async(&full_path)
@@ -130,28 +144,83 @@ pub async fn get_clips(
     }
     let permitted: Vec<i64> = permitted.into_iter().collect();
 
-    let result = sqlx::query_as!(
-        ClipInfo,
+    let rows = sqlx::query(
         r#"
         SELECT clip_id,
-        user_id as "user_id!",
+        user_id,
         name,
         original_file_name,
         saved_file_name,
         length,
         size,
-        guild_id as "guild_id!",
-        channel_id as "channel_id!",
+        guild_id,
+        channel_id,
         start_time
         FROM clips
-        WHERE guild_id = $1 AND deleted_at IS NULL AND channel_id = ANY($2)
+        WHERE guild_id = $1
+          AND deleted_at IS NULL
+          AND channel_id IS NOT NULL
+          AND (
+              (recording_session_id IS NULL AND channel_id = ANY($2))
+              OR (
+                  recording_session_id IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                        FROM recording_sessions rs
+                       WHERE rs.id = clips.recording_session_id
+                         AND (
+                             (
+                                 EXISTS (
+                                     SELECT 1 FROM audio_files audible
+                                      WHERE audible.recording_session_id = rs.id
+                                 )
+                                 AND NOT EXISTS (
+                                     SELECT 1
+                                       FROM audio_files forbidden
+                                      WHERE forbidden.recording_session_id = rs.id
+                                        AND NOT (forbidden.channel_id = ANY($2))
+                                 )
+                             )
+                             OR (
+                                 NOT EXISTS (
+                                     SELECT 1 FROM audio_files audible
+                                      WHERE audible.recording_session_id = rs.id
+                                 )
+                                 AND rs.starting_channel_id = ANY($2)
+                             )
+                         )
+                  )
+              )
+          )
         "#,
-        guild_id,
-        &permitted
     )
+    .bind(guild_id)
+    .bind(&permitted)
     .fetch_all(pool.get_ref())
     .await?;
-
+    let result = rows
+        .into_iter()
+        .map(|row| {
+            Ok(ClipInfo {
+                clip_id: row.try_get("clip_id")?,
+                user_id: row
+                    .try_get::<Option<i64>, _>("user_id")?
+                    .unwrap_or_default(),
+                name: row.try_get("name")?,
+                original_file_name: row.try_get("original_file_name")?,
+                saved_file_name: row.try_get("saved_file_name")?,
+                length: row.try_get("length")?,
+                size: row.try_get("size")?,
+                guild_id: row
+                    .try_get::<Option<i64>, _>("guild_id")?
+                    .unwrap_or_default(),
+                channel_id: row
+                    .try_get::<Option<i64>, _>("channel_id")?
+                    .unwrap_or_default(),
+                start_time: row.try_get("start_time")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
     Ok(HttpResponse::Ok().json(result))
 }
 #[derive(Deserialize, PartialEq, Debug)]
@@ -182,7 +251,27 @@ pub async fn play_clip(
         .get::<Token<Access>>()
         .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
-    if visible_channels_for_user(&pool, info.guild_id, user_id)
+    let clip = sqlx::query(
+        "SELECT channel_id, recording_session_id
+           FROM clips
+          WHERE guild_id = $1
+            AND deleted_at IS NULL
+            AND (clip_id = $2 OR name = $2)
+          LIMIT 1",
+    )
+    .bind(info.guild_id)
+    .bind(&info.clip_name)
+    .fetch_optional(pool.get_ref())
+    .await?;
+    if let Some(clip) = clip {
+        if let Some(session_id) = clip.try_get::<Option<i64>, _>("recording_session_id")? {
+            crate::audio::sessions::require_session_access(&pool, session_id, user_id).await?;
+        } else if let Some(channel_id) = clip.try_get::<Option<i64>, _>("channel_id")? {
+            require_channel_access(&pool, info.guild_id, channel_id, user_id).await?;
+        } else {
+            return Err(AppError::Forbidden);
+        }
+    } else if visible_channels_for_user(&pool, info.guild_id, user_id)
         .await?
         .is_empty()
     {
@@ -310,7 +399,14 @@ pub async fn create_clip(
     if !is_valid_recording_file_name(&file_name_from_url) {
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
-    require_channel_access(&pool, guild_id, channel_id, user_id).await?;
+    crate::audio::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        &file_name_from_url,
+        user_id,
+    )
+    .await?;
     let src_path = {
         let dir = crate::audio::util::get_file_path_root(
             &recording_path(),

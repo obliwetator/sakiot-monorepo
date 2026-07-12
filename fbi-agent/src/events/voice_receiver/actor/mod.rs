@@ -15,7 +15,10 @@ mod recovery;
 pub(super) use handle::{RecorderCommand, RecorderHandle, VoicePacket};
 pub(super) use packets::{disconnect_command, extract_opus_payload};
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use serenity::{
     client::Context,
@@ -44,9 +47,18 @@ struct RecorderActor {
     recording_owner_instance_id: String,
     stats: Arc<RecorderStats>,
     recordings: Recordings,
-    paused_token: u64,
     disconnected_at_ms: i64,
     recoverable_disconnect_deadline_ms: i64,
+    current_channel_id: Arc<AtomicU64>,
+    planned_handoff: Option<PlannedHandoff>,
+    has_afk_channel: bool,
+    pending_cap_seconds: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlannedHandoff {
+    from_channel_id: ChannelId,
+    to_channel_id: Option<ChannelId>,
 }
 
 impl RecorderActor {
@@ -107,6 +119,48 @@ impl RecorderActor {
             }
             RecorderCommand::DriverConnected { reconnect, at_ms } => {
                 self.handle_driver_connected(reconnect, at_ms).await;
+            }
+            RecorderCommand::BeginHandoff {
+                from_channel_id,
+                to_channel_id,
+                has_afk_channel,
+                pending_cap_seconds,
+            } => {
+                self.has_afk_channel = has_afk_channel;
+                self.pending_cap_seconds = pending_cap_seconds;
+                self.planned_handoff = Some(PlannedHandoff {
+                    from_channel_id,
+                    to_channel_id,
+                });
+            }
+            RecorderCommand::CancelHandoff => {
+                self.planned_handoff = None;
+            }
+            RecorderCommand::CompleteHandoff {
+                channel_id,
+                connected_at_ms,
+                has_afk_channel,
+                pending_cap_seconds,
+            } => {
+                self.has_afk_channel = has_afk_channel;
+                self.pending_cap_seconds = pending_cap_seconds;
+                self.complete_handoff(channel_id, connected_at_ms).await;
+            }
+            RecorderCommand::UserVoiceTransition {
+                user_id,
+                old_channel_id,
+                new_channel_id,
+                afk_channel_id,
+                at_ms,
+            } => {
+                self.handle_user_voice_transition(
+                    user_id,
+                    old_channel_id,
+                    new_channel_id,
+                    afk_channel_id,
+                    at_ms,
+                )
+                .await;
             }
         }
     }
