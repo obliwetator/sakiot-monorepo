@@ -36,7 +36,7 @@ jobs:
       SQLX_OFFLINE: "true"
       DATABASE_URL: postgres://postgres:password@localhost:54320/sakiot_rouvas
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Installs the toolchain pinned in rust-toolchain.toml (including its
       # components) and provides rust-cache keyed against that toolchain.
@@ -93,7 +93,7 @@ jobs:
       # service or connects to PostgreSQL.
       SQLX_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -121,7 +121,7 @@ jobs:
   ops-shims:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run ops shim test suites
         run: ops/tests/run.sh
@@ -132,7 +132,7 @@ jobs:
       run:
         working-directory: sakiot-stage
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
 
