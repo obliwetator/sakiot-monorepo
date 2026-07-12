@@ -49,13 +49,13 @@ dotenvy = "0.15.7"
 uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sakiot-paths = { path = "../sakiot-paths" }
 sakiot-proto = { path = "../sakiot-proto" }
-opentelemetry = "0.31.0"
-opentelemetry_sdk = { version = "0.31.0", features = ["metrics", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", features = [
+opentelemetry = "0.32.0"
+opentelemetry_sdk = { version = "0.32.1", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32.0", features = [
 	"grpc-tonic",
 	"metrics",
 ] }
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 utoipa = { version = "5", features = ["actix_extras", "chrono"] }
 utoipa-scalar = { version = "0.3", features = ["actix-web"] }
 libc = "0.2.186"
