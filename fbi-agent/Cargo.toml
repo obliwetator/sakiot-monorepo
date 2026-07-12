@@ -52,13 +52,13 @@ tokio-stream = { version = "0.1.18", features = ["sync"] }
 dashmap = "6.1.0"
 dotenvy = "0.15"
 sysinfo = "0.38.4"
-opentelemetry = "0.31.0"
+opentelemetry = "0.32.0"
 opentelemetry_sdk = { version = "0.32.1", features = ["metrics", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31.1", features = [
+opentelemetry-otlp = { version = "0.32.0", features = [
 	"grpc-tonic",
 	"metrics",
 ] }
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
 ogg = "0.9"
