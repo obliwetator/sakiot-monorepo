@@ -132,7 +132,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const generationRef = useRef(0);
 	const positionRef = useRef(0);
 	const playingRef = useRef(false);
-	const selectionRef = useRef<[number, number]>([0, 0]);
+	const durationRef = useRef(0);
 	const segmentsRef = useRef<PlaybackSegment[]>([]);
 	const rateRef = useRef(1);
 	const volumeRef = useRef(1);
@@ -147,9 +147,6 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		playingRef.current = playing;
 	}, [playing]);
 	useEffect(() => {
-		selectionRef.current = selection;
-	}, [selection]);
-	useEffect(() => {
 		segmentsRef.current = segments;
 	}, [segments]);
 	useEffect(() => {
@@ -163,6 +160,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	useEffect(() => {
 		if (!manifest) return;
+		durationRef.current = manifest.duration_ms;
 		setSelection((current) => {
 			if (current[1] === 0 || current[1] > manifest.duration_ms) {
 				return [
@@ -194,16 +192,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		generationRef.current += 1;
 		const generation = generationRef.current;
 		stopSource();
-		const selectionEnd = selectionRef.current[1];
-		const selectionStart = selectionRef.current[0];
-		const position = Math.max(
-			selectionStart,
-			Math.min(requestedPosition, selectionEnd),
-		);
+		const durationMs = durationRef.current;
+		const position = Math.max(0, Math.min(requestedPosition, durationMs));
 		positionRef.current = position;
 		setPositionMs(position);
 
-		if (!autoplay || position >= selectionEnd) {
+		if (!autoplay || position >= durationMs) {
 			playingRef.current = false;
 			setPlaying(false);
 			return;
@@ -220,7 +214,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		playingRef.current = true;
 		setPlaying(true);
 
-		const segmentLimit = Math.min(segment.end_ms, selectionEnd);
+		const segmentLimit = Math.min(segment.end_ms, durationMs);
 		if (segment.kind === "silence") {
 			const wallStart = performance.now();
 			const logicalStart = position;
@@ -228,7 +222,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				if (generationRef.current !== generation || !playingRef.current) return;
 				const next = logicalStart + (wallNow - wallStart) * rateRef.current;
 				if (next >= segmentLimit) {
-					startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+					startAtRef.current(segmentLimit, segmentLimit < durationMs);
 					return;
 				}
 				positionRef.current = next;
@@ -241,7 +235,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		const mediaUrl = segment.media_url;
 		if (!mediaUrl) {
-			startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+			startAtRef.current(segmentLimit, segmentLimit < durationMs);
 			return;
 		}
 		const audio = new Audio();
@@ -272,7 +266,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			if (generationRef.current !== generation) return;
 			const logical = segment.start_ms + audio.currentTime * 1_000;
 			if (logical >= segmentLimit - 20) {
-				startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+				startAtRef.current(segmentLimit, segmentLimit < durationMs);
 				return;
 			}
 			positionRef.current = logical;
@@ -280,7 +274,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		});
 		audio.addEventListener("ended", () => {
 			if (generationRef.current === generation) {
-				startAtRef.current(segmentLimit, segmentLimit < selectionEnd);
+				startAtRef.current(segmentLimit, segmentLimit < durationMs);
 			}
 		});
 		audio.addEventListener("error", () => {
@@ -347,9 +341,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			return;
 		}
 		const start =
-			positionRef.current >= selectionRef.current[1]
-				? selectionRef.current[0]
-				: positionRef.current;
+			positionRef.current >= durationRef.current ? 0 : positionRef.current;
 		startAtRef.current(start, true);
 	};
 
@@ -427,6 +419,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const currentSegment = segments.find(
 		(segment) => positionMs >= segment.start_ms && positionMs < segment.end_ms,
 	);
+	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
 
 	return (
 		<Box sx={{ pb: 4 }}>
@@ -448,6 +441,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					/>
 				)}
 			</Stack>
+			<Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+				Started {new Date(manifest.started_at_ms).toLocaleString()} · duration{" "}
+				{formatDuration(durationSeconds)}
+			</Typography>
 
 			<SessionWaveform
 				sessionId={props.sessionId}
@@ -467,6 +464,25 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				valueLabelDisplay="auto"
 				valueLabelFormat={formatDuration}
 			/>
+			<Stack
+				direction={{ xs: "column", sm: "row" }}
+				justifyContent="space-between"
+				spacing={0.5}
+				sx={{ mt: -1, mb: 1 }}
+			>
+				<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+					Recording {formatDuration(positionMs / 1_000)} /{" "}
+					{formatDuration(durationSeconds)}
+				</Typography>
+				<Typography
+					variant="body2"
+					color="text.secondary"
+					sx={{ fontVariantNumeric: "tabular-nums" }}
+				>
+					Real time{" "}
+					{new Date(manifest.started_at_ms + positionMs).toLocaleString()}
+				</Typography>
+			</Stack>
 			<TimelineMarkers manifest={manifest} onSeek={seek} />
 
 			<Stack
@@ -563,16 +579,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				)}
 			</Paper>
 
-			<Paper sx={{ p: 2 }}>
-				<Typography variant="h6">Channel journey</Typography>
-				<Typography>
-					{manifest.channel_journey.join(" → ") || manifest.starting_channel_id}
-				</Typography>
-				<Typography variant="body2" color="text.secondary">
-					Started {new Date(manifest.started_at_ms).toLocaleString()} · duration{" "}
-					{formatDuration(durationSeconds)}
-				</Typography>
-			</Paper>
+			{hasChannelJourney && (
+				<Paper sx={{ p: 2 }}>
+					<Typography variant="h6">Channel journey</Typography>
+					<Typography>{manifest.channel_journey.join(" → ")}</Typography>
+				</Paper>
+			)}
 		</Box>
 	);
 }

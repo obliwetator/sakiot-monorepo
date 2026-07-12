@@ -85,9 +85,30 @@ export function SessionWaveform(props: {
 			: 0;
 
 	return (
-		<Box sx={{ position: "relative", my: 2 }}>
+		<Box
+			sx={{
+				position: "relative",
+				my: 2,
+				height: 140,
+				borderRadius: 1,
+				overflow: "hidden",
+				bgcolor: "rgba(168, 85, 247, 0.18)",
+			}}
+		>
 			{data?.progress !== 100 && !isError && (
-				<Box sx={{ mb: 1 }}>
+				<Box
+					sx={{
+						position: "absolute",
+						top: 0,
+						left: 0,
+						right: 0,
+						zIndex: 2,
+						px: 1,
+						py: 0.5,
+						bgcolor: "rgba(15, 23, 42, 0.78)",
+						pointerEvents: "none",
+					}}
+				>
 					<Typography variant="caption">
 						Building combined waveform ({data?.progress ?? 0}%)
 					</Typography>
@@ -95,9 +116,20 @@ export function SessionWaveform(props: {
 				</Box>
 			)}
 			{isError && (
-				<Typography color="error" variant="caption">
-					Combined waveform unavailable.
-				</Typography>
+				<Box
+					sx={{
+						position: "absolute",
+						inset: 0,
+						display: "grid",
+						placeItems: "center",
+						zIndex: 2,
+						pointerEvents: "none",
+					}}
+				>
+					<Typography color="error" variant="caption">
+						Combined waveform unavailable.
+					</Typography>
+				</Box>
 			)}
 			<canvas
 				ref={canvasRef}
@@ -119,7 +151,7 @@ export function SessionWaveform(props: {
 			<Box
 				sx={{
 					position: "absolute",
-					top: data?.progress !== 100 && !isError ? 44 : 0,
+					top: 0,
 					bottom: 0,
 					left: `${playhead}%`,
 					width: 2,
