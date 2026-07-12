@@ -1,32 +1,21 @@
-# Weekly dependency update PRs. Minor and patch bumps are grouped into one
-# PR per ecosystem to keep the noise down; majors arrive individually.
-# Every merge to main deploys staging as usual, so grouped bumps get the
-# same staging soak as any other change.
+# Security-update PRs only. A zero version-update limit suppresses routine
+# dependency bumps without disabling Dependabot security updates.
 version: 2
 updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
-    groups:
-      rust-minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "npm"
     directory: "/sakiot-stage"
     schedule:
       interval: "weekly"
-    groups:
-      frontend-minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0

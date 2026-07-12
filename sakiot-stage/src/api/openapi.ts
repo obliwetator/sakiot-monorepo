@@ -164,9 +164,9 @@ export interface paths {
 			cookie?: never;
 		};
 		/**
-		 * Live recordings for a guild (`audio_files.end_ts IS NULL`), filtered to
-		 *     the channels the caller has read access to. Frontend polls this to badge
-		 *     the recordings tree. Set is naturally tiny (only currently-active rows).
+		 * Live recordings for a guild, filtered to the channels the caller has read
+		 *     access to. A recording is live only if its unfinished row has a fresh
+		 *     recording heartbeat from a fresh, non-stopped bot instance.
 		 */
 		get: operations["get_live_stems"];
 		put?: never;
@@ -216,9 +216,9 @@ export interface paths {
 			path?: never;
 			cookie?: never;
 		};
-		get: operations["remove_silence"];
+		get?: never;
 		put?: never;
-		post?: never;
+		post: operations["remove_silence"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -351,7 +351,7 @@ export interface components {
 			message: string;
 		};
 		RefreshTokenResponse: {
-			token: string;
+			status: string;
 		};
 		RemoveSilenceResponse: {
 			message: string;
@@ -425,13 +425,11 @@ export interface components {
 			user_id: number;
 		};
 		VoiceEventDto: {
-			/** Format: int64 */
-			channel_id?: number | null;
+			channel_id?: string | null;
 			event_type: string;
 			/** Format: int64 */
 			offset_ms: number;
-			/** Format: int64 */
-			user_id: number;
+			user_id: string;
 		};
 	};
 	responses: never;
@@ -472,7 +470,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User is not a guild admin */
+			/** @description User cannot manage this guild */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -533,7 +531,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User is not a guild admin */
+			/** @description User cannot manage this guild */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -583,7 +581,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User is not a guild admin */
+			/** @description User cannot manage this guild */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -646,7 +644,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User is not a guild admin */
+			/** @description User cannot manage this guild */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -696,7 +694,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User is not a guild admin */
+			/** @description User cannot manage this guild */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -767,6 +765,15 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Server error */
 			500: {
 				headers: {
@@ -808,6 +815,15 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
+			/** @description Missing guild or channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Server error */
 			500: {
 				headers: {
@@ -842,6 +858,15 @@ export interface operations {
 			};
 			/** @description Missing or invalid access token */
 			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Not clip owner or guild manager */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -910,8 +935,17 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description Missing access or channel permission */
+			/** @description Missing or invalid access token */
 			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -970,6 +1004,24 @@ export interface operations {
 			};
 			/** @description Invalid stem */
 			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -1219,6 +1271,33 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Idempotency key reused for another request */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Server error */
 			500: {
 				headers: {
@@ -1262,6 +1341,15 @@ export interface operations {
 			};
 			/** @description Missing or invalid access token */
 			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing guild or channel permission */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};

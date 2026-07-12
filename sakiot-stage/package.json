@@ -8,6 +8,7 @@
 		"build": "biome check . && tsc && vite build",
 		"deploy": "bun run build && ./scripts/deploy.sh",
 		"generate:api-types": "bun scripts/generate-api-types.ts",
+		"check:api-types": "bun scripts/generate-api-types.ts --check",
 		"preview": "vite preview",
 		"test": "bun test",
 		"lint": "biome lint .",

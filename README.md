@@ -175,12 +175,17 @@ cd sakiot-stage
 bun run format
 ```
 
-Generate frontend API types while `web-server` is serving its OpenAPI document:
+Generate frontend API types directly from `web-server`'s compile-time OpenAPI
+document; no running server or database is required:
 
 ```sh
 cd sakiot-stage
 bun run generate:api-types
+bun run check:api-types
 ```
+
+`check:api-types` exits nonzero when the checked-in types are stale. Set
+`OPENAPI_URL` only when intentionally generating from another OpenAPI source.
 
 ## Database
 
