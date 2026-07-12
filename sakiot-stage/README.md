@@ -32,6 +32,20 @@ whole Sakiot application:
   workflows.
 - Includes tests for selected shared utilities and auth fetch behavior.
 
+## API Types
+
+The checked-in API types come from `web-server`'s compile-time OpenAPI document.
+Neither command needs a running server or database:
+
+```sh
+bun run generate:api-types
+bun run check:api-types
+```
+
+The check command generates into a temporary file and fails when
+`src/api/openapi.ts` is stale. Set `OPENAPI_URL` only to use another OpenAPI
+source intentionally.
+
 ## Status
 
 This is personal/project code, not a turnkey product. It expects the matching

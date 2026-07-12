@@ -49,6 +49,13 @@ Sakiot application:
   `/scalar`.
 - Emits HTTP metrics and telemetry for observability.
 
+Export the same OpenAPI document without starting the service or connecting to
+the database:
+
+```sh
+SQLX_OFFLINE=true cargo run --locked -p web_server --bin export_openapi
+```
+
 Runtime media defaults to `../data` and can be moved by setting
 `SAKIOT_DATA_DIR`, for example `SAKIOT_DATA_DIR=/data` in containers.
 Existing local media should be moved into `../data/{voice_recordings,

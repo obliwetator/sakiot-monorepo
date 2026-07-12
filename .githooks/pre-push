@@ -15,3 +15,9 @@ echo "Checking frontend formatting..."
 	cd sakiot-stage
 	bunx biome check .
 )
+
+echo "Checking generated OpenAPI types..."
+(
+	cd sakiot-stage
+	bun run check:api-types
+)
