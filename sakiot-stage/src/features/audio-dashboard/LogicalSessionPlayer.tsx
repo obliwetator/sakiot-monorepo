@@ -301,7 +301,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			} else {
 				audio.currentTime = localSeconds;
 			}
-			void audio.play().catch(() => {
+			void audio.play().catch((error: unknown) => {
+				if (generationRef.current !== generation) return;
+				if (error instanceof DOMException && error.name === "AbortError")
+					return;
 				setActionError("Browser blocked or failed audio playback.");
 				playingRef.current = false;
 				setPlaying(false);
@@ -412,6 +415,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			setPlaying(false);
 			return;
 		}
+		setActionError(null);
 		const start =
 			positionRef.current >= durationRef.current ? 0 : positionRef.current;
 		startAtRef.current(start, true);
@@ -565,6 +569,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				}}
 				valueLabelDisplay="auto"
 				valueLabelFormat={formatDuration}
+				sx={{
+					"& .MuiSlider-thumb, & .MuiSlider-track": {
+						transition: "none",
+					},
+				}}
 			/>
 			<Stack
 				direction={{ xs: "column", sm: "row" }}
