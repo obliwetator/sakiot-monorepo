@@ -81,7 +81,7 @@ export function RangeSlider(props: {
 				isSilence={props.isSilence}
 				isLive={props.isLive}
 			/>
-			<JamIt disabled={props.isClip} userGuilds={props.userGuilds} />
+			<JamIt visible={props.isClip} />
 		</Box>
 	);
 }

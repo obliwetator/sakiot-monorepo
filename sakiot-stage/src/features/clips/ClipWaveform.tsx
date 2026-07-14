@@ -2,58 +2,35 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-	useGetSessionWaveformQuery,
-	useRebuildSessionWaveformMutation,
-} from "../../app/apiSlice";
-import { decodeWaveformPeaks } from "./waveformPeaks";
+import { useEffect, useRef, useState } from "react";
+import { useGetClipWaveformQuery } from "../../app/apiSlice";
+import { decodeWaveformPeaks } from "../audio-dashboard/waveformPeaks";
 
-export function SessionWaveform(props: {
-	sessionId: string;
-	positionMs: number;
-	durationMs: number;
-	onSeek: (positionMs: number) => void;
+export function ClipWaveform(props: {
+	guildId: string;
+	clipId: string;
+	positionSeconds: number;
+	durationSeconds: number;
+	onSeek: (seconds: number) => void;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const [rebuilding, setRebuilding] = useState(false);
-	const [rebuildProgress, setRebuildProgress] = useState(0);
-	const { data, isError, refetch } = useGetSessionWaveformQuery(
-		props.sessionId,
+	const [requestKey, setRequestKey] = useState<number | null>(null);
+	const [generating, setGenerating] = useState(false);
+	const { data, isError } = useGetClipWaveformQuery(
+		{
+			guild_id: props.guildId,
+			clip_id: props.clipId,
+			timestamp: requestKey ?? undefined,
+		},
+		{
+			skip: requestKey === null,
+			pollingInterval: generating ? 1_000 : 0,
+		},
 	);
-	const [rebuildWaveform, rebuildState] = useRebuildSessionWaveformMutation();
-
-	const pollRebuild = useCallback(async () => {
-		const result = await refetch();
-		if (result.data) setRebuildProgress(result.data.progress);
-		if (result.error || result.data?.building === false) {
-			setRebuilding(false);
-		}
-	}, [refetch]);
 
 	useEffect(() => {
-		if (data?.building) {
-			setRebuildProgress(data.progress);
-			setRebuilding(true);
-		}
-	}, [data?.building, data?.progress]);
-
-	useEffect(() => {
-		if (!rebuilding) return;
-		void pollRebuild();
-		const interval = window.setInterval(() => void pollRebuild(), 1_000);
-		return () => window.clearInterval(interval);
-	}, [pollRebuild, rebuilding]);
-
-	const startRebuild = async () => {
-		setRebuildProgress(0);
-		try {
-			await rebuildWaveform(props.sessionId).unwrap();
-			setRebuilding(true);
-		} catch {
-			setRebuilding(false);
-		}
-	};
+		if (data?.progress === 100 || data?.error || isError) setGenerating(false);
+	}, [data?.error, data?.progress, isError]);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -95,13 +72,15 @@ export function SessionWaveform(props: {
 		return () => observer.disconnect();
 	}, [data?.data]);
 
+	const progress = data?.progress ?? 0;
+	const waveformError = isError || Boolean(data?.error);
 	const playhead =
-		props.durationMs > 0
-			? Math.min(100, Math.max(0, (props.positionMs / props.durationMs) * 100))
+		props.durationSeconds > 0
+			? Math.min(
+					100,
+					Math.max(0, (props.positionSeconds / props.durationSeconds) * 100),
+				)
 			: 0;
-	const buildInProgress =
-		rebuilding || rebuildState.isLoading || data?.building === true;
-	const waveformError = isError || rebuildState.isError;
 
 	return (
 		<Box
@@ -114,7 +93,7 @@ export function SessionWaveform(props: {
 				bgcolor: "rgba(168, 85, 247, 0.18)",
 			}}
 		>
-			{buildInProgress && !waveformError && (
+			{generating && !waveformError && (
 				<Box
 					sx={{
 						position: "absolute",
@@ -129,24 +108,23 @@ export function SessionWaveform(props: {
 					}}
 				>
 					<Typography variant="caption">
-						Building combined waveform ({rebuildProgress}%)
+						Building clip waveform ({progress}%)
 					</Typography>
-					<LinearProgress variant="determinate" value={rebuildProgress} />
+					<LinearProgress variant="determinate" value={progress} />
 				</Box>
 			)}
-			{!data?.data && !buildInProgress && !waveformError && (
+			{!data?.data && !generating && !waveformError && (
 				<Box
 					sx={{
 						position: "absolute",
 						inset: 0,
 						display: "grid",
 						placeItems: "center",
-						zIndex: 1,
 						pointerEvents: "none",
 					}}
 				>
 					<Typography color="text.secondary" variant="caption">
-						Combined waveform has not been built.
+						Clip waveform has not been loaded.
 					</Typography>
 				</Box>
 			)}
@@ -157,41 +135,44 @@ export function SessionWaveform(props: {
 						inset: 0,
 						display: "grid",
 						placeItems: "center",
-						zIndex: 2,
-						pointerEvents: "none",
 					}}
 				>
 					<Typography color="error" variant="caption">
-						Combined waveform unavailable.
+						Clip waveform unavailable.
 					</Typography>
 				</Box>
 			)}
 			<canvas
 				ref={canvasRef}
-				aria-label="Combined logical recording waveform"
+				aria-label="Clip waveform"
 				onClick={(event) => {
+					if (!data?.data) return;
 					const bounds = event.currentTarget.getBoundingClientRect();
 					const fraction =
 						(event.clientX - bounds.left) / Math.max(1, bounds.width);
-					props.onSeek(fraction * props.durationMs);
+					props.onSeek(fraction * props.durationSeconds);
 				}}
 				style={{
 					width: "100%",
 					height: 140,
 					display: "block",
-					cursor: "pointer",
-					borderRadius: 6,
+					cursor: data?.data ? "pointer" : "default",
 				}}
 			/>
-			<Button
-				size="small"
-				variant="contained"
-				onClick={() => void startRebuild()}
-				disabled={buildInProgress}
-				sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
-			>
-				{data?.data ? "Rebuild waveform" : "Build waveform"}
-			</Button>
+			{!data?.data && (
+				<Button
+					size="small"
+					variant="contained"
+					onClick={() => {
+						setGenerating(true);
+						setRequestKey(Date.now());
+					}}
+					disabled={generating}
+					sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
+				>
+					Build waveform
+				</Button>
+			)}
 			<Box
 				sx={{
 					position: "absolute",

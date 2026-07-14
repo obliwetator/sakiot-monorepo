@@ -11,6 +11,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import Drawer from "@mui/material/Drawer";
+import Stack from "@mui/material/Stack";
 import { useTheme } from "@mui/material/styles";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -28,7 +29,7 @@ import { useAppSelector } from "../../app/hooks";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
 import { canDeleteClip } from "../../shared/permissions";
 import { formatDuration } from "../../utils/formatTime";
-import { AudioInterface } from "../audio-dashboard/AudioInterface";
+import { ClipPlayer } from "./ClipPlayer";
 
 function SimpleAccordion(props: {
 	data: ClipData[];
@@ -36,6 +37,7 @@ function SimpleAccordion(props: {
 	guildSelected: UserGuilds | null;
 }) {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const [expanded, setExpanded] = useState<string | false>(false);
 
 	const handleClickAccordion = (guild_id: string, clip_id: string) => {
@@ -54,6 +56,19 @@ function SimpleAccordion(props: {
 		return (
 			<Accordion
 				key={el.clip_id}
+				disableGutters
+				sx={{
+					mb: 1,
+					border: "1px solid",
+					borderColor: location.pathname.endsWith(
+						encodeURIComponent(el.clip_id),
+					)
+						? "secondary.main"
+						: "divider",
+					borderRadius: "8px !important",
+					boxShadow: "none",
+					"&:before": { display: "none" },
+				}}
 				onClick={() => {
 					handleClickAccordion(el.guild_id, el.clip_id);
 				}}
@@ -65,18 +80,28 @@ function SimpleAccordion(props: {
 					aria-controls="panel1a-content"
 					id="panel1a-header"
 				>
-					<Typography>CLIP_NAME: {el.name}</Typography>
+					<Box sx={{ minWidth: 0, flex: 1 }}>
+						<Typography sx={{ overflowWrap: "anywhere" }}>
+							{el.name || "Unnamed clip"}
+						</Typography>
+						<Typography variant="caption" color="text.secondary">
+							{formatDuration(el.length ?? 0)} · User {el.user_id}
+						</Typography>
+					</Box>
 				</AccordionSummary>
 				<AccordionDetails>
-					<Typography>Start time: {formatDuration(el.start_time)}</Typography>
-					<Typography>BY(not working): {el.user_id}</Typography>
-					<Typography>
-						length:{" "}
-						{typeof el.length === "number" ? el.length.toFixed(2) : "unknown"}
-					</Typography>
-					<Typography>size: {el.size}</Typography>
-					<Typography>OG file: {el.original_file_name}</Typography>
-					<div>
+					<Stack spacing={0.5}>
+						<Typography variant="body2">
+							Channel {el.channel_id} · source offset{" "}
+							{formatDuration(el.start_time)}
+						</Typography>
+						<Typography
+							variant="caption"
+							color="text.secondary"
+							sx={{ overflowWrap: "anywhere" }}
+						>
+							{el.original_file_name || "Unknown source recording"}
+						</Typography>
 						<AlertDialog
 							clip_id={el.clip_id}
 							canDelete={canDeleteClip(
@@ -85,7 +110,7 @@ function SimpleAccordion(props: {
 								el.user_id,
 							)}
 						/>
-					</div>
+					</Stack>
 				</AccordionDetails>
 			</Accordion>
 		);
@@ -167,14 +192,11 @@ function clipAbsoluteStartMs(clip: ClipData | null): number | null {
 
 export default function Clips() {
 	const params = useParams();
-	const location = useLocation();
 
 	const guildSelected = useAppSelector((state) => state.app.guildSelected);
 	const { data: authData } = useGetAuthDetailsQuery(undefined, {
 		skip: !hasLoggedInCookie(),
 	});
-	const userGuilds = authData?.guilds || null;
-
 	const { data, isError, isSuccess } = useGetClipsQuery(
 		guildSelected?.id || "",
 		{
@@ -192,8 +214,6 @@ export default function Clips() {
 			<ClipsLayout
 				data={data}
 				params={params}
-				location={location}
-				userGuilds={userGuilds}
 				currentUserId={authData?.user?.user_id ?? null}
 				guildSelected={guildSelected}
 			/>
@@ -206,8 +226,6 @@ export default function Clips() {
 function ClipsLayout(props: {
 	data: ClipData[];
 	params: { file_name?: string };
-	location: ReturnType<typeof useLocation>;
-	userGuilds: UserGuilds[] | null;
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
 }) {
@@ -247,10 +265,11 @@ function ClipsLayout(props: {
 			{isDesktop ? (
 				<Box
 					sx={{
-						flex: "0 0 40%",
+						flex: "0 0 34%",
 						maxWidth: 480,
 						width: "100%",
 						overflow: "auto",
+						p: 1,
 					}}
 				>
 					{list}
@@ -284,12 +303,10 @@ function ClipsLayout(props: {
 				</Box>
 			)}
 			<Box sx={{ flex: 1, minWidth: 0 }}>
-				{props.params.file_name && (
-					<AudioInterface
-						key={props.location.pathname}
-						isClip={true}
-						userGuilds={props.userGuilds}
-						isSilence={false}
+				{selectedClip && (
+					<ClipPlayer
+						key={selectedClip.clip_id}
+						clip={selectedClip}
 						absoluteStartMs={absoluteStartMs}
 					/>
 				)}
