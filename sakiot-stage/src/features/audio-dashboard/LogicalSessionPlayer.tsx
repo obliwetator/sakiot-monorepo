@@ -56,6 +56,21 @@ function shortcutTargetIsInteractive(target: EventTarget | null): boolean {
 	);
 }
 
+function isSameMediaSegment(
+	left: PlaybackSegment | null,
+	right: PlaybackSegment | undefined,
+): boolean {
+	if (!left || !right || left.kind === "silence" || right.kind === "silence") {
+		return false;
+	}
+	if (left.kind !== right.kind || left.start_ms !== right.start_ms)
+		return false;
+	if (left.audio_file_id && right.audio_file_id) {
+		return left.audio_file_id === right.audio_file_id;
+	}
+	return Boolean(left.media_url && left.media_url === right.media_url);
+}
+
 function markerColor(source: string, eventType: string): string {
 	if (source === "voice_connection") {
 		return eventType.includes("failed") ? "#ef4444" : "#0ea5e9";
@@ -118,12 +133,15 @@ function TimelineMarkers(props: {
 }
 
 export function LogicalSessionPlayer(props: { sessionId: string }) {
+	const [finalizedSessionId, setFinalizedSessionId] = useState<string | null>(
+		null,
+	);
 	const {
 		data: manifest,
 		isLoading,
 		isError,
 	} = useGetSessionManifestQuery(props.sessionId, {
-		pollingInterval: 5_000,
+		pollingInterval: finalizedSessionId === props.sessionId ? 0 : 5_000,
 		refetchOnMountOrArgChange: true,
 	});
 	const segments = useMemo(
@@ -147,6 +165,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const generationRef = useRef(0);
 	const positionRef = useRef(0);
 	const playingRef = useRef(false);
+	const activeSegmentRef = useRef<PlaybackSegment | null>(null);
 	const durationRef = useRef(0);
 	const segmentsRef = useRef<PlaybackSegment[]>([]);
 	const rateRef = useRef(1);
@@ -154,6 +173,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
+
+	useEffect(() => {
+		if (manifest?.state === "finalized") {
+			setFinalizedSessionId(props.sessionId);
+		}
+	}, [manifest?.state, props.sessionId]);
 
 	useEffect(() => {
 		positionRef.current = positionMs;
@@ -225,10 +250,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				position >= candidate.start_ms && position < candidate.end_ms,
 		);
 		if (!segment) {
+			activeSegmentRef.current = null;
 			playingRef.current = false;
 			setPlaying(false);
 			return;
 		}
+		activeSegmentRef.current = segment;
 		playingRef.current = true;
 		setPlaying(true);
 
@@ -347,6 +374,33 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 
 	const seek = useCallback((nextPositionMs: number) => {
+		const durationMs = durationRef.current;
+		const position = Math.max(0, Math.min(nextPositionMs, durationMs));
+		const targetSegment = segmentsRef.current.find(
+			(candidate) =>
+				position >= candidate.start_ms && position < candidate.end_ms,
+		);
+		const audio = audioRef.current;
+		if (
+			playingRef.current &&
+			audio &&
+			isSameMediaSegment(activeSegmentRef.current, targetSegment)
+		) {
+			const localSeconds = Math.max(
+				0,
+				(position - (targetSegment?.start_ms ?? 0)) / 1_000,
+			);
+			try {
+				audio.currentTime = Number.isFinite(audio.duration)
+					? Math.min(localSeconds, Math.max(0, audio.duration - 0.01))
+					: localSeconds;
+				positionRef.current = position;
+				setPositionMs(position);
+				return;
+			} catch {
+				// Source replacement below handles media that cannot seek in place.
+			}
+		}
 		startAtRef.current(nextPositionMs, playingRef.current);
 	}, []);
 

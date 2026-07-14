@@ -3,6 +3,7 @@ import * as React from "react";
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
+	apiSlice,
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
 } from "../../../app/apiSlice";
@@ -69,9 +70,15 @@ export default function CustomizedTreeView(_props: {
 			refetchOnMountOrArgChange: true,
 		},
 	);
+	const { data: selectedSession } =
+		apiSlice.endpoints.getSessionManifest.useQueryState(
+			params.session_id ?? "",
+			{ skip: !params.session_id },
+		);
+	const selectedSessionFinalized = selectedSession?.state === "finalized";
 	const { data: liveStems } = useGetLiveStemsQuery(params.guild_id ?? "", {
 		skip: !params.guild_id,
-		pollingInterval: 10_000,
+		pollingInterval: selectedSessionFinalized ? 0 : 10_000,
 	});
 	const liveSet = useMemo(() => new Set(liveStems ?? []), [liveStems]);
 
