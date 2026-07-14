@@ -55,6 +55,7 @@ pub struct ClipInfo {
     #[schema(value_type = String, example = "146638124288704513")]
     channel_id: i64,
     start_time: f32,
+    recording_session_id: Option<String>,
 }
 
 #[get("/audio/clips/{guild_id}/{clip_id:.*}")]
@@ -155,7 +156,8 @@ pub async fn get_clips(
         size,
         guild_id,
         channel_id,
-        start_time
+        start_time,
+        recording_session_id
         FROM clips
         WHERE guild_id = $1
           AND deleted_at IS NULL
@@ -218,6 +220,9 @@ pub async fn get_clips(
                     .try_get::<Option<i64>, _>("channel_id")?
                     .unwrap_or_default(),
                 start_time: row.try_get("start_time")?,
+                recording_session_id: row
+                    .try_get::<Option<i64>, _>("recording_session_id")?
+                    .map(|session_id| session_id.to_string()),
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;

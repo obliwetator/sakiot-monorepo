@@ -424,6 +424,7 @@ export interface components {
 			length?: number | null;
 			name?: string | null;
 			original_file_name?: string | null;
+			recording_session_id?: string | null;
 			saved_file_name?: string | null;
 			/** Format: int64 */
 			size?: number | null;

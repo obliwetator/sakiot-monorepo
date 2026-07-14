@@ -5,14 +5,17 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import { BASE_API_URL, type ClipData } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
+import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { formatDuration } from "../../utils/formatTime";
 import { JamIt } from "../audio-dashboard/RangeSlider/JamIt";
 import { ClipWaveform } from "./ClipWaveform";
@@ -234,6 +237,9 @@ export function ClipPlayer(props: {
 		props.absoluteStartMs == null
 			? null
 			: props.absoluteStartMs + displayedPosition * 1_000;
+	const sourceSessionPath = props.clip.recording_session_id
+		? `${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/audio/session/${encodeURIComponent(props.clip.recording_session_id)}?${new URLSearchParams({ t: String(props.clip.start_time) })}`
+		: null;
 
 	return (
 		<Box sx={{ px: { xs: 1, md: 3 }, pb: 4 }}>
@@ -289,7 +295,16 @@ export function ClipPlayer(props: {
 					/>
 					<MetadataItem
 						label="Source recording"
-						value={props.clip.original_file_name || "Unknown"}
+						value={
+							sourceSessionPath ? (
+								<Link component={RouterLink} to={sourceSessionPath}>
+									Session {props.clip.recording_session_id} · open at{" "}
+									{formatDuration(props.clip.start_time)}
+								</Link>
+							) : (
+								props.clip.original_file_name || "Unknown"
+							)
+						}
 					/>
 					<MetadataItem
 						label="Stored file"

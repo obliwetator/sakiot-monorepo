@@ -12,6 +12,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type Hls from "hls.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
 	BASE_API_URL,
 	type SessionManifest,
@@ -133,6 +134,13 @@ function TimelineMarkers(props: {
 }
 
 export function LogicalSessionPlayer(props: { sessionId: string }) {
+	const location = useLocation();
+	const deepLinkedPositionMs = useMemo(() => {
+		const rawPosition = new URLSearchParams(location.search).get("t");
+		if (rawPosition === null) return null;
+		const seconds = Number(rawPosition);
+		return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1_000 : null;
+	}, [location.search]);
 	const [finalizedSessionId, setFinalizedSessionId] = useState<string | null>(
 		null,
 	);
@@ -170,6 +178,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const segmentsRef = useRef<PlaybackSegment[]>([]);
 	const rateRef = useRef(1);
 	const volumeRef = useRef(1);
+	const appliedDeepLinkRef = useRef<string | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
@@ -367,6 +376,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		}
 	};
 	startAtRef.current = startAt;
+
+	useEffect(() => {
+		if (!manifest || deepLinkedPositionMs === null) return;
+		const deepLinkKey = `${props.sessionId}:${deepLinkedPositionMs}`;
+		if (appliedDeepLinkRef.current === deepLinkKey) return;
+		appliedDeepLinkRef.current = deepLinkKey;
+		setSeekPreviewMs(null);
+		startAtRef.current(deepLinkedPositionMs, false);
+	}, [deepLinkedPositionMs, manifest, props.sessionId]);
 
 	useEffect(
 		() => () => {
