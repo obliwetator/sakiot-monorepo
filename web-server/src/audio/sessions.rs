@@ -10,6 +10,7 @@ use chrono::Datelike;
 use sakiot_paths::RecordingKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -990,7 +991,26 @@ pub async fn rebuild_session_waveform(
     let progress_clone = progress.clone();
     let cache_key_clone = cache_key.clone();
     tokio::spawn(async move {
-        if let Err(err) = compose_session(&pool_clone, &access, None, None, false, &composite).await
+        progress_clone
+            .0
+            .write()
+            .await
+            .insert(cache_key_clone.clone(), 1);
+        let composition_progress = CompositionProgress {
+            cache_key: cache_key_clone.clone(),
+            progress: progress_clone.clone(),
+            completed: 85,
+        };
+        if let Err(err) = compose_session_with_progress(
+            &pool_clone,
+            &access,
+            None,
+            None,
+            false,
+            &composite,
+            composition_progress,
+        )
+        .await
         {
             tracing::error!(session_id, "session waveform composition failed: {}", err);
             progress_clone.0.write().await.insert(cache_key_clone, -1);
@@ -1003,6 +1023,7 @@ pub async fn rebuild_session_waveform(
             None,
             progress_clone.clone(),
             None,
+            Some((85, 99)),
         )
         .await;
         let _ = tokio::fs::remove_file(composite).await;
@@ -1035,6 +1056,56 @@ async fn compose_session(
     range_end_seconds: Option<f64>,
     remove_silence: bool,
     output: &Path,
+) -> Result<(), AppError> {
+    compose_session_inner(
+        pool,
+        access,
+        range_start_seconds,
+        range_end_seconds,
+        remove_silence,
+        output,
+        None,
+    )
+    .await
+}
+
+#[derive(Clone)]
+struct CompositionProgress {
+    cache_key: String,
+    progress: web::Data<WaveformProgressContainer>,
+    completed: i16,
+}
+
+async fn compose_session_with_progress(
+    pool: &web::Data<Pool<Postgres>>,
+    access: &SessionAccess,
+    range_start_seconds: Option<f64>,
+    range_end_seconds: Option<f64>,
+    remove_silence: bool,
+    output: &Path,
+    progress: CompositionProgress,
+) -> Result<(), AppError> {
+    compose_session_inner(
+        pool,
+        access,
+        range_start_seconds,
+        range_end_seconds,
+        remove_silence,
+        output,
+        Some(progress),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn compose_session_inner(
+    pool: &web::Data<Pool<Postgres>>,
+    access: &SessionAccess,
+    range_start_seconds: Option<f64>,
+    range_end_seconds: Option<f64>,
+    remove_silence: bool,
+    output: &Path,
+    progress: Option<CompositionProgress>,
 ) -> Result<(), AppError> {
     let parts = timeline_parts(pool, access).await?;
     let timeline_end = timeline_end_ms(access);
@@ -1129,14 +1200,84 @@ async fn compose_session(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    let result = command.output().await.map_err(AppError::IoError)?;
-    if !result.status.success() {
-        let limit = result.stderr.len().min(4_096);
+    if progress.is_some() {
+        command.args(["-progress", "pipe:2", "-nostats"]);
+    }
+
+    let mut child = command.spawn().map_err(AppError::IoError)?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::FfmpegError("FFmpeg stderr pipe unavailable".into()))?;
+    let mut lines = BufReader::new(stderr).lines();
+    let mut error_output = Vec::new();
+    while let Some(line) = lines.next_line().await.map_err(AppError::IoError)? {
+        if let Some(progress) = &progress
+            && let Some(value) = composition_progress_percent(
+                &line,
+                selected_end.saturating_sub(selected_start),
+                progress.completed,
+            )
+        {
+            let mut values = progress.progress.0.write().await;
+            let current = values.entry(progress.cache_key.clone()).or_insert(0);
+            if *current >= 0 && value > *current {
+                *current = value;
+            }
+        } else if !is_ffmpeg_progress_line(&line) && error_output.len() < 4_096 {
+            let remaining = 4_096 - error_output.len();
+            error_output.extend_from_slice(&line.as_bytes()[..line.len().min(remaining)]);
+            error_output.push(b'\n');
+        }
+    }
+
+    let status = child.wait().await.map_err(AppError::IoError)?;
+    if !status.success() {
         return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&result.stderr[..limit]).into_owned(),
+            String::from_utf8_lossy(&error_output).into_owned(),
         ));
     }
+    if let Some(progress) = progress {
+        progress
+            .progress
+            .0
+            .write()
+            .await
+            .insert(progress.cache_key, progress.completed);
+    }
     Ok(())
+}
+
+fn composition_progress_percent(line: &str, duration_ms: i64, completed: i16) -> Option<i16> {
+    let elapsed_us = line.strip_prefix("out_time_us=")?.parse::<u64>().ok()?;
+    let duration_ms = u64::try_from(duration_ms).ok()?.max(1);
+    let completed = u64::try_from(completed).ok()?.clamp(2, 99);
+    let elapsed_ms = elapsed_us / 1_000;
+    let progress = elapsed_ms
+        .saturating_mul(completed)
+        .checked_div(duration_ms)?
+        .clamp(1, completed - 1);
+    i16::try_from(progress).ok()
+}
+
+fn is_ffmpeg_progress_line(line: &str) -> bool {
+    matches!(
+        line.split_once('=').map(|(key, _)| key),
+        Some(
+            "bitrate"
+                | "drop_frames"
+                | "dup_frames"
+                | "fps"
+                | "frame"
+                | "out_time"
+                | "out_time_ms"
+                | "out_time_us"
+                | "progress"
+                | "speed"
+                | "stream_0_0_q"
+                | "total_size"
+        )
+    )
 }
 
 async fn timeline_parts(
@@ -1227,7 +1368,9 @@ fn schedule_temporary_cleanup(path: PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionAccess, timeline_end_ms, validate_segment_name};
+    use super::{
+        SessionAccess, composition_progress_percent, timeline_end_ms, validate_segment_name,
+    };
 
     fn access(state: &str) -> SessionAccess {
         SessionAccess {
@@ -1253,5 +1396,21 @@ mod tests {
         assert!(validate_segment_name("seg_00001.m4s").is_ok());
         assert!(validate_segment_name("../secret").is_err());
         assert!(validate_segment_name("playlist.m3u8").is_err());
+    }
+
+    #[test]
+    fn maps_ffmpeg_output_time_into_composition_progress() {
+        assert_eq!(
+            composition_progress_percent("out_time_us=5000000", 10_000, 85),
+            Some(42)
+        );
+        assert_eq!(
+            composition_progress_percent("out_time_us=10000000", 10_000, 85),
+            Some(84)
+        );
+        assert_eq!(
+            composition_progress_percent("progress=end", 10_000, 85),
+            None
+        );
     }
 }

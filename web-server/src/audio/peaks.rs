@@ -60,6 +60,7 @@ async fn silence_free_waveform(
             None,
             progress_map_clone,
             None,
+            None,
         )
         .await
         {
@@ -178,6 +179,7 @@ pub async fn get_waveform_data(
             None,
             progress_map_clone.clone(),
             Some(FINAL_WAVEFORM_WRITTEN),
+            None,
         )
         .await
         {
@@ -311,6 +313,7 @@ pub async fn get_clip_waveform_data(
             cache_key,
             None,
             progress_map_clone,
+            None,
             None,
         )
         .await

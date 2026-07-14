@@ -16,6 +16,7 @@ pub async fn generate_peaks_background(
     target_points: Option<f64>,
     progress_map: web::Data<WaveformProgressContainer>,
     completed_progress: Option<i16>,
+    progress_range: Option<(i16, i16)>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 1. Get duration and sample rate using a single ffprobe call
     let ffprobe_output = Command::new("ffprobe")
@@ -103,7 +104,7 @@ pub async fn generate_peaks_background(
                             .0
                             .write()
                             .await
-                            .insert(file_name.clone(), pct_val.min(99));
+                            .insert(file_name.clone(), scale_progress(pct_val, progress_range));
                     }
                 }
             }
@@ -132,4 +133,27 @@ pub async fn generate_peaks_background(
     }
 
     Ok(())
+}
+
+fn scale_progress(progress: i16, range: Option<(i16, i16)>) -> i16 {
+    let progress = progress.clamp(0, 100);
+    let Some((start, end)) = range else {
+        return progress.min(99);
+    };
+    let start = start.clamp(0, 99);
+    let end = end.clamp(start, 99);
+    start + (progress * (end - start) / 100)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale_progress;
+
+    #[test]
+    fn scales_peak_generation_into_reserved_progress_range() {
+        assert_eq!(scale_progress(0, Some((85, 99))), 85);
+        assert_eq!(scale_progress(50, Some((85, 99))), 92);
+        assert_eq!(scale_progress(100, Some((85, 99))), 99);
+        assert_eq!(scale_progress(100, None), 99);
+    }
 }

@@ -26,6 +26,9 @@ import {
 } from "./logicalSessionTimeline";
 import { SessionWaveform } from "./SessionWaveform";
 
+const ARROW_SEEK_MS = 5_000;
+const CTRL_ARROW_SEEK_MS = 30_000;
+
 function absoluteMediaUrl(path: string): string {
 	return new URL(
 		path,
@@ -40,6 +43,17 @@ function saveBlob(blob: Blob, fileName: string) {
 	anchor.download = fileName;
 	anchor.click();
 	URL.revokeObjectURL(url);
+}
+
+function shortcutTargetIsInteractive(target: EventTarget | null): boolean {
+	return (
+		target instanceof HTMLElement &&
+		Boolean(
+			target.closest(
+				'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="slider"]',
+			),
+		)
+	);
 }
 
 function markerColor(source: string, eventType: string): string {
@@ -332,11 +346,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		[stopSource],
 	);
 
-	const seek = (nextPositionMs: number) => {
+	const seek = useCallback((nextPositionMs: number) => {
 		startAtRef.current(nextPositionMs, playingRef.current);
-	};
+	}, []);
 
-	const togglePlay = () => {
+	const togglePlay = useCallback(() => {
 		if (playingRef.current) {
 			generationRef.current += 1;
 			stopSource();
@@ -347,7 +361,30 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		const start =
 			positionRef.current >= durationRef.current ? 0 : positionRef.current;
 		startAtRef.current(start, true);
-	};
+	}, [stopSource]);
+
+	useEffect(() => {
+		const handlePlaybackShortcut = (event: KeyboardEvent) => {
+			if (shortcutTargetIsInteractive(event.target)) return;
+
+			if (event.key === " " || event.code === "Space") {
+				if (event.repeat) return;
+				event.preventDefault();
+				togglePlay();
+				return;
+			}
+
+			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+			event.preventDefault();
+			const distance = event.ctrlKey ? CTRL_ARROW_SEEK_MS : ARROW_SEEK_MS;
+			const direction = event.key === "ArrowRight" ? 1 : -1;
+			setSeekPreviewMs(null);
+			seek(positionRef.current + direction * distance);
+		};
+
+		window.addEventListener("keydown", handlePlaybackShortcut);
+		return () => window.removeEventListener("keydown", handlePlaybackShortcut);
+	}, [seek, togglePlay]);
 
 	const downloadRange = async (removeSilence: boolean) => {
 		setActionError(null);
