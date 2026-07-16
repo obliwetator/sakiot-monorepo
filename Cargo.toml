@@ -13,7 +13,7 @@ resolver = "3"
 # merging to main is what cuts a release: CI tags v<version> after the staging
 # deploy verifies, and the tag push triggers the production deploy.
 [workspace.package]
-version = "1.0.9"
+version = "1.0.10"
 
 # Restriction lints for production code, inherited by every crate via
 # `lints.workspace = true`. Tests are exempted in clippy.toml
