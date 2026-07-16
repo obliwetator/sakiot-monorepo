@@ -6,12 +6,11 @@ use tracing::{error, info};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::media_archive::MediaArchive;
 use crate::permissions::require_channel_access;
 use crate::waveform::generate_peaks_background;
 
-use super::paths::{
-    NO_SILENCE_PREFIX, clips_path, no_silence_recording_path, recording_path, waveform_path,
-};
+use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path, waveform_path};
 use super::serve::AudioQuery;
 use super::types::WaveformProgressContainer;
 use super::util::{file_exists, get_file_path_root, is_stale};
@@ -88,11 +87,20 @@ pub async fn get_waveform_data(
     progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    super::sessions::require_recording_access(&pool, path.0, path.1, &path.4, token.user_id)
-        .await?;
+    super::sessions::require_recording_access(
+        &pool,
+        path.0,
+        path.1,
+        path.2,
+        path.3,
+        &path.4,
+        token.user_id,
+    )
+    .await?;
 
     // Silence-free version is a separate static file: distinct input,
     // distinct cache/progress key. No DB cache marker — the file is final
@@ -120,6 +128,26 @@ pub async fn get_waveform_data(
 
     if has_final_cache {
         return waveform_response(&output).await;
+    }
+
+    if !file_exists(&file_path).await {
+        let audio_file_id = crate::media_archive::recording_id(
+            pool.get_ref(),
+            path.0,
+            path.1,
+            path.2,
+            path.3,
+            &path.4,
+        )
+        .await?
+        .ok_or(AppError::FileNotFound)?;
+        media
+            .ensure_recording_local(
+                pool.get_ref(),
+                audio_file_id,
+                std::path::Path::new(&file_path),
+            )
+            .await?;
     }
 
     let pct = {
@@ -252,6 +280,7 @@ pub async fn get_clip_waveform_data(
     progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, clip_id) = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
@@ -278,7 +307,8 @@ pub async fn get_clip_waveform_data(
     let saved_file_name = row
         .try_get::<Option<String>, _>("saved_file_name")?
         .ok_or(AppError::ClipNotFound)?;
-    let input_file = format!("{}{}", clips_path(), saved_file_name);
+    let input_path = crate::media_archive::clip_local_path(&saved_file_name)?;
+    let input_file = input_path.to_string_lossy().into_owned();
 
     // Prefix the cache/progress key so it never collides with recording stems
     // ({ts}-{user_id}) or the silence-free (_no_silence_) key.
@@ -288,6 +318,10 @@ pub async fn get_clip_waveform_data(
     if file_exists(&output).await {
         return waveform_response(&output).await;
     }
+
+    media
+        .ensure_clip_local(pool.get_ref(), &clip_id, &input_path)
+        .await?;
 
     // Claim the generation slot (or report an in-flight one) under one lock.
     {

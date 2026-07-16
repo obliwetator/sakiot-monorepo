@@ -84,6 +84,12 @@ database setup, override the remote command:
 SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" scripts/dev.sh fetch-fixtures
 ```
 
+Archive-pruned staging recordings are materialized and SHA-256 verified before
+`rsync`. The workflow first tries the staging environment/binary directly, then
+`sudo -n -u sakiot`. Override unusual layouts with
+`SAKIOT_DEV_REMOTE_WEB_BINARY`, `SAKIOT_DEV_REMOTE_ENV_FILE`, or a complete
+`SAKIOT_DEV_REMOTE_HYDRATE` command.
+
 ## Environment
 
 Copy the root example once and fill in local credentials:
@@ -97,6 +103,11 @@ The root `.env` is used by both Rust services, SQLx macros and CLI commands, and
 the database backup scripts. Set `SAKIOT_ENV_FILE` to override its path for
 backup jobs. Frontend development values live in root `.env.development`; Vite
 loads environment files from the monorepo root.
+
+Backblaze archive variables default to disabled for local development. Enabled
+deployments require every `SAKIOT_MEDIA_S3_*` value and fail startup on partial
+configuration. Provisioning, migration, verification, restore, and rollback
+steps live in [`ops/B2_MEDIA_ARCHIVE.md`](ops/B2_MEDIA_ARCHIVE.md).
 
 Database integration tests use `SAKIOT_TEST_DATABASE_URL`. Export it as
 `DATABASE_URL` when running tests; SQLx creates a disposable database per test:

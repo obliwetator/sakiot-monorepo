@@ -243,6 +243,13 @@ async fn handle_jam(
             return ("Voice system is not configured.".to_string(), None);
         }
     };
+    let media_archive = match crate::media_archive::from_ctx(ctx).await {
+        Some(archive) => archive,
+        None => {
+            warn!("Media archive state not found");
+            return ("Voice system is not configured.".to_string(), None);
+        }
+    };
 
     let guild_id = match application_command.guild_id {
         Some(id) => id,
@@ -275,8 +282,15 @@ async fn handle_jam(
             return ("Database error. Try again later.".to_string(), None);
         }
     }
-    match crate::commands::voice_controls::play_clip(pool, &manager, guild_id, &clip_name, user_id)
-        .await
+    match crate::commands::voice_controls::play_clip(
+        pool,
+        &media_archive,
+        &manager,
+        guild_id,
+        &clip_name,
+        user_id,
+    )
+    .await
     {
         Ok(msg) => (msg, Some(clip_name)),
         Err(e) => {
@@ -297,6 +311,9 @@ async fn replay_clip(
     let manager = match songbird::get(ctx).await {
         Some(m) => m,
         None => return "Voice system is not configured.".to_string(),
+    };
+    let Some(media_archive) = crate::media_archive::from_ctx(ctx).await else {
+        return "Voice system is not configured.".to_string();
     };
 
     let guild_id = match guild_id {
@@ -321,8 +338,15 @@ async fn replay_clip(
         }
     }
 
-    match crate::commands::voice_controls::play_clip(pool, &manager, guild_id, clip_id, user_id)
-        .await
+    match crate::commands::voice_controls::play_clip(
+        pool,
+        &media_archive,
+        &manager,
+        guild_id,
+        clip_id,
+        user_id,
+    )
+    .await
     {
         Ok(msg) => msg,
         Err(e) => {

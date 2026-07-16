@@ -61,6 +61,7 @@ opentelemetry-otlp = { version = "0.32.0", features = [
 tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
+sakiot-storage = { path = "../sakiot-storage" }
 ogg = "0.9"
 opus2 = "0.4"
 thiserror = "2"

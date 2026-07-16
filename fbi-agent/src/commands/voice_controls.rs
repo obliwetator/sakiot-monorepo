@@ -5,7 +5,6 @@ use serenity::model::id::{ChannelId, UserId};
 use serenity::model::prelude::CommandOptionType;
 
 use crate::database::DbError;
-use crate::events::voice_receiver::clips_file_path;
 use serenity::model::prelude::GuildId;
 use songbird::Songbird;
 use sqlx::{Pool, Postgres};
@@ -14,6 +13,8 @@ use sqlx::{Pool, Postgres};
 pub enum PlayClipError {
     #[error(transparent)]
     Db(#[from] DbError),
+    #[error(transparent)]
+    Media(#[from] crate::media_archive::MediaArchiveError),
     #[error("{0}")]
     User(String),
 }
@@ -22,6 +23,7 @@ impl PlayClipError {
     pub fn user_message(&self) -> String {
         match self {
             Self::Db(_) => "Database error. Try again later.".to_string(),
+            Self::Media(_) => "Clip media is unavailable. Try again later.".to_string(),
             Self::User(message) => message.clone(),
         }
     }
@@ -29,6 +31,7 @@ impl PlayClipError {
 
 pub async fn play_clip(
     pool: &Pool<Postgres>,
+    media_archive: &crate::media_archive::MediaArchive,
     manager: &std::sync::Arc<Songbird>,
     guild_id: GuildId,
     clip_id: &str,
@@ -39,9 +42,6 @@ pub async fn play_clip(
         .map_err(PlayClipError::Db)?
         .ok_or_else(|| PlayClipError::User(format!("Clip with ID '{}' not found.", clip_id)))?;
 
-    let result = songbird::input::File::new(clips_file_path().join(clip.saved_file_name));
-    let input = songbird::input::Input::from(result);
-
     let handler = match manager.get(guild_id) {
         Some(h) => h,
         None => {
@@ -51,7 +51,13 @@ pub async fn play_clip(
         }
     };
 
-    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.to_i64(), clip_id)
+    let clip_path = media_archive
+        .ensure_clip_local(pool, &clip.clip_id, &clip.saved_file_name)
+        .await?;
+    let result = songbird::input::File::new(clip_path);
+    let input = songbird::input::Input::from(result);
+
+    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.to_i64(), &clip.clip_id)
         .await
         .map_err(PlayClipError::Db)?;
 

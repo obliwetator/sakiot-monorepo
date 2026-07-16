@@ -1,6 +1,6 @@
 use actix_files::NamedFile;
 use actix_web::{
-    HttpRequest, Responder, get,
+    HttpRequest, Responder,
     http::header::{ContentDisposition, DispositionType},
     route, web,
 };
@@ -10,6 +10,7 @@ use tracing::info;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::media_archive::{MediaArchive, RemoteDisposition};
 
 use sakiot_paths::RecordingKey;
 
@@ -31,6 +32,7 @@ pub async fn get_audio(
     query_param: web::Query<AudioQuery>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<impl Responder, AppError> {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
@@ -43,6 +45,8 @@ pub async fn get_audio(
         &pool,
         guild_id,
         channel_id,
+        year,
+        month,
         &file_name,
         token.user_id,
     )
@@ -64,17 +68,42 @@ pub async fn get_audio(
     if let Ok(f) = NamedFile::open_async(&path).await {
         return Ok(f.into_response(&req));
     }
-    Err(AppError::FileNotFound)
+    if query_param.silence.is_some() {
+        return Err(AppError::FileNotFound);
+    }
+    let audio_file_id = crate::media_archive::recording_id(
+        pool.get_ref(),
+        guild_id,
+        channel_id,
+        year,
+        month,
+        &file_name,
+    )
+    .await?
+    .ok_or(AppError::FileNotFound)?;
+    media
+        .serve_recording(
+            &req,
+            pool.get_ref(),
+            audio_file_id,
+            RemoteDisposition::Inline,
+        )
+        .await
 }
 
-#[get("/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[route(
+    "/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    method = "GET",
+    method = "HEAD"
+)]
 pub async fn download_audio(
-    _req: HttpRequest,
+    req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
     is_silence: web::Query<AudioQuery>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
-) -> Result<NamedFile, AppError> {
+    media: web::Data<MediaArchive>,
+) -> Result<actix_web::HttpResponse, AppError> {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
 
     if file_name_from_url.contains("..")
@@ -89,6 +118,8 @@ pub async fn download_audio(
         &pool,
         guild_id,
         channel_id,
+        year,
+        month,
         &file_name_from_url,
         token.user_id,
     )
@@ -112,14 +143,34 @@ pub async fn download_audio(
         path.display(),
         is_silence
     );
-    let file = actix_files::NamedFile::open_async(&path)
+    if let Ok(file) = actix_files::NamedFile::open_async(&path).await {
+        return Ok(file
+            .use_last_modified(true)
+            .set_content_disposition(ContentDisposition {
+                disposition: DispositionType::Attachment,
+                parameters: vec![],
+            })
+            .into_response(&req));
+    }
+    if is_silence.silence.is_some() {
+        return Err(AppError::FileNotFound);
+    }
+    let audio_file_id = crate::media_archive::recording_id(
+        pool.get_ref(),
+        guild_id,
+        channel_id,
+        year,
+        month,
+        &file_name_from_url,
+    )
+    .await?
+    .ok_or(AppError::FileNotFound)?;
+    media
+        .serve_recording(
+            &req,
+            pool.get_ref(),
+            audio_file_id,
+            RemoteDisposition::Attachment,
+        )
         .await
-        .map_err(|_| AppError::FileNotFound)?;
-
-    Ok(file
-        .use_last_modified(true)
-        .set_content_disposition(ContentDisposition {
-            disposition: DispositionType::Attachment,
-            parameters: vec![],
-        }))
 }

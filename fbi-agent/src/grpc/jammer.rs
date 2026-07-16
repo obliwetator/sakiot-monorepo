@@ -84,6 +84,7 @@ impl Jammer for FbiAgentGrpc {
                         data.user_id,
                         self.data_cache.data.clone(),
                         self.data_cache.pool.clone(),
+                        self.data_cache.media_archive.clone(),
                     )
                     .await
                     {
@@ -118,6 +119,7 @@ async fn handle_play_audio_to_channel(
     user_id: i64,
     data: Arc<RwLock<TypeMap>>,
     pool: sqlx::Pool<sqlx::Postgres>,
+    media_archive: crate::media_archive::MediaArchive,
 ) -> Result<(), PlayClipError> {
     let manager = {
         let data_guard = data.read().await;
@@ -130,7 +132,14 @@ async fn handle_play_audio_to_channel(
         u64::try_from(id)
             .map_err(|_| PlayClipError::User("guild_id must be non-negative".to_string()))?,
     );
-    crate::commands::voice_controls::play_clip(&pool, &manager, guild_id, clip_name, user_id)
-        .await
-        .map(|_| ())
+    crate::commands::voice_controls::play_clip(
+        &pool,
+        &media_archive,
+        &manager,
+        guild_id,
+        clip_name,
+        user_id,
+    )
+    .await
+    .map(|_| ())
 }

@@ -1,9 +1,10 @@
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, Row};
 
 use crate::database::DbResult;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PlayableClip {
+    pub clip_id: String,
     pub saved_file_name: String,
     pub display_name: String,
 }
@@ -19,24 +20,35 @@ pub async fn playable_clip(
     guild_id: i64,
     clip_id: &str,
 ) -> DbResult<Option<PlayableClip>> {
-    let row = sqlx::query!(
-        "SELECT saved_file_name, name
+    let row = sqlx::query(
+        "SELECT clip_id, saved_file_name, name
            FROM clips
           WHERE guild_id = $1
-            AND clip_id = $2
-            AND deleted_at IS NULL",
-        guild_id,
-        clip_id
+            AND (clip_id = $2 OR name = $2)
+            AND deleted_at IS NULL
+          ORDER BY (clip_id = $2) DESC, created_at, clip_id
+          LIMIT 1",
     )
+    .bind(guild_id)
+    .bind(clip_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|record| PlayableClip {
-        display_name: record.name.unwrap_or_else(|| clip_id.to_string()),
-        saved_file_name: record
-            .saved_file_name
-            .unwrap_or_else(|| format!("{}.ogg", clip_id)),
-    }))
+    let clip = row
+        .map(|record| {
+            let resolved_clip_id: String = record.try_get("clip_id")?;
+            Ok::<PlayableClip, sqlx::Error>(PlayableClip {
+                display_name: record
+                    .try_get::<Option<String>, _>("name")?
+                    .unwrap_or_else(|| resolved_clip_id.clone()),
+                saved_file_name: record
+                    .try_get::<Option<String>, _>("saved_file_name")?
+                    .unwrap_or_else(|| format!("{resolved_clip_id}.ogg")),
+                clip_id: resolved_clip_id,
+            })
+        })
+        .transpose()?;
+    Ok(clip)
 }
 
 pub async fn record_jam_invocation(

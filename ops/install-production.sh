@@ -124,14 +124,19 @@ systemctl daemon-reload
 backup_url="$(sed -n 's/^BACKUP_DATABASE_URL=//p' /etc/sakiot/production.env | head -n 1)"
 age_recipient="$(sed -n 's/^AGE_RECIPIENT=//p' /etc/sakiot/production.env | head -n 1)"
 age_key_file="$(sed -n 's/^AGE_KEY_FILE=//p' /etc/sakiot/production.env | head -n 1)"
+b2_backup_remote="$(sed -n 's/^B2_BACKUP_REMOTE=//p' /etc/sakiot/production.env | head -n 1)"
+rclone_config="$(sed -n 's/^RCLONE_CONFIG=//p' /etc/sakiot/production.env | head -n 1)"
+rclone_config="${rclone_config:-/etc/sakiot/rclone.conf}"
 if [[ -n "${backup_url}" && "${backup_url}" != *replace_me* \
-      && "${age_recipient}" == age1* && -r "${age_key_file}" ]]; then
+      && "${age_recipient}" == age1* && -r "${age_key_file}" \
+      && -n "${b2_backup_remote}" && "${b2_backup_remote}" != *replace-random* \
+      && -r "${rclone_config}" && -x "$(command -v rclone || true)" ]]; then
   systemctl enable --now \
     sakiot-db-backup-hourly.timer \
     sakiot-db-backup-nightly.timer \
     sakiot-db-restore-test.timer
 else
-  echo "backup timers installed but not enabled; configure production backup credentials and age key"
+  echo "backup timers installed but not enabled; configure DB, age, B2 remote, and rclone credentials"
 fi
 echo "production + staging skeleton installed"
 echo "edit /etc/sakiot/production.env before the first tag"

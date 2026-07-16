@@ -16,6 +16,8 @@ source "$SCRIPT_DIR/load-env.sh"
 : "${AGE_KEY_FILE:?set AGE_KEY_FILE in the root .env}"
 : "${BACKUP_DIR:?set BACKUP_DIR in the root .env}"
 : "${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in the root .env}"
+: "${B2_BACKUP_REMOTE:?set B2_BACKUP_REMOTE (for example b2:sakiot-db-backups-random) in the root .env}"
+RCLONE_CONFIG="${RCLONE_CONFIG:-/etc/sakiot/rclone.conf}"
 
 TESTDB="sakiot_rouvas_restoretest"
 base_url="${BACKUP_DATABASE_URL%%\?*}"
@@ -29,15 +31,27 @@ if [[ "$base_url" != postgres://*/* && "$base_url" != postgresql://*/* ]]; then
 fi
 TEST_DATABASE_URL="${base_url%/*}/${TESTDB}${query}"
 
-# Newest nightly, falling back to newest of any label.
-newest="$(ls -1t "$BACKUP_DIR"/sakiot_rouvas_nightly_*.dump.age 2>/dev/null | head -1 || true)"
-[[ -z "$newest" ]] && newest="$(ls -1t "$BACKUP_DIR"/sakiot_rouvas_*.dump.age 2>/dev/null | head -1 || true)"
-[[ -z "$newest" ]] && { echo "no backups found in $BACKUP_DIR" >&2; exit 1; }
-echo "testing restore of: $newest"
+# Select and download newest remote nightly, falling back to any label. Dump
+# names contain sortable UTC dates/times, so lexical order is chronological.
+remote_name="$(rclone --config "$RCLONE_CONFIG" lsf "$B2_BACKUP_REMOTE" \
+  --files-only --include 'sakiot_rouvas_nightly_*.dump.age' | sort | tail -1)"
+if [[ -z "$remote_name" ]]; then
+  remote_name="$(rclone --config "$RCLONE_CONFIG" lsf "$B2_BACKUP_REMOTE" \
+    --files-only --include 'sakiot_rouvas_*.dump.age' | sort | tail -1)"
+fi
+[[ -n "$remote_name" ]] || { echo "no B2 backups found in $B2_BACKUP_REMOTE" >&2; exit 1; }
+download_dir="$(mktemp -d)"
+newest="$download_dir/$remote_name"
+rclone --config "$RCLONE_CONFIG" copyto "$B2_BACKUP_REMOTE/$remote_name" "$newest"
+echo "testing restore of downloaded B2 backup: $remote_name"
 
 dropdb --if-exists --maintenance-db="$BACKUP_DATABASE_URL" "$TESTDB"
 createdb --maintenance-db="$BACKUP_DATABASE_URL" "$TESTDB"
-trap 'dropdb --if-exists --maintenance-db="$BACKUP_DATABASE_URL" "$TESTDB" >/dev/null 2>&1 || true' EXIT
+cleanup() {
+  dropdb --if-exists --maintenance-db="$BACKUP_DATABASE_URL" "$TESTDB" >/dev/null 2>&1 || true
+  rm -rf "$download_dir"
+}
+trap cleanup EXIT
 
 age -d -i "$AGE_KEY_FILE" "$newest" \
   | pg_restore --clean --if-exists --no-owner -d "$TEST_DATABASE_URL"

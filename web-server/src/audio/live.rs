@@ -611,8 +611,18 @@ pub async fn live_playlist(
     let (guild_id, channel_id, year, month, stem) = path.into_inner();
     validate_stem(&stem)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
-        .await?;
+    let month_i32 = i32::try_from(month)
+        .map_err(|_| AppError::InvalidParam("invalid recording month".to_owned()))?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        year,
+        month_i32,
+        &stem,
+        token.user_id,
+    )
+    .await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
     let pl = key.live_playlist_path(&recording_path());
@@ -659,11 +669,21 @@ pub async fn live_state(
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
-    let (guild_id, channel_id, _y, _m, stem) = path.into_inner();
+    let (guild_id, channel_id, year, month, stem) = path.into_inner();
     validate_stem(&stem)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
-        .await?;
+    let month = i32::try_from(month)
+        .map_err(|_| AppError::InvalidParam("invalid recording month".to_owned()))?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        year,
+        month,
+        &stem,
+        token.user_id,
+    )
+    .await?;
     let db = db_state(&pool, &stem).await?;
     let ended_at = db.end_ts.or(if db.live { None } else { db.start_ts });
     Ok(HttpResponse::Ok().json(StateResponse {
@@ -684,8 +704,18 @@ pub async fn live_segment(
     validate_stem(&stem)?;
     validate_seg(&seg)?;
     let token = token.ok_or(AppError::Unauthorized)?;
-    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
-        .await?;
+    let month_i32 = i32::try_from(month)
+        .map_err(|_| AppError::InvalidParam("invalid recording month".to_owned()))?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        year,
+        month_i32,
+        &stem,
+        token.user_id,
+    )
+    .await?;
     if seg == "playlist.m3u8" || seg == "state" {
         return Err(AppError::BadRequest("reserved name".into()));
     }

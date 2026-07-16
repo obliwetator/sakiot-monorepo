@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use actix_files::NamedFile;
-use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, route, web};
 use base64::prelude::*;
 use chrono::Datelike;
 use sakiot_paths::RecordingKey;
@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::media_archive::{MediaArchive, RemoteDisposition};
 use crate::permissions::visible_channels_for_user;
 
 use super::live::LiveContainer;
@@ -164,6 +165,8 @@ pub(crate) async fn require_recording_access(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
     channel_id: i64,
+    year: i32,
+    month: i32,
     file_name: &str,
     viewer_user_id: i64,
 ) -> Result<(), AppError> {
@@ -173,12 +176,14 @@ pub(crate) async fn require_recording_access(
            FROM audio_files
           WHERE guild_id = $1
             AND channel_id = $2
-            AND (file_name = $3 OR file_name = $4)
-          ORDER BY id DESC
+            AND (file_name = $5 OR file_name = $6)
+          ORDER BY (year = $3 AND month = $4) DESC, id DESC
           LIMIT 1",
     )
     .bind(guild_id)
     .bind(channel_id)
+    .bind(year)
+    .bind(month)
     .bind(file_name)
     .bind(stem)
     .fetch_optional(pool.get_ref())
@@ -246,22 +251,34 @@ pub async fn get_session_events(
     Ok(HttpResponse::Ok().json(load_events(&pool, &access, timeline_end_ms).await?))
 }
 
-#[get("/audio/sessions/{recording_session_id}/segments/{audio_file_id}")]
+#[route(
+    "/audio/sessions/{recording_session_id}/segments/{audio_file_id}",
+    method = "GET",
+    method = "HEAD"
+)]
 pub async fn get_session_segment(
     req: HttpRequest,
     path: web::Path<(i64, i64)>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<impl Responder, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let (session_id, audio_file_id) = path.into_inner();
     require_session_access(&pool, session_id, token.user_id).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let path = fragment_path(&fragment);
-    let file = NamedFile::open_async(path)
+    if let Ok(file) = NamedFile::open_async(path).await {
+        return Ok(file.into_response(&req));
+    }
+    media
+        .serve_recording(
+            &req,
+            pool.get_ref(),
+            audio_file_id,
+            RemoteDisposition::Inline,
+        )
         .await
-        .map_err(|_| AppError::FileNotFound)?;
-    Ok(file.into_response(&req))
 }
 
 #[get("/audio/sessions/{recording_session_id}/live/{audio_file_id}/playlist.m3u8")]
@@ -737,6 +754,7 @@ pub async fn download_session(
     query: web::Query<SessionDownloadQuery>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<NamedFile, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -749,6 +767,7 @@ pub async fn download_session(
         query.end,
         query.remove_silence.unwrap_or(false),
         &output,
+        media.get_ref(),
     )
     .await?;
     schedule_temporary_cleanup(output.clone());
@@ -782,6 +801,7 @@ pub async fn remove_session_silence(
     range: web::Json<StartEnd>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<NamedFile, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -794,6 +814,7 @@ pub async fn remove_session_silence(
         range.end.map(f64::from),
         true,
         &output,
+        media.get_ref(),
     )
     .await?;
     schedule_temporary_cleanup(output.clone());
@@ -827,6 +848,7 @@ pub async fn create_session_clip(
     range: web::Json<StartEnd>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -846,7 +868,16 @@ pub async fn create_session_clip(
         .join(format!("{:02}", now.month()));
     tokio::fs::create_dir_all(&target_dir).await?;
     let full_path = target_dir.join(format!("{clip_id}.ogg"));
-    compose_session(&pool, &access, Some(start), Some(end), false, &full_path).await?;
+    compose_session(
+        &pool,
+        &access,
+        Some(start),
+        Some(end),
+        false,
+        &full_path,
+        media.get_ref(),
+    )
+    .await?;
     let size = tokio::fs::metadata(&full_path).await?.len() as i64;
     let saved_file_name = format!("{}/{:02}/{clip_id}.ogg", now.year(), now.month());
     let name = range
@@ -960,6 +991,7 @@ pub async fn rebuild_session_waveform(
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
     progress: web::Data<WaveformProgressContainer>,
+    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -990,6 +1022,7 @@ pub async fn rebuild_session_waveform(
     let pool_clone = pool.clone();
     let progress_clone = progress.clone();
     let cache_key_clone = cache_key.clone();
+    let media_clone = media.clone();
     tokio::spawn(async move {
         progress_clone
             .0
@@ -1009,6 +1042,7 @@ pub async fn rebuild_session_waveform(
             false,
             &composite,
             composition_progress,
+            media_clone.get_ref(),
         )
         .await
         {
@@ -1056,6 +1090,7 @@ async fn compose_session(
     range_end_seconds: Option<f64>,
     remove_silence: bool,
     output: &Path,
+    media: &MediaArchive,
 ) -> Result<(), AppError> {
     compose_session_inner(
         pool,
@@ -1065,6 +1100,7 @@ async fn compose_session(
         remove_silence,
         output,
         None,
+        media,
     )
     .await
 }
@@ -1076,6 +1112,7 @@ struct CompositionProgress {
     completed: i16,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn compose_session_with_progress(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
@@ -1084,6 +1121,7 @@ async fn compose_session_with_progress(
     remove_silence: bool,
     output: &Path,
     progress: CompositionProgress,
+    media: &MediaArchive,
 ) -> Result<(), AppError> {
     compose_session_inner(
         pool,
@@ -1093,6 +1131,7 @@ async fn compose_session_with_progress(
         remove_silence,
         output,
         Some(progress),
+        media,
     )
     .await
 }
@@ -1106,8 +1145,9 @@ async fn compose_session_inner(
     remove_silence: bool,
     output: &Path,
     progress: Option<CompositionProgress>,
+    media: &MediaArchive,
 ) -> Result<(), AppError> {
-    let parts = timeline_parts(pool, access).await?;
+    let parts = timeline_parts(pool, access, media).await?;
     let timeline_end = timeline_end_ms(access);
     let duration_ms = timeline_end.saturating_sub(access.started_at_ms);
     let start_ms = seconds_to_ms(range_start_seconds.unwrap_or(0.0))?;
@@ -1283,17 +1323,22 @@ fn is_ffmpeg_progress_line(line: &str) -> bool {
 async fn timeline_parts(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
+    media: &MediaArchive,
 ) -> Result<Vec<TimelinePart>, AppError> {
     let timeline_end = timeline_end_ms(access);
     let mut raw = Vec::new();
     for fragment in load_fragments(pool, access.session_id).await? {
         let end_ms = fragment.end_ms.unwrap_or(timeline_end).min(timeline_end);
         if end_ms > fragment.start_ms {
+            let path = fragment_path(&fragment);
+            media
+                .ensure_recording_local(pool.get_ref(), fragment.id, &path)
+                .await?;
             raw.push(TimelinePart {
                 start_ms: fragment.start_ms,
                 end_ms,
                 kind: PartKind::Audio {
-                    path: fragment_path(&fragment),
+                    path,
                     source_start_ms: fragment.start_ms,
                 },
             });

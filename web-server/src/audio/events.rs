@@ -63,11 +63,21 @@ pub async fn get_recording_events(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let (guild_id, channel_id, _year, _month, stem) = path.into_inner();
+    let (guild_id, channel_id, year, month, stem) = path.into_inner();
     validate_stem(&stem)?;
 
-    super::sessions::require_recording_access(&pool, guild_id, channel_id, &stem, token.user_id)
-        .await?;
+    let month = i32::try_from(month)
+        .map_err(|_| AppError::InvalidParam("invalid recording month".to_owned()))?;
+    super::sessions::require_recording_access(
+        &pool,
+        guild_id,
+        channel_id,
+        year,
+        month,
+        &stem,
+        token.user_id,
+    )
+    .await?;
 
     let row = sqlx::query!(
         "SELECT start_ts, end_ts FROM audio_files WHERE file_name = $1",

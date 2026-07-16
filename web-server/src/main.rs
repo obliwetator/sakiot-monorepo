@@ -37,6 +37,9 @@ use web_server::fbi_agent_registry::{
     AgentGrpcRegistry, get_agent_grpc_endpoints, register_agent_grpc_endpoints,
 };
 use web_server::health::healthz;
+use web_server::media_archive::{
+    MediaArchive, run_media_command, spawn_archive_worker, spawn_local_cleanup,
+};
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 
@@ -79,7 +82,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
     env_logger::init();
 
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "media")
+    {
+        let telemetry_port = std::env::var("PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(8900);
+        init_telemetry(telemetry_port);
+        run_media_command(&arguments[1..])
+            .await
+            .map_err(|error| -> Box<dyn Error> { error })?;
+        return Ok(());
+    }
+
     let cfg = Config::from_env()?;
+    let media_archive = MediaArchive::from_env().await?;
     init_telemetry(cfg.port);
 
     // Periodically delete stale per-recording HLS caches (dead after live).
@@ -94,6 +114,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .max_connections(cfg.db_max_connections)
         .connect(&cfg.database_url)
         .await?;
+
+    spawn_archive_worker(pool.clone(), media_archive.clone());
+    spawn_local_cleanup(pool.clone(), media_archive.clone());
 
     let keys = web::Data::new(AccessKeys {
         access_encode: jsonwebtoken::EncodingKey::from_secret(cfg.access_secret.as_bytes()),
@@ -132,6 +155,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .expose_headers([
                 "Content-Length",
                 "Content-Range",
+                "Content-Disposition",
+                "ETag",
                 "Accept-Ranges",
                 "X-CSRF-Token",
             ])
@@ -193,6 +218,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(reqwest::Client::new()))
+            .app_data(web::Data::new(media_archive.clone()))
             .app_data(silence_jobs.clone())
             .app_data(waveform_progress.clone())
             .app_data(live_container.clone())

@@ -46,6 +46,8 @@ pub enum AppError {
     GrpcError(String),
     #[error("Service Unavailable: {0}")]
     ServiceUnavailable(String),
+    #[error("Requested range is not satisfiable")]
+    RangeNotSatisfiable { total: u64 },
     #[error("Invalid or expired token")]
     InvalidToken,
 }
@@ -63,6 +65,7 @@ impl ResponseError for AppError {
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -86,6 +89,13 @@ impl ResponseError for AppError {
             code: status_code.as_u16(),
             message,
         };
-        HttpResponse::build(status_code).json(error_response)
+        let mut response = HttpResponse::build(status_code);
+        if let AppError::RangeNotSatisfiable { total } = self {
+            response.insert_header((
+                actix_web::http::header::CONTENT_RANGE,
+                format!("bytes */{total}"),
+            ));
+        }
+        response.json(error_response)
     }
 }

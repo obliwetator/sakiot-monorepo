@@ -14,6 +14,7 @@ use crate::database::{DbError, logical_recordings, recordings};
 use crate::runtime::{BotRole, RuntimeConfig, RuntimeState};
 
 static FULL_MIGRATOR: Migrator = sqlx::migrate!("../sakiot-db/migrations");
+const MEDIA_ARCHIVE_MIGRATION: i64 = 20_260_716_000_000;
 const LOGICAL_RECORDINGS_MIGRATION: i64 = 20_260_712_000_000;
 
 fn unique_id() -> i64 {
@@ -531,6 +532,70 @@ async fn logical_recording_migration_backfills_one_session_per_file(
     .await?;
     assert!(!fk_validated);
     assert!(index_exists);
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn media_archive_migration_backfills_finalized_recordings_and_saved_clips(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prior = Migrator::with_migrations(
+        FULL_MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < MEDIA_ARCHIVE_MIGRATION)
+            .cloned()
+            .collect(),
+    );
+    prior.run(&pool).await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts)
+         VALUES
+            ('archive-finalized', 1, 10, 100, 2026, 7, 1000, 2000),
+            ('archive-active', 1, 10, 100, 2026, 7, 3000, NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips (clip_id, start_time, saved_file_name)
+         VALUES
+            ('archive-saved-clip', 0, '2026/07/archive-saved-clip.ogg'),
+            ('archive-unsaved-clip', 0, NULL)",
+    )
+    .execute(&pool)
+    .await?;
+
+    FULL_MIGRATOR.run(&pool).await?;
+
+    let sources: Vec<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT af.file_name, mo.clip_id, mo.state
+           FROM media_objects mo
+           LEFT JOIN audio_files af ON af.id = mo.audio_file_id
+          ORDER BY COALESCE(af.file_name, mo.clip_id)",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        sources,
+        vec![
+            (
+                Some("archive-finalized".to_owned()),
+                None,
+                "pending".to_owned()
+            ),
+            (
+                None,
+                Some("archive-saved-clip".to_owned()),
+                "pending".to_owned()
+            ),
+        ]
+    );
+
+    let duplicate =
+        sqlx::query("INSERT INTO media_objects (clip_id) VALUES ('archive-saved-clip')")
+            .execute(&pool)
+            .await;
+    assert!(duplicate.is_err());
     Ok(())
 }
 

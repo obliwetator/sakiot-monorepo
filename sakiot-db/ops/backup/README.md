@@ -9,23 +9,30 @@ Automated, encrypted logical backups of the `sakiot_rouvas` Postgres database.
 - **No WAL archiving / PITR.** For a near-idle, tiny db it produces gigabytes of
   mostly-empty 16 MB WAL segments per day and adds a halt-risk failure mode for
   no real benefit. See **[Future: PITR](#future-enabling-pitr)** for when to add it.
-- **Local storage only.** A disk failure loses the db *and* its backups. See
-  **[Future: offsite](#future-offsite)**.
+- **B2 is mandatory.** A backup run succeeds only after every completed
+  `*.dump.age` has been copied to private Backblaze B2 storage.
 
 ## Setup
 
 ```sh
-# 1. tools (already installed here): pg_dump, age, flock, sqlx
-apt install age            # if not present
+# 1. tools: pg_dump, age, flock, sqlx, rclone
+apt install age rclone
 
 # 2. encryption keypair (stores private key in the file, prints public key)
 age-keygen -o /etc/sakiot/age-key.txt
 #   -> copy the "Public key: age1..." into AGE_RECIPIENT
 #   -> back up /etc/sakiot/age-key.txt OFF this host
+#   -> perform one restore using that off-host copy before cutover
 
 # 3. config (from the monorepo root)
 cp .env.example .env
-$EDITOR .env      # fill BACKUP_DATABASE_URL, PGPASSWORD, AGE_*, BACKUP_DIR
+$EDITOR .env      # fill DB, age, B2_BACKUP_REMOTE, and backup settings
+
+# Configure native B2 remote with bucket-restricted, non-delete credentials.
+# Keep file root-owned; grant read only to backup service group.
+sudo rclone config --config /etc/sakiot/rclone.conf
+sudo chown root:sakiot /etc/sakiot/rclone.conf
+sudo chmod 0640 /etc/sakiot/rclone.conf
 
 # 4. smoke test
 ops/backup/backup.sh hourly        # writes one encrypted dump
@@ -43,9 +50,11 @@ ops/backup/restore-test.sh         # restores it into a scratch db and checks it
 4. Writes to a `.partial` file and only `mv`s it into place on success. If
    `pg_dump` dies mid-stream, `pipefail` aborts the run and the trap deletes the
    partial — a truncated file is never promoted to a real backup.
-5. Prunes dumps older than the per-label retention (default: hourly 7d,
+5. Runs `rclone copy` for all completed encrypted dumps. Upload or checksum
+   failure fails the unit; remote destination is never deleted or synchronized.
+6. Prunes local dumps older than the per-label retention (default: hourly 7d,
    nightly 90d, pre-migrate 90d).
-6. If `HEALTHCHECK_URL` is set, pings it on success (dead-man switch).
+7. If `HEALTHCHECK_URL` is set, pings it on success (dead-man switch).
 
 Files are `chmod 600`; `BACKUP_DIR` is `chmod 700`.
 
@@ -59,7 +68,8 @@ age -d -i /etc/sakiot/age-key.txt FILE.dump.age | pg_restore -t TABLE -d sakiot_
 ```
 
 ### `restore-test.sh`
-Restores the newest nightly into throwaway db `sakiot_rouvas_restoretest`,
+Downloads the newest B2 nightly, restores it into throwaway db
+`sakiot_rouvas_restoretest`,
 asserts tables came back, warns on pending migrations (`sqlx migrate info`),
 prints row counts, drops the scratch db. **Untested backup = no backup.**
 
@@ -103,22 +113,15 @@ slow/lock-heavy enough that 1-hour RPO is unacceptable. Then:
    db**. Prune archived WAL on a retention window.
 4. Restore = restore base backup + replay WAL to a `recovery_target_time`.
 
-## Future: offsite
-
-Local-only is the weak point. To ship offsite, append one line to `backup.sh`
-after the prune step (and add the var to the root `.env`):
-
-```sh
-# rclone copy "$BACKUP_DIR" "$RCLONE_REMOTE" --min-age 1m
-```
-
-Dumps are already `age`-encrypted, so the remote need not be trusted.
-
 ## Security
 
 - `.env`, `*.dump`, `*.dump.age` are gitignored - never commit them.
 - `AGE_KEY_FILE` (private key) is the keystone: a **lost** key makes every backup
   unrecoverable; a **leaked** key exposes all data. Store a copy off this host,
-  access-restricted.
+  access-restricted, and prove it by restoring with that copy.
+- B2 application key is bucket-restricted to read/write/list capabilities and
+  deliberately lacks delete capability. Never use account master key here.
+- Always use `rclone copy`, never `sync`; local retention must not delete remote
+  backup history.
 - DB password lives in the root `.env` (gitignored). Lock down file
   perms (`chmod 600`).

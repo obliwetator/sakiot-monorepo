@@ -1,7 +1,7 @@
 use actix_web::{
     HttpMessage, HttpRequest, HttpResponse, delete, get,
     http::header::{ContentDisposition, DispositionType},
-    post, web,
+    post, route, web,
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ use crate::{
     errors::AppError,
     fbi_agent_registry::AgentGrpcRegistry,
     grpc_client,
+    media_archive::{MediaArchive, RemoteDisposition},
 };
 use serde_json::json;
 
@@ -58,12 +59,17 @@ pub struct ClipInfo {
     recording_session_id: Option<String>,
 }
 
-#[get("/audio/clips/{guild_id}/{clip_id:.*}")]
+#[route(
+    "/audio/clips/{guild_id}/{clip_id:.*}",
+    method = "GET",
+    method = "HEAD"
+)]
 pub async fn get_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, String)>,
     token: Option<web::ReqData<Token<Access>>>,
+    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     use actix_files::NamedFile;
 
@@ -97,11 +103,16 @@ pub async fn get_clip(
 
     let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
     let saved_file_name = saved_file_name.ok_or(AppError::ClipNotFound)?;
-    let full_path = format!("{}{}", clips_path(), saved_file_name);
+    let full_path = crate::media_archive::clip_local_path(&saved_file_name)?;
 
-    let file = NamedFile::open_async(&full_path)
-        .await
-        .map_err(|_| AppError::FileNotFound)?;
+    let file = match NamedFile::open_async(&full_path).await {
+        Ok(file) => file,
+        Err(_) => {
+            return media
+                .serve_clip(&req, pool.get_ref(), &clip_id, RemoteDisposition::Inline)
+                .await;
+        }
+    };
 
     let mut res = file
         .use_last_modified(true)
@@ -257,18 +268,20 @@ pub async fn play_clip(
         .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
     let clip = sqlx::query(
-        "SELECT channel_id, recording_session_id
+        "SELECT clip_id, channel_id, recording_session_id
            FROM clips
           WHERE guild_id = $1
             AND deleted_at IS NULL
             AND (clip_id = $2 OR name = $2)
+          ORDER BY (clip_id = $2) DESC, created_at, clip_id
           LIMIT 1",
     )
     .bind(info.guild_id)
     .bind(&info.clip_name)
     .fetch_optional(pool.get_ref())
     .await?;
-    if let Some(clip) = clip {
+    let resolved_clip_id = if let Some(clip) = clip {
+        let resolved_clip_id: String = clip.try_get("clip_id")?;
         if let Some(session_id) = clip.try_get::<Option<i64>, _>("recording_session_id")? {
             crate::audio::sessions::require_session_access(&pool, session_id, user_id).await?;
         } else if let Some(channel_id) = clip.try_get::<Option<i64>, _>("channel_id")? {
@@ -276,12 +289,15 @@ pub async fn play_clip(
         } else {
             return Err(AppError::Forbidden);
         }
+        Some(resolved_clip_id)
     } else if visible_channels_for_user(&pool, info.guild_id, user_id)
         .await?
         .is_empty()
     {
         return Err(AppError::Forbidden);
-    }
+    } else {
+        None
+    };
 
     let active_address = registry.active_address();
     let (grpc_address, mut client) = grpc_client::connect_jammer(active_address.clone())
@@ -297,7 +313,7 @@ pub async fn play_clip(
         })?;
 
     let request = tonic::Request::new(JamData {
-        clip_name: info.clip_name.clone(),
+        clip_name: resolved_clip_id.unwrap_or_else(|| info.clip_name.clone()),
         guild_id: info.guild_id,
         user_id,
     });
@@ -392,6 +408,7 @@ async fn crop_ffmpeg(
 pub async fn create_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
@@ -408,10 +425,21 @@ pub async fn create_clip(
         &pool,
         guild_id,
         channel_id,
+        year,
+        month,
         &file_name_from_url,
         user_id,
     )
     .await?;
+    let start = clip_duration.start.unwrap_or(0.0);
+    let end = clip_duration.end.unwrap_or(0.0);
+    let length = end - start;
+    if !(1.0..=20.0).contains(&length) {
+        return Err(AppError::BadRequest(
+            "Clip duration must be between 1 and 20 seconds".into(),
+        ));
+    }
+
     let src_path = {
         let dir = crate::audio::util::get_file_path_root(
             &recording_path(),
@@ -425,16 +453,23 @@ pub async fn create_clip(
         );
         format!("{}/{}.ogg", dir, file_name_from_url)
     };
-
-    let start = clip_duration.start.unwrap_or(0.0);
-    let end = clip_duration.end.unwrap_or(0.0);
-
-    let length = end - start;
-    if !(1.0..=20.0).contains(&length) {
-        return Err(AppError::BadRequest(
-            "Clip duration must be between 1 and 20 seconds".into(),
-        ));
-    }
+    let audio_file_id = crate::media_archive::recording_id(
+        pool.get_ref(),
+        guild_id,
+        channel_id,
+        year,
+        month,
+        &file_name_from_url,
+    )
+    .await?
+    .ok_or(AppError::FileNotFound)?;
+    media
+        .ensure_recording_local(
+            pool.get_ref(),
+            audio_file_id,
+            std::path::Path::new(&src_path),
+        )
+        .await?;
 
     let clip_name = if let Some(ref name) = clip_duration.name {
         name.clone()
@@ -470,7 +505,6 @@ pub async fn create_clip(
         .await
         .map(|m| m.len())
         .unwrap_or(0) as i64;
-    let length = end - start;
 
     sqlx::query!(
         "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",

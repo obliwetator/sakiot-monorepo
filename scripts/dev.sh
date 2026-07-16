@@ -207,6 +207,30 @@ fetch_tsv() { # fetch_tsv "<select query>"
     fi
 }
 
+hydrate_remote_recordings() { # hydrate_remote_recordings <comma-separated audio_file ids>
+    local ids=$1 env_file binary command sudo_command
+    env_file=${SAKIOT_DEV_REMOTE_ENV_FILE:-/etc/sakiot/staging.env}
+    binary=${SAKIOT_DEV_REMOTE_WEB_BINARY:-/srv/sakiot-staging/current/web/web_server}
+    if [ -n "${SAKIOT_DEV_REMOTE_HYDRATE:-}" ]; then
+        command="$SAKIOT_DEV_REMOTE_HYDRATE $(sh_quote "$ids")"
+    else
+        command="set -a; . $(sh_quote "$env_file"); set +a; $(sh_quote "$binary") media restore --audio-file-ids $(sh_quote "$ids")"
+    fi
+    log "materializing selected remote-only staging recordings"
+    sudo_command="sudo -n -u sakiot /bin/bash -lc $(sh_quote "$command")"
+    if [ "$SAKIOT_DEV_SSH" = local ]; then
+        bash -lc "$command" 2>/dev/null && return
+        bash -lc "$sudo_command" && return
+    else
+        # The quoted hydration script is intentionally evaluated on the staging host.
+        # shellcheck disable=SC2029
+        ssh "$SAKIOT_DEV_SSH" "$command" 2>/dev/null && return
+        # shellcheck disable=SC2029
+        ssh "$SAKIOT_DEV_SSH" "$sudo_command" && return
+    fi
+    die "could not hydrate staging archive media. Grant env/data access, passwordless sudo -u sakiot, or set SAKIOT_DEV_REMOTE_HYDRATE."
+}
+
 import_tsv() { # import_tsv <table> <tsv-file> [fixup-sql run before the insert]
     [ -s "$2" ] || { log "  $1: nothing to import"; return; }
     {
@@ -313,10 +337,18 @@ cmd_fetch_fixtures() (
     trap 'rm -rf "${tmp:-}"' EXIT
 
     log "exporting up to $count recent recordings from $REMOTE_DB on $SAKIOT_DEV_SSH"
-    fetch_tsv "SELECT * FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" > "$tmp/audio_files.tsv"
-    if [ ! -s "$tmp/audio_files.tsv" ]; then
+    fetch_tsv "SELECT id FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" > "$tmp/audio_file_ids.tsv"
+    if [ ! -s "$tmp/audio_file_ids.tsv" ]; then
         die "staging has no matching recordings — nothing to fetch"
     fi
+    local audio_file_ids
+    audio_file_ids=$(sort -un "$tmp/audio_file_ids.tsv" | paste -sd, -)
+    fetch_tsv "SELECT * FROM audio_files WHERE id IN ($audio_file_ids) ORDER BY id DESC" > "$tmp/audio_files.tsv"
+
+    # Archive-pruned originals must exist locally before rsync. Targeted
+    # restore full-hash verifies existing files and atomically downloads only
+    # missing/mismatched selected recordings.
+    hydrate_remote_recordings "$audio_file_ids"
 
     # audio_files columns: file_name guild_id channel_id user_id year month ...
     local guild_ids channel_ids user_ids

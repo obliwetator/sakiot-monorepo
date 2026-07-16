@@ -4,6 +4,7 @@ members = [
     "ops/sakiot-deploy",
     "sakiot-paths",
     "sakiot-proto",
+    "sakiot-storage",
     "web-server",
 ]
 resolver = "3"

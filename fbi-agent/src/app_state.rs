@@ -15,6 +15,7 @@ pub struct Custom {
     pub(crate) pool: sqlx::Pool<sqlx::Postgres>,
     pub(crate) jam_cooldown: crate::cooldown::JamCooldown,
     pub(crate) runtime: Arc<crate::runtime::RuntimeState>,
+    pub(crate) media_archive: crate::media_archive::MediaArchive,
 }
 
 impl Custom {
@@ -25,6 +26,7 @@ impl Custom {
         pool: sqlx::Pool<sqlx::Postgres>,
         jam_cooldown: crate::cooldown::JamCooldown,
         runtime: Arc<crate::runtime::RuntimeState>,
+        media_archive: crate::media_archive::MediaArchive,
     ) -> Self {
         Self {
             cache,
@@ -33,6 +35,7 @@ impl Custom {
             pool,
             jam_cooldown,
             runtime,
+            media_archive,
         }
     }
 }

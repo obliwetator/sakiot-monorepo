@@ -113,6 +113,9 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
             .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
                 HashMap::new(),
             ))))
@@ -223,6 +226,9 @@ async fn voice_settings_require_manager_and_restore_default(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
             .service(
                 web::scope("/api")
                     .wrap(AuthMiddleware)
@@ -389,6 +395,9 @@ async fn forbidden_cross_guild_requests_are_rejected(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
             .app_data(web::Data::new(SilenceJobContainer::default()))
             .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
                 HashMap::new(),

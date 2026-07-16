@@ -8,7 +8,7 @@ migrations, service changes, and health checks run on the VPS.
 ## VPS bootstrap
 
 Install required tools: Git, Rust, Bun, `protoc`, OpenSSL development headers,
-FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rsync`,
+FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rsync`,
 and `sudo`. The bash deploy engine additionally needs `grpcurl`, `jq`,
 Python 3, and `flock`; the Rust engine does that work in-process.
 

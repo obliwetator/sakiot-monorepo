@@ -19,6 +19,8 @@ source "$SCRIPT_DIR/load-env.sh"
 : "${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL in the root .env}"
 : "${BACKUP_DIR:?set BACKUP_DIR in the root .env}"
 : "${AGE_RECIPIENT:?set AGE_RECIPIENT (age public key) in the root .env}"
+: "${B2_BACKUP_REMOTE:?set B2_BACKUP_REMOTE (for example b2:sakiot-db-backups-random) in the root .env}"
+RCLONE_CONFIG="${RCLONE_CONFIG:-/etc/sakiot/rclone.conf}"
 HOURLY_RETENTION_DAYS="${HOURLY_RETENTION_DAYS:-7}"
 NIGHTLY_RETENTION_DAYS="${NIGHTLY_RETENTION_DAYS:-90}"
 PREMIGRATE_RETENTION_DAYS="${PREMIGRATE_RETENTION_DAYS:-90}"
@@ -46,6 +48,14 @@ pg_dump -Fc "$BACKUP_DATABASE_URL" | age -r "$AGE_RECIPIENT" -o "$tmp"
 mv "$tmp" "$out"
 chmod 600 "$out"
 echo "wrote $out ($(du -h "$out" | cut -f1))"
+
+# Offsite durability is part of backup success. Copy every completed encrypted
+# dump before any local pruning. `copy` never deletes destination objects;
+# `.partial` files are excluded and B2 transfers are checksum-verified by
+# rclone. With `set -e`, upload failure suppresses both pruning and success ping.
+rclone --config "$RCLONE_CONFIG" copy "$BACKUP_DIR" "$B2_BACKUP_REMOTE" \
+  --filter '+ *.dump.age' --filter '- *'
+echo "copied completed encrypted dumps to $B2_BACKUP_REMOTE"
 
 # Retention: delete encrypted dumps of each label older than N days.
 prune() { # <label> <days>

@@ -9,6 +9,7 @@ use tracing::{error, info};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::media_archive::MediaArchive;
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 use super::util::{file_exists, get_file_path_root, handle_idempotency_key, is_stale};
@@ -261,23 +262,28 @@ pub async fn remove_silence(
     path: web::Path<(i64, i64, i32, i32, String)>,
     jobs: web::Data<SilenceJobContainer>,
     pool: web::Data<Pool<Postgres>>,
+    media: web::Data<MediaArchive>,
     token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    super::sessions::require_recording_access(&pool, path.0, path.1, &path.4, token.user_id)
-        .await?;
+    super::sessions::require_recording_access(
+        &pool,
+        path.0,
+        path.1,
+        path.2,
+        path.3,
+        &path.4,
+        token.user_id,
+    )
+    .await?;
 
     let file_path: String = get_file_path_root(&recording_path(), &path);
     let no_silence_file_path = get_file_path_root(&no_silence_recording_path(), &path);
     let file_no_silence =
         no_silence_file_path.to_owned() + "/" + NO_SILENCE_PREFIX + path.4.as_str() + ".ogg";
-
     let idempotency_key = handle_idempotency_key(&req)?;
     let fingerprint = recording_fingerprint(&path);
-    let claim = jobs
-        .claim(token.user_id, idempotency_key, &fingerprint)
-        .await?;
 
     info!("File name: {}", path.4);
 
@@ -289,6 +295,29 @@ pub async fn remove_silence(
     let cached_fresh =
         file_exists(&file_no_silence).await && !is_stale(&source_file, &file_no_silence).await;
 
+    if !cached_fresh {
+        let audio_file_id = crate::media_archive::recording_id(
+            pool.get_ref(),
+            path.0,
+            path.1,
+            path.2,
+            path.3,
+            &path.4,
+        )
+        .await?
+        .ok_or(AppError::FileNotFound)?;
+        media
+            .ensure_recording_local(
+                pool.get_ref(),
+                audio_file_id,
+                std::path::Path::new(&source_file),
+            )
+            .await?;
+    }
+
+    let claim = jobs
+        .claim(token.user_id, idempotency_key, &fingerprint)
+        .await?;
     let sender = match claim {
         SilenceJobClaim::Wait(receiver) => {
             info!("silence removal already processing");

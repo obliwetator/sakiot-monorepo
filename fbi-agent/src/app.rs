@@ -15,6 +15,7 @@ pub(crate) async fn run() -> AppResult<()> {
     install_crypto_provider()?;
     crate::telemetry::init_telemetry()?;
     ensure_recording_dir().await?;
+    let media_archive = crate::media_archive::MediaArchive::from_env().await?;
 
     let pool = connect_database().await?;
     crate::reaper::reap_zombie_recordings(&pool).await?;
@@ -41,7 +42,7 @@ pub(crate) async fn run() -> AppResult<()> {
         "runtime configured"
     );
 
-    let runtime_result = run_registered_instance(&pool, runtime.clone()).await;
+    let runtime_result = run_registered_instance(&pool, runtime.clone(), media_archive).await;
     let cleanup_result = deployment::mark_instance_stopped(&pool, &runtime).await;
 
     match (runtime_result, cleanup_result) {
@@ -61,12 +62,13 @@ pub(crate) async fn run() -> AppResult<()> {
 async fn run_registered_instance(
     pool: &Pool<Postgres>,
     runtime: Arc<crate::runtime::RuntimeState>,
+    media_archive: crate::media_archive::MediaArchive,
 ) -> Result<(), RuntimeTaskError> {
     let jam_cooldown = crate::cooldown::JamCooldown::new();
     let mut client = build_discord_client(pool, runtime.clone(), jam_cooldown.clone())
         .await
         .map_err(RuntimeTaskError::Startup)?;
-    insert_typemap_state(&mut client, runtime.clone()).await;
+    insert_typemap_state(&mut client, runtime.clone(), media_archive.clone()).await;
 
     let custom = Custom::new(
         client.cache.clone(),
@@ -75,6 +77,7 @@ async fn run_registered_instance(
         pool.to_owned(),
         jam_cooldown,
         runtime.clone(),
+        media_archive,
     );
     let process_metrics = process_metrics(&client)
         .await
@@ -373,11 +376,16 @@ async fn build_discord_client(
         .await?)
 }
 
-async fn insert_typemap_state(client: &mut Client, runtime: Arc<crate::runtime::RuntimeState>) {
+async fn insert_typemap_state(
+    client: &mut Client,
+    runtime: Arc<crate::runtime::RuntimeState>,
+    media_archive: crate::media_archive::MediaArchive,
+) {
     let mut data = client.data.write().await;
     data.insert::<HasBossMusic>(HashMap::new());
     data.insert::<BotMetricsKey>(Arc::new(BotMetrics::default()));
     data.insert::<crate::runtime::RuntimeStateKey>(runtime);
+    data.insert::<crate::media_archive::MediaArchiveKey>(media_archive);
     data.insert::<crate::events::voice_receiver::RecordingCoordinatorRegistryKey>(Arc::new(
         crate::events::voice_receiver::RecordingCoordinatorRegistry::default(),
     ));
