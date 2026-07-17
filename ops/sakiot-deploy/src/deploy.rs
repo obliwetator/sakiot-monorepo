@@ -18,6 +18,7 @@ use crate::fsx;
 use crate::git;
 use crate::lock::DeployLock;
 use crate::log;
+use crate::promotion::{self, PreparedPromotion};
 use crate::release::{
     Manifest, ManifestDatabase, ManifestReused, prune_old_releases, release_id, reusable_artifact,
 };
@@ -188,6 +189,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         &config.release_root,
         &config.current_root,
         &config.cache_dir,
+        &config.promotion_root,
         &config.worktree_root(),
     ] {
         fsx::ensure_dir_mode(dir, 0o750)?;
@@ -271,11 +273,33 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         );
     }
 
-    // Lines 163-175: artifact reuse on rollback.
+    // Lines 163-175: artifact reuse on rollback or exact staging promotion.
     let mut reuse_bot: Option<PathBuf> = None;
     let mut reuse_web: Option<PathBuf> = None;
     let mut reuse_frontend: Option<PathBuf> = None;
-    if mode == Mode::Rollback && !config.rollback_force_rebuild {
+    let mut consumed_promotion: Option<PathBuf> = None;
+    if mode == Mode::Release {
+        let promoted = promotion::verified(&config.promotion_root, tag, sha)?;
+        if request.require_promotion && promoted.is_none() {
+            bail!("required staging promotion for {tag} at {sha} was not found");
+        }
+        if let Some(bundle) = promoted {
+            log(format!(
+                "verified immutable staging promotion {}",
+                bundle.display()
+            ));
+            consumed_promotion = Some(bundle.clone());
+            if component_selected(Component::Bot, &components) {
+                reuse_bot = Some(bundle.clone());
+            }
+            if component_selected(Component::Web, &components) {
+                reuse_web = Some(bundle.clone());
+            }
+            if component_selected(Component::Frontend, &components) {
+                reuse_frontend = Some(bundle);
+            }
+        }
+    } else if mode == Mode::Rollback && !config.rollback_force_rebuild {
         if component_selected(Component::Bot, &components) {
             reuse_bot =
                 reusable_artifact(&config.release_root, sha, Component::Bot, &artifact_dir)?;
@@ -327,29 +351,48 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     // Lines 135-140: detached worktree at the release SHA, cleaned on exit.
     let worktree = git::Worktree::add(deps.runner, &source_repo, &worktree_path, sha)?;
 
+    // Production and staging intentionally share a Cargo target directory.
+    // Their deploy-state locks are separate, so hold an additional common
+    // lock across every build and artifact copy. Cargo's own lock ends when
+    // `cargo build` exits; without this guard another target could overwrite
+    // target/release/web_server before the first deploy copies it.
+    let cargo_lock = if build_rust || request.prepare_production_tag.is_some() {
+        fsx::ensure_dir_mode(&config.cargo_target_dir, 0o750)?;
+        log("acquiring shared Cargo build-and-copy lock");
+        Some(DeployLock::acquire(
+            &config.cargo_target_dir.join(".sakiot-deploy.lock"),
+        )?)
+    } else {
+        None
+    };
+
     // Lines 177-196: test the Rust workspace when building from source.
-    let cargo_target = config.cache_dir.join("cargo-target");
+    let cargo_target = &config.cargo_target_dir;
     if build_rust {
         (deps.require_command)("protoc")?;
-        let database_url = config.database_url.clone().context("set DATABASE_URL")?;
-        validate::validate_test_database_url(&database_url, &config.test_database_url)?;
-        log("testing Rust workspace");
-        let test_data_dir = tempfile::Builder::new()
-            .prefix("test-data.")
-            .tempdir_in(&config.cache_dir)
-            .context("failed to create test data directory")?;
-        deps.runner.run(
-            &Cmd::new("cargo")
-                .args(["test", "--workspace", "--locked"])
-                .cwd(worktree.path())
-                .env("DATABASE_URL", &config.test_database_url)
-                .env(
-                    "SAKIOT_DATA_DIR",
-                    test_data_dir.path().display().to_string(),
-                )
-                .env("SQLX_OFFLINE", "true")
-                .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),
-        )?;
+        if request.ci_verified {
+            log("trusted CI verification received; skipping duplicate Rust tests");
+        } else {
+            let database_url = config.database_url.clone().context("set DATABASE_URL")?;
+            validate::validate_test_database_url(&database_url, &config.test_database_url)?;
+            log("testing Rust workspace");
+            let test_data_dir = tempfile::Builder::new()
+                .prefix("test-data.")
+                .tempdir_in(&config.cache_dir)
+                .context("failed to create test data directory")?;
+            deps.runner.run(
+                &Cmd::new("cargo")
+                    .args(["test", "--workspace", "--locked"])
+                    .cwd(worktree.path())
+                    .env("DATABASE_URL", &config.test_database_url)
+                    .env(
+                        "SAKIOT_DATA_DIR",
+                        test_data_dir.path().display().to_string(),
+                    )
+                    .env("SQLX_OFFLINE", "true")
+                    .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),
+            )?;
+        }
     }
 
     // Lines 198-232: bot and web binaries (build or reuse).
@@ -436,11 +479,18 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
                     .args(["install", "--frozen-lockfile"])
                     .cwd(&stage_dir),
             )?;
-            deps.runner
-                .run(&Cmd::new("bun").args(["run", "test"]).cwd(&stage_dir))?;
+            if !request.ci_verified {
+                deps.runner
+                    .run(&Cmd::new("bun").args(["run", "test"]).cwd(&stage_dir))?;
+            }
+            let build_script = if request.ci_verified {
+                "build:bundle"
+            } else {
+                "build"
+            };
             deps.runner.run(
                 &Cmd::new("bun")
-                    .args(["run", "build"])
+                    .args(["run", build_script])
                     .cwd(&stage_dir)
                     .env("SAKIOT_RELEASE_TAG", tag)
                     .env("SAKIOT_COMMIT_SHA", sha)
@@ -453,11 +503,35 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         }
     }
 
+    // A version-bump staging run prepares the production variants on the
+    // target Debian host. This avoids both ABI risk from runner-built Linux
+    // binaries and the later production compilation cycle.
+    let prepared_promotion = if let Some(production_tag) = &request.prepare_production_tag {
+        if promotion::verified(&config.promotion_root, production_tag, sha)?.is_some() {
+            log(format!(
+                "production promotion {production_tag} at {sha} already prepared"
+            ));
+            None
+        } else {
+            Some(prepare_production_promotion(
+                config,
+                deps,
+                worktree.path(),
+                cargo_target,
+                production_tag,
+                sha,
+            )?)
+        }
+    } else {
+        None
+    };
+    drop(cargo_lock);
+
     // The bash engine ran ops/tests/run.sh from the worktree here. The engine
-    // is no longer shipped in the release tag: its tests run in CI and in
-    // `cargo test --workspace` above, and the remaining bash suites cover the
-    // out-of-band installed shims, so deploy-time execution validated code
-    // that is not what executes.
+    // is no longer shipped in the release tag: its tests run in CI (and in
+    // the legacy local fallback above), while remaining bash suites cover the
+    // out-of-band installed shims. Running them here would validate code that
+    // is not what executes.
 
     // Lines 260-280: migrations, with pre-migrate backup on production.
     let migration_head = git::migration_head(&worktree.path().join("sakiot-db/migrations"))?;
@@ -556,6 +630,18 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     if mode == Mode::Release {
         fsx::write_line(&tag_record, sha)?;
     }
+    if let Some(prepared) = prepared_promotion {
+        let path = prepared.publish()?;
+        log(format!("published production promotion {}", path.display()));
+    }
+    if let Some(bundle) = consumed_promotion
+        && let Err(error) = std::fs::remove_dir_all(&bundle)
+    {
+        log(format!(
+            "consumed promotion cleanup failed for {} ({error})",
+            bundle.display()
+        ));
+    }
 
     // Lines 596-601: garbage collection and the final summary.
     if let Err(error) = prune_old_releases(
@@ -577,6 +663,118 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         config.keep_releases
     ));
     Ok(())
+}
+
+fn prepare_production_promotion(
+    config: &Config,
+    deps: &Deps,
+    worktree: &Path,
+    cargo_target: &Path,
+    tag: &str,
+    sha: &str,
+) -> Result<PreparedPromotion> {
+    let version = workspace_version(&worktree.join("Cargo.toml"))?;
+    if tag.strip_prefix('v') != Some(version.as_str()) {
+        bail!("production promotion tag {tag} does not match workspace version {version}");
+    }
+
+    (deps.require_command)("protoc")?;
+    (deps.require_command)("bun")?;
+    log(format!("preparing immutable production bundle for {tag}"));
+    let prepared = PreparedPromotion::new(&config.promotion_root, tag, sha)?;
+    fsx::ensure_dir_mode(&prepared.bot_dir(), 0o755)?;
+    fsx::ensure_dir_mode(&prepared.web_dir(), 0o755)?;
+    fsx::ensure_dir_mode(&prepared.frontend_dir(), 0o755)?;
+
+    deps.runner.run(
+        &Cmd::new("cargo")
+            .args([
+                "build",
+                "--release",
+                "--locked",
+                "--package",
+                "fbi_agent",
+                "--package",
+                "web_server",
+            ])
+            .cwd(worktree)
+            .env("SQLX_OFFLINE", "true")
+            .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),
+    )?;
+    fsx::install_file(
+        &cargo_target.join("release/fbi_agent"),
+        &prepared.bot_dir().join("fbi_agent"),
+        0o755,
+    )?;
+    fsx::install_file(
+        &cargo_target.join("release/web_server"),
+        &prepared.web_dir().join("web_server"),
+        0o755,
+    )?;
+
+    let production_env = crate::config::plain_env_vars(&config.production_env_file)?;
+    if !production_env.contains_key("VITE_API_URL") {
+        bail!(
+            "set VITE_API_URL in {} before preparing production",
+            config.production_env_file.display()
+        );
+    }
+    let stage_dir = worktree.join("sakiot-stage");
+    deps.runner.run(
+        &Cmd::new("bun")
+            .args(["install", "--frozen-lockfile"])
+            .cwd(&stage_dir),
+    )?;
+    let mut build = Cmd::new("bun")
+        .args(["run", "build:bundle"])
+        .cwd(&stage_dir)
+        .env("SAKIOT_RELEASE_TAG", tag)
+        .env("SAKIOT_COMMIT_SHA", sha)
+        .env(
+            "SAKIOT_BUNDLE_VERSION",
+            format!("{tag}-{}", &sha[..12.min(sha.len())]),
+        );
+    for (key, _) in std::env::vars().filter(|(key, _)| key.starts_with("VITE_")) {
+        build = build.env_remove(key);
+    }
+    for (key, value) in production_env
+        .iter()
+        .filter(|(key, _)| key.starts_with("VITE_"))
+    {
+        build = build.env(key, value);
+    }
+    deps.runner.run(&build)?;
+    deps.runner.run(&Cmd::new("cp").arg("-a").args([
+        stage_dir.join("dist").display().to_string(),
+        prepared.frontend_dir().join("dist").display().to_string(),
+    ]))?;
+    Ok(prepared)
+}
+
+fn workspace_version(manifest: &Path) -> Result<String> {
+    let content = std::fs::read_to_string(manifest)
+        .with_context(|| format!("failed to read {}", manifest.display()))?;
+    let mut in_workspace_package = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_workspace_package = trimmed == "[workspace.package]";
+            continue;
+        }
+        if in_workspace_package
+            && let Some(value) = trimmed.strip_prefix("version")
+            && let Some(value) = value.trim_start().strip_prefix('=')
+        {
+            let version = value.trim().trim_matches('"');
+            if !version.is_empty() {
+                return Ok(version.to_string());
+            }
+        }
+    }
+    bail!(
+        "workspace package version missing from {}",
+        manifest.display()
+    )
 }
 
 fn is_executable(path: &Path) -> bool {

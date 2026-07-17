@@ -5,7 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "biome check . && tsc && vite build",
+		"build": "biome check . && tsc && bun run build:bundle",
+		"build:bundle": "vite build",
 		"deploy": "bun run build && ./scripts/deploy.sh",
 		"generate:api-types": "bun scripts/generate-api-types.ts",
 		"check:api-types": "bun scripts/generate-api-types.ts --check",

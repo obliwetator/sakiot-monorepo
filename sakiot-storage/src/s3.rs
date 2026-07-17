@@ -1,15 +1,15 @@
 use std::{path::Path, time::Duration};
 
-use aws_config::{BehaviorVersion, retry::RetryConfig, timeout::TimeoutConfig};
-use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     Client,
-    config::{RequestChecksumCalculation, ResponseChecksumValidation},
+    config::{
+        BehaviorVersion, Credentials, Region, RequestChecksumCalculation,
+        ResponseChecksumValidation, retry::RetryConfig, timeout::TimeoutConfig,
+    },
     error::ProvideErrorMetadata,
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, ServerSideEncryption},
 };
-use aws_types::region::Region;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -105,7 +105,8 @@ impl Archive {
             None,
             "sakiot-media-archive",
         );
-        let sdk_config = aws_config::defaults(BehaviorVersion::latest())
+        let s3_config = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
             .region(Region::new(config.region.clone()))
             .credentials_provider(credentials)
             .endpoint_url(&config.endpoint)
@@ -116,9 +117,6 @@ impl Archive {
                     .read_timeout(Duration::from_secs(30))
                     .build(),
             )
-            .load()
-            .await;
-        let s3_config = aws_sdk_s3::config::Builder::from(&sdk_config)
             .force_path_style(true)
             // B2 does not require AWS's optional SDK checksum trailers. The
             // archive performs its own full streamed SHA-256 verification.

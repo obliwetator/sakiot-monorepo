@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    # Docs-only pushes skip CI and the staging deploy entirely. Keep this
-    # list conservative: only files that provably cannot affect the build
-    # or the deploy. Workflow files are deliberately not ignored.
     paths-ignore:
       - "**.md"
       - "LICENSE*"
@@ -21,26 +18,64 @@ concurrency:
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+
+  release-candidate:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(
+            sed -n '/^\[workspace.package\]$/,/^\[/{s/^version = "\([^"]*\)"$/\1/p;}' Cargo.toml
+          )"
+          tag="v${version}"
+          [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "error: invalid workspace version '${version}'"; exit 1; }
+
+          last="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n 1)"
+          if [[ "${tag}" == "${last}" ]]; then
+            echo "tag=" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ -n "${last}" ]]; then
+            [[ "$(printf '%s\n%s\n' "${last}" "${tag}" | sort -V | tail -n 1)" == "${tag}" ]] \
+              || { echo "error: ${tag} is not above latest release ${last}"; exit 1; }
+          fi
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
 
   deploy:
-    needs: test
+    needs:
+      - test
+      - release-candidate
     runs-on: ubuntu-latest
     environment: staging
     steps:
       - name: Validate commit input
         env:
           STAGING_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
           set -euo pipefail
           [[ "${STAGING_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ -z "${RELEASE_TAG}" || "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
-      - name: Deploy through restricted SSH
+      - name: Deploy CI-verified commit through restricted SSH
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           STAGING_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
           set -euo pipefail
           install -d -m 0700 "${HOME}/.ssh"
@@ -48,58 +83,57 @@ jobs:
           chmod 0600 "${HOME}/.ssh/deploy_key"
           trap 'rm -f "${HOME}/.ssh/deploy_key"' EXIT
           printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+
+          command="staging-ci ${STAGING_SHA}"
+          if [[ -n "${RELEASE_TAG}" ]]; then
+            command+=" prepare ${RELEASE_TAG}"
+          fi
+          set +e
           ssh -i "${HOME}/.ssh/deploy_key" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "staging ${STAGING_SHA}"
+            "${command}"
+          status=$?
+          set -e
+          if [[ "${status}" -eq 126 ]]; then
+            echo "deploy engine predates CI attestation; using tested legacy path"
+            ssh -i "${HOME}/.ssh/deploy_key" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "staging ${STAGING_SHA}"
+          elif [[ "${status}" -ne 0 ]]; then
+            exit "${status}"
+          fi
 
-  # Cuts a production release when the workspace version was bumped: after the
-  # staging deploy verifies, tag v<version>, push it, and dispatch
-  # deploy-release.yml on that tag. The explicit dispatch is needed because a
-  # tag pushed with the default GITHUB_TOKEN does not trigger workflows
-  # (GitHub's recursion guard); workflow_dispatch is exempt from that guard.
   auto-tag:
-    needs: deploy
+    needs:
+      - deploy
+      - release-candidate
+    if: needs.release-candidate.outputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the release tag
-      actions: write # dispatch deploy-release.yml
+      contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Tag release if workspace version increased
+      - name: Tag verified staging release
         env:
-          # Must be the deployed staging frontend (nginx serves version.json
-          # with no-store there); debug.patrykstyla.com proxies the Vite dev
-          # server and 502s when it is not running.
+          RELEASE_TAG: ${{ needs.release-candidate.outputs.tag }}
           STAGING_VERSION_URL: https://staging.patrykstyla.com/version.json
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "fbi_agent") | .version')"
-          tag="v${version}"
-          # Strict semver only, same gate as deploy-release.yml and ops/release.
-          [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-            || { echo "error: invalid workspace version '${version}'"; exit 1; }
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null \
+            && { echo "error: tag ${RELEASE_TAG} already exists"; exit 1; }
 
-          last="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n 1)"
-          if [[ "${tag}" == "${last}" ]]; then
-            echo "version ${version} already released; nothing to do"
-            exit 0
-          fi
-          # Strictly greater than the latest release blocks downgrades and typos.
-          [[ "$(printf '%s\n%s\n' "${last}" "${tag}" | sort -V | tail -n 1)" == "${tag}" ]] \
-            || { echo "error: ${tag} is not above latest release ${last}"; exit 1; }
-          git rev-parse -q --verify "refs/tags/${tag}" >/dev/null \
-            && { echo "error: tag ${tag} already exists"; exit 1; }
-
-          # Staging gate: staging must serve exactly this commit before the
-          # release is cut (mirrors the check in ops/release).
           sha=""
           for _ in $(seq 1 30); do
             sha="$(curl -fsS --connect-timeout 5 --max-time 10 "${STAGING_VERSION_URL}" \
@@ -112,9 +146,10 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${tag}" -m "${tag}"
-          git push origin "refs/tags/${tag}"
-          # A GITHUB_TOKEN tag push does not trigger deploy-release.yml on its
-          # own; start it explicitly on the tag we just pushed.
-          gh workflow run deploy-release.yml --ref "${tag}" -R "${GITHUB_REPOSITORY}"
-          echo "pushed ${tag} and dispatched production deploy"
+          git tag -a "${RELEASE_TAG}" -m "${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+          gh workflow run deploy-release.yml \
+            --ref "${RELEASE_TAG}" \
+            -f promoted=true \
+            -R "${GITHUB_REPOSITORY}"
+          echo "pushed ${RELEASE_TAG} and dispatched promoted production deploy"

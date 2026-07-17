@@ -13,6 +13,7 @@ pub struct Cmd {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
+    pub env_remove: Vec<String>,
 }
 
 impl Cmd {
@@ -22,6 +23,7 @@ impl Cmd {
             args: Vec::new(),
             cwd: None,
             env: Vec::new(),
+            env_remove: Vec::new(),
         }
     }
 
@@ -49,6 +51,11 @@ impl Cmd {
         self
     }
 
+    pub fn env_remove(mut self, key: impl Into<String>) -> Cmd {
+        self.env_remove.push(key.into());
+        self
+    }
+
     /// Rendered argv for logs and test assertions.
     pub fn rendered(&self) -> String {
         let mut parts = vec![self.program.clone()];
@@ -61,6 +68,9 @@ impl Cmd {
         command.args(&self.args);
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
+        }
+        for key in &self.env_remove {
+            command.env_remove(key);
         }
         for (key, value) in &self.env {
             command.env(key, value);

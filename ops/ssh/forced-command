@@ -4,6 +4,14 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 original="${SSH_ORIGINAL_COMMAND:-}"
 
+if [[ "${original}" =~ ^release-ci\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" release-ci "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
+if [[ "${original}" =~ ^release-promoted\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" release-promoted "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+fi
+
 if [[ "${original}" =~ ^release\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
   exec "${script_dir}/deploy" release "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
@@ -19,6 +27,15 @@ fi
 
 if [[ "${original}" =~ ^staging\ ([0-9a-f]{40})$ ]]; then
   exec "${script_dir}/deploy" stage "${BASH_REMATCH[1]}"
+fi
+
+if [[ "${original}" =~ ^staging-ci\ ([0-9a-f]{40})$ ]]; then
+  exec "${script_dir}/deploy" stage-ci "${BASH_REMATCH[1]}"
+fi
+
+if [[ "${original}" =~ ^staging-ci\ ([0-9a-f]{40})\ prepare\ (v[0-9][0-9A-Za-z._-]*)$ ]]; then
+  exec "${script_dir}/deploy" stage-ci "${BASH_REMATCH[1]}" \
+    --prepare-production "${BASH_REMATCH[2]}"
 fi
 
 echo "rejected deployment command" >&2

@@ -48,6 +48,16 @@ pub struct Request {
     /// rejected by validate() with the bash error message.
     pub schema_option: Option<String>,
     pub dry_run: bool,
+    /// Trusted CI reached the deploy job through `needs: test` and attested
+    /// that result by using a dedicated restricted-SSH verb. Legacy/local
+    /// verbs leave this false and retain deploy-time test execution.
+    pub ci_verified: bool,
+    /// Auto-releases must consume the exact production bundle prepared by
+    /// staging. Manual releases may still build from source as a fallback.
+    pub require_promotion: bool,
+    /// A staging deploy for a version bump prepares this production tag's
+    /// immutable bundle after the normal staging artifacts are built.
+    pub prepare_production_tag: Option<String>,
 }
 
 impl Request {
@@ -68,7 +78,7 @@ impl Request {
 
         let mode = args.first().map(String::as_str);
         match mode {
-            Some("release") | Some("rollback") => {
+            Some("release") | Some("release-ci") | Some("release-promoted") | Some("rollback") => {
                 let is_rollback = mode == Some("rollback");
                 let (min, max) = if is_rollback { (3, 4) } else { (3, 3) };
                 if args.len() < min || args.len() > max {
@@ -89,12 +99,25 @@ impl Request {
                     sha: args[2].clone(),
                     schema_option: args.get(3).cloned().filter(|option| !option.is_empty()),
                     dry_run,
+                    ci_verified: matches!(mode, Some("release-ci" | "release-promoted")),
+                    require_promotion: mode == Some("release-promoted"),
+                    prepare_production_tag: None,
                 })
             }
-            Some("stage") => {
-                if args.len() != 2 {
-                    return Err(UsageError("usage: sakiot-deploy stage <sha>"));
-                }
+            Some("stage") | Some("stage-ci") => {
+                let prepare_production_tag = match args.as_slice() {
+                    [_, _] => None,
+                    [_, _, option, tag]
+                        if mode == Some("stage-ci") && option == "--prepare-production" =>
+                    {
+                        Some(tag.clone())
+                    }
+                    _ => {
+                        return Err(UsageError(
+                            "usage: sakiot-deploy stage-ci <sha> [--prepare-production <tag>]",
+                        ));
+                    }
+                };
                 Ok(Request {
                     mode: Mode::Stage,
                     target: Target::Staging,
@@ -102,6 +125,9 @@ impl Request {
                     sha: args[1].clone(),
                     schema_option: None,
                     dry_run,
+                    ci_verified: mode == Some("stage-ci"),
+                    require_promotion: false,
+                    prepare_production_tag,
                 })
             }
             _ => Err(UsageError(
@@ -120,6 +146,15 @@ impl Request {
             && option != "--allow-schema-mismatch"
         {
             bail!("invalid rollback option");
+        }
+        if let Some(tag) = &self.prepare_production_tag {
+            if self.target != Target::Staging || !self.ci_verified {
+                bail!("production preparation requires a CI-verified staging deploy");
+            }
+            crate::validate::validate_tag(tag)?;
+        }
+        if self.require_promotion && (self.mode != Mode::Release || !self.ci_verified) {
+            bail!("required promotion is only valid for a CI-verified release");
         }
         Ok(())
     }
@@ -141,6 +176,9 @@ pub struct Config {
     pub release_root: PathBuf,
     pub current_root: PathBuf,
     pub cache_dir: PathBuf,
+    pub cargo_target_dir: PathBuf,
+    pub promotion_root: PathBuf,
+    pub production_env_file: PathBuf,
     pub frontend_root: PathBuf,
     pub web_health_url: String,
     pub web_registry_url: String,
@@ -200,6 +238,13 @@ impl Config {
             std::env::var(name).unwrap_or_else(|_| default.to_string()) == "1"
         };
 
+        let cache_dir: PathBuf = var("SAKIOT_CACHE_DIR")
+            .unwrap_or_else(|| "/var/cache/sakiot".into())
+            .into();
+        let cargo_target_dir = var("SAKIOT_CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| cache_dir.join("cargo-target"));
+
         Ok(Config {
             env_file,
             web_unit: var("SAKIOT_WEB_UNIT").unwrap_or_else(|| "sakiot-web.service".into()),
@@ -218,8 +263,13 @@ impl Config {
             current_root: var("SAKIOT_CURRENT_ROOT")
                 .unwrap_or_else(|| "/srv/sakiot/current".into())
                 .into(),
-            cache_dir: var("SAKIOT_CACHE_DIR")
-                .unwrap_or_else(|| "/var/cache/sakiot".into())
+            cache_dir,
+            cargo_target_dir,
+            promotion_root: var("SAKIOT_PROMOTION_ROOT")
+                .unwrap_or_else(|| "/var/cache/sakiot/promotions".into())
+                .into(),
+            production_env_file: var("SAKIOT_PRODUCTION_ENV_FILE")
+                .unwrap_or_else(|| Config::default_env_file(Target::Production).into())
                 .into(),
             frontend_root: var("SAKIOT_FRONTEND_ROOT")
                 .unwrap_or_else(|| "/var/www/patrykstyla.com".into())
@@ -271,6 +321,17 @@ fn check_env_file_is_plain(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Parse a deployment env file without mutating this process's environment.
+/// Production bundle preparation uses this to select only public `VITE_*`
+/// values while the staging runtime environment remains active.
+pub fn plain_env_vars(path: &Path) -> Result<std::collections::BTreeMap<String, String>> {
+    check_env_file_is_plain(path)?;
+    dotenvy::from_path_iter(path)
+        .with_context(|| format!("failed to load env file {}", path.display()))?
+        .collect::<std::result::Result<_, _>>()
+        .with_context(|| format!("failed to parse env file {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,6 +359,20 @@ mod tests {
         let stage = parse(&["stage", &"a".repeat(40)]).unwrap();
         assert_eq!(stage.mode, Mode::Stage);
         assert_eq!(stage.tag, "main");
+
+        let stage_ci = parse(&[
+            "stage-ci",
+            &"a".repeat(40),
+            "--prepare-production",
+            "v1.2.3",
+        ])
+        .unwrap();
+        assert!(stage_ci.ci_verified);
+        assert_eq!(stage_ci.prepare_production_tag.as_deref(), Some("v1.2.3"));
+
+        let promoted = parse(&["release-promoted", "v1.2.3", &"a".repeat(40)]).unwrap();
+        assert!(promoted.ci_verified);
+        assert!(promoted.require_promotion);
     }
 
     #[test]
@@ -333,6 +408,13 @@ mod tests {
         )
         .unwrap();
         assert!(check_env_file_is_plain(&plain).is_ok());
+        let vars = plain_env_vars(&plain).unwrap();
+        assert_eq!(
+            vars.get("SAKIOT_DATA_DIR").map(String::as_str),
+            Some("/var/lib/sakiot/data")
+        );
+        assert_eq!(vars.get("FOO").map(String::as_str), Some("bar"));
+        assert_eq!(vars.get("URL").map(String::as_str), Some("https://x/y?a=b"));
 
         for bad in [
             "FOO=$(whoami)\n",

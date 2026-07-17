@@ -2,19 +2,58 @@ name: CI
 
 on:
   pull_request:
-    # Docs-only PRs skip the test suite. Same conservative list as the
-    # deploy-staging push trigger; workflow_call below is unaffected so
-    # deploy workflows always run the full suite.
     paths-ignore:
       - "**.md"
       - "LICENSE*"
   workflow_call:
+    inputs:
+      full:
+        description: Run every suite for a trusted deployment gate
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      api_contract: ${{ steps.scope.outputs.api_contract }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      ops: ${{ steps.scope.outputs.ops }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select affected suites
+        id: scope
+        env:
+          FULL: ${{ inputs.full || false }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${FULL}" == "true" ]]; then
+            printf '%s\n' \
+              'rust=true' \
+              'api_contract=true' \
+              'frontend=true' \
+              'ops=true' >>"${GITHUB_OUTPUT}"
+          else
+            git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" \
+              | scripts/ci-scope.sh >>"${GITHUB_OUTPUT}"
+          fi
+
   rust:
+    needs: scope
+    if: needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -31,33 +70,29 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      # Compile-time query validation comes from the checked-in .sqlx
-      # metadata; the live database is only for #[sqlx::test] fixtures.
       SQLX_OFFLINE: "true"
       DATABASE_URL: postgres://postgres:password@localhost:54320/sakiot_rouvas
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
     steps:
       - uses: actions/checkout@v4
 
-      # Installs the toolchain pinned in rust-toolchain.toml (including its
-      # components) and provides rust-cache keyed against that toolchain.
-      # rustflags must stay empty: the action's default -D warnings would
-      # change build behavior; the clippy step opts in explicitly instead.
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ""
+          cache-targets: false
+          cache-save-if: ${{ github.event_name != 'pull_request' }}
 
-      # sakiot-proto's build script needs protoc; the runner image does not
-      # ship it, and only a warm build cache hides that.
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
 
-      # scripts/sqlx-cli-version is the single source of truth for the pin;
-      # scripts/sqlx-prepare.sh reads the same file.
+      - name: Install protoc and fast linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler lld
+
       - name: Read pinned sqlx-cli version
-        run: echo "SQLX_CLI_VERSION=$(tr -d '[:space:]' <scripts/sqlx-cli-version)" >> "$GITHUB_ENV"
+        run: echo "SQLX_CLI_VERSION=$(tr -d '[:space:]' <scripts/sqlx-cli-version)" >>"${GITHUB_ENV}"
 
-      # rust-cache does not cover ~/.cargo/bin, so cache the two installed
-      # binaries directly (cargo sqlx dispatches to cargo-sqlx).
       - name: Cache SQLx CLI
         id: cache-sqlx
         uses: actions/cache@v4
@@ -69,16 +104,16 @@ jobs:
 
       - name: Install SQLx CLI
         if: steps.cache-sqlx.outputs.cache-hit != 'true'
-        run: cargo install sqlx-cli --version "$SQLX_CLI_VERSION" --locked --no-default-features --features postgres,native-tls
+        run: cargo install sqlx-cli --version "${SQLX_CLI_VERSION}" --locked --no-default-features --features postgres,native-tls
 
       - name: Apply database migrations
         run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations
 
-      - name: Check SQLx metadata
-        run: SQLX_OFFLINE=false cargo sqlx prepare --check --workspace -- --all-targets
-
       - name: Check formatting
         run: cargo fmt --all --check
+
+      - name: Check SQLx metadata
+        run: SQLX_OFFLINE=false cargo sqlx prepare --check --workspace -- --all-targets
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -87,24 +122,32 @@ jobs:
         run: cargo test --workspace
 
   api-contract:
+    needs: scope
+    if: needs.scope.outputs.api_contract == 'true'
     runs-on: ubuntu-latest
     env:
-      # The exporter compiles the web_server library but never starts the
-      # service or connects to PostgreSQL.
       SQLX_OFFLINE: "true"
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ""
+          cache-targets: false
+          cache-save-if: ${{ github.event_name != 'pull_request' }}
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Install protoc and fast linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler lld
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Install frontend dependencies
+      - name: Install frontend dependencies for API contract
         working-directory: sakiot-stage
         run: bun install --frozen-lockfile
 
@@ -112,40 +155,53 @@ jobs:
         working-directory: sakiot-stage
         run: bun run check:api-types
 
-  # The SSH forced command and systemctl sudo wrapper are installed
-  # out-of-band on the VPS, so deploys never rebuild them; without this job
-  # their bash suites only run there (ops/update-deploy-engine.sh) and a PR
-  # could regress the shims unnoticed. The suites are hermetic (mktemp
-  # sandboxes, stub binaries, no root/systemd) and finish in seconds, so run
-  # them unconditionally rather than path-filtering.
   ops-shims:
+    needs: scope
+    if: needs.scope.outputs.ops == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Run ops shim test suites
         run: ops/tests/run.sh
 
   frontend:
+    needs: scope
+    if: needs.scope.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: sakiot-stage
     steps:
       - uses: actions/checkout@v4
-
       - uses: oven-sh/setup-bun@v2
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
       - name: Test
         run: bun run test
-
-      # Runs biome check and tsc before vite build. This is a smoke build
-      # (the artifact is never shipped); real deploys bake VITE_API_URL from
-      # the target's env file, and vite.config.ts refuses to build without it.
       - name: Build
         run: bun run build
         env:
           VITE_API_URL: https://ci.sakiot.test/api/
+
+  result:
+    if: always()
+    needs:
+      - scope
+      - rust
+      - api-contract
+      - ops-shims
+      - frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected suite
+        env:
+          SCOPE: ${{ needs.scope.result }}
+          RUST: ${{ needs.rust.result }}
+          API_CONTRACT: ${{ needs.api-contract.result }}
+          OPS: ${{ needs.ops-shims.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+        run: |
+          set -euo pipefail
+          for result in "${SCOPE}" "${RUST}" "${API_CONTRACT}" "${OPS}" "${FRONTEND}"; do
+            [[ "${result}" == "success" || "${result}" == "skipped" ]]
+          done

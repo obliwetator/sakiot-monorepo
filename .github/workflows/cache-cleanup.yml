@@ -1,0 +1,26 @@
+name: Clean PR caches
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merge-ref caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CACHE_REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+          gh cache list --ref "${CACHE_REF}" --limit 100 --json id --jq '.[].id' \
+            | while IFS= read -r id; do
+                [[ -n "${id}" ]] && gh cache delete "${id}"
+              done

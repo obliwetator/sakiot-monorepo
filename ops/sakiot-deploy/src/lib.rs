@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod fsx;
 pub mod git;
 pub mod lock;
+pub mod promotion;
 pub mod release;
 pub mod runner;
 #[expect(

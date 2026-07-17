@@ -26,6 +26,30 @@ staging_actual="$(
 )"
 [[ "${staging_actual}" == "stage ${sha}" ]]
 
+staging_ci_actual="$(
+  SSH_ORIGINAL_COMMAND="staging-ci ${sha}" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${staging_ci_actual}" == "stage-ci ${sha}" ]]
+
+staging_prepare_actual="$(
+  SSH_ORIGINAL_COMMAND="staging-ci ${sha} prepare v1.2.3" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${staging_prepare_actual}" == "stage-ci ${sha} --prepare-production v1.2.3" ]]
+
+release_ci_actual="$(
+  SSH_ORIGINAL_COMMAND="release-ci v1.2.3 ${sha}" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${release_ci_actual}" == "release-ci v1.2.3 ${sha}" ]]
+
+release_promoted_actual="$(
+  SSH_ORIGINAL_COMMAND="release-promoted v1.2.3 ${sha}" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${release_promoted_actual}" == "release-promoted v1.2.3 ${sha}" ]]
+
 if SSH_ORIGINAL_COMMAND="staging ${sha}; id" \
   "${temporary}/ops/ssh/forced-command" >/dev/null 2>&1; then
   echo "forced command accepted shell metacharacters in staging verb" >&2

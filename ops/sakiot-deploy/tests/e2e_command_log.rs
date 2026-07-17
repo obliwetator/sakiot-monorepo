@@ -15,6 +15,7 @@ use sakiot_deploy::admin_api::AdminApi;
 use sakiot_deploy::clock::Clock;
 use sakiot_deploy::config::{Config, Request};
 use sakiot_deploy::deploy::{self, Deps};
+use sakiot_deploy::promotion::PreparedPromotion;
 use sakiot_deploy::runner::{ScriptEntry, ScriptedRunner};
 use sakiot_deploy::web_api::WebApi;
 use time::OffsetDateTime;
@@ -178,6 +179,9 @@ impl World {
             release_root: base.join("releases"),
             current_root: base.join("current"),
             cache_dir: base.join("cache"),
+            cargo_target_dir: base.join("cache/cargo-target"),
+            promotion_root: base.join("promotions"),
+            production_env_file: base.join("production.env"),
             frontend_root: base.join("www"),
             web_health_url: "http://127.0.0.1:1/healthz".into(),
             web_registry_url: "http://127.0.0.1:1/registry".into(),
@@ -204,6 +208,11 @@ impl World {
         fs::write(
             config.cache_dir.join("cargo-target/release/web_server"),
             "web-bin",
+        )
+        .unwrap();
+        fs::write(
+            &config.production_env_file,
+            "VITE_API_URL=https://example.invalid/api/\n",
         )
         .unwrap();
         World {
@@ -302,7 +311,6 @@ fn stage_happy_path_web_only() {
             &repo,
             &format!("worktree add --detach {worktree} {SHA_B}"),
         )),
-        ScriptEntry::ok("cargo test --workspace --locked"),
         ScriptEntry::ok("cargo build --release --locked --package web_server --features dev-login"),
         ScriptEntry::ok("systemctl restart sakiot-web.service"),
         ScriptEntry::ok("systemctl enable-web sakiot-web.service"),
@@ -317,7 +325,7 @@ fn stage_happy_path_web_only() {
     let clock = MockClock::new();
 
     world
-        .run(&["stage", SHA_B], &runner, &admin, &web, &clock)
+        .run(&["stage-ci", SHA_B], &runner, &admin, &web, &clock)
         .unwrap();
     runner.assert_exhausted().unwrap();
 
@@ -483,6 +491,106 @@ fn release_happy_path_first_deploy_all_components() {
             // The web restart wiped the in-memory registry; republished.
             format!("web publish http://127.0.0.1:1/registry active=127.0.0.1:{PORT} draining=[]"),
         ]
+    );
+}
+
+#[test]
+fn promoted_release_verifies_and_reuses_every_artifact() {
+    let world = World::new();
+    let repo = world.repo();
+    let release_id = format!("v1.0.0-bbbbbbbbbbbb-{STAMP}");
+    let worktree_path = world.worktree(&release_id);
+    let worktree = worktree_path.display().to_string();
+    world.fake_worktree(&release_id);
+    let migrations = worktree_path
+        .join("sakiot-db/migrations")
+        .display()
+        .to_string();
+    let artifact = world.config.release_root.join(&release_id);
+    let new_unit = format!("sakiot-fbi-agent@{release_id}.service");
+
+    let promotion = PreparedPromotion::new(&world.config.promotion_root, "v1.0.0", SHA_B).unwrap();
+    fs::create_dir_all(promotion.bot_dir()).unwrap();
+    fs::write(promotion.bot_dir().join("fbi_agent"), "promoted-bot").unwrap();
+    fs::create_dir_all(promotion.web_dir()).unwrap();
+    fs::write(promotion.web_dir().join("web_server"), "promoted-web").unwrap();
+    fs::create_dir_all(promotion.frontend_dir().join("dist")).unwrap();
+    fs::write(
+        promotion.frontend_dir().join("dist/index.html"),
+        "promoted-ui",
+    )
+    .unwrap();
+    let promotion_path = promotion.publish().unwrap();
+
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/* +refs/tags/v1.0.0:refs/tags/v1.0.0",
+        )),
+        ScriptEntry::ok_with(
+            git(&repo, "rev-list -n 1 refs/tags/v1.0.0"),
+            format!("{SHA_B}\n"),
+        ),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
+        ScriptEntry::ok(git(
+            &repo,
+            &format!("worktree add --detach {worktree} {SHA_B}"),
+        )),
+        ScriptEntry::ok(format!(
+            "cp -a {}/frontend/dist {}/frontend/dist",
+            promotion_path.display(),
+            artifact.display()
+        )),
+        ScriptEntry::ok(format!("sqlx migrate info --source {migrations}")),
+        ScriptEntry::ok(format!("sqlx migrate run --source {migrations}")),
+        ScriptEntry::ok(format!("systemctl start {new_unit}")),
+        ScriptEntry::ok(format!("systemctl enable {new_unit}")),
+        ScriptEntry::ok("systemctl restart sakiot-web.service"),
+        ScriptEntry::ok("systemctl enable-web sakiot-web.service"),
+        ScriptEntry::ok(format!("{worktree}/sakiot-stage/scripts/deploy.sh")),
+        ScriptEntry::ok(git(&repo, &format!("worktree remove --force {worktree}"))),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    world
+        .run(
+            &["release-promoted", "v1.0.0", SHA_B],
+            &runner,
+            &admin,
+            &web,
+            &clock,
+        )
+        .unwrap();
+    runner.assert_exhausted().unwrap();
+
+    assert_eq!(
+        fs::read_to_string(artifact.join("fbi-agent/fbi_agent")).unwrap(),
+        "promoted-bot"
+    );
+    assert_eq!(
+        fs::read_to_string(artifact.join("web/web_server")).unwrap(),
+        "promoted-web"
+    );
+    assert!(
+        !promotion_path.exists(),
+        "consumed promotion should be removed"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(artifact.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["reused"],
+        serde_json::json!({"bot": true, "web": true, "frontend": true})
     );
 }
 

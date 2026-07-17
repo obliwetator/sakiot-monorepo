@@ -2,8 +2,10 @@
 
 Production deploys run from GitHub-hosted Actions runners when a new `v*` tag
 is pushed. The runner has read-only repository permission and sends only the
-tag and commit SHA through a forced SSH command. Builds, tests, backups,
-migrations, service changes, and health checks run on the VPS.
+tag and commit SHA through a forced SSH command. CI runs tests once. A
+version-bump staging deploy builds and hashes the production bundle on the
+Debian VPS; production promotes that exact bundle, then performs backups,
+migrations, service changes, and health checks.
 
 ## VPS bootstrap
 
@@ -12,9 +14,9 @@ FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rs
 and `sudo`. The bash deploy engine additionally needs `grpcurl`, `jq`,
 Python 3, and `flock`; the Rust engine does that work in-process.
 
-Create a dedicated SQLx test role and master database. Deploy-time Rust tests
-create and remove a temporary database per test; they never use the runtime
-`DATABASE_URL`.
+Create a dedicated SQLx test role and master database. Legacy/local deploy
+verbs retain deploy-time Rust tests as a safe fallback; those tests create and
+remove a temporary database per test and never use runtime `DATABASE_URL`.
 
 ```sql
 CREATE ROLE sakiot_test LOGIN CREATEDB PASSWORD 'replace_me';
@@ -72,8 +74,10 @@ The binary is installed out-of-band like the rest of `ops/`:
 builds `--package sakiot-deploy` from the checkout as the `sakiot` user and
 installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
 never built from the release worktree, so a broken commit cannot brick
-deploys. Engine tests run in CI (`cargo test --workspace`) and on the VPS
-during the deploy-time workspace test step. The bash suites for the
+deploys. Engine tests run in CI (`cargo test --workspace`). Authenticated `*-ci`
+forced-command verbs are reachable only after the Actions test job succeeds,
+so they skip the duplicate VPS test pass. Legacy/local verbs still test on the
+VPS. The bash suites for the
 out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
 frontend publish) run in CI on every PR and on the VPS via
 `update-deploy-engine.sh`.
@@ -144,6 +148,13 @@ touching production. Because the bot binary is built with `cargo build --release
 (which reads the `*_RELEASE*` credential slots, see `fbi-agent/src/config.rs`),
 `staging.env` puts the DEBUG bot's token/application id in those slots.
 
+CI uses `stage-ci`; when the workspace version exceeds the latest release tag,
+it also supplies `--prepare-production vX.Y.Z`. The deployer builds production
+bot, web, and frontend variants before any staging mutation, records SHA-256
+digests, and atomically publishes them under
+`/var/cache/sakiot/promotions`. Publication happens only after staging health
+checks and state recording succeed.
+
 ## Release
 
 The normal path is version-bump driven. The workspace version in the root
@@ -161,8 +172,11 @@ single source of truth:
    own `GITHUB_TOKEN` does not trigger the tag-push event (GitHub's recursion
    guard); `workflow_dispatch` is exempt. No personal access token is
    involved, so the release path is not tied to any individual account.
-4. The dispatched run validates the tag and deploys production exactly as a
-   manually pushed tag would.
+4. The dispatched run skips duplicate CI, requires the exact tag/SHA promotion,
+   re-verifies every digest, copies it into the production release directory,
+   and deploys it. A missing or modified promotion fails before migrations or
+   service changes. Manual/raw tag pushes still run full CI and can build on the
+   VPS when no promotion exists.
 
 Merges that do not bump the version deploy staging only; the `auto-tag` job is
 a no-op. A version lower than the latest release fails the job loudly.
@@ -225,6 +239,7 @@ compatibility review.
 /srv/sakiot/releases
 /srv/sakiot/current
 /var/cache/sakiot
+/var/cache/sakiot/promotions
 ```
 
 Release manifests are under `/srv/sakiot/releases/<release>/manifest.json`;

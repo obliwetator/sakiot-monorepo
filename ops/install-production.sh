@@ -25,6 +25,7 @@ install -d -o sakiot -g sakiot -m 0750 \
   /var/lib/sakiot/deploy \
   /var/lib/sakiot/backups \
   /var/cache/sakiot \
+  /var/cache/sakiot/promotions \
   /srv/sakiot/releases \
   /srv/sakiot/current
 install -d -o sakiot -g sakiot -m 0755 /var/www/patrykstyla.com
