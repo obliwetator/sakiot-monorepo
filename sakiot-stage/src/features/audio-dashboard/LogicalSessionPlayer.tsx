@@ -22,6 +22,11 @@ import {
 import { authedFetch } from "../../app/authedFetch";
 import { formatDuration } from "../../utils/formatTime";
 import {
+	isValidClipSelection,
+	reconcileSessionSelection,
+	type SelectionManifest,
+} from "./logicalSessionSelection";
+import {
 	normalizeSessionSegments,
 	type PlaybackSegment,
 } from "./logicalSessionTimeline";
@@ -179,6 +184,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const rateRef = useRef(1);
 	const volumeRef = useRef(1);
 	const appliedDeepLinkRef = useRef<string | null>(null);
+	const selectionManifestRef = useRef<SelectionManifest | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
@@ -210,15 +216,19 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	useEffect(() => {
 		if (!manifest) return;
 		durationRef.current = manifest.duration_ms;
-		setSelection((current) => {
-			if (current[1] === 0 || current[1] > manifest.duration_ms) {
-				return [
-					Math.min(current[0], manifest.duration_ms),
-					manifest.duration_ms,
-				];
-			}
-			return current;
-		});
+		const nextSelectionManifest = {
+			recordingSessionId: manifest.recording_session_id,
+			durationMs: manifest.duration_ms,
+		};
+		const previousSelectionManifest = selectionManifestRef.current;
+		selectionManifestRef.current = nextSelectionManifest;
+		setSelection((current) =>
+			reconcileSessionSelection(
+				current,
+				previousSelectionManifest,
+				nextSelectionManifest,
+			),
+		);
 		setPositionMs((current) => Math.min(current, manifest.duration_ms));
 		setSeekPreviewMs((current) =>
 			current === null ? null : Math.min(current, manifest.duration_ms),
@@ -540,6 +550,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			displayedPositionMs < segment.end_ms,
 	);
 	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
+	const clipSelectionIsValid = isValidClipSelection(selection);
 
 	return (
 		<Box sx={{ pb: 4 }}>
@@ -567,6 +578,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			</Typography>
 
 			<SessionWaveform
+				key={props.sessionId}
 				sessionId={props.sessionId}
 				positionMs={displayedPositionMs}
 				durationMs={manifest.duration_ms}
@@ -653,10 +665,21 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			</Stack>
 
 			<Paper sx={{ p: 2, my: 2 }}>
-				<Typography gutterBottom>
-					Selected range: {formatDuration(selection[0] / 1_000)} –{" "}
-					{formatDuration(selection[1] / 1_000)}
-				</Typography>
+				<Stack
+					direction="row"
+					spacing={1}
+					alignItems="center"
+					flexWrap="wrap"
+					sx={{ mb: 1 }}
+				>
+					<Typography>
+						Selected range: {formatDuration(selection[0] / 1_000)} –{" "}
+						{formatDuration(selection[1] / 1_000)}
+					</Typography>
+					{clipSelectionIsValid && (
+						<Chip label="Valid clip duration" color="success" size="small" />
+					)}
+				</Stack>
 				<Slider
 					aria-label="Logical action range"
 					min={0}

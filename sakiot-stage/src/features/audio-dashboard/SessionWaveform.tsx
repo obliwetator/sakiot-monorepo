@@ -7,6 +7,7 @@ import {
 	useGetSessionWaveformQuery,
 	useRebuildSessionWaveformMutation,
 } from "../../app/apiSlice";
+import { drawSessionWaveform } from "./sessionWaveformCanvas";
 import { decodeWaveformPeaks } from "./waveformPeaks";
 
 export function SessionWaveform(props: {
@@ -18,9 +19,11 @@ export function SessionWaveform(props: {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [rebuilding, setRebuilding] = useState(false);
 	const [rebuildProgress, setRebuildProgress] = useState(0);
-	const { data, isError, refetch } = useGetSessionWaveformQuery(
-		props.sessionId,
-	);
+	const {
+		currentData: data,
+		isError,
+		refetch,
+	} = useGetSessionWaveformQuery(props.sessionId);
 	const [rebuildWaveform, rebuildState] = useRebuildSessionWaveformMutation();
 
 	const pollRebuild = useCallback(async () => {
@@ -57,9 +60,8 @@ export function SessionWaveform(props: {
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
-		if (!canvas || !data?.data) return;
-		const peaks = decodeWaveformPeaks(data.data);
-		if (peaks.length === 0) return;
+		if (!canvas) return;
+		const peaks = data?.data ? decodeWaveformPeaks(data.data) : [];
 
 		const draw = () => {
 			const ratio = window.devicePixelRatio || 1;
@@ -70,23 +72,7 @@ export function SessionWaveform(props: {
 			const context = canvas.getContext("2d");
 			if (!context) return;
 			context.scale(ratio, ratio);
-			context.clearRect(0, 0, width, height);
-			context.fillStyle = "rgba(168, 85, 247, 0.18)";
-			context.fillRect(0, 0, width, height);
-			const center = height / 2;
-			context.strokeStyle = "#d946ef";
-			context.lineWidth = 1;
-			context.beginPath();
-			for (let x = 0; x < width; x += 1) {
-				const index = Math.min(
-					peaks.length - 1,
-					Math.floor((x / Math.max(1, width - 1)) * peaks.length),
-				);
-				const amplitude = Math.abs(peaks[index] ?? 0) * center;
-				context.moveTo(x, center - amplitude);
-				context.lineTo(x, center + amplitude);
-			}
-			context.stroke();
+			drawSessionWaveform(context, width, height, peaks);
 		};
 
 		draw();
