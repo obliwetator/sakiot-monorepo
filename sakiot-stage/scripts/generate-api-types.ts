@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	access,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +14,14 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(scriptDirectory, "..");
 const repositoryRoot = resolve(frontendRoot, "..");
+// openapi-typescript builds its output with the TypeScript 5 compiler API,
+// which the native TypeScript 7 compiler no longer exposes. It therefore lives
+// in scripts/codegen with its own pinned TypeScript instead of the frontend's.
+const codegenRoot = resolve(scriptDirectory, "codegen");
+const codegenBinary = resolve(
+	codegenRoot,
+	"node_modules/.bin/openapi-typescript",
+);
 const outputFile = resolve(
 	process.env.OPENAPI_OUT ?? resolve(frontendRoot, "src/api/openapi.ts"),
 );
@@ -58,18 +73,32 @@ async function exportOpenApi(destination: string): Promise<void> {
 	await writeFile(destination, Buffer.concat(chunks));
 }
 
+async function ensureCodegenToolchain(): Promise<void> {
+	try {
+		await access(codegenBinary);
+		return;
+	} catch {
+		// Not installed yet; fall through.
+	}
+
+	const child = spawn("bun", ["install", "--frozen-lockfile"], {
+		cwd: codegenRoot,
+		stdio: "inherit",
+	});
+
+	await waitForExit(child, "Codegen toolchain install");
+}
+
 async function generateTypes(
 	source: string,
 	destination: string,
 ): Promise<void> {
-	const child = spawn(
-		"bunx",
-		["openapi-typescript", source, "-o", destination],
-		{
-			cwd: frontendRoot,
-			stdio: "inherit",
-		},
-	);
+	await ensureCodegenToolchain();
+
+	const child = spawn(codegenBinary, [source, "-o", destination], {
+		cwd: codegenRoot,
+		stdio: "inherit",
+	});
 
 	await waitForExit(child, "OpenAPI type generation");
 }

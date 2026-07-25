@@ -14,7 +14,8 @@
 		"resolveJsonModule": true,
 		"isolatedModules": true,
 		"noEmit": true,
-		"jsx": "react-jsx"
+		"jsx": "react-jsx",
+		"tsBuildInfoFile": "node_modules/.cache/tsconfig-app/tsconfig.tsbuildinfo"
 	},
 	"include": ["src"],
 	"exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"],

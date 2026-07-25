@@ -1,0 +1,10 @@
+{
+	"name": "sakiot-stage-codegen",
+	"private": true,
+	"type": "module",
+	"description": "Isolated toolchain for OpenAPI type generation. openapi-typescript uses the TypeScript 5 compiler API (ts.factory), which TypeScript 7's native compiler no longer exposes, so it is pinned to its own TypeScript here instead of sharing the frontend's.",
+	"dependencies": {
+		"openapi-typescript": "^7.13.0",
+		"typescript": "^5.9.3"
+	}
+}

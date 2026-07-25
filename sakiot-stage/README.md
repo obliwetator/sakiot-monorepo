@@ -46,6 +46,24 @@ The check command generates into a temporary file and fails when
 `src/api/openapi.ts` is stale. Set `OPENAPI_URL` only to use another OpenAPI
 source intentionally.
 
+The generator itself lives in `scripts/codegen`, which pins its own TypeScript 5
+alongside `openapi-typescript`. `openapi-typescript` emits its output through
+the TypeScript 5 compiler API (`ts.factory`), which the native TypeScript 7
+compiler used by the frontend no longer exposes. Both commands install that
+toolchain on first use, so no extra setup step is required.
+
+This split is temporary. Check upstream periodically:
+
+```sh
+npm view openapi-typescript peerDependencies
+```
+
+As of 2026-07-25 the newest release is 7.13.0 and still requires
+`typescript: ^5.x`. Once the peer range admits TypeScript 7, delete
+`scripts/codegen`, move `openapi-typescript` back into `devDependencies`, and
+revert `scripts/generate-api-types.ts` to invoking it directly.
+`bun run check:api-types` must stay byte-identical against `src/api/openapi.ts`.
+
 ## Status
 
 This is personal/project code, not a turnkey product. It expects the matching

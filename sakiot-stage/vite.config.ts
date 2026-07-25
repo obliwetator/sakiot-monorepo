@@ -1,4 +1,5 @@
-import react from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 
@@ -52,11 +53,10 @@ export default defineConfig(({ command, mode }) => {
 		},
 		plugins: [
 			bundleVersionPlugin(),
-			react({
-				babel: {
-					plugins: [["babel-plugin-react-compiler", {}]],
-				},
-			}),
+			react(),
+			// plugin-react v6 transforms JSX with oxc and no longer accepts a
+			// `babel` option, so the React Compiler runs as its own preset.
+			babel({ presets: [reactCompilerPreset()] }),
 			visualizer({
 				filename: "dist/stats.html",
 				gzipSize: true,

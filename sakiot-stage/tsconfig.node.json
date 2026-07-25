@@ -4,7 +4,12 @@
 		"module": "node16",
 		"moduleResolution": "node16",
 		"allowSyntheticDefaultImports": true,
-		"skipLibCheck": true
+		"skipLibCheck": true,
+		// A referenced project may not set noEmit (TS6310), so send its build
+		// artifacts to an ignored directory instead of scattering .js/.d.ts
+		// files next to the sources they were generated from.
+		"outDir": "node_modules/.cache/tsconfig-node",
+		"tsBuildInfoFile": "node_modules/.cache/tsconfig-node/tsconfig.node.tsbuildinfo"
 	},
 	"include": ["vite.config.ts", "scripts/**/*"]
 }
