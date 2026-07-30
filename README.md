@@ -51,12 +51,13 @@ Other subcommands:
 scripts/dev.sh db              # only start Postgres + migrate + seed
 scripts/dev.sh down            # stop Postgres
 scripts/dev.sh reset           # drop the local database volume and re-seed
-scripts/dev.sh fetch-fixtures  # copy real recordings from staging (see below)
+scripts/dev.sh fetch-fixtures  # copy recent recordings from staging (see below)
+scripts/dev.sh fetch <what>    # copy one recording/session by URL or id (see below)
 scripts/dev.sh clean           # drop the db volume + delete fetched fixture files
 ```
 
 The synthetic seed leaves the recordings list empty. To test the recordings
-UI with real audio, waveforms, and metadata, pull a sample from the staging
+UI with real audio, waveforms, and metadata, pull a sample from a deployed
 instance over your personal SSH access (read-only on the VPS side; nothing
 is committed to the repository). Set `SAKIOT_DEV_SSH` in the git-ignored `.env`
 to avoid entering the SSH target when the startup prompt requests recordings:
@@ -74,21 +75,104 @@ existing fixture set, whose recording count is shown in the prompt. The remote
 export and media download complete before replacement begins, so a remote
 failure leaves the previous set intact.
 
-On the VPS itself fetch-fixtures detects `/var/lib/sakiot-staging/data` and
-switches to local mode automatically — no `SAKIOT_DEV_SSH` needed. By default,
-the export runs on the VPS using `/etc/sakiot/staging.env` when readable,
-then tries `sudo -n -u postgres psql`, then direct `psql`. For a nonstandard
-database setup, override the remote command:
+### Pulling one specific recording
+
+When a particular production file misbehaves or makes a good test sample, hand
+its dashboard URL straight to `fetch`:
+
+```sh
+scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/763782256980131892/2026/7/1785336946781-161172393719496704
+scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/session/384
+scripts/dev.sh fetch 1785336946781-161172393719496704   # bare file name
+scripts/dev.sh fetch 384                                # bare id, resolved remotely
+```
+
+A file URL pulls that fragment; a session URL pulls every fragment of the
+logical session. Both also pull the parent `recording_sessions` row plus its
+gaps and timeline events. Unlike `--count`, this **adds** to the fixture set
+instead of replacing it, and re-running the same fetch is a no-op.
+
+The audio event timeline draws from three tables, so all three come across.
+`recording_session_events` feeds the "recording" lane; `voice_state_events` feeds
+mute, deafen, suppress, channel and media; `voice_connection_events` feeds
+"connection". The latter two are keyed by guild and wall-clock time rather than
+by recording, so they are scoped to the span the imported fragments cover, plus
+a margin (`SAKIOT_DEV_EVENT_MARGIN`, default 5 minutes) — the connect operation
+that starts a session completes just before its first fragment and would
+otherwise be missed. Events for every user in the channel are pulled, not just
+the recorded one, along with their names.
+
+The host in the URL picks the source, so a `patrykstyla.com` link reads from
+production and a `staging.patrykstyla.com` one from staging. Override with
+`--source prod|staging`, or set `SAKIOT_DEV_SOURCE` in `.env` for bare ids. A
+bare number can be either an `audio_files.id` or a `recording_sessions.id`; the
+script looks it up and asks for `--recording` or `--session` only if both match.
+
+`audio_files.id` and `recording_sessions.id` are per-environment sequences, so
+the destination mints its own and rewrites every reference. `file_name`, guild,
+channel, year and month survive unchanged, which means a file URL works verbatim
+against the local dev server — only session ids differ. The command prints the
+URLs to open when it finishes.
+
+### Copying a production recording into staging
+
+`--into staging` puts the same selection into the staging instance instead of
+the local dev database, for reproducing something on `staging.patrykstyla.com`:
+
+```sh
+scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../audio/session/384 --into staging
+```
+
+It asks for confirmation first, and the copy is deliberately obvious afterwards:
+
+- every imported session gets an `imported_from_production` event at offset 0 of
+  its staging timeline, carrying the origin URL, the origin session id, who ran
+  the import, and when — visible as a marker in the session player;
+- each recording is appended to
+  `/var/lib/sakiot-staging/data/.imported-from-production.list`;
+- the run prints a banner naming the target database and media directory.
+
+Importing the rows and files is not enough to make a recording *reachable*. The
+listing goes through `visible_channels_for_user`, which returns 403 unless the
+viewing account has a `user_guilds` row for that guild, and staging is reached
+through `dev_login` — a token for `DEV_ACCOUNT_ID`, never a Discord identity, so
+nothing populates that table on its own. The import therefore reads
+`DEV_ACCOUNT_ID` out of `staging.env` and grants that account access to the
+imported guild, listed as `Imported from production <id>` in the guild picker.
+Override the account with `SAKIOT_DEV_STAGING_ACCOUNT_ID` if the env file is not
+readable.
+
+`guilds_present` is topped up for the same reason. The staging bot rewrites that
+table on startup and is not a member of a production guild, so the entry
+disappears on its next restart — re-run the fetch to restore it.
+
+The command finishes with a pass/fail line per precondition — media files on
+disk, the `@everyone` role, voice channel rows, `guilds_present`, and the
+`dev_login` account's access — instead of reporting success on data that nothing
+can serve.
+
+### Remote access details
+
+On the VPS itself the command detects the source data directory and switches to
+local mode automatically — no `SAKIOT_DEV_SSH` needed. By default, the export
+runs on the VPS using the source's env file (`/etc/sakiot/production.env` or
+`/etc/sakiot/staging.env`) when readable, then tries `sudo -n -u postgres psql`,
+then direct `psql`. For a nonstandard database setup, override the remote
+command:
 
 ```sh
 SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" scripts/dev.sh fetch-fixtures
 ```
 
-Archive-pruned staging recordings are materialized and SHA-256 verified before
-`rsync`. The workflow first tries the staging environment/binary directly, then
+Archive-pruned recordings are materialized and SHA-256 verified before `rsync`.
+The workflow first tries the source environment/binary directly, then
 `sudo -n -u sakiot`. Override unusual layouts with
-`SAKIOT_DEV_REMOTE_WEB_BINARY`, `SAKIOT_DEV_REMOTE_ENV_FILE`, or a complete
-`SAKIOT_DEV_REMOTE_HYDRATE` command.
+`SAKIOT_DEV_REMOTE_WEB_BINARY`, `SAKIOT_DEV_REMOTE_ENV_FILE`,
+`SAKIOT_DEV_REMOTE_DB`, `SAKIOT_DEV_REMOTE_DATA`, or a complete
+`SAKIOT_DEV_REMOTE_HYDRATE` command. Writing into staging uses
+`SAKIOT_DEV_STAGING_ENV_FILE`, `SAKIOT_DEV_STAGING_DB`,
+`SAKIOT_DEV_STAGING_DATA`, `SAKIOT_DEV_STAGING_PSQL` and
+`SAKIOT_DEV_STAGING_RSYNC_PATH`.
 
 ## Environment
 
