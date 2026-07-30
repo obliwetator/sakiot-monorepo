@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionManifest } from "../../app/apiSlice";
-import { normalizeSessionSegments } from "./logicalSessionTimeline";
+import {
+	isolateSessionChannel,
+	normalizeSessionSegments,
+} from "./logicalSessionTimeline";
 
 function manifest(
 	segments: SessionManifest["segments"],
@@ -76,6 +79,54 @@ describe("normalizeSessionSegments", () => {
 			["audio", 0, 4_000],
 			["silence", 4_000, 5_000],
 			["active_hls", 5_000, 6_000],
+		]);
+	});
+
+	it("mutes other channels without changing logical positions", () => {
+		const normalized = normalizeSessionSegments(
+			manifest([
+				{
+					kind: "audio",
+					start_ms: 0,
+					end_ms: 3_000,
+					channel_id: "30",
+					media_url: "/first",
+				},
+				{
+					kind: "audio",
+					start_ms: 3_000,
+					end_ms: 8_000,
+					channel_id: "31",
+					media_url: "/second",
+				},
+			]),
+		);
+
+		const result = isolateSessionChannel(normalized, "31");
+
+		expect(
+			result.map(({ kind, start_ms, end_ms, reason, media_url }) => ({
+				kind,
+				start_ms,
+				end_ms,
+				reason,
+				media_url,
+			})),
+		).toEqual([
+			{
+				kind: "silence",
+				start_ms: 0,
+				end_ms: 3_000,
+				reason: "channel_filtered",
+				media_url: null,
+			},
+			{
+				kind: "audio",
+				start_ms: 3_000,
+				end_ms: 8_000,
+				reason: undefined,
+				media_url: "/second",
+			},
 		]);
 	});
 });

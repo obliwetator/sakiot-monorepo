@@ -37,6 +37,10 @@ pub struct StampInfo {
     year: Option<i32>,
     month: Option<i32>,
     start_ts: Option<i64>,
+    recording_session_id: Option<String>,
+    segment_index: Option<i32>,
+    session_started_at_ms: Option<i64>,
+    session_fragment_count: Option<i64>,
     audio_url: Option<String>,
     waveform_url: Option<String>,
 }
@@ -68,7 +72,7 @@ pub async fn get_stamps(
     }
     let permitted: Vec<i64> = permitted.into_iter().collect();
 
-    #[derive(Debug)]
+    #[derive(Debug, sqlx::FromRow)]
     struct Row {
         id: i64,
         guild_id: i64,
@@ -87,28 +91,44 @@ pub async fn get_stamps(
         year: Option<i32>,
         month: Option<i32>,
         start_ts: Option<i64>,
+        recording_session_id: Option<i64>,
+        segment_index: Option<i32>,
+        session_started_at_ms: Option<i64>,
+        session_fragment_count: Option<i64>,
     }
 
-    let rows = sqlx::query_as!(
-        Row,
+    let rows = sqlx::query_as::<_, Row>(
         r#"
-        SELECT s.id                     as "id!",
-               s.guild_id               as "guild_id!",
-               s.channel_id             as "channel_id!",
-               s.target_user_id         as "target_user_id!",
-               s.stamper_user_id        as "stamper_user_id!",
-               s.stamp_ts               as "stamp_ts!",
-               s.offset_ms              as "offset_ms!",
+        SELECT s.id,
+               s.guild_id,
+               s.channel_id,
+               s.target_user_id,
+               s.stamper_user_id,
+               s.stamp_ts,
+               s.offset_ms,
                s.audio_file_id,
                s.note,
-               s.created_at             as "created_at!",
+               s.created_at,
                COALESCE(tn.nickname, tu.global_name, tu.username) as target_name,
                COALESCE(sn.nickname, su.global_name, su.username) as stamper_name,
                c.name                   as channel_name,
                af.file_name             as file_name,
                af.year                  as year,
                af.month                 as month,
-               af.start_ts              as start_ts
+               af.start_ts              as start_ts,
+               rs.id                    as recording_session_id,
+               CASE WHEN rs.id IS NULL THEN NULL ELSE af.segment_index END
+                                           as segment_index,
+               (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint
+                                           as session_started_at_ms,
+               CASE
+                   WHEN rs.id IS NULL THEN NULL
+                   ELSE (
+                       SELECT COUNT(*)
+                         FROM audio_files sibling
+                        WHERE sibling.recording_session_id = rs.id
+                   )
+               END                         as session_fragment_count
         FROM stamps s
         LEFT JOIN user_names      tu ON tu.user_id = s.target_user_id
         LEFT JOIN user_nicknames  tn ON tn.user_id = s.target_user_id  AND tn.guild_id = s.guild_id
@@ -116,14 +136,22 @@ pub async fn get_stamps(
         LEFT JOIN user_nicknames  sn ON sn.user_id = s.stamper_user_id AND sn.guild_id = s.guild_id
         LEFT JOIN channels        c  ON c.channel_id = s.channel_id
         LEFT JOIN audio_files     af ON af.id = s.audio_file_id
+        LEFT JOIN recording_sessions rs
+          ON rs.id = af.recording_session_id
+         AND NOT EXISTS (
+                 SELECT 1
+                   FROM audio_files restricted
+                  WHERE restricted.recording_session_id = rs.id
+                    AND NOT (restricted.channel_id = ANY($2))
+             )
         WHERE s.guild_id = $1
           AND s.channel_id = ANY($2)
         ORDER BY s.stamp_ts DESC
         LIMIT 500
         "#,
-        guild_id,
-        &permitted
     )
+    .bind(guild_id)
+    .bind(&permitted)
     .fetch_all(pool.get_ref())
     .await?;
 
@@ -155,6 +183,10 @@ pub async fn get_stamps(
                 year: r.year,
                 month: r.month,
                 start_ts: r.start_ts,
+                recording_session_id: r.recording_session_id.map(|id| id.to_string()),
+                segment_index: r.segment_index,
+                session_started_at_ms: r.session_started_at_ms,
+                session_fragment_count: r.session_fragment_count,
                 audio_url: urls.0,
                 waveform_url: urls.1,
             }

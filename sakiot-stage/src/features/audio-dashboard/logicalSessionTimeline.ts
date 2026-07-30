@@ -44,3 +44,28 @@ export function normalizeSessionSegments(
 	}
 	return normalized;
 }
+
+/**
+ * Keeps logical timestamps stable while muting physical fragments recorded in
+ * other channels. Downloads and server-side range actions still use the full
+ * manifest; this only changes browser playback.
+ */
+export function isolateSessionChannel(
+	segments: PlaybackSegment[],
+	channelId: string | null,
+): PlaybackSegment[] {
+	if (channelId === null) return segments;
+
+	return segments.map((segment) => {
+		if (segment.kind === "silence" || segment.channel_id === channelId) {
+			return segment;
+		}
+		return {
+			...segment,
+			kind: "silence",
+			reason: "channel_filtered",
+			media_url: null,
+			hls_playlist_url: null,
+		};
+	});
+}

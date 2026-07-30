@@ -385,6 +385,167 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn stamps_include_only_fully_accessible_logical_sessions(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let denied_channel_id = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'denied-in-session')",
+    )
+    .bind(denied_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions
+            (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(denied_channel_id)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(&pool)
+    .await?;
+
+    let accessible_session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $3, 'finalized',
+                 to_timestamp(1), to_timestamp(3), 'test', 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('accessible-first', $1, $2, $3, 1970, 1,
+                 1000, 2000, $4, 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(accessible_session_id)
+    .execute(&pool)
+    .await?;
+    let accessible_audio_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('accessible-second', $1, $2, $3, 1970, 1,
+                 2000, 3000, $4, 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(accessible_session_id)
+    .fetch_one(&pool)
+    .await?;
+
+    let restricted_session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $4, 'finalized',
+                 to_timestamp(4), to_timestamp(6), 'test', 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(denied_channel_id)
+    .fetch_one(&pool)
+    .await?;
+    let restricted_audio_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('restricted-allowed-fragment', $1, $2, $3, 1970, 1,
+                 4000, 5000, $4, 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(restricted_session_id)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('restricted-denied-fragment', $1, $2, $3, 1970, 1,
+                 5000, 6000, $4, 1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(denied_channel_id)
+    .bind(OTHER_USER_ID)
+    .bind(restricted_session_id)
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO stamps
+            (guild_id, channel_id, target_user_id, stamper_user_id,
+             stamp_ts, offset_ms, audio_file_id, note)
+         VALUES
+            ($1, $2, $3, $3, 2500, 100, $4, 'accessible-session'),
+            ($1, $2, $3, $3, 4500, 0, $5, 'restricted-session')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(accessible_audio_id)
+    .bind(restricted_audio_id)
+    .execute(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool))
+            .app_data(web::Data::new(access_keys()))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(get_stamps)),
+    )
+    .await;
+    let request = test::TestRequest::get()
+        .uri("/api/stamps/1")
+        .insert_header(("Cookie", access_cookie_value()?))
+        .to_request();
+    let response = test::call_service(&app, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = test::read_body_json(response).await;
+
+    let accessible = body
+        .iter()
+        .find(|stamp| stamp["note"] == "accessible-session")
+        .expect("accessible stamp");
+    assert_eq!(
+        accessible["recording_session_id"],
+        accessible_session_id.to_string()
+    );
+    assert_eq!(accessible["segment_index"], 1);
+    assert_eq!(accessible["session_started_at_ms"], 1000);
+    assert_eq!(accessible["session_fragment_count"], 2);
+
+    let restricted = body
+        .iter()
+        .find(|stamp| stamp["note"] == "restricted-session")
+        .expect("restricted stamp");
+    assert!(restricted["recording_session_id"].is_null());
+    assert!(restricted["session_started_at_ms"].is_null());
+    assert!(restricted["session_fragment_count"].is_null());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn forbidden_cross_guild_requests_are_rejected(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

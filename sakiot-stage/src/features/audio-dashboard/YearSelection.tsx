@@ -99,7 +99,10 @@ export function YearSelection() {
 				}}
 			>
 				{params.session_id ? (
-					<LogicalSessionPlayer sessionId={params.session_id} />
+					<LogicalSessionPlayer
+						key={params.session_id}
+						sessionId={params.session_id}
+					/>
 				) : params.year ? (
 					<>
 						<Tabs

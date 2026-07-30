@@ -4,7 +4,11 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
+import MenuItem from "@mui/material/MenuItem";
 import Paper from "@mui/material/Paper";
+import Select from "@mui/material/Select";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -26,6 +30,7 @@ import {
 	type SelectionManifest,
 } from "./logicalSessionSelection";
 import {
+	isolateSessionChannel,
 	normalizeSessionSegments,
 	type PlaybackSegment,
 } from "./logicalSessionTimeline";
@@ -95,9 +100,48 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		pollingInterval: finalizedSessionId === props.sessionId ? 0 : 5_000,
 		refetchOnMountOrArgChange: true,
 	});
-	const segments = useMemo(
+	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
+		null,
+	);
+	const normalizedSegments = useMemo(
 		() => (manifest ? normalizeSessionSegments(manifest) : []),
 		[manifest],
+	);
+	const physicalFragments = useMemo(
+		() =>
+			normalizedSegments.filter(
+				(segment) =>
+					segment.kind !== "silence" && segment.audio_file_id != null,
+			),
+		[normalizedSegments],
+	);
+	const channelIds = useMemo(
+		() =>
+			Array.from(
+				new Set(
+					physicalFragments
+						.map((fragment) => fragment.channel_id)
+						.filter((channelId): channelId is string => Boolean(channelId)),
+				),
+			),
+		[physicalFragments],
+	);
+	const effectiveChannelId =
+		selectedChannelId && channelIds.includes(selectedChannelId)
+			? selectedChannelId
+			: null;
+	const segments = useMemo(
+		() => isolateSessionChannel(normalizedSegments, effectiveChannelId),
+		[effectiveChannelId, normalizedSegments],
+	);
+	const displayedFragments = useMemo(
+		() =>
+			effectiveChannelId
+				? physicalFragments.filter(
+						(fragment) => fragment.channel_id === effectiveChannelId,
+					)
+				: physicalFragments,
+		[effectiveChannelId, physicalFragments],
 	);
 	const [positionMs, setPositionMs] = useState(0);
 	const [seekPreviewMs, setSeekPreviewMs] = useState<number | null>(null);
@@ -373,6 +417,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		startAtRef.current(nextPositionMs, playingRef.current);
 	}, []);
 
+	const selectPlaybackChannel = useCallback(
+		(channelId: string | null) => {
+			const nextSegments = isolateSessionChannel(normalizedSegments, channelId);
+			segmentsRef.current = nextSegments;
+			setSelectedChannelId(channelId);
+			setSeekPreviewMs(null);
+			startAtRef.current(positionRef.current, playingRef.current);
+		},
+		[normalizedSegments],
+	);
+
 	const togglePlay = useCallback(() => {
 		if (playingRef.current) {
 			generationRef.current += 1;
@@ -499,14 +554,28 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					color={manifest.state === "active" ? "error" : "default"}
 				/>
 				<Chip label={`User ${manifest.user_id}`} />
+				<Chip
+					label={`${physicalFragments.length} physical ${
+						physicalFragments.length === 1 ? "file" : "files"
+					}`}
+					variant="outlined"
+				/>
 				{currentSegment && (
 					<Chip
 						label={
-							currentSegment.kind === "silence"
-								? `Silence · ${currentSegment.reason ?? "gap"}`
-								: `Channel ${currentSegment.channel_id ?? "?"}`
+							currentSegment.reason === "channel_filtered"
+								? `Channel ${currentSegment.channel_id ?? "?"} muted`
+								: currentSegment.kind === "silence"
+									? `Silence · ${currentSegment.reason ?? "gap"}`
+									: `Channel ${currentSegment.channel_id ?? "?"}`
 						}
-						color={currentSegment.kind === "silence" ? "warning" : "primary"}
+						color={
+							currentSegment.reason === "channel_filtered"
+								? "default"
+								: currentSegment.kind === "silence"
+									? "warning"
+									: "primary"
+						}
 					/>
 				)}
 			</Stack>
@@ -514,6 +583,88 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				Started {new Date(manifest.started_at_ms).toLocaleString()} · duration{" "}
 				{formatDuration(durationSeconds)}
 			</Typography>
+
+			<Paper variant="outlined" sx={{ p: 2, my: 2 }}>
+				<Stack
+					direction={{ xs: "column", md: "row" }}
+					spacing={2}
+					justifyContent="space-between"
+					alignItems={{ xs: "stretch", md: "flex-start" }}
+				>
+					<Box>
+						<Typography variant="h6">Physical recordings</Typography>
+						<Typography variant="body2" color="text.secondary">
+							Session combines channel-bound files into one timestamp-aligned
+							timeline.
+						</Typography>
+					</Box>
+					{channelIds.length > 1 && (
+						<FormControl size="small" sx={{ minWidth: 260 }}>
+							<InputLabel id={`session-${props.sessionId}-channel-label`}>
+								Playback channel
+							</InputLabel>
+							<Select
+								labelId={`session-${props.sessionId}-channel-label`}
+								label="Playback channel"
+								value={effectiveChannelId ?? ""}
+								onChange={(event) =>
+									selectPlaybackChannel(event.target.value || null)
+								}
+							>
+								<MenuItem value="">All channels</MenuItem>
+								{channelIds.map((channelId) => {
+									const count = physicalFragments.filter(
+										(fragment) => fragment.channel_id === channelId,
+									).length;
+									return (
+										<MenuItem key={channelId} value={channelId}>
+											Channel {channelId} · {count}{" "}
+											{count === 1 ? "file" : "files"}
+										</MenuItem>
+									);
+								})}
+							</Select>
+						</FormControl>
+					)}
+				</Stack>
+				<Stack spacing={0.75} sx={{ mt: 1.5 }}>
+					{displayedFragments.map((fragment, index) => (
+						<Button
+							key={
+								fragment.audio_file_id ??
+								`${fragment.start_ms}-${fragment.end_ms}`
+							}
+							variant="text"
+							onClick={() => seek(fragment.start_ms)}
+							sx={{
+								justifyContent: "flex-start",
+								textAlign: "left",
+								textTransform: "none",
+								px: 1,
+							}}
+						>
+							<Box>
+								<Typography variant="body2">
+									Fragment {(fragment.segment_index ?? index) + 1} · Channel{" "}
+									{fragment.channel_id ?? "?"} ·{" "}
+									{formatDuration(fragment.start_ms / 1_000)} –{" "}
+									{formatDuration(fragment.end_ms / 1_000)}
+								</Typography>
+								<Typography variant="caption" color="text.secondary">
+									{fragment.file_name ?? `File ${fragment.audio_file_id}`}
+								</Typography>
+							</Box>
+						</Button>
+					))}
+				</Stack>
+				{effectiveChannelId && (
+					<Alert severity="info" sx={{ mt: 1.5 }}>
+						Only Channel {effectiveChannelId} plays. Other channels stay muted
+						while timeline offsets remain unchanged. Downloads and clips still
+						use full session.
+					</Alert>
+				)}
+			</Paper>
 
 			<SessionWaveform
 				key={props.sessionId}

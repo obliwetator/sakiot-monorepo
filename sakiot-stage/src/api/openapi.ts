@@ -576,6 +576,13 @@ export interface components {
 			note?: string | null;
 			/** Format: int32 */
 			offset_ms: number;
+			recording_session_id?: string | null;
+			/** Format: int32 */
+			segment_index?: number | null;
+			/** Format: int64 */
+			session_fragment_count?: number | null;
+			/** Format: int64 */
+			session_started_at_ms?: number | null;
 			/** Format: int64 */
 			stamp_ts: number;
 			stamper_name?: string | null;

@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
+import { buildStampPlaybackTarget } from "./stampNavigation";
 
 function formatTimestamp(ms: number): string {
 	return new Date(ms).toLocaleString();
@@ -64,7 +65,8 @@ export function Stamps() {
 			</Typography>
 			<Typography color="text.secondary" sx={{ mb: 2 }}>
 				{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max
-				500).
+				500). Session links open complete logical recording; fragment identifies
+				physical file containing stamp.
 			</Typography>
 
 			{rows.length === 0 ? (
@@ -81,74 +83,102 @@ export function Stamps() {
 								<TableCell>Stamper</TableCell>
 								<TableCell>Channel</TableCell>
 								<TableCell align="right">Offset (ms)</TableCell>
-								<TableCell align="right">Audio File ID</TableCell>
+								<TableCell>Recording</TableCell>
 								<TableCell>Note</TableCell>
 								<TableCell>Created</TableCell>
 							</TableRow>
 						</TableHead>
 						<TableBody>
-							{rows.map((s) => (
-								<TableRow key={s.id} hover>
-									<TableCell>{s.id}</TableCell>
-									<TableCell>{formatTimestamp(s.stamp_ts)}</TableCell>
-									<TableCell>
-										{s.start_ts != null ? (
-											<Button
-												size="small"
-												onClick={() => {
-													if (s.file_name && s.year && s.month) {
-														const relSecs =
-															(s.stamp_ts - (s.start_ts ?? 0) + s.offset_ms) /
-															1000;
-														navigate(
-															`/dashboard/${guildId}/audio/${s.channel_id}/${s.year}/${s.month}/${s.file_name}?t=${relSecs}`,
-														);
+							{rows.map((s) => {
+								const playbackTarget = buildStampPlaybackTarget(s, guildId);
+								const fragmentNumber =
+									s.segment_index == null ? null : s.segment_index + 1;
+								return (
+									<TableRow key={s.id} hover>
+										<TableCell>{s.id}</TableCell>
+										<TableCell>{formatTimestamp(s.stamp_ts)}</TableCell>
+										<TableCell>
+											{playbackTarget ? (
+												<Button
+													size="small"
+													onClick={() => navigate(playbackTarget.path)}
+													title={
+														playbackTarget.scope === "session"
+															? "Open complete logical session"
+															: "Open legacy physical fragment"
 													}
-												}}
-												disabled={!s.file_name}
-											>
-												{formatDuration(
-													(s.stamp_ts - s.start_ts + s.offset_ms) / 1000,
-												)}
-											</Button>
-										) : (
-											<span style={{ opacity: 0.5 }}>—</span>
-										)}
-									</TableCell>
-									<TableCell>
-										<div>{s.target_name ?? s.target_user_id}</div>
-										{s.target_name && (
-											<div style={{ fontSize: 11, opacity: 0.6 }}>
-												{s.target_user_id}
-											</div>
-										)}
-									</TableCell>
-									<TableCell>
-										<div>{s.stamper_name ?? s.stamper_user_id}</div>
-										{s.stamper_name && (
-											<div style={{ fontSize: 11, opacity: 0.6 }}>
-												{s.stamper_user_id}
-											</div>
-										)}
-									</TableCell>
-									<TableCell>
-										<div>{s.channel_name ?? s.channel_id}</div>
-										{s.channel_name && (
-											<div style={{ fontSize: 11, opacity: 0.6 }}>
-												{s.channel_id}
-											</div>
-										)}
-									</TableCell>
-									<TableCell align="right">{s.offset_ms}</TableCell>
-									<TableCell align="right">
-										{s.audio_file_id ?? <span style={{ opacity: 0.5 }}>—</span>}
-									</TableCell>
-									<TableCell>{s.note ?? ""}</TableCell>
-									<TableCell>
-										{new Date(s.created_at).toLocaleString()}
-									</TableCell>
-								</TableRow>
-							))}
+												>
+													{formatDuration(playbackTarget.relativeSeconds)}
+												</Button>
+											) : (
+												<span style={{ opacity: 0.5 }}>—</span>
+											)}
+										</TableCell>
+										<TableCell>
+											<div>{s.target_name ?? s.target_user_id}</div>
+											{s.target_name && (
+												<div style={{ fontSize: 11, opacity: 0.6 }}>
+													{s.target_user_id}
+												</div>
+											)}
+										</TableCell>
+										<TableCell>
+											<div>{s.stamper_name ?? s.stamper_user_id}</div>
+											{s.stamper_name && (
+												<div style={{ fontSize: 11, opacity: 0.6 }}>
+													{s.stamper_user_id}
+												</div>
+											)}
+										</TableCell>
+										<TableCell>
+											<div>{s.channel_name ?? s.channel_id}</div>
+											{s.channel_name && (
+												<div style={{ fontSize: 11, opacity: 0.6 }}>
+													{s.channel_id}
+												</div>
+											)}
+										</TableCell>
+										<TableCell align="right">{s.offset_ms}</TableCell>
+										<TableCell>
+											{s.recording_session_id ? (
+												<Box>
+													<Button
+														size="small"
+														onClick={() => {
+															if (playbackTarget) navigate(playbackTarget.path);
+														}}
+													>
+														Session {s.recording_session_id}
+													</Button>
+													<Typography
+														variant="caption"
+														color="text.secondary"
+														display="block"
+													>
+														Fragment {fragmentNumber ?? "?"}
+														{s.session_fragment_count
+															? ` of ${s.session_fragment_count}`
+															: ""}
+														{s.audio_file_id
+															? ` · file ${s.audio_file_id}`
+															: ""}
+													</Typography>
+												</Box>
+											) : s.audio_file_id ? (
+												<Typography variant="caption">
+													Legacy physical file {s.audio_file_id}
+												</Typography>
+											) : (
+												<span style={{ opacity: 0.5 }}>—</span>
+											)}
+										</TableCell>
+										<TableCell>{s.note ?? ""}</TableCell>
+										<TableCell>
+											{new Date(s.created_at).toLocaleString()}
+										</TableCell>
+									</TableRow>
+								);
+							})}
 						</TableBody>
 					</Table>
 				</TableContainer>
