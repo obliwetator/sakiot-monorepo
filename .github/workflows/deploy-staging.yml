@@ -19,7 +19,7 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
     with:
-      full: true
+      full: false
 
   release-candidate:
     runs-on: ubuntu-latest

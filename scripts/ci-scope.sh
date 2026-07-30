@@ -18,7 +18,7 @@ while IFS= read -r path; do
       ;;
     rust-toolchain.toml|clippy.toml|.cargo/*|.sqlx/*|\
     fbi-agent/*|sakiot-paths/*|sakiot-storage/*|sakiot-db/migrations/*|\
-    scripts/sqlx-*|scripts/sqlx-cli-version)
+    scripts/sqlx-*)
       rust=true
       ;;
     sakiot-proto/*)

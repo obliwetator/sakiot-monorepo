@@ -32,24 +32,43 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Test suite selection rules
+        run: bash scripts/ci-scope.test.sh
+
       - name: Select affected suites
         id: scope
         env:
           FULL: ${{ inputs.full || false }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          if [[ "${FULL}" == "true" ]]; then
+
+          select_all() {
             printf '%s\n' \
               'rust=true' \
               'api_contract=true' \
               'frontend=true' \
               'ops=true' >>"${GITHUB_OUTPUT}"
-          else
-            git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" \
-              | scripts/ci-scope.sh >>"${GITHUB_OUTPUT}"
+          }
+
+          if [[ "${FULL}" == "true" ]]; then
+            select_all
+            exit 0
           fi
+
+          if [[ ! "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ "${BASE_SHA}" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "${BASE_SHA}^{commit}" \
+            || ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            echo "::notice::Cannot resolve change range; selecting every CI suite"
+            select_all
+            exit 0
+          fi
+
+          git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" \
+            | scripts/ci-scope.sh >>"${GITHUB_OUTPUT}"
 
   rust:
     needs: scope
