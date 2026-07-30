@@ -1,0 +1,565 @@
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Popover from "@mui/material/Popover";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	type AudioTimelineEvent,
+	buildEventTimelineModel,
+	clusterTimelinePoints,
+	formatTimelineOffset,
+	type TimelineInterval,
+	type TimelineLane,
+	type TimelinePointCluster,
+} from "./eventTimelineModel";
+
+const TRACK_HEIGHT_PX = 18;
+const LANE_PADDING_PX = 5;
+const MIN_LANE_HEIGHT_PX = 28;
+const CLUSTER_DISTANCE_PX = 14;
+
+function laneHeight(lane: TimelineLane): number {
+	return Math.max(
+		MIN_LANE_HEIGHT_PX,
+		lane.trackCount * TRACK_HEIGHT_PX + LANE_PADDING_PX * 2,
+	);
+}
+
+function percent(positionMs: number, durationMs: number): number {
+	return Math.min(100, Math.max(0, (positionMs / durationMs) * 100));
+}
+
+function formatWallClock(
+	startedAtMs: number | undefined,
+	offsetMs: number,
+): string | null {
+	if (startedAtMs === undefined || !Number.isFinite(startedAtMs)) return null;
+	return new Date(startedAtMs + offsetMs).toLocaleString();
+}
+
+function eventContext(event: AudioTimelineEvent): string[] {
+	const context: string[] = [];
+	if (event.source) context.push(event.source.replaceAll("_", " "));
+	if (event.previous_channel_id || event.channel_id) {
+		context.push(
+			`${event.previous_channel_id ?? "none"} → ${event.channel_id ?? "none"}`,
+		);
+	}
+	if (event.details !== undefined && event.details !== null) {
+		try {
+			const details = JSON.stringify(event.details);
+			if (details !== "{}" && details !== "[]" && details !== "null") {
+				context.push(
+					details.length > 180 ? `${details.slice(0, 177)}…` : details,
+				);
+			}
+		} catch {
+			// API details should be JSON. Ignore malformed diagnostic data.
+		}
+	}
+	return context;
+}
+
+function PointTooltip(props: {
+	cluster: TimelinePointCluster;
+	startedAtMs?: number;
+}) {
+	if (props.cluster.points.length > 1) {
+		return (
+			<Box>
+				<Typography variant="caption" fontWeight={700}>
+					{props.cluster.points.length} nearby events
+				</Typography>
+				<Typography variant="caption" display="block">
+					{formatTimelineOffset(props.cluster.startMs)} –{" "}
+					{formatTimelineOffset(props.cluster.endMs)}
+				</Typography>
+				<Typography variant="caption" display="block">
+					Click to choose exact event
+				</Typography>
+			</Box>
+		);
+	}
+
+	const point = props.cluster.points[0];
+	const wallClock = formatWallClock(props.startedAtMs, point.offsetMs);
+	const context = eventContext(point.event);
+	return (
+		<Box>
+			<Typography variant="caption" fontWeight={700}>
+				{point.label}
+			</Typography>
+			<Typography variant="caption" display="block">
+				{formatTimelineOffset(point.offsetMs)}
+				{wallClock ? ` · ${wallClock}` : ""}
+			</Typography>
+			{context.map((line) => (
+				<Typography key={line} variant="caption" display="block">
+					{line}
+				</Typography>
+			))}
+		</Box>
+	);
+}
+
+function IntervalTooltip(props: {
+	interval: TimelineInterval;
+	startedAtMs?: number;
+}) {
+	const wallClock = formatWallClock(props.startedAtMs, props.interval.startMs);
+	return (
+		<Box>
+			<Typography variant="caption" fontWeight={700}>
+				{props.interval.label}
+			</Typography>
+			<Typography variant="caption" display="block">
+				{formatTimelineOffset(props.interval.startMs)} –{" "}
+				{formatTimelineOffset(props.interval.endMs)} ·{" "}
+				{formatTimelineOffset(props.interval.endMs - props.interval.startMs)}
+			</Typography>
+			{wallClock && (
+				<Typography variant="caption" display="block">
+					Starts {wallClock}
+				</Typography>
+			)}
+			{props.interval.startsAtBoundary && (
+				<Typography variant="caption" display="block">
+					State active when timeline begins
+				</Typography>
+			)}
+			{props.interval.endsAtBoundary && (
+				<Typography variant="caption" display="block">
+					State continues to timeline end
+				</Typography>
+			)}
+		</Box>
+	);
+}
+
+function markerShape(laneId: TimelineLane["id"]): string {
+	if (laneId === "connection") {
+		return "polygon(50% 0, 100% 50%, 50% 100%, 0 50%)";
+	}
+	if (laneId === "channel") {
+		return "polygon(0 0, 100% 0, 100% 72%, 50% 100%, 0 72%)";
+	}
+	if (laneId === "recording") {
+		return "polygon(50% 0, 100% 100%, 0 100%)";
+	}
+	return "circle(50%)";
+}
+
+function clusterColor(cluster: TimelinePointCluster): string {
+	const first = cluster.points[0].color;
+	return cluster.points.every((point) => point.color === first)
+		? first
+		: "#64748b";
+}
+
+function ClusterPicker(props: {
+	anchor: HTMLElement | null;
+	cluster: TimelinePointCluster | null;
+	startedAtMs?: number;
+	onClose: () => void;
+	onSeek: (offsetMs: number) => void;
+}) {
+	return (
+		<Popover
+			open={Boolean(props.anchor && props.cluster)}
+			anchorEl={props.anchor}
+			onClose={props.onClose}
+			anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+			transformOrigin={{ vertical: "top", horizontal: "center" }}
+		>
+			<Box sx={{ p: 1, maxHeight: 320, maxWidth: 360, overflowY: "auto" }}>
+				<Typography variant="subtitle2" sx={{ px: 1, pb: 0.5 }}>
+					{props.cluster?.points.length ?? 0} nearby events
+				</Typography>
+				{props.cluster?.points.map((point) => {
+					const wallClock = formatWallClock(props.startedAtMs, point.offsetMs);
+					return (
+						<Button
+							key={point.id}
+							fullWidth
+							size="small"
+							onClick={() => {
+								props.onSeek(point.offsetMs);
+								props.onClose();
+							}}
+							sx={{
+								justifyContent: "flex-start",
+								textAlign: "left",
+								textTransform: "none",
+								gap: 1,
+							}}
+						>
+							<Box
+								aria-hidden="true"
+								sx={{
+									width: 9,
+									height: 9,
+									flex: "0 0 auto",
+									bgcolor: point.color,
+									clipPath: markerShape(point.laneId),
+								}}
+							/>
+							<Box>
+								<Typography variant="body2">{point.label}</Typography>
+								<Typography variant="caption" color="text.secondary">
+									{formatTimelineOffset(point.offsetMs)}
+									{wallClock ? ` · ${wallClock}` : ""}
+								</Typography>
+							</Box>
+						</Button>
+					);
+				})}
+			</Box>
+		</Popover>
+	);
+}
+
+export function AudioEventTimeline(props: {
+	events: readonly AudioTimelineEvent[];
+	durationMs: number;
+	positionMs?: number;
+	startedAtMs?: number;
+	onSeek: (offsetMs: number) => void;
+}) {
+	const plotRef = useRef<HTMLDivElement | null>(null);
+	const [plotWidth, setPlotWidth] = useState(0);
+	const [picker, setPicker] = useState<{
+		anchor: HTMLElement;
+		cluster: TimelinePointCluster;
+	} | null>(null);
+	const model = useMemo(
+		() => buildEventTimelineModel(props.events, props.durationMs),
+		[props.durationMs, props.events],
+	);
+	const clusters = useMemo(
+		() =>
+			clusterTimelinePoints(
+				model.lanes.flatMap((lane) => lane.points),
+				props.durationMs,
+				plotWidth,
+				CLUSTER_DISTANCE_PX,
+			),
+		[model.lanes, plotWidth, props.durationMs],
+	);
+	const intervalCount = model.lanes.reduce(
+		(count, lane) => count + lane.intervals.length,
+		0,
+	);
+
+	useEffect(() => {
+		if (model.lanes.length === 0) return;
+		const plot = plotRef.current;
+		if (!plot) return;
+		setPlotWidth(plot.clientWidth);
+		const observer = new ResizeObserver((entries) => {
+			setPlotWidth(entries[0]?.contentRect.width ?? 0);
+		});
+		observer.observe(plot);
+		return () => observer.disconnect();
+	}, [model.lanes.length]);
+
+	useEffect(() => {
+		if (
+			picker &&
+			!clusters.some((cluster) => cluster.id === picker.cluster.id)
+		) {
+			setPicker(null);
+		}
+	}, [clusters, picker]);
+
+	if (model.lanes.length === 0) return null;
+
+	const clustersByLane = new Map<TimelineLane["id"], TimelinePointCluster[]>();
+	for (const cluster of clusters) {
+		const current = clustersByLane.get(cluster.laneId);
+		if (current) current.push(cluster);
+		else clustersByLane.set(cluster.laneId, [cluster]);
+	}
+	const playheadPercent =
+		props.positionMs !== undefined && Number.isFinite(props.positionMs)
+			? percent(props.positionMs, props.durationMs)
+			: null;
+
+	return (
+		<Box
+			component="section"
+			aria-label="Recording event timeline"
+			sx={{ mt: 1, mb: 1.5 }}
+		>
+			<Box
+				sx={{
+					display: "flex",
+					alignItems: "baseline",
+					justifyContent: "space-between",
+					gap: 1,
+					mb: 0.5,
+				}}
+			>
+				<Typography variant="caption" fontWeight={700}>
+					Event timeline
+				</Typography>
+				<Typography variant="caption" color="text.secondary">
+					{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
+					{intervalCount > 0
+						? ` · ${intervalCount} state period${intervalCount === 1 ? "" : "s"}`
+						: ""}
+				</Typography>
+			</Box>
+
+			<Box sx={{ display: "flex", minWidth: 0 }}>
+				<Box
+					aria-hidden="true"
+					sx={{ width: { xs: 68, sm: 92 }, flex: "0 0 auto" }}
+				>
+					{model.lanes.map((lane) => (
+						<Box
+							key={lane.id}
+							sx={{
+								height: laneHeight(lane),
+								display: "flex",
+								alignItems: "center",
+								pr: 1,
+								borderBottom: "1px solid",
+								borderColor: "divider",
+							}}
+						>
+							<Typography
+								variant="caption"
+								color="text.secondary"
+								noWrap
+								title={lane.label}
+							>
+								{lane.label}
+							</Typography>
+						</Box>
+					))}
+				</Box>
+
+				<Box
+					ref={plotRef}
+					sx={{
+						position: "relative",
+						flex: 1,
+						minWidth: 0,
+						borderLeft: "1px solid",
+						borderColor: "divider",
+					}}
+				>
+					{model.lanes.map((lane, laneIndex) => {
+						const height = laneHeight(lane);
+						return (
+							<Box
+								key={lane.id}
+								sx={{
+									position: "relative",
+									height,
+									bgcolor:
+										laneIndex % 2 === 0 ? "action.hover" : "background.paper",
+									borderBottom: "1px solid",
+									borderColor: "divider",
+									overflow: "hidden",
+								}}
+							>
+								{lane.intervals.map((interval) => {
+									const left = percent(interval.startMs, props.durationMs);
+									const width = percent(
+										interval.endMs - interval.startMs,
+										props.durationMs,
+									);
+									const widthPx = (width / 100) * plotWidth;
+									return (
+										<Tooltip
+											key={interval.id}
+											title={
+												<IntervalTooltip
+													interval={interval}
+													startedAtMs={props.startedAtMs}
+												/>
+											}
+											arrow
+										>
+											<Box
+												component="button"
+												type="button"
+												aria-label={`${interval.label}, ${formatTimelineOffset(interval.startMs)} to ${formatTimelineOffset(interval.endMs)}`}
+												onClick={(event) => {
+													const bounds =
+														event.currentTarget.getBoundingClientRect();
+													const fraction =
+														(event.clientX - bounds.left) /
+														Math.max(1, bounds.width);
+													props.onSeek(
+														interval.startMs +
+															fraction * (interval.endMs - interval.startMs),
+													);
+												}}
+												sx={{
+													position: "absolute",
+													left: `${left}%`,
+													top:
+														LANE_PADDING_PX + interval.track * TRACK_HEIGHT_PX,
+													width: `max(3px, ${width}%)`,
+													height: TRACK_HEIGHT_PX - 4,
+													p: 0,
+													px: widthPx >= 60 ? 0.5 : 0,
+													overflow: "hidden",
+													borderTop: "1px solid rgba(255,255,255,0.7)",
+													borderBottom: "1px solid rgba(15,23,42,0.45)",
+													borderLeft: interval.startsAtBoundary
+														? "none"
+														: "2px solid rgba(255,255,255,0.9)",
+													borderRight: interval.endsAtBoundary
+														? "2px dashed rgba(255,255,255,0.9)"
+														: "2px solid rgba(255,255,255,0.9)",
+													borderRadius: 0.5,
+													bgcolor: interval.color,
+													color: "#0f172a",
+													cursor: "pointer",
+													fontSize: 10,
+													fontWeight: 700,
+													lineHeight: 1,
+													textAlign: "left",
+													whiteSpace: "nowrap",
+													textOverflow: "ellipsis",
+													zIndex: 1,
+													"&:hover, &:focus-visible": {
+														filter: "brightness(1.14)",
+														zIndex: 4,
+													},
+												}}
+											>
+												{widthPx >= 60 ? interval.label : ""}
+											</Box>
+										</Tooltip>
+									);
+								})}
+
+								{(clustersByLane.get(lane.id) ?? []).map((cluster) => {
+									const clustered = cluster.points.length > 1;
+									const markerSize = clustered ? 20 : 12;
+									return (
+										<Tooltip
+											key={cluster.id}
+											title={
+												<PointTooltip
+													cluster={cluster}
+													startedAtMs={props.startedAtMs}
+												/>
+											}
+											arrow
+										>
+											<Box
+												component="button"
+												type="button"
+												aria-label={
+													clustered
+														? `${cluster.points.length} events between ${formatTimelineOffset(cluster.startMs)} and ${formatTimelineOffset(cluster.endMs)}`
+														: `${cluster.points[0].label} at ${formatTimelineOffset(cluster.offsetMs)}`
+												}
+												onClick={(event) => {
+													if (clustered) {
+														setPicker({
+															anchor: event.currentTarget,
+															cluster,
+														});
+													} else {
+														props.onSeek(cluster.points[0].offsetMs);
+													}
+												}}
+												sx={{
+													position: "absolute",
+													left: `clamp(${markerSize / 2}px, ${percent(cluster.offsetMs, props.durationMs)}%, calc(100% - ${markerSize / 2}px))`,
+													top:
+														LANE_PADDING_PX +
+														cluster.track * TRACK_HEIGHT_PX +
+														TRACK_HEIGHT_PX / 2,
+													transform: "translate(-50%, -50%)",
+													width: markerSize,
+													height: markerSize,
+													p: 0,
+													border: 0,
+													borderRadius: clustered ? "50%" : 0,
+													clipPath: clustered
+														? undefined
+														: markerShape(cluster.laneId),
+													bgcolor: clusterColor(cluster),
+													color: "white",
+													cursor: "pointer",
+													fontSize: 10,
+													fontWeight: 800,
+													lineHeight: `${markerSize}px`,
+													boxShadow:
+														"0 0 0 1.5px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.65)",
+													zIndex: 3,
+													"&:hover, &:focus-visible": {
+														transform: "translate(-50%, -50%) scale(1.2)",
+														zIndex: 5,
+													},
+												}}
+											>
+												{clustered ? cluster.points.length : ""}
+											</Box>
+										</Tooltip>
+									);
+								})}
+							</Box>
+						);
+					})}
+
+					{playheadPercent !== null && (
+						<Box
+							aria-hidden="true"
+							sx={{
+								position: "absolute",
+								top: 0,
+								bottom: 0,
+								left: `${playheadPercent}%`,
+								width: 2,
+								transform: "translateX(-1px)",
+								bgcolor: "primary.light",
+								boxShadow: "0 0 0 1px rgba(15,23,42,0.5)",
+								pointerEvents: "none",
+								zIndex: 6,
+							}}
+						/>
+					)}
+				</Box>
+			</Box>
+
+			<Box sx={{ display: "flex", mt: 0.25 }}>
+				<Box sx={{ width: { xs: 68, sm: 92 }, flex: "0 0 auto" }} />
+				<Box
+					sx={{
+						flex: 1,
+						display: "flex",
+						justifyContent: "space-between",
+						fontVariantNumeric: "tabular-nums",
+					}}
+				>
+					<Typography variant="caption" color="text.secondary">
+						{formatTimelineOffset(0)}
+					</Typography>
+					<Typography variant="caption" color="text.secondary">
+						{formatTimelineOffset(props.durationMs / 2)}
+					</Typography>
+					<Typography variant="caption" color="text.secondary">
+						{formatTimelineOffset(props.durationMs)}
+					</Typography>
+				</Box>
+			</Box>
+
+			<ClusterPicker
+				anchor={picker?.anchor ?? null}
+				cluster={picker?.cluster ?? null}
+				startedAtMs={props.startedAtMs}
+				onClose={() => setPicker(null)}
+				onSeek={props.onSeek}
+			/>
+		</Box>
+	);
+}

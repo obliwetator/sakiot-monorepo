@@ -8,19 +8,18 @@ import Paper from "@mui/material/Paper";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type Hls from "hls.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
 	BASE_API_URL,
-	type SessionManifest,
 	useCreateSessionClipMutation,
 	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
 import { formatDuration } from "../../utils/formatTime";
+import { AudioEventTimeline } from "./AudioEventTimeline";
 import {
 	isValidClipSelection,
 	reconcileSessionSelection,
@@ -75,67 +74,6 @@ function isSameMediaSegment(
 		return left.audio_file_id === right.audio_file_id;
 	}
 	return Boolean(left.media_url && left.media_url === right.media_url);
-}
-
-function markerColor(source: string, eventType: string): string {
-	if (source === "voice_connection") {
-		return eventType.includes("failed") ? "#ef4444" : "#0ea5e9";
-	}
-	if (eventType.includes("pause") || eventType.includes("disconnect"))
-		return "#f97316";
-	if (eventType.includes("resume")) return "#22c55e";
-	if (eventType.includes("mute") || eventType.includes("deaf"))
-		return "#a855f7";
-	if (eventType.includes("expiry") || eventType.includes("timeout"))
-		return "#ef4444";
-	return "#9ca3af";
-}
-
-function TimelineMarkers(props: {
-	manifest: SessionManifest;
-	onSeek: (positionMs: number) => void;
-}) {
-	if (props.manifest.duration_ms <= 0) return null;
-	return (
-		<Box sx={{ position: "relative", height: 30, mt: -1, mb: 1 }}>
-			{props.manifest.events.map((event, index) => {
-				const position = Math.min(
-					100,
-					Math.max(0, (event.offset_ms / props.manifest.duration_ms) * 100),
-				);
-				const details =
-					event.details && typeof event.details === "object"
-						? ` · ${JSON.stringify(event.details)}`
-						: "";
-				return (
-					<Tooltip
-						key={`${event.source}-${event.offset_ms}-${event.event_type}-${event.channel_id ?? "none"}-${event.previous_channel_id ?? "none"}`}
-						title={`${event.event_type} @ ${formatDuration(event.offset_ms / 1000)}${details}`}
-					>
-						<Box
-							component="button"
-							type="button"
-							aria-label={`Seek to ${event.event_type}`}
-							onClick={() => props.onSeek(event.offset_ms)}
-							sx={{
-								position: "absolute",
-								left: `${position}%`,
-								top: index % 2 === 0 ? 4 : 15,
-								transform: "translateX(-50%)",
-								width: 10,
-								height: 10,
-								borderRadius: "50%",
-								border: "1px solid white",
-								bgcolor: markerColor(event.source, event.event_type),
-								cursor: "pointer",
-								p: 0,
-							}}
-						/>
-					</Tooltip>
-				);
-			})}
-		</Box>
-	);
 }
 
 export function LogicalSessionPlayer(props: { sessionId: string }) {
@@ -626,7 +564,13 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					).toLocaleString()}
 				</Typography>
 			</Stack>
-			<TimelineMarkers manifest={manifest} onSeek={seek} />
+			<AudioEventTimeline
+				events={manifest.events}
+				durationMs={manifest.duration_ms}
+				positionMs={displayedPositionMs}
+				startedAtMs={manifest.started_at_ms}
+				onSeek={seek}
+			/>
 
 			<Stack
 				direction={{ xs: "column", md: "row" }}

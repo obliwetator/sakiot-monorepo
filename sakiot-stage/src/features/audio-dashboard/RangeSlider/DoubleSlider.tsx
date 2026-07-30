@@ -5,7 +5,7 @@ import Typography from "@mui/material/Typography";
 import type React from "react";
 import type { VoiceEvent } from "../../../app/apiSlice";
 import { formatDuration } from "../../../utils/formatTime";
-import { VoiceEventMarkers } from "./VoiceEventMarkers";
+import { AudioEventTimeline } from "../AudioEventTimeline";
 
 const TinyText = styled(Typography)({
 	fontSize: "0.75rem",
@@ -25,35 +25,27 @@ export function DoubleSlider(props: {
 	audioRef: HTMLAudioElement;
 	durationSec: number;
 	voiceEvents?: VoiceEvent[];
+	recordingStartedAtMs?: number | null;
 }) {
 	return (
 		<>
-			<Box sx={{ position: "relative" }}>
-				<Slider
-					sx={{
-						"& .MuiSlider-thumb": {
-							height: 25,
-							width: 5,
-							borderRadius: "1px",
-						},
-					}}
-					max={props.durationSec}
-					getAriaLabel={() => "Playback range"}
-					value={props.startEnd}
-					onChange={props.handleChange}
-					valueLabelDisplay="auto"
-					valueLabelFormat={(value) => <div>{formatDuration(value)}</div>}
-					getAriaValueText={(value) => formatDuration(value)}
-					disableSwap
-				/>
-				{props.voiceEvents && props.voiceEvents.length > 0 && (
-					<VoiceEventMarkers
-						events={props.voiceEvents}
-						durationSec={props.durationSec}
-						audioRef={props.audioRef}
-					/>
-				)}
-			</Box>
+			<Slider
+				sx={{
+					"& .MuiSlider-thumb": {
+						height: 25,
+						width: 5,
+						borderRadius: "1px",
+					},
+				}}
+				max={props.durationSec}
+				getAriaLabel={() => "Playback range"}
+				value={props.startEnd}
+				onChange={props.handleChange}
+				valueLabelDisplay="auto"
+				valueLabelFormat={(value) => <div>{formatDuration(value)}</div>}
+				getAriaValueText={(value) => formatDuration(value)}
+				disableSwap
+			/>
 			<Box
 				sx={{
 					display: "flex",
@@ -65,6 +57,22 @@ export function DoubleSlider(props: {
 				<TinyText>{formatDuration(props.startEnd[0])} </TinyText>
 				<TinyText>{formatDuration(Math.round(props.durationSec))}</TinyText>
 			</Box>
+			{props.voiceEvents && props.voiceEvents.length > 0 && (
+				<AudioEventTimeline
+					events={props.voiceEvents}
+					durationMs={props.durationSec * 1_000}
+					positionMs={props.startEnd[0] * 1_000}
+					startedAtMs={props.recordingStartedAtMs ?? undefined}
+					onSeek={(offsetMs) => {
+						const offsetSec = offsetMs / 1_000;
+						props.audioRef.currentTime = offsetSec;
+						props.setStartEnd((current) => [
+							offsetSec,
+							Math.max(offsetSec, current[1]),
+						]);
+					}}
+				/>
+			)}
 		</>
 	);
 }

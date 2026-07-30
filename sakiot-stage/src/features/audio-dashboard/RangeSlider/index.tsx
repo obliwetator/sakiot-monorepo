@@ -56,6 +56,7 @@ export function RangeSlider(props: {
 				startEnd={range.startEnd}
 				durationSec={range.durationSec}
 				voiceEvents={props.voiceEvents}
+				recordingStartedAtMs={props.recordingStartedAtMs}
 			/>
 			<RangeDetails
 				audioRef={props.audioRef}
