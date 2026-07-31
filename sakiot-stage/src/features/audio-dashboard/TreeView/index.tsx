@@ -1,61 +1,16 @@
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import * as React from "react";
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	apiSlice,
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
 } from "../../../app/apiSlice";
-import type { Dirs, MonthNumber, UserGuilds } from "../../../Constants";
+import type { Dirs, UserGuilds } from "../../../Constants";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
-
-// Expansion path to the currently open file, or null if none is selected.
-function getFileExpansion(params: {
-	year?: string;
-	month?: string;
-	file_name?: string;
-}): string[] | null {
-	const year = Number(params.year);
-	const month = Number(params.month);
-	const fileTimestamp = Number(params.file_name?.slice(0, 13));
-
-	if (
-		params.file_name &&
-		Number.isFinite(year) &&
-		Number.isFinite(month) &&
-		Number.isFinite(fileTimestamp)
-	) {
-		const day = new Date(fileTimestamp).getDate();
-		return [`${year}`, `${year}-${month}`, `${year}-${month}-${day}`];
-	}
-
-	return null;
-}
-
-// Expansion path to the topmost (newest) day actually present in the tree.
-// Mirrors the render order: years desc, months desc, days desc.
-function getTopmostExpansion(data: Dirs[]): string[] {
-	const year = data[0];
-	if (!year) return [];
-
-	const topMonth = Object.keys(year.months)
-		.map(Number)
-		.sort((a, b) => b - a)[0];
-	if (topMonth === undefined) return [`${year.year}`];
-
-	const files = year.months[topMonth as MonthNumber] ?? [];
-	let topDay: number | undefined;
-	for (const f of files) {
-		const day = new Date(parseInt(f.file.slice(0, 13), 10)).getDate();
-		if (topDay === undefined || day > topDay) topDay = day;
-	}
-
-	const ids = [`${year.year}`, `${year.year}-${topMonth}`];
-	if (topDay !== undefined) ids.push(`${year.year}-${topMonth}-${topDay}`);
-	return ids;
-}
+import { audioTreeRouteState, recordingTreeRoutes } from "./treeNavigation";
 
 export default function CustomizedTreeView(_props: {
 	guildSelected: UserGuilds | null;
@@ -63,6 +18,8 @@ export default function CustomizedTreeView(_props: {
 	const [data, setData] = useState<Dirs[] | null>(null);
 	const [expandedItems, setExpandedItems] = useState<string[]>([]);
 	const params = useParams();
+	const location = useLocation();
+	const navigate = useNavigate();
 	const { data: channelsData, isSuccess } = useGetCurrentGuildDirsQuery(
 		params.guild_id ?? "",
 		{
@@ -89,14 +46,33 @@ export default function CustomizedTreeView(_props: {
 		}
 	}, [channelsData, isSuccess]);
 
-	// Auto-expand the path to the selected file, or — when none is selected —
-	// the topmost day present in the tree. Runs once whenever that target
-	// changes (navigation / data load), then expansion is fully user-controlled.
-	const requiredItems = useMemo(() => {
-		const fileExpansion = getFileExpansion(params);
-		if (fileExpansion) return fileExpansion;
-		return data ? getTopmostExpansion(data) : [];
-	}, [params, data]);
+	// Resolve the current URL against the loaded tree. This handles both legacy
+	// physical-file routes and logical-session routes used by stamps.
+	const routeState = useMemo(
+		() =>
+			data
+				? audioTreeRouteState(data, {
+						channel_id: params.channel_id,
+						file_name: params.file_name,
+						month: params.month,
+						session_id: params.session_id,
+						year: params.year,
+					})
+				: { expandedItems: [], selectedItemId: null },
+		[
+			data,
+			params.channel_id,
+			params.file_name,
+			params.month,
+			params.session_id,
+			params.year,
+		],
+	);
+	const itemRoutes = useMemo(
+		() => (data ? recordingTreeRoutes(data, params.guild_id ?? "") : new Map()),
+		[data, params.guild_id],
+	);
+	const requiredItems = routeState.expandedItems;
 	const requiredKey = requiredItems.join(",");
 	React.useEffect(() => {
 		if (!requiredKey) return;
@@ -115,8 +91,26 @@ export default function CustomizedTreeView(_props: {
 		<SimpleTreeView
 			aria-label="customized"
 			expandedItems={expandedItems}
+			selectedItems={routeState.selectedItemId}
 			onExpandedItemsChange={(_event, itemIds) => {
 				setExpandedItems(itemIds);
+			}}
+			onItemClick={(_event, itemId) => {
+				// Selecting an already-selected item does not emit a selection change.
+				// Still allow a physical URL mapped to a logical item to open its
+				// canonical session route when clicked.
+				if (itemId !== routeState.selectedItemId) return;
+				const targetPath = itemRoutes.get(itemId);
+				if (targetPath && targetPath !== location.pathname) {
+					navigate(targetPath + location.search);
+				}
+			}}
+			onSelectedItemsChange={(_event, itemId) => {
+				if (!itemId) return;
+				const targetPath = itemRoutes.get(itemId);
+				if (targetPath && targetPath !== location.pathname) {
+					navigate(targetPath + location.search);
+				}
 			}}
 			className="w-full p-3"
 		>

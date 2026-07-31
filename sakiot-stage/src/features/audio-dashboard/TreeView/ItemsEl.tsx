@@ -1,10 +1,9 @@
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import {
-	type IndividualFile,
-	PATH_PREFIX_FOR_LOGGED_USERS,
-} from "../../../Constants";
+import { treeItemClasses } from "@mui/x-tree-view";
+import type { IndividualFile } from "../../../Constants";
 import { LivePill } from "./LiveDot";
 import { parseFileName } from "./parseFileName";
+import { StyledTreeItem } from "./StyledTreeItem";
+import { recordingTreeItemId } from "./treeNavigation";
 
 export function ItemsEl(props: {
 	file: IndividualFile;
@@ -12,52 +11,41 @@ export function ItemsEl(props: {
 	month_name: number;
 	isLive?: boolean;
 }) {
-	const navigate = useNavigate();
-	const location = useLocation();
-	const params = useParams();
-
-	const fileId = props.file.file.slice(0, -4);
-	const targetPath = props.file.recording_session_id
-		? `${PATH_PREFIX_FOR_LOGGED_USERS}/${params.guild_id}/audio/session/${props.file.recording_session_id}`
-		: `${PATH_PREFIX_FOR_LOGGED_USERS}/${params.guild_id}/audio/${props.file.channel_id}/${props.year}/${props.month_name}/${fileId}`;
-	const isActive = location.pathname === targetPath;
-
-	const baseColor = "bg-violet-600";
-	const hoverColor = "hover:bg-violet-500";
-	const activeRing = isActive ? "ring-2 ring-inset ring-white" : "";
-
 	const { time, username: legacyUsername } = parseFileName(props.file.file);
 	const username = props.file.display_name ?? legacyUsername;
+	const title = props.file.channel_journey?.length
+		? `${props.file.file} · channels ${props.file.channel_journey.join(" → ")}`
+		: props.file.file;
 
 	return (
-		<button
-			type="button"
-			id={props.file.file}
-			className={`${baseColor} ${hoverColor} ${activeRing} w-full text-left px-2 py-1 border-b border-violet-900 last:border-b-0 cursor-pointer select-none text-sm`}
-			onClick={(e) => {
-				e.preventDefault();
-				if (!isActive) navigate(targetPath + location.search);
+		<StyledTreeItem
+			itemId={recordingTreeItemId(props.file, props.year, props.month_name)}
+			className="bg-violet-600 overflow-hidden"
+			sx={{
+				[`& > .${treeItemClasses.content}`]: {
+					borderBottom: "1px solid rgb(76 29 149)",
+					cursor: "pointer",
+				},
+				[`& > .${treeItemClasses.content}.${treeItemClasses.selected}`]: {
+					boxShadow: "inset 0 0 0 2px white",
+				},
 			}}
-			onKeyDown={(e) => {
-				if (e.key === "Enter" || e.key === " ") {
-					e.preventDefault();
-					if (!isActive) navigate(targetPath + location.search);
-				}
-			}}
-			title={
-				props.file.channel_journey?.length
-					? `${props.file.file} · channels ${props.file.channel_journey.join(" → ")}`
-					: props.file.file
-			}
-		>
-			<span className="font-mono">{time}</span>
-			{username && <span className="ml-2">{username}</span>}
-			{props.file.channel_journey && props.file.channel_journey.length > 1 && (
-				<span className="ml-2 text-xs opacity-75">
-					{props.file.channel_journey.join(" → ")}
+			label={
+				<span
+					className="block w-full px-2 py-1 select-none text-sm"
+					title={title}
+				>
+					<span className="font-mono">{time}</span>
+					{username && <span className="ml-2">{username}</span>}
+					{props.file.channel_journey &&
+						props.file.channel_journey.length > 1 && (
+							<span className="ml-2 text-xs opacity-75">
+								{props.file.channel_journey.join(" → ")}
+							</span>
+						)}
+					{props.isLive && <LivePill />}
 				</span>
-			)}
-			{props.isLive && <LivePill />}
-		</button>
+			}
+		/>
 	);
 }

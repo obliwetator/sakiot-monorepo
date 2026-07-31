@@ -97,7 +97,7 @@ pub async fn handle_stamp(
         }
     }
 
-    let active_file_id: Option<i64> = match crate::database::stamps::active_audio_file_id_for_stamp(
+    let active_recording = match crate::database::stamps::active_recording_for_stamp(
         pool,
         target.to_i64(),
         guild_id.to_i64(),
@@ -106,12 +106,15 @@ pub async fn handle_stamp(
     )
     .await
     {
-        Ok(id) => id,
+        Ok(recording) => recording,
         Err(e) => {
-            warn!("Failed to look up active audio_file: {}", e);
+            warn!("Failed to look up active recording: {}", e);
             return "Database error. Try again later.".to_string();
         }
     };
+    let active_file_id = active_recording.map(|recording| recording.audio_file_id);
+    let recording_session_id =
+        active_recording.and_then(|recording| recording.recording_session_id);
 
     let insert = crate::database::stamps::create_stamp(
         pool,
@@ -122,6 +125,7 @@ pub async fn handle_stamp(
         now_ms,
         offset_ms,
         active_file_id,
+        recording_session_id,
         note.as_deref(),
     )
     .await;
@@ -132,6 +136,7 @@ pub async fn handle_stamp(
                 stamp_id,
                 target = target.get(),
                 audio_file_id = ?active_file_id,
+                recording_session_id = ?recording_session_id,
                 "stamp created"
             );
             let suffix = if active_file_id.is_some() {

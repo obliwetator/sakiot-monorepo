@@ -2,6 +2,12 @@ use sqlx::{Pool, Postgres};
 
 use crate::database::DbResult;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, sqlx::FromRow)]
+pub struct ActiveStampRecording {
+    pub audio_file_id: i64,
+    pub recording_session_id: Option<i64>,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "stamps insert mirrors command payload"
@@ -15,27 +21,29 @@ pub async fn create_stamp(
     stamp_ts: i64,
     offset_ms: i32,
     audio_file_id: Option<i64>,
+    recording_session_id: Option<i64>,
     note: Option<&str>,
 ) -> DbResult<i64> {
-    let row = sqlx::query!(
+    let stamp_id = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO stamps
              (guild_id, channel_id, target_user_id, stamper_user_id,
-              stamp_ts, offset_ms, audio_file_id, note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              stamp_ts, offset_ms, audio_file_id, recording_session_id, note)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id"#,
-        guild_id,
-        channel_id,
-        target_user_id,
-        stamper_user_id,
-        stamp_ts,
-        offset_ms,
-        audio_file_id,
-        note,
     )
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(target_user_id)
+    .bind(stamper_user_id)
+    .bind(stamp_ts)
+    .bind(offset_ms)
+    .bind(audio_file_id)
+    .bind(recording_session_id)
+    .bind(note)
     .fetch_one(pool)
     .await?;
 
-    Ok(row.id)
+    Ok(stamp_id)
 }
 
 pub async fn latest_stamp_ts(
@@ -57,16 +65,17 @@ pub async fn latest_stamp_ts(
     Ok(last_ts)
 }
 
-pub async fn active_audio_file_id_for_stamp(
+pub async fn active_recording_for_stamp(
     pool: &Pool<Postgres>,
     target_user_id: i64,
     guild_id: i64,
     channel_id: i64,
     stamp_ts: i64,
-) -> DbResult<Option<i64>> {
+) -> DbResult<Option<ActiveStampRecording>> {
     let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
-    let active_file_id = sqlx::query_scalar!(
-        r#"SELECT id
+    let active_recording = sqlx::query_as::<_, ActiveStampRecording>(
+        r#"SELECT id AS audio_file_id,
+                  recording_session_id
              FROM audio_files
             WHERE user_id = $1
               AND guild_id = $2
@@ -83,14 +92,14 @@ pub async fn active_audio_file_id_for_stamp(
               )
             ORDER BY start_ts DESC
             LIMIT 1"#,
-        target_user_id,
-        guild_id,
-        channel_id,
-        stamp_ts,
-        stale_after_seconds,
     )
+    .bind(target_user_id)
+    .bind(guild_id)
+    .bind(channel_id)
+    .bind(stamp_ts)
+    .bind(stale_after_seconds)
     .fetch_optional(pool)
     .await?;
 
-    Ok(active_file_id)
+    Ok(active_recording)
 }

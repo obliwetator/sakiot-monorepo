@@ -10,12 +10,13 @@ use serenity::{
 use sqlx::{PgPool, migrate::Migrator};
 
 use crate::cooldown::JamCooldown;
-use crate::database::{DbError, logical_recordings, recordings};
+use crate::database::{DbError, logical_recordings, recordings, stamps};
 use crate::runtime::{BotRole, RuntimeConfig, RuntimeState};
 
 static FULL_MIGRATOR: Migrator = sqlx::migrate!("../sakiot-db/migrations");
 const MEDIA_ARCHIVE_MIGRATION: i64 = 20_260_716_000_000;
 const LOGICAL_RECORDINGS_MIGRATION: i64 = 20_260_712_000_000;
+const STAMP_RECORDING_SESSIONS_MIGRATION: i64 = 20_260_731_000_000;
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -113,6 +114,71 @@ async fn recording_create_heartbeat_finalize_uses_audio_file_id(
         .execute(&pool)
         .await?;
 
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn stamp_creation_persists_fragment_and_logical_session(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let base = unique_id();
+    let guild_id = base;
+    let channel_id = base + 1;
+    let user_id = base + 2;
+    let stamper_user_id = base + 3;
+    let owner = format!("test-stamp-recording-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let now = chrono::Utc::now();
+
+    let handle = recordings::create_recording_for_test(
+        &pool,
+        guild_id,
+        channel_id,
+        user_id,
+        now,
+        &owner,
+        temporary.path(),
+    )
+    .await?;
+    let active = stamps::active_recording_for_stamp(
+        &pool,
+        user_id,
+        guild_id,
+        channel_id,
+        now.timestamp_millis(),
+    )
+    .await?
+    .expect("active recording");
+    assert_eq!(active.audio_file_id, handle.audio_file_id);
+    assert_eq!(
+        active.recording_session_id,
+        Some(handle.recording_session_id)
+    );
+
+    let stamp_id = stamps::create_stamp(
+        &pool,
+        guild_id,
+        channel_id,
+        user_id,
+        stamper_user_id,
+        now.timestamp_millis(),
+        -5_000,
+        Some(active.audio_file_id),
+        active.recording_session_id,
+        Some("test stamp"),
+    )
+    .await?;
+    let stored: (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT audio_file_id, recording_session_id
+           FROM stamps
+          WHERE id = $1",
+    )
+    .bind(stamp_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored.0, Some(handle.audio_file_id));
+    assert_eq!(stored.1, Some(handle.recording_session_id));
     Ok(())
 }
 
@@ -531,6 +597,93 @@ async fn logical_recording_migration_backfills_one_session_per_file(
     .fetch_one(&pool)
     .await?;
     assert!(!fk_validated);
+    assert!(index_exists);
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn stamp_session_migration_backfills_and_preserves_logical_session(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prior = Migrator::with_migrations(
+        FULL_MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < STAMP_RECORDING_SESSIONS_MIGRATION)
+            .cloned()
+            .collect(),
+    );
+    prior.run(&pool).await?;
+
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES (1, 100, 10, 10, 'finalized',
+                 to_timestamp(1), to_timestamp(2), 'test', 0)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await?;
+    let audio_file_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('stamp-backfill', 1, 10, 100, 1970, 1,
+                 1000, 2000, $1, 0)
+         RETURNING id",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await?;
+    let stamp_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO stamps
+            (guild_id, channel_id, target_user_id, stamper_user_id,
+             stamp_ts, audio_file_id)
+         VALUES (1, 10, 100, 101, 1500, $1)
+         RETURNING id",
+    )
+    .bind(audio_file_id)
+    .fetch_one(&pool)
+    .await?;
+
+    FULL_MIGRATOR.run(&pool).await?;
+
+    let migrated_session_id: Option<i64> = sqlx::query_scalar(
+        "SELECT recording_session_id
+           FROM stamps
+          WHERE id = $1",
+    )
+    .bind(stamp_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(migrated_session_id, Some(session_id));
+
+    sqlx::query("DELETE FROM audio_files WHERE id = $1")
+        .bind(audio_file_id)
+        .execute(&pool)
+        .await?;
+    let links: (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT audio_file_id, recording_session_id
+           FROM stamps
+          WHERE id = $1",
+    )
+    .bind(stamp_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(links, (None, Some(session_id)));
+
+    let (foreign_key_exists, index_exists): (bool, bool) = sqlx::query_as(
+        "SELECT
+            EXISTS (
+                SELECT 1
+                  FROM pg_constraint
+                 WHERE conname = 'stamps_recording_session_id_fkey'
+            ),
+            to_regclass('public.stamps_by_recording_session') IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(foreign_key_exists);
     assert!(index_exists);
     Ok(())
 }

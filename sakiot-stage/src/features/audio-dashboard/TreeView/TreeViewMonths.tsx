@@ -2,6 +2,7 @@ import { getMonthName, type IndividualFileArray } from "../../../Constants";
 import { LiveDot } from "./LiveDot";
 import { StyledTreeItem } from "./StyledTreeItem";
 import { TreeViewDays } from "./TreeViewDays";
+import { recordingFileDay } from "./treeNavigation";
 
 export function TreeViewMonths(props: {
 	files: IndividualFileArray | null;
@@ -17,7 +18,7 @@ export function TreeViewMonths(props: {
 
 	const byDay = new Map<number, IndividualFileArray>();
 	for (const el of safeFiles) {
-		const day = new Date(parseInt(el.file.slice(0, 13), 10)).getDate();
+		const day = recordingFileDay(el.file);
 		const bucket = byDay.get(day) ?? [];
 		bucket.push({ ...el });
 		byDay.set(day, bucket);

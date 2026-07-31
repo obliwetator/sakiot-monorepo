@@ -137,7 +137,9 @@ pub async fn get_stamps(
         LEFT JOIN channels        c  ON c.channel_id = s.channel_id
         LEFT JOIN audio_files     af ON af.id = s.audio_file_id
         LEFT JOIN recording_sessions rs
-          ON rs.id = af.recording_session_id
+          ON rs.id = COALESCE(s.recording_session_id, af.recording_session_id)
+         AND rs.guild_id = s.guild_id
+         AND rs.user_id = s.target_user_id
          AND NOT EXISTS (
                  SELECT 1
                    FROM audio_files restricted

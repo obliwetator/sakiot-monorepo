@@ -495,16 +495,19 @@ async fn stamps_include_only_fully_accessible_logical_sessions(
     sqlx::query(
         "INSERT INTO stamps
             (guild_id, channel_id, target_user_id, stamper_user_id,
-             stamp_ts, offset_ms, audio_file_id, note)
+             stamp_ts, offset_ms, audio_file_id, recording_session_id, note)
          VALUES
-            ($1, $2, $3, $3, 2500, 100, $4, 'accessible-session'),
-            ($1, $2, $3, $3, 4500, 0, $5, 'restricted-session')",
+            ($1, $2, $3, $3, 2500, 100, $4, $5, 'accessible-session'),
+            ($1, $2, $3, $3, 4500, 0, $6, $7, 'restricted-session'),
+            ($1, $2, $3, $3, 2600, 0, NULL, $5, 'session-without-fragment')",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)
     .bind(OTHER_USER_ID)
     .bind(accessible_audio_id)
+    .bind(accessible_session_id)
     .bind(restricted_audio_id)
+    .bind(restricted_session_id)
     .execute(&pool)
     .await?;
 
@@ -534,6 +537,19 @@ async fn stamps_include_only_fully_accessible_logical_sessions(
     assert_eq!(accessible["segment_index"], 1);
     assert_eq!(accessible["session_started_at_ms"], 1000);
     assert_eq!(accessible["session_fragment_count"], 2);
+
+    let without_fragment = body
+        .iter()
+        .find(|stamp| stamp["note"] == "session-without-fragment")
+        .expect("session-only stamp");
+    assert_eq!(
+        without_fragment["recording_session_id"],
+        accessible_session_id.to_string()
+    );
+    assert!(without_fragment["audio_file_id"].is_null());
+    assert!(without_fragment["segment_index"].is_null());
+    assert_eq!(without_fragment["session_started_at_ms"], 1000);
+    assert_eq!(without_fragment["session_fragment_count"], 2);
 
     let restricted = body
         .iter()

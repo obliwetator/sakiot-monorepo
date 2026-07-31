@@ -65,8 +65,8 @@ export function Stamps() {
 			</Typography>
 			<Typography color="text.secondary" sx={{ mb: 2 }}>
 				{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max
-				500). Session links open complete logical recording; fragment identifies
-				physical file containing stamp.
+				500). Session links open the complete logical recording. Audio file IDs
+				identify the physical fragment containing each stamp.
 			</Typography>
 
 			{rows.length === 0 ? (
@@ -83,7 +83,8 @@ export function Stamps() {
 								<TableCell>Stamper</TableCell>
 								<TableCell>Channel</TableCell>
 								<TableCell align="right">Offset (ms)</TableCell>
-								<TableCell>Recording</TableCell>
+								<TableCell>Session ID</TableCell>
+								<TableCell>Audio File ID</TableCell>
 								<TableCell>Note</TableCell>
 								<TableCell>Created</TableCell>
 							</TableRow>
@@ -93,6 +94,9 @@ export function Stamps() {
 								const playbackTarget = buildStampPlaybackTarget(s, guildId);
 								const fragmentNumber =
 									s.segment_index == null ? null : s.segment_index + 1;
+								const sessionPath = s.recording_session_id
+									? `/dashboard/${encodeURIComponent(guildId)}/audio/session/${encodeURIComponent(s.recording_session_id)}`
+									: null;
 								return (
 									<TableRow key={s.id} hover>
 										<TableCell>{s.id}</TableCell>
@@ -140,34 +144,43 @@ export function Stamps() {
 										</TableCell>
 										<TableCell align="right">{s.offset_ms}</TableCell>
 										<TableCell>
-											{s.recording_session_id ? (
+											{sessionPath ? (
+												<Button
+													size="small"
+													onClick={() =>
+														navigate(
+															playbackTarget?.scope === "session"
+																? playbackTarget.path
+																: sessionPath,
+														)
+													}
+												>
+													{s.recording_session_id}
+												</Button>
+											) : (
+												<span style={{ opacity: 0.5 }}>—</span>
+											)}
+										</TableCell>
+										<TableCell>
+											{s.audio_file_id ? (
 												<Box>
-													<Button
-														size="small"
-														onClick={() => {
-															if (playbackTarget) navigate(playbackTarget.path);
-														}}
-													>
-														Session {s.recording_session_id}
-													</Button>
+													<Typography variant="body2">
+														{s.audio_file_id}
+													</Typography>
 													<Typography
 														variant="caption"
 														color="text.secondary"
 														display="block"
 													>
-														Fragment {fragmentNumber ?? "?"}
-														{s.session_fragment_count
-															? ` of ${s.session_fragment_count}`
-															: ""}
-														{s.audio_file_id
-															? ` · file ${s.audio_file_id}`
-															: ""}
+														{s.recording_session_id
+															? `Fragment ${fragmentNumber ?? "?"}${
+																	s.session_fragment_count
+																		? ` of ${s.session_fragment_count}`
+																		: ""
+																}`
+															: "Legacy physical file"}
 													</Typography>
 												</Box>
-											) : s.audio_file_id ? (
-												<Typography variant="caption">
-													Legacy physical file {s.audio_file_id}
-												</Typography>
 											) : (
 												<span style={{ opacity: 0.5 }}>—</span>
 											)}
