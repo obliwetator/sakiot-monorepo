@@ -10,7 +10,7 @@ body,
 	height: 100%;
 	background-color: #121212;
 	color: #fff;
-	font-family: "Cascadia Code", monospace;
+	font-family: "Inter Variable", system-ui, sans-serif;
 }
 
 .menu {
