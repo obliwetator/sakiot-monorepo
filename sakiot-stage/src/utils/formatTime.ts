@@ -3,6 +3,14 @@ export function formatDuration(value: number) {
 	return new Date(Math.floor(value) * 1000).toISOString().slice(11, 19);
 }
 
+/** HH:MM:SS.t — for readouts where whole seconds are too coarse to act on. */
+export function formatDurationPrecise(value: number) {
+	if (!Number.isFinite(value) || Number.isNaN(value)) return "00:00:00.0";
+	const clamped = Math.max(0, value);
+	const tenths = Math.floor(clamped * 10) % 10;
+	return `${formatDuration(clamped)}.${tenths}`;
+}
+
 export function formatUptime(seconds: number) {
 	const d = Math.floor(seconds / (3600 * 24));
 	const h = Math.floor((seconds % (3600 * 24)) / 3600);

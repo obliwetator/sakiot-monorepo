@@ -28,10 +28,13 @@ import {
 import { authedFetch } from "../../app/authedFetch";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
+import { ClipRangeEditor } from "./ClipRangeEditor";
+import { applyEdge, type SelectionEdge } from "./clipSelection";
 import {
 	isValidClipSelection,
 	reconcileSessionSelection,
 	type SelectionManifest,
+	type SessionSelection,
 } from "./logicalSessionSelection";
 import {
 	isolateSessionChannel,
@@ -157,6 +160,8 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [clipName, setClipName] = useState("");
+	const [previewing, setPreviewing] = useState(false);
+	const [loopSelection, setLoopSelection] = useState(false);
 	const [createClip, clipState] = useCreateSessionClipMutation();
 
 	const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -172,6 +177,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const volumeRef = useRef(1);
 	const appliedDeepLinkRef = useRef<string | null>(null);
 	const selectionManifestRef = useRef<SelectionManifest | null>(null);
+	const selectionRef = useRef<SessionSelection>([0, 0]);
+	/** Where a selection preview stops, and where it resumes when looping. */
+	const playbackBoundRef = useRef<{
+		stopMs: number;
+		loopToMs: number | null;
+	} | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
@@ -188,6 +199,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	useEffect(() => {
 		playingRef.current = playing;
 	}, [playing]);
+	useEffect(() => {
+		selectionRef.current = selection;
+	}, [selection]);
 	useEffect(() => {
 		segmentsRef.current = segments;
 	}, [segments]);
@@ -237,6 +251,29 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		}
 	}, []);
 
+	const clearPlaybackBound = useCallback(() => {
+		playbackBoundRef.current = null;
+		setPreviewing(false);
+	}, []);
+
+	/**
+	 * Stops or restarts a selection preview. Reported so the callers can leave
+	 * playback alone once the bound has taken over. Checked wherever playback
+	 * advances, so it holds across a segment boundary.
+	 */
+	const applyPlaybackBound = useCallback((atMs: number): boolean => {
+		const bound = playbackBoundRef.current;
+		if (!bound || atMs < bound.stopMs) return false;
+		if (bound.loopToMs !== null) {
+			startAtRef.current(bound.loopToMs, true);
+			return true;
+		}
+		playbackBoundRef.current = null;
+		setPreviewing(false);
+		startAtRef.current(bound.stopMs, false);
+		return true;
+	}, []);
+
 	const startAt = (requestedPosition: number, autoplay: boolean) => {
 		generationRef.current += 1;
 		const generation = generationRef.current;
@@ -272,6 +309,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			const tick = (wallNow: number) => {
 				if (generationRef.current !== generation || !playingRef.current) return;
 				const next = logicalStart + (wallNow - wallStart) * rateRef.current;
+				if (applyPlaybackBound(next)) return;
 				if (next >= segmentLimit) {
 					startAtRef.current(segmentLimit, segmentLimit < durationMs);
 					return;
@@ -319,6 +357,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		audio.addEventListener("timeupdate", () => {
 			if (generationRef.current !== generation) return;
 			const logical = segment.start_ms + audio.currentTime * 1_000;
+			if (applyPlaybackBound(logical)) return;
 			if (logical >= segmentLimit - 20) {
 				startAtRef.current(segmentLimit, segmentLimit < durationMs);
 				return;
@@ -391,7 +430,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		[stopSource],
 	);
 
-	const seek = useCallback((nextPositionMs: number) => {
+	const seekWithinBound = useCallback((nextPositionMs: number) => {
 		const durationMs = durationRef.current;
 		const position = Math.max(0, Math.min(nextPositionMs, durationMs));
 		const targetSegment = segmentsRef.current.find(
@@ -422,6 +461,16 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		startAtRef.current(nextPositionMs, playingRef.current);
 	}, []);
 
+	const seek = useCallback(
+		(nextPositionMs: number) => {
+			// Going somewhere by hand ends the preview rather than letting the bound
+			// yank playback back at the next check.
+			clearPlaybackBound();
+			seekWithinBound(nextPositionMs);
+		},
+		[clearPlaybackBound, seekWithinBound],
+	);
+
 	const selectPlaybackChannel = useCallback(
 		(channelId: string | null) => {
 			const nextSegments = isolateSessionChannel(normalizedSegments, channelId);
@@ -434,6 +483,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 
 	const togglePlay = useCallback(() => {
+		clearPlaybackBound();
 		if (playingRef.current) {
 			generationRef.current += 1;
 			stopSource();
@@ -445,16 +495,68 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		const start =
 			positionRef.current >= durationRef.current ? 0 : positionRef.current;
 		startAtRef.current(start, true);
-	}, [stopSource]);
+	}, [clearPlaybackBound, stopSource]);
+
+	const setSelectionEdgeFromPlayhead = useCallback((edge: SelectionEdge) => {
+		setSeekPreviewMs(null);
+		setSelection((current) =>
+			applyEdge(current, edge, positionRef.current, durationRef.current),
+		);
+	}, []);
+
+	const togglePreview = useCallback(() => {
+		if (playbackBoundRef.current) {
+			clearPlaybackBound();
+			generationRef.current += 1;
+			stopSource();
+			playingRef.current = false;
+			setPlaying(false);
+			return;
+		}
+		if (selectionRef.current[1] <= selectionRef.current[0]) return;
+		setActionError(null);
+		playbackBoundRef.current = {
+			stopMs: selectionRef.current[1],
+			loopToMs: loopSelection ? selectionRef.current[0] : null,
+		};
+		setPreviewing(true);
+		setSeekPreviewMs(null);
+		startAtRef.current(selectionRef.current[0], true);
+	}, [clearPlaybackBound, loopSelection, stopSource]);
+
+	// A loop toggled mid-preview takes effect on the current pass.
+	useEffect(() => {
+		const bound = playbackBoundRef.current;
+		if (!bound) return;
+		playbackBoundRef.current = {
+			stopMs: bound.stopMs,
+			loopToMs: loopSelection ? selectionRef.current[0] : null,
+		};
+	}, [loopSelection]);
 
 	useEffect(() => {
 		const handlePlaybackShortcut = (event: KeyboardEvent) => {
 			if (shortcutTargetIsInteractive(event.target)) return;
+			if (event.ctrlKey || event.metaKey || event.altKey) {
+				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+			}
 
 			if (event.key === " " || event.code === "Space") {
 				if (event.repeat) return;
 				event.preventDefault();
 				togglePlay();
+				return;
+			}
+
+			if (event.key === "i" || event.key === "I") {
+				event.preventDefault();
+				setSelectionEdgeFromPlayhead("start");
+				return;
+			}
+
+			if (event.key === "o" || event.key === "O") {
+				event.preventDefault();
+				setSelectionEdgeFromPlayhead("end");
 				return;
 			}
 
@@ -468,7 +570,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		window.addEventListener("keydown", handlePlaybackShortcut);
 		return () => window.removeEventListener("keydown", handlePlaybackShortcut);
-	}, [seek, togglePlay]);
+	}, [seek, setSelectionEdgeFromPlayhead, togglePlay]);
 
 	const downloadRange = async (removeSilence: boolean) => {
 		setActionError(null);
@@ -704,7 +806,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					spacing={1}
 					alignItems="center"
 					flexWrap="wrap"
-					sx={{ mb: 1 }}
+					sx={{ mb: 1.5 }}
 				>
 					<Typography>
 						Selected range: {formatDuration(selection[0] / 1_000)} –{" "}
@@ -714,6 +816,21 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						<Chip label="Valid clip duration" color="success" size="small" />
 					)}
 				</Stack>
+
+				<ClipRangeEditor
+					sessionId={props.sessionId}
+					durationMs={manifest.duration_ms}
+					selection={selection}
+					onSelectionChange={setSelection}
+					positionMs={displayedPositionMs}
+					onSeek={seek}
+					onSetEdgeFromPlayhead={setSelectionEdgeFromPlayhead}
+					onPreview={togglePreview}
+					previewing={previewing}
+					loop={loopSelection}
+					onLoopChange={setLoopSelection}
+				/>
+
 				<Slider
 					aria-label="Logical action range"
 					min={0}
