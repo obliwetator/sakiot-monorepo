@@ -108,11 +108,19 @@ production and a `staging.patrykstyla.com` one from staging. Override with
 bare number can be either an `audio_files.id` or a `recording_sessions.id`; the
 script looks it up and asks for `--recording` or `--session` only if both match.
 
-`audio_files.id` and `recording_sessions.id` are per-environment sequences, so
-the destination mints its own and rewrites every reference. `file_name`, guild,
-channel, year and month survive unchanged, which means a file URL works verbatim
-against the local dev server — only session ids differ. The command prints the
-URLs to open when it finishes.
+URLs stay portable. `file_name`, guild, channel, year and month survive the
+import unchanged, and a session keeps its source `recording_sessions.id` when the
+destination has that id free — so both URL shapes work verbatim, only the host
+changes. If the destination already uses that id the session gets a fresh one
+rather than displacing anything, and the run says so:
+
+```
+[dev] session 376 was already taken there; imported as 41
+```
+
+`audio_files.id` is always reissued: nothing addresses a recording by it, while
+`media_objects` and `stamps` reference it, so preserving it would only risk
+collisions. The command prints the URLs to open when it finishes.
 
 ### Copying a production recording into staging
 

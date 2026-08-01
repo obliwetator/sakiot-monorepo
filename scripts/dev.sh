@@ -481,8 +481,9 @@ clear_fixture_media() {
 }
 
 # Imports a logical selection (sessions + fragments + gaps + events) into the
-# destination. audio_files.id and recording_sessions.id are per-environment
-# sequences, so the destination mints its own and every reference is rewritten;
+# destination. A session keeps its source id when the destination has it free,
+# so a /audio/session/<id> URL stays portable; audio_files.id is always reissued
+# because nothing addresses a recording by it and other tables reference it.
 # audio_files.file_name embeds the capture timestamp and the Discord user id, so
 # it is stable across environments and is what makes re-imports a no-op.
 import_selection() { # import_selection <tmpdir> [marker-details-json]
@@ -518,8 +519,20 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
         echo "DELETE FROM _imp_sessions s
                WHERE EXISTS (SELECT 1 FROM _session_map m WHERE m.old_id = s.id)
                   OR NOT EXISTS (SELECT 1 FROM _imp_audio a WHERE a.recording_session_id = s.id);"
+        # Keeping the source session id makes a /audio/session/<id> URL work
+        # verbatim against the destination, the way a file URL already does.
+        # Lifting the sequence above both what exists and what is about to be
+        # claimed first is what stops a fallback id landing on an id this same
+        # batch claims (import 5 and 6 where 5 is taken, and a naive nextval
+        # hands back 6).
+        echo "SELECT setval(pg_get_serial_sequence('public.recording_sessions', 'id'),
+                            GREATEST((SELECT COALESCE(MAX(id), 0) FROM recording_sessions),
+                                     (SELECT COALESCE(MAX(id), 0) FROM _imp_sessions), 1));"
         echo "INSERT INTO _session_map (old_id, new_id)
-              SELECT s.id, nextval(pg_get_serial_sequence('public.recording_sessions', 'id'))
+              SELECT s.id,
+                     CASE WHEN EXISTS (SELECT 1 FROM recording_sessions d WHERE d.id = s.id)
+                          THEN nextval(pg_get_serial_sequence('public.recording_sessions', 'id'))
+                          ELSE s.id END
                 FROM _imp_sessions s;"
 
         # Gaps and events of a session that already exists are already there.
@@ -541,6 +554,11 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
         echo "UPDATE _imp_events SET id = nextval(pg_get_serial_sequence('public.recording_session_events', 'id'));"
 
         echo "INSERT INTO recording_sessions SELECT * FROM _imp_sessions;"
+        # Claimed ids are inserted explicitly, which leaves the sequence behind
+        # them; without this the destination's own bot would eventually hand out
+        # an id this import already took.
+        echo "SELECT setval(pg_get_serial_sequence('public.recording_sessions', 'id'),
+                            GREATEST((SELECT COALESCE(MAX(id), 0) FROM recording_sessions), 1));"
         echo "INSERT INTO audio_files SELECT * FROM _imp_audio;"
         echo "INSERT INTO recording_gaps SELECT * FROM _imp_gaps;"
         echo "INSERT INTO recording_session_events SELECT * FROM _imp_events;"
@@ -647,15 +665,19 @@ sql_name_list() { # sql_name_list <file of file names> -> quoted IN-list
 # that was pasted in has an equivalent on the other side. file_name, guild,
 # channel, year and month survive the import unchanged; session ids do not.
 report_destination() { # report_destination <tmpdir> <base-url>
-    local tmp=$1 base=$2 names sessions=""
+    local tmp=$1 base=$2 names sessions="" remapped
     names=$(sql_name_list "$tmp/new-recordings.list")
     [ -n "$names" ] || return 0
+    : > "$tmp/dest-sessions.tsv"
     log "open in $base:"
     while IFS=$'\t' read -r guild channel year month name session; do
         [ -n "$name" ] || continue
         printf '        %s/dashboard/%s/audio/%s/%s/%s/%s\n' \
             "$base" "$guild" "$channel" "$year" "$month" "$name"
-        [ -n "$session" ] && sessions+="$guild/$session"$'\n'
+        [ -n "$session" ] && {
+            sessions+="$guild/$session"$'\n'
+            printf '%s\t%s\n' "$name" "$session" >> "$tmp/dest-sessions.tsv"
+        }
     done < <(dest_tsv "SELECT guild_id, channel_id, year, month, file_name,
                              COALESCE(recording_session_id::text, '')
                         FROM audio_files
@@ -665,6 +687,17 @@ report_destination() { # report_destination <tmpdir> <base-url>
         [ -n "$session" ] || continue
         printf '        %s/dashboard/%s/audio/session/%s\n' "$base" "$guild" "$session"
     done < <(printf '%s' "$sessions" | sort -u)
+
+    # A session keeps its source id unless the destination already had one, so
+    # say which ones moved instead of leaving the URL above to be puzzled over.
+    [ -s "$tmp/source-sessions.tsv" ] || return 0
+    remapped=$(awk -F'\t' 'NR == FNR { src[$1] = $2; next }
+                           ($1 in src) && src[$1] != $2 { print src[$1] "\t" $2 }' \
+        "$tmp/source-sessions.tsv" "$tmp/dest-sessions.tsv" | sort -u)
+    [ -n "$remapped" ] || return 0
+    while IFS=$'\t' read -r from to; do
+        [ -n "$to" ] && log "session $from was already taken there; imported as $to"
+    done <<< "$remapped"
 }
 
 remote_sh() { # remote_sh <command> — quiet, exit status only
@@ -863,8 +896,8 @@ confirm_staging_write() { # confirm_staging_write <recording count> <staging dat
     echo "  Every imported session gets an 'imported_from_production' event at"
     echo "  offset 0 of its staging timeline, and each recording is appended to"
     echo "  $2/$STAGING_IMPORT_MANIFEST."
-    echo "  Staging keeps its own audio_files.id / recording_sessions.id, so the"
-    echo "  session id in the staging URL differs from the production one."
+    echo "  A session keeps its production id unless staging already uses it, in"
+    echo "  which case the run says which id it landed on instead."
     printf '\n'
     [ "$ASSUME_YES" -eq 1 ] && { log "proceeding (--yes)"; return; }
     [ -t 0 ] || die "refusing to write to staging without a terminal; pass --yes"
@@ -1215,6 +1248,11 @@ cmd_fetch_fixtures() (
     : > "$tmp/recording_sessions.tsv"
     : > "$tmp/recording_gaps.tsv"
     : > "$tmp/recording_session_events.tsv"
+    # Which session each fragment came from, so a session id that could not be
+    # claimed in the destination can be named rather than inferred.
+    fetch_tsv "SELECT file_name, recording_session_id FROM audio_files
+                WHERE id IN ($audio_file_ids) AND recording_session_id IS NOT NULL" \
+        > "$tmp/source-sessions.tsv"
     if [ -n "$session_ids" ]; then
         fetch_tsv "SELECT * FROM recording_sessions WHERE id IN ($session_ids)" > "$tmp/recording_sessions.tsv"
         fetch_tsv "SELECT * FROM recording_gaps WHERE recording_session_id IN ($session_ids)" > "$tmp/recording_gaps.tsv"
