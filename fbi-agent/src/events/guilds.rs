@@ -1,4 +1,5 @@
 use serenity::client::Context;
+use tracing::error;
 
 use crate::event_handler::Handler;
 
@@ -37,24 +38,50 @@ pub async fn guild_delete(
 }
 
 pub async fn guild_member_removal(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
-    _guild_id: serenity::model::id::GuildId,
-    _user: serenity::model::prelude::User,
+    guild_id: serenity::model::id::GuildId,
+    user: serenity::model::prelude::User,
     _member_data_if_available: Option<serenity::model::guild::Member>,
 ) {
+    if let Err(err) =
+        crate::database::guild_cache::delete_live_member(&handler.database, guild_id, user.id).await
+    {
+        error!(
+            error = %err,
+            guild_id = guild_id.get(),
+            user_id = user.id.get(),
+            "failed to remove guild member from cache"
+        );
+    }
 }
 
 pub async fn guild_member_addition(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
     new_member: serenity::model::guild::Member,
 ) {
+    if let Err(err) = crate::database::guild_cache::sync_live_member_roles(
+        &handler.database,
+        new_member.guild_id,
+        new_member.user.id,
+        &new_member.roles,
+    )
+    .await
+    {
+        error!(
+            error = %err,
+            guild_id = new_member.guild_id.get(),
+            user_id = new_member.user.id.get(),
+            "failed to sync added member roles"
+        );
+    }
+
     if new_member.user.bot {
         return;
     }
     crate::database::user_names::observe(
-        &_self.database,
+        &handler.database,
         new_member.guild_id.get(),
         &new_member.user,
         Some(&new_member),
@@ -63,19 +90,35 @@ pub async fn guild_member_addition(
 }
 
 pub async fn guild_member_update(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
-    _old_if_available: Option<serenity::model::guild::Member>,
-    _new: serenity::model::guild::Member,
+    new: Option<serenity::model::guild::Member>,
+    event: serenity::model::event::GuildMemberUpdateEvent,
 ) {
-    if _new.user.bot {
+    if let Err(err) = crate::database::guild_cache::sync_live_member_roles(
+        &handler.database,
+        event.guild_id,
+        event.user.id,
+        &event.roles,
+    )
+    .await
+    {
+        error!(
+            error = %err,
+            guild_id = event.guild_id.get(),
+            user_id = event.user.id.get(),
+            "failed to sync updated member roles"
+        );
+    }
+
+    if event.user.bot {
         return;
     }
     crate::database::user_names::observe(
-        &_self.database,
-        _new.guild_id.get(),
-        &_new.user,
-        Some(&_new),
+        &handler.database,
+        event.guild_id.get(),
+        &event.user,
+        new.as_ref(),
     )
     .await;
 }

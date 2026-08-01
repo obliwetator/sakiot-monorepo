@@ -18,6 +18,7 @@ use web_server::audio::{
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips};
+use web_server::permissions::visible_channels_for_user;
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -27,6 +28,8 @@ const FORBIDDEN_GUILD_ID: i64 = 2;
 const ALLOWED_CHANNEL_ID: i64 = 100;
 const FORBIDDEN_CHANNEL_ID: i64 = 200;
 const CONNECT_PERMISSION: i64 = 1 << 20;
+const VIEW_CHANNEL_PERMISSION: i64 = 1 << 10;
+const BASE_VOICE_PERMISSIONS: i64 = CONNECT_PERMISSION | VIEW_CHANNEL_PERMISSION;
 const CSRF: &str = "csrf-test-token";
 
 fn access_cookie_value() -> Result<String, Box<dyn std::error::Error>> {
@@ -215,10 +218,17 @@ async fn voice_settings_require_manager_and_restore_default(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
+    // Keep an OAuth-era manager grant in the database. Authorization must use
+    // the live role cache below, including after that role permission is revoked.
     sqlx::query("UPDATE user_guilds SET permissions = $1 WHERE id = $2 AND user_id = $3")
         .bind(1_i64 << 5)
         .bind(ALLOWED_GUILD_ID)
         .bind(USER_ID)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS | (1_i64 << 5))
+        .bind(ALLOWED_GUILD_ID)
         .execute(&pool)
         .await?;
     let cookie = access_cookie_value()?;
@@ -284,9 +294,9 @@ async fn voice_settings_require_manager_and_restore_default(
             .await?;
     assert_eq!(overrides, 0);
 
-    sqlx::query("UPDATE user_guilds SET permissions = 0 WHERE id = $1 AND user_id = $2")
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS)
         .bind(ALLOWED_GUILD_ID)
-        .bind(USER_ID)
         .execute(&pool)
         .await?;
     let request = test::TestRequest::get()
@@ -326,7 +336,7 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
          VALUES ($1, $1, $3, '@everyone'), ($2, $2, $3, '@everyone')",
         ALLOWED_GUILD_ID,
         FORBIDDEN_GUILD_ID,
-        CONNECT_PERMISSION,
+        BASE_VOICE_PERMISSIONS,
     )
     .execute(pool)
     .await?;
@@ -381,6 +391,38 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let hidden_channel_id = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'hidden')",
+    )
+    .bind(hidden_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'role', 0, $3)",
+    )
+    .bind(hidden_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .bind(VIEW_CHANNEL_PERMISSION)
+    .execute(&pool)
+    .await?;
+
+    let pool = web::Data::new(pool);
+    let visible = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert!(visible.contains(&ALLOWED_CHANNEL_ID));
+    assert!(!visible.contains(&hidden_channel_id));
+
     Ok(())
 }
 

@@ -3,7 +3,7 @@ use crate::database::DbResult;
 use crate::event_handler::Handler;
 use serenity::{
     all::UnavailableGuild,
-    model::prelude::{Guild, GuildId},
+    model::prelude::{Guild, GuildChannel, GuildId, Role, RoleId, UserId},
     prelude::Context,
 };
 use sqlx::{Pool, Postgres};
@@ -69,6 +69,44 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()>
     Ok(())
 }
 
+pub(crate) async fn sync_live_role(pool: &Pool<Postgres>, role: &Role) -> DbResult<()> {
+    sqlx::query(
+        "INSERT INTO roles (guild_id, role_id, permission, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (role_id) DO UPDATE SET
+             guild_id = EXCLUDED.guild_id,
+             permission = EXCLUDED.permission,
+             name = EXCLUDED.name",
+    )
+    .bind(role.guild_id.to_i64())
+    .bind(role.id.to_i64())
+    .bind(role.permissions.bits().to_i64())
+    .bind(&role.name)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub(crate) async fn delete_live_role(pool: &Pool<Postgres>, role_id: RoleId) -> DbResult<()> {
+    let mut transaction = pool.begin().await?;
+    let role_id = role_id.to_i64();
+
+    // channel_permissions.target_id is intentionally polymorphic and has no
+    // foreign key to roles, so remove these rows explicitly.
+    sqlx::query("DELETE FROM channel_permissions WHERE kind = 'role' AND target_id = $1")
+        .bind(role_id)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("DELETE FROM roles WHERE role_id = $1")
+        .bind(role_id)
+        .execute(&mut *transaction)
+        .await?;
+
+    transaction.commit().await?;
+    Ok(())
+}
+
 async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
     for guild in guild_cached {
         delete_user_roles_for_guild(&handler.database, guild.id.to_i64()).await?;
@@ -94,6 +132,81 @@ async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResul
         }
     }
 
+    Ok(())
+}
+
+pub(crate) async fn sync_live_member_roles(
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    user_id: UserId,
+    role_ids: &[RoleId],
+) -> DbResult<()> {
+    let mut transaction = pool.begin().await?;
+    let guild_id = guild_id.to_i64();
+    let user_id = user_id.to_i64();
+    let role_ids: Vec<i64> = role_ids.iter().copied().map(ToI64::to_i64).collect();
+
+    sqlx::query(
+        "DELETE FROM user_roles ur
+          USING roles r
+         WHERE ur.role_id = r.role_id
+           AND ur.user_id = $1
+           AND r.guild_id = $2",
+    )
+    .bind(user_id)
+    .bind(guild_id)
+    .execute(&mut *transaction)
+    .await?;
+
+    // Joining through roles keeps an out-of-order unknown role fail-closed:
+    // known revoked roles stay removed without violating the foreign key.
+    if !role_ids.is_empty() {
+        sqlx::query(
+            "INSERT INTO user_roles (user_id, role_id)
+             SELECT $1, r.role_id
+               FROM roles r
+              WHERE r.guild_id = $2
+                AND r.role_id = ANY($3)
+             ON CONFLICT (user_id, role_id) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(guild_id)
+        .bind(&role_ids)
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn delete_live_member(
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    user_id: UserId,
+) -> DbResult<()> {
+    let mut transaction = pool.begin().await?;
+    let guild_id = guild_id.to_i64();
+    let user_id = user_id.to_i64();
+
+    sqlx::query(
+        "DELETE FROM user_roles ur
+          USING roles r
+         WHERE ur.role_id = r.role_id
+           AND ur.user_id = $1
+           AND r.guild_id = $2",
+    )
+    .bind(user_id)
+    .bind(guild_id)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DELETE FROM user_guilds WHERE id = $1 AND user_id = $2")
+        .bind(guild_id)
+        .bind(user_id)
+        .execute(&mut *transaction)
+        .await?;
+
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -199,6 +312,83 @@ async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<
         prune_stale_channels(&handler.database, guild.id.to_i64(), &channel_ids).await?;
     }
 
+    Ok(())
+}
+
+pub(crate) async fn sync_live_channel(
+    pool: &Pool<Postgres>,
+    channel: &GuildChannel,
+) -> DbResult<()> {
+    let mut transaction = pool.begin().await?;
+    let channel_id = channel.id.to_i64();
+
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (channel_id) DO UPDATE SET
+             guild_id = EXCLUDED.guild_id,
+             type = EXCLUDED.type,
+             name = EXCLUDED.name",
+    )
+    .bind(channel_id)
+    .bind(channel.guild_id.to_i64())
+    .bind(u8::from(channel.kind) as i32)
+    .bind(channel.name())
+    .execute(&mut *transaction)
+    .await?;
+
+    sqlx::query("DELETE FROM channel_permissions WHERE channel_id = $1")
+        .bind(channel_id)
+        .execute(&mut *transaction)
+        .await?;
+
+    for overwrite in &channel.permission_overwrites {
+        let (kind, target_id) = match overwrite.kind {
+            serenity::model::prelude::PermissionOverwriteType::Member(target_id) => {
+                ("user", target_id.to_i64())
+            }
+            serenity::model::prelude::PermissionOverwriteType::Role(target_id) => {
+                ("role", target_id.to_i64())
+            }
+            _ => {
+                error!(
+                    channel_id = channel.id.get(),
+                    "unknown permission overwrite type"
+                );
+                continue;
+            }
+        };
+
+        sqlx::query(
+            "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (channel_id, target_id) DO UPDATE SET
+                 kind = EXCLUDED.kind,
+                 allow = EXCLUDED.allow,
+                 deny = EXCLUDED.deny",
+        )
+        .bind(channel_id)
+        .bind(target_id)
+        .bind(kind)
+        .bind(overwrite.allow.bits().to_i64())
+        .bind(overwrite.deny.bits().to_i64())
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn delete_live_channel(
+    pool: &Pool<Postgres>,
+    channel_id: serenity::model::id::ChannelId,
+) -> DbResult<()> {
+    // The channel_permissions foreign key cascades this deletion.
+    sqlx::query("DELETE FROM channels WHERE channel_id = $1")
+        .bind(channel_id.to_i64())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

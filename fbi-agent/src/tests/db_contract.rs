@@ -4,7 +4,10 @@ use std::{
 };
 
 use serenity::{
-    model::id::{ChannelId, GuildId},
+    all::{
+        ChannelId, ChannelType, GuildChannel, GuildId, PermissionOverwrite,
+        PermissionOverwriteType, Permissions, Role, RoleId, UserId,
+    },
     prelude::{RwLock, TypeMap},
 };
 use sqlx::{PgPool, migrate::Migrator};
@@ -968,6 +971,125 @@ async fn guild_cache_prune_removes_stale_roles_channels_and_dependents(
     sqlx::query!("DELETE FROM guilds WHERE id = $1", guild_id)
         .execute(&pool)
         .await?;
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn live_permission_cache_replaces_and_removes_revoked_state(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = GuildId::new(unique_id() as u64);
+    let owner_id = UserId::new(guild_id.get() + 1);
+    let role_id = RoleId::new(guild_id.get() + 2);
+    let channel_id = ChannelId::new(guild_id.get() + 3);
+    let user_id = UserId::new(guild_id.get() + 4);
+
+    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2)")
+        .bind(guild_id.get() as i64)
+        .bind(owner_id.get() as i64)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO channel_type (id, type)
+         VALUES (2, 'voice')
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
+         VALUES ($1, $2, 'live-cache-test', false, 0, ARRAY[]::text[])",
+    )
+    .bind(guild_id.get() as i64)
+    .bind(user_id.get() as i64)
+    .execute(&pool)
+    .await?;
+
+    let mut role = Role::default();
+    role.id = role_id;
+    role.guild_id = guild_id;
+    role.name = "live-role".to_string();
+    role.permissions = Permissions::VIEW_CHANNEL | Permissions::CONNECT;
+    crate::database::guild_cache::sync_live_role(&pool, &role).await?;
+    crate::database::guild_cache::sync_live_member_roles(&pool, guild_id, user_id, &[role_id])
+        .await?;
+
+    let mut channel = GuildChannel::default();
+    channel.id = channel_id;
+    channel.guild_id = guild_id;
+    channel.kind = ChannelType::Voice;
+    channel.name = "live-channel".to_string();
+    channel.permission_overwrites = vec![PermissionOverwrite {
+        allow: Permissions::CONNECT,
+        deny: Permissions::VIEW_CHANNEL,
+        kind: PermissionOverwriteType::Role(role_id),
+    }];
+    crate::database::guild_cache::sync_live_channel(&pool, &channel).await?;
+
+    role.permissions = Permissions::empty();
+    crate::database::guild_cache::sync_live_role(&pool, &role).await?;
+    crate::database::guild_cache::sync_live_member_roles(&pool, guild_id, user_id, &[]).await?;
+    channel.permission_overwrites.clear();
+    crate::database::guild_cache::sync_live_channel(&pool, &channel).await?;
+
+    let role_permission: i64 =
+        sqlx::query_scalar("SELECT permission FROM roles WHERE role_id = $1")
+            .bind(role_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    let member_roles: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE user_id = $1 AND role_id = $2")
+            .bind(user_id.get() as i64)
+            .bind(role_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    let overwrites: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM channel_permissions WHERE channel_id = $1")
+            .bind(channel_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(role_permission, 0);
+    assert_eq!(member_roles, 0);
+    assert_eq!(overwrites, 0);
+
+    crate::database::guild_cache::sync_live_member_roles(&pool, guild_id, user_id, &[role_id])
+        .await?;
+    channel.permission_overwrites = vec![PermissionOverwrite {
+        allow: Permissions::CONNECT,
+        deny: Permissions::empty(),
+        kind: PermissionOverwriteType::Role(role_id),
+    }];
+    crate::database::guild_cache::sync_live_channel(&pool, &channel).await?;
+
+    crate::database::guild_cache::delete_live_member(&pool, guild_id, user_id).await?;
+    crate::database::guild_cache::delete_live_role(&pool, role_id).await?;
+    crate::database::guild_cache::delete_live_channel(&pool, channel_id).await?;
+
+    let membership: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_guilds WHERE id = $1 AND user_id = $2")
+            .bind(guild_id.get() as i64)
+            .bind(user_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    let role: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE role_id = $1")
+        .bind(role_id.get() as i64)
+        .fetch_one(&pool)
+        .await?;
+    let channel: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE channel_id = $1")
+        .bind(channel_id.get() as i64)
+        .fetch_one(&pool)
+        .await?;
+    let role_overwrites: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM channel_permissions WHERE kind = 'role' AND target_id = $1",
+    )
+    .bind(role_id.get() as i64)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(membership, 0);
+    assert_eq!(role, 0);
+    assert_eq!(channel, 0);
+    assert_eq!(role_overwrites, 0);
 
     Ok(())
 }

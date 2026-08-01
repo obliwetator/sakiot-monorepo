@@ -14,6 +14,12 @@ For verification during normal code work, only run Cargo commands such as:
 Database tests use `#[sqlx::test]` and must never run with the runtime
 `DATABASE_URL`. Load the root `.env` first so `SAKIOT_TEST_DATABASE_URL` is set.
 
+Especially in local development, make sure the local PostgreSQL container is
+running before executing database-backed tests. Run `scripts/dev.sh` from the
+repository root for the full development environment, or `scripts/dev.sh db`
+when only PostgreSQL, migrations, and seed data are needed. Then run SQLx tests
+with `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL"` as shown above.
+
 Do not use `deploy/*.sh`, `systemctl --user ...`, `grpcurl ...`, or service-management commands unless manually instructed.
 
 ## Current Runtime Model

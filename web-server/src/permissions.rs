@@ -175,12 +175,12 @@ impl ChannelPermissionState {
         }
     }
 
-    fn can_connect(self, base_permissions: Permissions) -> bool {
+    fn can_view_and_connect(self, base_permissions: Permissions) -> bool {
         let permissions = apply_overwrite(base_permissions, self.everyone);
         let permissions = apply_overwrite(permissions, self.roles);
         let permissions = apply_overwrite(permissions, self.member);
 
-        permissions.contains(Permissions::CONNECT)
+        permissions.contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT)
     }
 }
 
@@ -217,19 +217,42 @@ pub async fn get_combined_perm_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<Permissions, AppError> {
-    let res = sqlx::query!(
-        "SELECT permissions, owner FROM user_guilds
-		WHERE user_id = $1
-		AND id = $2",
-        user_id,
-        guild_id
+    let owner = sqlx::query_scalar::<_, bool>(
+        "SELECT owner FROM user_guilds
+         WHERE user_id = $1 AND id = $2",
     )
+    .bind(user_id)
+    .bind(guild_id)
     .fetch_one(pool.get_ref())
     .await?;
-    if res.owner {
+    if owner {
         return Ok(Permissions::all());
     }
-    Ok(permissions_from_bits(res.permissions))
+
+    // The OAuth guild list stores a combined permission snapshot from login.
+    // Build the value from the agent-maintained role cache instead so role and
+    // membership revocations take effect without requiring a new login.
+    let permissions = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT bit_or(r.permission)
+           FROM roles r
+          WHERE r.guild_id = $1
+            AND (
+                r.role_id = $1
+                OR EXISTS (
+                    SELECT 1
+                      FROM user_roles ur
+                     WHERE ur.user_id = $2
+                       AND ur.role_id = r.role_id
+                )
+            )",
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_one(pool.get_ref())
+    .await?
+    .unwrap_or(0);
+
+    Ok(permissions_from_bits(permissions))
 }
 
 async fn apply_role_overwrites(
@@ -267,9 +290,7 @@ pub async fn get_available_channels_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, AppError> {
-    let everyone_permission = get_everyone_permission_for_guild(pool, guild_id).await?;
-    let combined_permission = get_combined_perm_for_user(pool, guild_id, user_id).await?;
-    let base_permissions = everyone_permission | combined_permission;
+    let base_permissions = get_combined_perm_for_user(pool, guild_id, user_id).await?;
 
     let mut channels = get_voice_channel_permission_states(pool, guild_id).await?;
     if base_permissions.contains(Permissions::ADMINISTRATOR) {
@@ -281,7 +302,7 @@ pub async fn get_available_channels_for_user(
 
     Ok(channels
         .into_values()
-        .filter(|channel| channel.can_connect(base_permissions))
+        .filter(|channel| channel.can_view_and_connect(base_permissions))
         .map(|channel| channel.channel_id)
         .collect())
 }
@@ -453,7 +474,7 @@ mod tests {
             PermissionOverwriteBits::default(),
         );
 
-        assert!(!channel.can_connect(Permissions::CONNECT));
+        assert!(!channel.can_view_and_connect(Permissions::VIEW_CHANNEL | Permissions::CONNECT));
     }
 
     #[test]
@@ -470,7 +491,7 @@ mod tests {
             PermissionOverwriteBits::default(),
         );
 
-        assert!(channel.can_connect(Permissions::empty()));
+        assert!(channel.can_view_and_connect(Permissions::VIEW_CHANNEL));
     }
 
     #[test]
@@ -487,7 +508,7 @@ mod tests {
             },
         );
 
-        assert!(!channel.can_connect(Permissions::empty()));
+        assert!(!channel.can_view_and_connect(Permissions::VIEW_CHANNEL));
     }
 
     #[test]
@@ -504,7 +525,21 @@ mod tests {
             },
         );
 
-        assert!(channel.can_connect(Permissions::empty()));
+        assert!(channel.can_view_and_connect(Permissions::VIEW_CHANNEL));
+    }
+
+    #[test]
+    fn view_channel_deny_blocks_inherited_connect() {
+        let channel = state(
+            PermissionOverwriteBits {
+                allow: Permissions::empty(),
+                deny: Permissions::VIEW_CHANNEL,
+            },
+            PermissionOverwriteBits::default(),
+            PermissionOverwriteBits::default(),
+        );
+
+        assert!(!channel.can_view_and_connect(Permissions::VIEW_CHANNEL | Permissions::CONNECT));
     }
 
     #[test]

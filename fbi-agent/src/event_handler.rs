@@ -37,6 +37,28 @@ impl EventHandler for Handler {
         events::cache_ready::cache_ready(self, ctx, guilds).await;
     }
 
+    async fn channel_create(&self, ctx: Context, channel: serenity::model::channel::GuildChannel) {
+        events::channels::channel_create(self, ctx, channel).await;
+    }
+
+    async fn channel_delete(
+        &self,
+        ctx: Context,
+        channel: serenity::model::channel::GuildChannel,
+        _messages: Option<Vec<Message>>,
+    ) {
+        events::channels::channel_delete(self, ctx, channel).await;
+    }
+
+    async fn channel_update(
+        &self,
+        ctx: Context,
+        _old: Option<serenity::model::channel::GuildChannel>,
+        new: serenity::model::channel::GuildChannel,
+    ) {
+        events::channels::channel_update(self, ctx, new).await;
+    }
+
     async fn resume(&self, ctx: Context, _: serenity::model::event::ResumedEvent) {
         Self::with_metrics(&ctx, |m| m.record_gateway_resume()).await;
     }
@@ -135,13 +157,11 @@ impl EventHandler for Handler {
     async fn guild_member_update(
         &self,
         ctx: Context,
-        old_if_available: Option<serenity::model::guild::Member>,
+        _old_if_available: Option<serenity::model::guild::Member>,
         new: Option<serenity::model::guild::Member>,
-        _event: serenity::model::event::GuildMemberUpdateEvent,
+        event: serenity::model::event::GuildMemberUpdateEvent,
     ) {
-        if let Some(member) = new {
-            events::guilds::guild_member_update(self, ctx, old_if_available, member).await;
-        }
+        events::guilds::guild_member_update(self, ctx, new, event).await;
     }
 
     async fn guild_role_create(&self, ctx: Context, new: serenity::model::guild::Role) {
