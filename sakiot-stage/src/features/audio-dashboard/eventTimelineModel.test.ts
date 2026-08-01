@@ -62,6 +62,51 @@ describe("buildEventTimelineModel", () => {
 		]);
 	});
 
+	it("does not invent a recording pause before an unmatched resume", () => {
+		const model = buildEventTimelineModel(
+			[
+				event("user_recording_pause", 1_000),
+				event("user_recording_resume", 2_000),
+				event("recording_resume", 4 * 3_600_000 + 38 * 60_000 + 11_000),
+			],
+			5 * 3_600_000,
+		);
+		const recordingLane = model.lanes.find((lane) => lane.id === "recording");
+
+		expect(recordingLane?.intervals).toMatchObject([
+			{
+				startMs: 1_000,
+				endMs: 2_000,
+				label: "User recording paused",
+			},
+		]);
+		expect(recordingLane?.points).toMatchObject([
+			{
+				offsetMs: 4 * 3_600_000 + 38 * 60_000 + 11_000,
+				label: "Recording resumed",
+			},
+		]);
+	});
+
+	it("keeps an extra lifecycle resume as a point after a pause is closed", () => {
+		const model = buildEventTimelineModel(
+			[
+				event("recording_pause", 1_000),
+				event("recording_resume", 2_000),
+				event("recording_resume", 3_000),
+			],
+			4_000,
+		);
+		const recordingLane = model.lanes.find((lane) => lane.id === "recording");
+
+		expect(recordingLane?.intervals).toMatchObject([
+			{ startMs: 1_000, endMs: 2_000, label: "Recording paused" },
+		]);
+		expect(recordingLane?.points).toMatchObject([
+			{ offsetMs: 3_000, label: "Recording resumed" },
+		]);
+	});
+
 	it("uses fixed semantic lanes for session, channel, connection, and unknown events", () => {
 		const model = buildEventTimelineModel(
 			[

@@ -82,6 +82,21 @@ type IndexedEvent = {
 	type: string;
 };
 
+// Discord state may already be active before the recording window begins, so
+// an unmatched "off" event can legitimately close an interval that starts at
+// the left boundary. Recording lifecycle events are session-local: an
+// unmatched resume is only a milestone and must not imply that recording was
+// paused from 00:00:00.
+const BOUNDARY_INFERABLE_STATES = new Set([
+	"server-mute",
+	"self-mute",
+	"server-deafen",
+	"self-deafen",
+	"suppress",
+	"stream",
+	"video",
+]);
+
 const LANE_DEFINITIONS: ReadonlyArray<{
 	id: TimelineLaneId;
 	label: string;
@@ -502,6 +517,10 @@ export function buildEventTimelineModel(
 		}
 
 		const active = activeStates.get(stateKey);
+		if (!active && !BOUNDARY_INFERABLE_STATES.has(transition.stateKey)) {
+			points.push(createPoint(indexed, transition));
+			continue;
+		}
 		const interval = createInterval({
 			start: active?.start,
 			end: indexed,
