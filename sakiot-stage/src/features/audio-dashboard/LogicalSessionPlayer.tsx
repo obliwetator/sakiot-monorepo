@@ -1,5 +1,9 @@
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -35,6 +39,7 @@ import {
 	type PlaybackSegment,
 } from "./logicalSessionTimeline";
 import { SessionWaveform } from "./SessionWaveform";
+import { TimelineRow } from "./timelineLayout";
 
 const ARROW_SEEK_MS = 5_000;
 const CTRL_ARROW_SEEK_MS = 30_000;
@@ -585,143 +590,77 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			</Typography>
 
 			<Paper variant="outlined" sx={{ p: 2, my: 2 }}>
-				<Stack
-					direction={{ xs: "column", md: "row" }}
-					spacing={2}
-					justifyContent="space-between"
-					alignItems={{ xs: "stretch", md: "flex-start" }}
-				>
-					<Box>
-						<Typography variant="h6">Physical recordings</Typography>
-						<Typography variant="body2" color="text.secondary">
-							Session combines channel-bound files into one timestamp-aligned
-							timeline.
-						</Typography>
-					</Box>
-					{channelIds.length > 1 && (
-						<FormControl size="small" sx={{ minWidth: 260 }}>
-							<InputLabel id={`session-${props.sessionId}-channel-label`}>
-								Playback channel
-							</InputLabel>
-							<Select
-								labelId={`session-${props.sessionId}-channel-label`}
-								label="Playback channel"
-								value={effectiveChannelId ?? ""}
-								onChange={(event) =>
-									selectPlaybackChannel(event.target.value || null)
-								}
-							>
-								<MenuItem value="">All channels</MenuItem>
-								{channelIds.map((channelId) => {
-									const count = physicalFragments.filter(
-										(fragment) => fragment.channel_id === channelId,
-									).length;
-									return (
-										<MenuItem key={channelId} value={channelId}>
-											Channel {channelId} · {count}{" "}
-											{count === 1 ? "file" : "files"}
-										</MenuItem>
-									);
-								})}
-							</Select>
-						</FormControl>
-					)}
-				</Stack>
-				<Stack spacing={0.75} sx={{ mt: 1.5 }}>
-					{displayedFragments.map((fragment, index) => (
-						<Button
-							key={
-								fragment.audio_file_id ??
-								`${fragment.start_ms}-${fragment.end_ms}`
-							}
-							variant="text"
-							onClick={() => seek(fragment.start_ms)}
-							sx={{
-								justifyContent: "flex-start",
-								textAlign: "left",
-								textTransform: "none",
-								px: 1,
-							}}
+				<TimelineRow label="Waveform" labelAlign="flex-start" sx={{ mb: 1 }}>
+					<SessionWaveform
+						key={props.sessionId}
+						sessionId={props.sessionId}
+						positionMs={displayedPositionMs}
+						durationMs={manifest.duration_ms}
+						onSeek={seek}
+					/>
+				</TimelineRow>
+
+				<TimelineRow label="Position">
+					<Slider
+						aria-label="Logical playback position"
+						min={0}
+						max={Math.max(0.001, durationSeconds)}
+						step={0.01}
+						value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
+						onChange={(_event, value) =>
+							setSeekPreviewMs(Number(value) * 1_000)
+						}
+						onChangeCommitted={(_event, value) => {
+							const nextPositionMs = Number(value) * 1_000;
+							setSeekPreviewMs(null);
+							seek(nextPositionMs);
+						}}
+						valueLabelDisplay="auto"
+						valueLabelFormat={formatDuration}
+						sx={{
+							display: "block",
+							py: 1.5,
+							"& .MuiSlider-thumb, & .MuiSlider-track": {
+								transition: "none",
+							},
+						}}
+					/>
+				</TimelineRow>
+
+				<TimelineRow sx={{ mb: 1.5 }}>
+					<Stack
+						direction={{ xs: "column", sm: "row" }}
+						justifyContent="space-between"
+						spacing={0.5}
+					>
+						<Typography
+							variant="body2"
+							sx={{ fontVariantNumeric: "tabular-nums" }}
 						>
-							<Box>
-								<Typography variant="body2">
-									Fragment {(fragment.segment_index ?? index) + 1} · Channel{" "}
-									{fragment.channel_id ?? "?"} ·{" "}
-									{formatDuration(fragment.start_ms / 1_000)} –{" "}
-									{formatDuration(fragment.end_ms / 1_000)}
-								</Typography>
-								<Typography variant="caption" color="text.secondary">
-									{fragment.file_name ?? `File ${fragment.audio_file_id}`}
-								</Typography>
-							</Box>
-						</Button>
-					))}
-				</Stack>
-				{effectiveChannelId && (
-					<Alert severity="info" sx={{ mt: 1.5 }}>
-						Only Channel {effectiveChannelId} plays. Other channels stay muted
-						while timeline offsets remain unchanged. Downloads and clips still
-						use full session.
-					</Alert>
-				)}
+							Recording {formatDuration(displayedPositionMs / 1_000)} /{" "}
+							{formatDuration(durationSeconds)}
+						</Typography>
+						<Typography
+							variant="body2"
+							color="text.secondary"
+							sx={{ fontVariantNumeric: "tabular-nums" }}
+						>
+							Real time{" "}
+							{new Date(
+								manifest.started_at_ms + displayedPositionMs,
+							).toLocaleString()}
+						</Typography>
+					</Stack>
+				</TimelineRow>
+
+				<AudioEventTimeline
+					events={manifest.events}
+					durationMs={manifest.duration_ms}
+					positionMs={displayedPositionMs}
+					startedAtMs={manifest.started_at_ms}
+					onSeek={seek}
+				/>
 			</Paper>
-
-			<SessionWaveform
-				key={props.sessionId}
-				sessionId={props.sessionId}
-				positionMs={displayedPositionMs}
-				durationMs={manifest.duration_ms}
-				onSeek={seek}
-			/>
-
-			<Slider
-				aria-label="Logical playback position"
-				min={0}
-				max={Math.max(0.001, durationSeconds)}
-				step={0.01}
-				value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
-				onChange={(_event, value) => setSeekPreviewMs(Number(value) * 1_000)}
-				onChangeCommitted={(_event, value) => {
-					const nextPositionMs = Number(value) * 1_000;
-					setSeekPreviewMs(null);
-					seek(nextPositionMs);
-				}}
-				valueLabelDisplay="auto"
-				valueLabelFormat={formatDuration}
-				sx={{
-					"& .MuiSlider-thumb, & .MuiSlider-track": {
-						transition: "none",
-					},
-				}}
-			/>
-			<Stack
-				direction={{ xs: "column", sm: "row" }}
-				justifyContent="space-between"
-				spacing={0.5}
-				sx={{ mt: -1, mb: 1 }}
-			>
-				<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-					Recording {formatDuration(displayedPositionMs / 1_000)} /{" "}
-					{formatDuration(durationSeconds)}
-				</Typography>
-				<Typography
-					variant="body2"
-					color="text.secondary"
-					sx={{ fontVariantNumeric: "tabular-nums" }}
-				>
-					Real time{" "}
-					{new Date(
-						manifest.started_at_ms + displayedPositionMs,
-					).toLocaleString()}
-				</Typography>
-			</Stack>
-			<AudioEventTimeline
-				events={manifest.events}
-				durationMs={manifest.duration_ms}
-				positionMs={displayedPositionMs}
-				startedAtMs={manifest.started_at_ms}
-				onSeek={seek}
-			/>
 
 			<Stack
 				direction={{ xs: "column", md: "row" }}
@@ -827,6 +766,116 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					</Alert>
 				)}
 			</Paper>
+
+			<Accordion variant="outlined" disableGutters sx={{ my: 2 }}>
+				<AccordionSummary
+					expandIcon={<ExpandMoreIcon />}
+					aria-controls={`session-${props.sessionId}-physical-content`}
+					id={`session-${props.sessionId}-physical-header`}
+				>
+					<Stack
+						direction="row"
+						spacing={1}
+						alignItems="center"
+						flexWrap="wrap"
+						useFlexGap
+					>
+						<Typography>Physical recordings</Typography>
+						<Chip
+							size="small"
+							variant="outlined"
+							label={`${displayedFragments.length} ${
+								displayedFragments.length === 1 ? "file" : "files"
+							}`}
+						/>
+						{effectiveChannelId && (
+							<Chip
+								size="small"
+								color="primary"
+								label={`Channel ${effectiveChannelId} only`}
+							/>
+						)}
+					</Stack>
+				</AccordionSummary>
+				<AccordionDetails id={`session-${props.sessionId}-physical-content`}>
+					<Stack
+						direction={{ xs: "column", md: "row" }}
+						spacing={2}
+						justifyContent="space-between"
+						alignItems={{ xs: "stretch", md: "flex-start" }}
+					>
+						<Typography variant="body2" color="text.secondary">
+							Session combines channel-bound files into one timestamp-aligned
+							timeline.
+						</Typography>
+						{channelIds.length > 1 && (
+							<FormControl size="small" sx={{ minWidth: 260 }}>
+								<InputLabel id={`session-${props.sessionId}-channel-label`}>
+									Playback channel
+								</InputLabel>
+								<Select
+									labelId={`session-${props.sessionId}-channel-label`}
+									label="Playback channel"
+									value={effectiveChannelId ?? ""}
+									onChange={(event) =>
+										selectPlaybackChannel(event.target.value || null)
+									}
+								>
+									<MenuItem value="">All channels</MenuItem>
+									{channelIds.map((channelId) => {
+										const count = physicalFragments.filter(
+											(fragment) => fragment.channel_id === channelId,
+										).length;
+										return (
+											<MenuItem key={channelId} value={channelId}>
+												Channel {channelId} · {count}{" "}
+												{count === 1 ? "file" : "files"}
+											</MenuItem>
+										);
+									})}
+								</Select>
+							</FormControl>
+						)}
+					</Stack>
+					<Stack spacing={0.75} sx={{ mt: 1.5 }}>
+						{displayedFragments.map((fragment, index) => (
+							<Button
+								key={
+									fragment.audio_file_id ??
+									`${fragment.start_ms}-${fragment.end_ms}`
+								}
+								variant="text"
+								onClick={() => seek(fragment.start_ms)}
+								sx={{
+									justifyContent: "flex-start",
+									textAlign: "left",
+									textTransform: "none",
+									px: 1,
+								}}
+							>
+								<Box>
+									<Typography variant="body2">
+										Fragment {(fragment.segment_index ?? index) + 1} · Channel{" "}
+										{fragment.channel_id ?? "?"} ·{" "}
+										{formatDuration(fragment.start_ms / 1_000)} –{" "}
+										{formatDuration(fragment.end_ms / 1_000)}
+									</Typography>
+									<Typography variant="caption" color="text.secondary">
+										{fragment.file_name ?? `File ${fragment.audio_file_id}`}
+									</Typography>
+								</Box>
+							</Button>
+						))}
+					</Stack>
+					{effectiveChannelId && (
+						<Alert severity="info" sx={{ mt: 1.5 }}>
+							Only Channel {effectiveChannelId} plays. Other channels stay muted
+							while timeline offsets remain unchanged. Downloads and clips still
+							use full session.
+						</Alert>
+					)}
+				</AccordionDetails>
+			</Accordion>
 
 			{hasChannelJourney && (
 				<Paper sx={{ p: 2 }}>

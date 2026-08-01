@@ -8,7 +8,10 @@ import {
 	useRebuildSessionWaveformMutation,
 } from "../../app/apiSlice";
 import { drawSessionWaveform } from "./sessionWaveformCanvas";
+import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
 import { decodeWaveformPeaks } from "./waveformPeaks";
+
+const WAVEFORM_HEIGHT_PX = 132;
 
 export function SessionWaveform(props: {
 	sessionId: string;
@@ -93,8 +96,7 @@ export function SessionWaveform(props: {
 		<Box
 			sx={{
 				position: "relative",
-				my: 2,
-				height: 140,
+				height: WAVEFORM_HEIGHT_PX,
 				borderRadius: 1,
 				overflow: "hidden",
 				bgcolor: "rgba(168, 85, 247, 0.18)",
@@ -163,32 +165,22 @@ export function SessionWaveform(props: {
 				}}
 				style={{
 					width: "100%",
-					height: 140,
+					height: WAVEFORM_HEIGHT_PX,
 					display: "block",
 					cursor: "pointer",
-					borderRadius: 6,
 				}}
 			/>
+			<TimelineGrid />
 			<Button
 				size="small"
 				variant="contained"
 				onClick={() => void startRebuild()}
 				disabled={buildInProgress}
-				sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
+				sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 4 }}
 			>
 				{data?.data ? "Rebuild waveform" : "Build waveform"}
 			</Button>
-			<Box
-				sx={{
-					position: "absolute",
-					top: 0,
-					bottom: 0,
-					left: `${playhead}%`,
-					width: 2,
-					bgcolor: "white",
-					pointerEvents: "none",
-				}}
-			/>
+			<TimelinePlayhead percent={playhead} />
 		</Box>
 	);
 }

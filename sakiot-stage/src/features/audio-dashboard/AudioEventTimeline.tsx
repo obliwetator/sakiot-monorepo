@@ -13,11 +13,23 @@ import {
 	type TimelineLane,
 	type TimelinePointCluster,
 } from "./eventTimelineModel";
+import {
+	axisLabelTransform,
+	gridLineOffset,
+	TIMELINE_AXIS_FRACTIONS,
+	TIMELINE_GRID_COLOR,
+	TIMELINE_GUTTER_WIDTH,
+	TimelineGrid,
+	TimelinePlayhead,
+	TimelineRow,
+} from "./timelineLayout";
 
 const TRACK_HEIGHT_PX = 18;
-const LANE_PADDING_PX = 5;
-const MIN_LANE_HEIGHT_PX = 28;
+const LANE_PADDING_PX = 6;
+const MIN_LANE_HEIGHT_PX = 30;
 const CLUSTER_DISTANCE_PX = 14;
+const AXIS_TICK_HEIGHT_PX = 4;
+const LANE_RADIUS_PX = 4;
 
 function laneHeight(lane: TimelineLane): number {
 	return Math.max(
@@ -289,32 +301,33 @@ export function AudioEventTimeline(props: {
 		<Box
 			component="section"
 			aria-label="Recording event timeline"
-			sx={{ mt: 1, mb: 1.5 }}
+			sx={{ minWidth: 0 }}
 		>
-			<Box
-				sx={{
-					display: "flex",
-					alignItems: "baseline",
-					justifyContent: "space-between",
-					gap: 1,
-					mb: 0.5,
-				}}
-			>
-				<Typography variant="caption" fontWeight={700}>
-					Event timeline
-				</Typography>
-				<Typography variant="caption" color="text.secondary">
-					{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
-					{intervalCount > 0
-						? ` · ${intervalCount} state period${intervalCount === 1 ? "" : "s"}`
-						: ""}
-				</Typography>
-			</Box>
+			<TimelineRow sx={{ mb: 0.5 }}>
+				<Box
+					sx={{
+						display: "flex",
+						alignItems: "baseline",
+						justifyContent: "space-between",
+						gap: 1,
+					}}
+				>
+					<Typography variant="caption" fontWeight={700}>
+						Event timeline
+					</Typography>
+					<Typography variant="caption" color="text.secondary">
+						{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
+						{intervalCount > 0
+							? ` · ${intervalCount} state period${intervalCount === 1 ? "" : "s"}`
+							: ""}
+					</Typography>
+				</Box>
+			</TimelineRow>
 
 			<Box sx={{ display: "flex", minWidth: 0 }}>
 				<Box
 					aria-hidden="true"
-					sx={{ width: { xs: 68, sm: 92 }, flex: "0 0 auto" }}
+					sx={{ width: TIMELINE_GUTTER_WIDTH, flex: "0 0 auto" }}
 				>
 					{model.lanes.map((lane) => (
 						<Box
@@ -323,9 +336,9 @@ export function AudioEventTimeline(props: {
 								height: laneHeight(lane),
 								display: "flex",
 								alignItems: "center",
-								pr: 1,
-								borderBottom: "1px solid",
-								borderColor: "divider",
+								justifyContent: "flex-end",
+								pr: 1.5,
+								minWidth: 0,
 							}}
 						>
 							<Typography
@@ -346,12 +359,12 @@ export function AudioEventTimeline(props: {
 						position: "relative",
 						flex: 1,
 						minWidth: 0,
-						borderLeft: "1px solid",
-						borderColor: "divider",
 					}}
 				>
 					{model.lanes.map((lane, laneIndex) => {
 						const height = laneHeight(lane);
+						const isFirstLane = laneIndex === 0;
+						const isLastLane = laneIndex === model.lanes.length - 1;
 						return (
 							<Box
 								key={lane.id}
@@ -359,10 +372,16 @@ export function AudioEventTimeline(props: {
 									position: "relative",
 									height,
 									bgcolor:
-										laneIndex % 2 === 0 ? "action.hover" : "background.paper",
-									borderBottom: "1px solid",
-									borderColor: "divider",
-									overflow: "hidden",
+										laneIndex % 2 === 0
+											? "rgba(148, 163, 184, 0.11)"
+											: "rgba(148, 163, 184, 0.04)",
+									boxShadow: isLastLane
+										? "none"
+										: "inset 0 -1px 0 rgba(148, 163, 184, 0.14)",
+									borderTopLeftRadius: isFirstLane ? LANE_RADIUS_PX : 0,
+									borderTopRightRadius: isFirstLane ? LANE_RADIUS_PX : 0,
+									borderBottomLeftRadius: isLastLane ? LANE_RADIUS_PX : 0,
+									borderBottomRightRadius: isLastLane ? LANE_RADIUS_PX : 0,
 								}}
 							>
 								{lane.intervals.map((interval) => {
@@ -404,20 +423,29 @@ export function AudioEventTimeline(props: {
 													top:
 														LANE_PADDING_PX + interval.track * TRACK_HEIGHT_PX,
 													width: `max(3px, ${width}%)`,
-													height: TRACK_HEIGHT_PX - 4,
+													height: TRACK_HEIGHT_PX - 6,
 													p: 0,
-													px: widthPx >= 60 ? 0.5 : 0,
+													px: widthPx >= 60 ? 0.75 : 0,
 													overflow: "hidden",
-													borderTop: "1px solid rgba(255,255,255,0.7)",
-													borderBottom: "1px solid rgba(15,23,42,0.45)",
-													borderLeft: interval.startsAtBoundary
-														? "none"
-														: "2px solid rgba(255,255,255,0.9)",
-													borderRight: interval.endsAtBoundary
-														? "2px dashed rgba(255,255,255,0.9)"
-														: "2px solid rgba(255,255,255,0.9)",
-													borderRadius: 0.5,
+													border: 0,
+													// Rounded ends mean the state starts and stops
+													// inside the recording; square ends mean it runs
+													// past that edge of the timeline.
+													borderTopLeftRadius: interval.startsAtBoundary
+														? 0
+														: 999,
+													borderBottomLeftRadius: interval.startsAtBoundary
+														? 0
+														: 999,
+													borderTopRightRadius: interval.endsAtBoundary
+														? 0
+														: 999,
+													borderBottomRightRadius: interval.endsAtBoundary
+														? 0
+														: 999,
 													bgcolor: interval.color,
+													boxShadow:
+														"inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(2,6,23,0.5)",
 													color: "#0f172a",
 													cursor: "pointer",
 													fontSize: 10,
@@ -441,7 +469,7 @@ export function AudioEventTimeline(props: {
 
 								{(clustersByLane.get(lane.id) ?? []).map((cluster) => {
 									const clustered = cluster.points.length > 1;
-									const markerSize = clustered ? 20 : 12;
+									const markerSize = clustered ? 16 : 11;
 									return (
 										<Tooltip
 											key={cluster.id}
@@ -473,7 +501,9 @@ export function AudioEventTimeline(props: {
 												}}
 												sx={{
 													position: "absolute",
-													left: `clamp(${markerSize / 2}px, ${percent(cluster.offsetMs, props.durationMs)}%, calc(100% - ${markerSize / 2}px))`,
+													// No clamping: the marker must sit exactly above
+													// the same instant on the waveform and scrubber.
+													left: `${percent(cluster.offsetMs, props.durationMs)}%`,
 													top:
 														LANE_PADDING_PX +
 														cluster.track * TRACK_HEIGHT_PX +
@@ -490,11 +520,11 @@ export function AudioEventTimeline(props: {
 													bgcolor: clusterColor(cluster),
 													color: "white",
 													cursor: "pointer",
-													fontSize: 10,
+													fontSize: 9,
 													fontWeight: 800,
 													lineHeight: `${markerSize}px`,
 													boxShadow:
-														"0 0 0 1.5px rgba(255,255,255,0.9), 0 1px 3px rgba(0,0,0,0.65)",
+														"0 0 0 1.25px rgba(255,255,255,0.85), 0 1px 3px rgba(2,6,23,0.7)",
 													zIndex: 3,
 													"&:hover, &:focus-visible": {
 														transform: "translate(-50%, -50%) scale(1.2)",
@@ -511,47 +541,61 @@ export function AudioEventTimeline(props: {
 						);
 					})}
 
+					{/* After the lanes so the guides sit above their fills, but below
+					    the markers, which own the foreground. */}
+					<TimelineGrid />
+
 					{playheadPercent !== null && (
-						<Box
-							aria-hidden="true"
-							sx={{
-								position: "absolute",
-								top: 0,
-								bottom: 0,
-								left: `${playheadPercent}%`,
-								width: 2,
-								transform: "translateX(-1px)",
-								bgcolor: "primary.light",
-								boxShadow: "0 0 0 1px rgba(15,23,42,0.5)",
-								pointerEvents: "none",
-								zIndex: 6,
-							}}
-						/>
+						<TimelinePlayhead percent={playheadPercent} />
 					)}
 				</Box>
 			</Box>
 
-			<Box sx={{ display: "flex", mt: 0.25 }}>
-				<Box sx={{ width: { xs: 68, sm: 92 }, flex: "0 0 auto" }} />
-				<Box
-					sx={{
-						flex: 1,
-						display: "flex",
-						justifyContent: "space-between",
-						fontVariantNumeric: "tabular-nums",
-					}}
-				>
-					<Typography variant="caption" color="text.secondary">
-						{formatTimelineOffset(0)}
-					</Typography>
-					<Typography variant="caption" color="text.secondary">
-						{formatTimelineOffset(props.durationMs / 2)}
-					</Typography>
-					<Typography variant="caption" color="text.secondary">
-						{formatTimelineOffset(props.durationMs)}
-					</Typography>
+			<TimelineRow sx={{ mt: 0.5 }} labelAlign="flex-start">
+				<Box sx={{ position: "relative", height: 18 }}>
+					{TIMELINE_AXIS_FRACTIONS.map((fraction, index) => (
+						<Box
+							key={fraction}
+							sx={{
+								position: "absolute",
+								top: 0,
+								left: `${fraction * 100}%`,
+								// Quarter marks crowd the narrow layout; the ends and the
+								// midpoint stay readable at every width.
+								display:
+									index % 2 === 1 ? { xs: "none", sm: "block" } : "block",
+							}}
+						>
+							<Box
+								aria-hidden="true"
+								sx={{
+									position: "absolute",
+									top: 0,
+									left: 0,
+									ml: gridLineOffset(fraction),
+									width: "1px",
+									height: AXIS_TICK_HEIGHT_PX,
+									bgcolor: TIMELINE_GRID_COLOR,
+								}}
+							/>
+							<Typography
+								variant="caption"
+								color="text.secondary"
+								sx={{
+									display: "block",
+									mt: `${AXIS_TICK_HEIGHT_PX}px`,
+									transform: axisLabelTransform(fraction),
+									whiteSpace: "nowrap",
+									fontVariantNumeric: "tabular-nums",
+									lineHeight: 1.2,
+								}}
+							>
+								{formatTimelineOffset(fraction * props.durationMs)}
+							</Typography>
+						</Box>
+					))}
 				</Box>
-			</Box>
+			</TimelineRow>
 
 			<ClusterPicker
 				anchor={picker?.anchor ?? null}
