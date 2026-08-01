@@ -674,10 +674,10 @@ report_destination() { # report_destination <tmpdir> <base-url>
         [ -n "$name" ] || continue
         printf '        %s/dashboard/%s/audio/%s/%s/%s/%s\n' \
             "$base" "$guild" "$channel" "$year" "$month" "$name"
-        [ -n "$session" ] && {
+        if [ -n "$session" ]; then
             sessions+="$guild/$session"$'\n'
             printf '%s\t%s\n' "$name" "$session" >> "$tmp/dest-sessions.tsv"
-        }
+        fi
     done < <(dest_tsv "SELECT guild_id, channel_id, year, month, file_name,
                              COALESCE(recording_session_id::text, '')
                         FROM audio_files
@@ -696,7 +696,7 @@ report_destination() { # report_destination <tmpdir> <base-url>
         "$tmp/source-sessions.tsv" "$tmp/dest-sessions.tsv" | sort -u)
     [ -n "$remapped" ] || return 0
     while IFS=$'\t' read -r from to; do
-        [ -n "$to" ] && log "session $from was already taken there; imported as $to"
+        if [ -n "$to" ]; then log "session $from was already taken there; imported as $to"; fi
     done <<< "$remapped"
 }
 
@@ -1034,7 +1034,7 @@ verify_staging_visibility() { # verify_staging_visibility <tmpdir> <dest data di
         log "    ok    $(wc -l < "$tmp/new-files.list") media file(s) in place under $dest"
     else
         while IFS= read -r rel; do
-            [ -n "$rel" ] && log "    FAIL  not on disk: $rel"
+            if [ -n "$rel" ]; then log "    FAIL  not on disk: $rel"; fi
         done <<< "$missing"
     fi
 
@@ -1333,8 +1333,10 @@ cmd_fetch_fixtures() (
     rsync -a --info=stats1 --ignore-missing-args \
         --files-from="$tmp/files.list" "$src" "$tmp/media/"
 
+    # `if`, not `&&`: a false `&&` makes the loop exit non-zero, and with
+    # `set -euo pipefail` that silently ends the run mid-fetch.
     while IFS= read -r f; do
-        [ -f "$tmp/media/$f" ] && printf '%s\n' "$f"
+        if [ -f "$tmp/media/$f" ]; then printf '%s\n' "$f"; fi
     done < "$tmp/files.list" | sort -u > "$tmp/new-files.list"
 
     if [ "$DEST" = staging ]; then
