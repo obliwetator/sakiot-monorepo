@@ -21,6 +21,10 @@ use super::live::LiveContainer;
 use super::paths::{clips_path, recording_path, waveform_path};
 use super::types::{StartEnd, WaveformProgressContainer};
 
+/// Waveform points per second of session audio. Four keeps a 20 second clip
+/// window at ~80 points even before the cap applies.
+const SESSION_PEAKS_PER_SECOND: f64 = 4.0;
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionAccess {
     pub session_id: i64,
@@ -1054,7 +1058,10 @@ pub async fn rebuild_session_waveform(
             composite.to_string_lossy().into_owned(),
             output.to_string_lossy().into_owned(),
             cache_key_clone.clone(),
-            None,
+            // Sessions run for hours and the dashboard zooms into them to cut
+            // clips, so they are sampled by duration rather than to a fixed
+            // 2500 points that would smear a six hour recording into a blob.
+            crate::waveform::PeakDensity::PerSecond(SESSION_PEAKS_PER_SECOND),
             progress_clone.clone(),
             None,
             Some((85, 99)),

@@ -2,14 +2,10 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-	useGetSessionWaveformQuery,
-	useRebuildSessionWaveformMutation,
-} from "../../app/apiSlice";
-import { drawSessionWaveform } from "./sessionWaveformCanvas";
+import { useCallback, useEffect, useState } from "react";
+import { useRebuildSessionWaveformMutation } from "../../app/apiSlice";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
-import { decodeWaveformPeaks } from "./waveformPeaks";
+import { useSessionWaveformPeaks, WaveformCanvas } from "./WaveformCanvas";
 
 const WAVEFORM_HEIGHT_PX = 132;
 
@@ -19,14 +15,10 @@ export function SessionWaveform(props: {
 	durationMs: number;
 	onSeek: (positionMs: number) => void;
 }) {
-	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [rebuilding, setRebuilding] = useState(false);
 	const [rebuildProgress, setRebuildProgress] = useState(0);
-	const {
-		currentData: data,
-		isError,
-		refetch,
-	} = useGetSessionWaveformQuery(props.sessionId);
+	const { query, peaks } = useSessionWaveformPeaks(props.sessionId);
+	const { currentData: data, isError, refetch } = query;
 	const [rebuildWaveform, rebuildState] = useRebuildSessionWaveformMutation();
 
 	const pollRebuild = useCallback(async () => {
@@ -60,29 +52,6 @@ export function SessionWaveform(props: {
 			setRebuilding(false);
 		}
 	};
-
-	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
-		const peaks = data?.data ? decodeWaveformPeaks(data.data) : [];
-
-		const draw = () => {
-			const ratio = window.devicePixelRatio || 1;
-			const width = canvas.clientWidth;
-			const height = canvas.clientHeight;
-			canvas.width = Math.max(1, Math.floor(width * ratio));
-			canvas.height = Math.max(1, Math.floor(height * ratio));
-			const context = canvas.getContext("2d");
-			if (!context) return;
-			context.scale(ratio, ratio);
-			drawSessionWaveform(context, width, height, peaks);
-		};
-
-		draw();
-		const observer = new ResizeObserver(draw);
-		observer.observe(canvas);
-		return () => observer.disconnect();
-	}, [data?.data]);
 
 	const playhead =
 		props.durationMs > 0
@@ -154,21 +123,11 @@ export function SessionWaveform(props: {
 					</Typography>
 				</Box>
 			)}
-			<canvas
-				ref={canvasRef}
-				aria-label="Combined logical recording waveform"
-				onClick={(event) => {
-					const bounds = event.currentTarget.getBoundingClientRect();
-					const fraction =
-						(event.clientX - bounds.left) / Math.max(1, bounds.width);
-					props.onSeek(fraction * props.durationMs);
-				}}
-				style={{
-					width: "100%",
-					height: WAVEFORM_HEIGHT_PX,
-					display: "block",
-					cursor: "pointer",
-				}}
+			<WaveformCanvas
+				peaks={peaks}
+				height={WAVEFORM_HEIGHT_PX}
+				label="Combined logical recording waveform"
+				onSeekFraction={(fraction) => props.onSeek(fraction * props.durationMs)}
 			/>
 			<TimelineGrid />
 			<Button

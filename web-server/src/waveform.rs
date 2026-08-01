@@ -7,13 +7,42 @@ use uuid::Uuid;
 
 use crate::audio::WaveformProgressContainer;
 
-/// Generates an audiowaveform track.dat file for a given audio file with a specific target number of points (pixels).
+const DEFAULT_TARGET_POINTS: f64 = 2500.0;
+const MIN_TARGET_POINTS: f64 = 2500.0;
+/// Above this the payload costs more than the extra detail is worth: 60k points
+/// is ~120 KB of 8-bit min/max pairs before base64.
+const MAX_TARGET_POINTS: f64 = 60_000.0;
+
+/// How finely a waveform is sampled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PeakDensity {
+    /// A fixed number of points across the file, however long it is.
+    Fixed(f64),
+    /// Points per second, so a long recording still resolves detail when the
+    /// dashboard zooms into it. Clamped at both ends.
+    PerSecond(f64),
+}
+
+impl PeakDensity {
+    pub const DEFAULT: Self = Self::Fixed(DEFAULT_TARGET_POINTS);
+
+    fn target_points(self, duration_seconds: f64) -> f64 {
+        match self {
+            Self::Fixed(points) => points,
+            Self::PerSecond(rate) => {
+                (duration_seconds * rate).clamp(MIN_TARGET_POINTS, MAX_TARGET_POINTS)
+            }
+        }
+    }
+}
+
+/// Generates an audiowaveform track.dat file for a given audio file at the requested peak density.
 /// Updates progress in a shared HashMap container.
 pub async fn generate_peaks_background(
     input_file: String,
     output_file: String,
     file_name: String,
-    target_points: Option<f64>,
+    density: PeakDensity,
     progress_map: web::Data<WaveformProgressContainer>,
     completed_progress: Option<i16>,
     progress_range: Option<(i16, i16)>,
@@ -61,7 +90,7 @@ pub async fn generate_peaks_background(
     }
 
     // 2. Calculate the zoom level
-    let zoom = ((duration * sample_rate) / target_points.unwrap_or(2500.0)).floor() as u64;
+    let zoom = ((duration * sample_rate) / density.target_points(duration)).floor() as u64;
     let zoom_val = std::cmp::max(1, zoom).to_string();
 
     // 3. Generate peaks using audiowaveform with streaming output
@@ -147,7 +176,7 @@ fn scale_progress(progress: i16, range: Option<(i16, i16)>) -> i16 {
 
 #[cfg(test)]
 mod tests {
-    use super::scale_progress;
+    use super::{PeakDensity, scale_progress};
 
     #[test]
     fn scales_peak_generation_into_reserved_progress_range() {
@@ -155,5 +184,21 @@ mod tests {
         assert_eq!(scale_progress(50, Some((85, 99))), 92);
         assert_eq!(scale_progress(100, Some((85, 99))), 99);
         assert_eq!(scale_progress(100, None), 99);
+    }
+
+    #[test]
+    fn fixed_density_ignores_duration() {
+        assert_eq!(PeakDensity::DEFAULT.target_points(30.0), 2500.0);
+        assert_eq!(PeakDensity::DEFAULT.target_points(22_484.0), 2500.0);
+    }
+
+    #[test]
+    fn per_second_density_scales_between_its_bounds() {
+        let density = PeakDensity::PerSecond(4.0);
+        // A short recording keeps the old resolution.
+        assert_eq!(density.target_points(60.0), 2500.0);
+        assert_eq!(density.target_points(1_000.0), 4_000.0);
+        // A six hour session caps out at ~0.37s per point.
+        assert_eq!(density.target_points(22_484.0), 60_000.0);
     }
 }

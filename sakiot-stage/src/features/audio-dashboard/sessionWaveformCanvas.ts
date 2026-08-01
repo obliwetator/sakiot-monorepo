@@ -1,3 +1,5 @@
+import type { WaveformEnvelope } from "./waveformPeaks";
+
 export interface WaveformCanvasContext {
 	fillStyle: string | CanvasGradient | CanvasPattern;
 	strokeStyle: string | CanvasGradient | CanvasPattern;
@@ -10,14 +12,24 @@ export interface WaveformCanvasContext {
 	stroke: () => void;
 }
 
+/** Fractions of the recording to draw; defaults to all of it. */
+export interface WaveformWindow {
+	startFraction: number;
+	endFraction: number;
+}
+
+const FULL_WINDOW: WaveformWindow = { startFraction: 0, endFraction: 1 };
+
 export function drawSessionWaveform(
 	context: WaveformCanvasContext,
 	width: number,
 	height: number,
-	peaks: readonly number[],
+	peaks: WaveformEnvelope,
+	window: WaveformWindow = FULL_WINDOW,
 ) {
 	context.clearRect(0, 0, width, height);
-	if (peaks.length === 0) return;
+	const pointCount = Math.min(peaks.min.length, peaks.max.length);
+	if (pointCount === 0 || width <= 0) return;
 
 	context.fillStyle = "rgba(168, 85, 247, 0.18)";
 	context.fillRect(0, 0, width, height);
@@ -25,14 +37,41 @@ export function drawSessionWaveform(
 	context.strokeStyle = "#d946ef";
 	context.lineWidth = 1;
 	context.beginPath();
+
+	const from = clampFraction(window.startFraction) * pointCount;
+	const to = clampFraction(window.endFraction) * pointCount;
+	const span = Math.max(to - from, Number.EPSILON);
+
 	for (let x = 0; x < width; x += 1) {
-		const index = Math.min(
-			peaks.length - 1,
-			Math.floor((x / Math.max(1, width - 1)) * peaks.length),
+		// Every point falling in this column contributes, so raising the peak
+		// resolution sharpens the envelope instead of aliasing it into noise.
+		const first = Math.floor(from + (x / width) * span);
+		const last = Math.max(
+			first + 1,
+			Math.ceil(from + ((x + 1) / width) * span),
 		);
-		const amplitude = Math.abs(peaks[index] ?? 0) * center;
-		context.moveTo(x, center - amplitude);
-		context.lineTo(x, center + amplitude);
+		let min = 0;
+		let max = 0;
+		for (
+			let point = Math.max(0, first);
+			point < Math.min(pointCount, last);
+			point += 1
+		) {
+			min = Math.min(min, peaks.min[point]);
+			max = Math.max(max, peaks.max[point]);
+		}
+		context.moveTo(x, center - clampAmplitude(max) * center);
+		context.lineTo(x, center - clampAmplitude(min) * center);
 	}
 	context.stroke();
+}
+
+function clampFraction(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return Math.min(1, Math.max(0, value));
+}
+
+function clampAmplitude(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return Math.min(1, Math.max(-1, value));
 }

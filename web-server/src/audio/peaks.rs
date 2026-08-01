@@ -8,7 +8,7 @@ use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
 use crate::permissions::require_channel_access;
-use crate::waveform::generate_peaks_background;
+use crate::waveform::{PeakDensity, generate_peaks_background};
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path, waveform_path};
 use super::serve::AudioQuery;
@@ -56,7 +56,7 @@ async fn silence_free_waveform(
             input_file,
             output,
             cache_key,
-            None,
+            PeakDensity::DEFAULT,
             progress_map_clone,
             None,
             None,
@@ -204,7 +204,7 @@ pub async fn get_waveform_data(
             file_path,
             output,
             file_name.clone(),
-            None,
+            PeakDensity::DEFAULT,
             progress_map_clone.clone(),
             Some(FINAL_WAVEFORM_WRITTEN),
             None,
@@ -345,7 +345,7 @@ pub async fn get_clip_waveform_data(
             input_file,
             output,
             cache_key,
-            None,
+            PeakDensity::DEFAULT,
             progress_map_clone,
             None,
             None,
