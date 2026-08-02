@@ -223,6 +223,39 @@ export function nudgeEdge(
 	return applyEdge(selection, edge, current + deltaMs, durationMs);
 }
 
+/** Edge the playhead is visually closest to, with the midpoint favouring In. */
+export function nearestSelectionEdge(
+	selection: SessionSelection,
+	positionMs: number,
+): SelectionEdge {
+	return positionMs <= (selection[0] + selection[1]) / 2 ? "start" : "end";
+}
+
+/** Prevents an explicit In/Out action from collapsing or crossing the range. */
+export function canSetSelectionEdge(
+	selection: SessionSelection,
+	edge: SelectionEdge,
+	positionMs: number,
+): boolean {
+	return edge === "start"
+		? positionMs < selection[1]
+		: positionMs > selection[0];
+}
+
+/** Moves whichever edge is closest to the chosen position. */
+export function setNearestSelectionEdge(
+	selection: SessionSelection,
+	positionMs: number,
+	durationMs: number,
+): SessionSelection {
+	return applyEdge(
+		selection,
+		nearestSelectionEdge(selection, positionMs),
+		positionMs,
+		durationMs,
+	);
+}
+
 /** Slides the whole selection, preserving its length at either boundary. */
 export function moveSelection(
 	selection: SessionSelection,

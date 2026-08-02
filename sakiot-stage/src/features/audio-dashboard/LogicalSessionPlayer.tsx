@@ -29,10 +29,16 @@ import { authedFetch } from "../../app/authedFetch";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
 import { ClipRangeEditor } from "./ClipRangeEditor";
-import { applyEdge, type SelectionEdge } from "./clipSelection";
+import {
+	applyEdge,
+	canSetSelectionEdge,
+	nearestSelectionEdge,
+	type SelectionEdge,
+} from "./clipSelection";
 import {
 	isValidClipSelection,
 	reconcileSessionSelection,
+	resetClipSelection,
 	type SelectionManifest,
 	type SessionSelection,
 	selectionAroundStamp,
@@ -170,6 +176,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [playbackRate, setPlaybackRate] = useState(1);
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [selectionHint, setSelectionHint] = useState<string | null>(null);
 	const [clipName, setClipName] = useState("");
 	const [previewing, setPreviewing] = useState(false);
 	const [loopSelection, setLoopSelection] = useState(false);
@@ -208,6 +215,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	useEffect(() => {
 		positionRef.current = positionMs;
 	}, [positionMs]);
+	useEffect(() => {
+		if (!selectionHint) return;
+		const timeout = globalThis.setTimeout(() => setSelectionHint(null), 4_000);
+		return () => globalThis.clearTimeout(timeout);
+	}, [selectionHint]);
 	useEffect(() => {
 		playingRef.current = playing;
 	}, [playing]);
@@ -487,6 +499,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		(nextPositionMs: number) => {
 			// Going somewhere by hand ends the preview rather than letting the bound
 			// yank playback back at the next check.
+			setSelectionHint(null);
 			clearPlaybackBound();
 			seekWithinBound(nextPositionMs);
 		},
@@ -520,11 +533,46 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	}, [clearPlaybackBound, stopSource]);
 
 	const setSelectionEdgeFromPlayhead = useCallback((edge: SelectionEdge) => {
+		const current = selectionRef.current;
+		const positionMs = positionRef.current;
+		if (!canSetSelectionEdge(current, edge, positionMs)) {
+			setSelectionHint(
+				edge === "start"
+					? "The playhead is at or beyond the right edge. Use O or E for that side."
+					: "The playhead is at or before the left edge. Use I or E for that side.",
+			);
+			return;
+		}
 		setSeekPreviewMs(null);
-		setSelection((current) =>
-			applyEdge(current, edge, positionRef.current, durationRef.current),
-		);
+		setSelectionHint(null);
+		const next = applyEdge(current, edge, positionMs, durationRef.current);
+		selectionRef.current = next;
+		setSelection(next);
 	}, []);
+
+	const setNearestEdgeFromPlayhead = useCallback(() => {
+		setSelectionEdgeFromPlayhead(
+			nearestSelectionEdge(selectionRef.current, positionRef.current),
+		);
+	}, [setSelectionEdgeFromPlayhead]);
+
+	const changeSelection = useCallback((next: SessionSelection) => {
+		setSelectionHint(null);
+		selectionRef.current = next;
+		setSelection(next);
+	}, []);
+
+	const resetSelection = useCallback(() => {
+		clearPlaybackBound();
+		setSelectionHint(null);
+		const stampMs =
+			stampClipRequested && deepLinkedPositionMs !== null
+				? deepLinkedPositionMs
+				: undefined;
+		const next = resetClipSelection(durationRef.current, stampMs);
+		selectionRef.current = next;
+		setSelection(next);
+	}, [clearPlaybackBound, deepLinkedPositionMs, stampClipRequested]);
 
 	const togglePreview = useCallback(() => {
 		if (playbackBoundRef.current) {
@@ -582,6 +630,20 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				return;
 			}
 
+			if (event.key === "e" || event.key === "E") {
+				if (event.repeat) return;
+				event.preventDefault();
+				setNearestEdgeFromPlayhead();
+				return;
+			}
+
+			if (event.key === "r" || event.key === "R") {
+				if (event.repeat) return;
+				event.preventDefault();
+				resetSelection();
+				return;
+			}
+
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			event.preventDefault();
 			const distance = stampClipRequested
@@ -600,7 +662,14 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		window.addEventListener("keydown", handlePlaybackShortcut);
 		return () => window.removeEventListener("keydown", handlePlaybackShortcut);
-	}, [seek, setSelectionEdgeFromPlayhead, stampClipRequested, togglePlay]);
+	}, [
+		resetSelection,
+		seek,
+		setNearestEdgeFromPlayhead,
+		setSelectionEdgeFromPlayhead,
+		stampClipRequested,
+		togglePlay,
+	]);
 
 	const downloadRange = async (removeSilence: boolean) => {
 		setActionError(null);
@@ -852,7 +921,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				{stampClipRequested && (
 					<Typography variant="caption" color="text.secondary">
 						Fine seek: Arrow 0.1s · Shift+Arrow 1s · Ctrl/⌘+Arrow 5s · I/O set
-						the clip boundaries.
+						the left/right edges · E sets the nearest edge.
 					</Typography>
 				)}
 
@@ -864,11 +933,14 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					initialFocusMs={
 						stampClipRequested ? (deepLinkedPositionMs ?? undefined) : undefined
 					}
-					onSelectionChange={setSelection}
+					onSelectionChange={changeSelection}
 					positionMs={displayedPositionMs}
 					onSeek={seek}
 					onSeekPreview={setSeekPreviewMs}
 					onSetEdgeFromPlayhead={setSelectionEdgeFromPlayhead}
+					onSetNearestEdgeFromPlayhead={setNearestEdgeFromPlayhead}
+					edgeHint={selectionHint}
+					onReset={resetSelection}
 					onPreview={togglePreview}
 					previewing={previewing}
 					loop={loopSelection}
@@ -883,7 +955,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						step={100}
 						value={selection}
 						onChange={(_event, value) => {
-							if (Array.isArray(value)) setSelection([value[0], value[1]]);
+							if (Array.isArray(value)) changeSelection([value[0], value[1]]);
 						}}
 						valueLabelDisplay="auto"
 						valueLabelFormat={(value) => formatDuration(value / 1_000)}

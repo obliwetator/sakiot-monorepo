@@ -1,5 +1,6 @@
 import LoopIcon from "@mui/icons-material/Loop";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import StopIcon from "@mui/icons-material/Stop";
 import ZoomInIcon from "@mui/icons-material/ZoomIn";
 import ZoomOutIcon from "@mui/icons-material/ZoomOut";
@@ -23,6 +24,7 @@ import {
 	advanceFineDrag,
 	applyEdge,
 	beginFineDrag,
+	canSetSelectionEdge,
 	changedEdge,
 	constrainFineDragToLens,
 	constrainFineDragToWindow,
@@ -30,6 +32,7 @@ import {
 	FINE_DRAG_START_PX,
 	type FineDragState,
 	moveSelection,
+	nearestSelectionEdge,
 	nudgeEdge,
 	panWindowToInclude,
 	precisionLensWindowMs,
@@ -39,6 +42,7 @@ import {
 	type SelectionEdge,
 	selectionFitsWindow,
 	selectionWindowGeometry,
+	setNearestSelectionEdge,
 	shiftWindow,
 	type TimeWindow,
 	ULTRA_FINE_DRAG_START_PX,
@@ -83,11 +87,13 @@ type DragFeedbackKind = DragKind | { type: "playhead" };
 interface DragSession {
 	kind: DragKind;
 	pointerId: number;
+	startX: number;
 	startY: number;
 	plotLeftPx: number;
 	plotWidthPx: number;
 	fine: FineDragState;
 	origin: SessionSelection;
+	moved: boolean;
 }
 
 interface DragFeedback {
@@ -158,6 +164,9 @@ export function ClipRangeEditor(props: {
 	/** Shows a playhead position while scrubbing without reloading audio. */
 	onSeekPreview?: (positionMs: number | null) => void;
 	onSetEdgeFromPlayhead: (edge: SelectionEdge) => void;
+	onSetNearestEdgeFromPlayhead: () => void;
+	edgeHint?: string | null;
+	onReset: () => void;
 	onPreview: () => void;
 	previewing: boolean;
 	loop: boolean;
@@ -311,6 +320,9 @@ export function ClipRangeEditor(props: {
 	const { peaks } = useSessionWaveformPeaks(props.sessionId);
 	const selectionMs = selection[1] - selection[0];
 	const valid = isValidClipSelection(selection);
+	const suggestedEdge = nearestSelectionEdge(selection, props.positionMs);
+	const canSetStart = canSetSelectionEdge(selection, "start", props.positionMs);
+	const canSetEnd = canSetSelectionEdge(selection, "end", props.positionMs);
 	const startFraction = windowFraction(selection[0], view);
 	const endFraction = windowFraction(selection[1], view);
 	const selectionGeometry = selectionWindowGeometry(selection, view);
@@ -423,11 +435,13 @@ export function ClipRangeEditor(props: {
 		dragRef.current = {
 			kind,
 			pointerId: event.pointerId,
+			startX: event.clientX,
 			startY: event.clientY,
 			plotLeftPx: plotBounds?.left ?? 0,
 			plotWidthPx: plotBounds?.width ?? plotWidth,
 			fine: beginFineDrag(event.clientX, anchorMs),
 			origin: selection,
+			moved: false,
 		};
 		setDragFeedback({
 			kind,
@@ -447,6 +461,15 @@ export function ClipRangeEditor(props: {
 	const continueDrag = (event: ReactPointerEvent<HTMLElement>) => {
 		const drag = dragRef.current;
 		if (!drag || drag.pointerId !== event.pointerId || msPerPx <= 0) return;
+		if (
+			drag.kind.type === "band" &&
+			!drag.moved &&
+			Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <
+				VIEW_DRAG_THRESHOLD_PX
+		) {
+			return;
+		}
+		drag.moved = true;
 		const advanced = advanceFineDrag(drag.fine, {
 			xPx: event.clientX,
 			dyPx: event.clientY - drag.startY,
@@ -482,6 +505,38 @@ export function ClipRangeEditor(props: {
 		);
 	};
 
+	const finishDrag = (event: ReactPointerEvent<HTMLElement>) => {
+		const drag = dragRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		event.stopPropagation();
+		const movementPx = Math.hypot(
+			event.clientX - drag.startX,
+			event.clientY - drag.startY,
+		);
+		if (
+			drag.kind.type === "band" &&
+			!drag.moved &&
+			movementPx >= VIEW_DRAG_THRESHOLD_PX
+		) {
+			continueDrag(event);
+		}
+		if (drag.kind.type === "band" && !drag.moved) {
+			const positionMs = timeAtPointer(
+				event.clientX,
+				drag.plotLeftPx,
+				drag.plotWidthPx,
+				view,
+			);
+			endDrag();
+			props.onSeek(positionMs);
+			onSelectionChange(
+				setNearestSelectionEdge(drag.origin, positionMs, durationMs),
+			);
+			return;
+		}
+		endDrag();
+	};
+
 	const onHandleKeyDown = (
 		event: ReactKeyboardEvent<HTMLElement>,
 		edge: SelectionEdge,
@@ -504,7 +559,7 @@ export function ClipRangeEditor(props: {
 		onPointerDown: (event: ReactPointerEvent<HTMLElement>) =>
 			beginDrag(event, kind),
 		onPointerMove: continueDrag,
-		onPointerUp: endDrag,
+		onPointerUp: finishDrag,
 		onPointerCancel: endDrag,
 		onLostPointerCapture: endDrag,
 	});
@@ -975,7 +1030,8 @@ export function ClipRangeEditor(props: {
 							{...dragHandlers({ type: "band" })}
 							role="button"
 							tabIndex={-1}
-							aria-label="Move clip selection"
+							aria-label="Move clip selection; click to set nearest edge"
+							title="Drag to move the selection, or click to set the nearest edge"
 							sx={{
 								position: "absolute",
 								top: 0,
@@ -1033,6 +1089,11 @@ export function ClipRangeEditor(props: {
 									boxShadow: "0 1px 4px rgba(2,6,23,0.7)",
 									cursor: "ew-resize",
 									zIndex: 11,
+									outline:
+										edge === suggestedEdge
+											? "2px solid rgba(125, 211, 252, 0.72)"
+											: "none",
+									outlineOffset: 2,
 									touchAction: "none",
 									display: "grid",
 									placeItems: "center",
@@ -1388,7 +1449,7 @@ export function ClipRangeEditor(props: {
 					/>
 					<Typography variant="caption" color="text.secondary">
 						Pull a handle or playhead upward while dragging for a magnified
-						ruler.
+						ruler. E sets the nearest edge · R resets the selection.
 					</Typography>
 					<Box sx={{ flex: 1 }} />
 					<Tooltip title="Zoom out (ctrl + scroll)">
@@ -1419,20 +1480,36 @@ export function ClipRangeEditor(props: {
 					flexWrap="wrap"
 					useFlexGap
 				>
+					<Tooltip
+						title={`Set the ${suggestedEdge === "start" ? "left" : "right"} edge nearest the playhead (E)`}
+					>
+						<Button
+							size="small"
+							variant="contained"
+							onClick={props.onSetNearestEdgeFromPlayhead}
+						>
+							Set nearest: {suggestedEdge === "start" ? "left" : "right"} (E)
+						</Button>
+					</Tooltip>
 					{(["start", "end"] as const).map((edge) => (
 						<Stack key={edge} direction="row" spacing={0.5} alignItems="center">
 							<Tooltip
-								title={`Set ${edge === "start" ? "in" : "out"} point to the playhead (${
-									edge === "start" ? "I" : "O"
-								})`}
+								title={
+									(edge === "start" ? canSetStart : canSetEnd)
+										? `Set the ${edge === "start" ? "left" : "right"} edge to the playhead (${edge === "start" ? "I" : "O"})`
+										: `Move the playhead ${edge === "start" ? "left of the right" : "right of the left"} edge first`
+								}
 							>
-								<Button
-									size="small"
-									variant="outlined"
-									onClick={() => props.onSetEdgeFromPlayhead(edge)}
-								>
-									Set {edge === "start" ? "in" : "out"}
-								</Button>
+								<span>
+									<Button
+										size="small"
+										variant="outlined"
+										disabled={edge === "start" ? !canSetStart : !canSetEnd}
+										onClick={() => props.onSetEdgeFromPlayhead(edge)}
+									>
+										Set {edge === "start" ? "left edge (I)" : "right edge (O)"}
+									</Button>
+								</span>
 							</Tooltip>
 							{[-1_000, -100, 100, 1_000].map((deltaMs) => (
 								<Button
@@ -1452,7 +1529,26 @@ export function ClipRangeEditor(props: {
 							))}
 						</Stack>
 					))}
+					{props.edgeHint && (
+						<Typography
+							variant="caption"
+							color="warning.main"
+							sx={{ flexBasis: "100%" }}
+						>
+							{props.edgeHint}
+						</Typography>
+					)}
 					<Box sx={{ flex: 1 }} />
+					<Tooltip title="Reset clip selection (R)">
+						<Button
+							size="small"
+							variant="outlined"
+							startIcon={<RestartAltIcon />}
+							onClick={props.onReset}
+						>
+							Reset
+						</Button>
+					</Tooltip>
 					<Button
 						size="small"
 						variant="contained"

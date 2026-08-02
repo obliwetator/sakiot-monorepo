@@ -3,11 +3,13 @@ import {
 	advanceFineDrag,
 	applyEdge,
 	beginFineDrag,
+	canSetSelectionEdge,
 	changedEdge,
 	constrainFineDragToLens,
 	constrainFineDragToWindow,
 	fineDragMultiplier,
 	moveSelection,
+	nearestSelectionEdge,
 	nudgeEdge,
 	panWindowToInclude,
 	precisionLensWindowMs,
@@ -16,6 +18,7 @@ import {
 	rollingRulerWindow,
 	selectionFitsWindow,
 	selectionWindowGeometry,
+	setNearestSelectionEdge,
 	shiftWindow,
 	windowAround,
 	windowCenter,
@@ -289,6 +292,33 @@ describe("applyEdge", () => {
 	test("nudges by a delta", () => {
 		expect(nudgeEdge([10_000, 20_000], "end", -100, SESSION_MS)).toEqual([
 			10_000, 19_900,
+		]);
+	});
+});
+
+describe("direction-aware edge controls", () => {
+	const selection: [number, number] = [10_000, 20_000];
+
+	test("chooses the nearest edge inside and outside the selection", () => {
+		expect(nearestSelectionEdge(selection, 5_000)).toBe("start");
+		expect(nearestSelectionEdge(selection, 12_000)).toBe("start");
+		expect(nearestSelectionEdge(selection, 18_000)).toBe("end");
+		expect(nearestSelectionEdge(selection, 25_000)).toBe("end");
+	});
+
+	test("does not let explicit edge actions collapse or cross", () => {
+		expect(canSetSelectionEdge(selection, "start", 19_999)).toBe(true);
+		expect(canSetSelectionEdge(selection, "start", 20_000)).toBe(false);
+		expect(canSetSelectionEdge(selection, "end", 10_001)).toBe(true);
+		expect(canSetSelectionEdge(selection, "end", 10_000)).toBe(false);
+	});
+
+	test("moves the closest edge to a position inside the selection", () => {
+		expect(setNearestSelectionEdge(selection, 12_000, SESSION_MS)).toEqual([
+			12_000, 20_000,
+		]);
+		expect(setNearestSelectionEdge(selection, 18_000, SESSION_MS)).toEqual([
+			10_000, 18_000,
 		]);
 	});
 });

@@ -3,6 +3,7 @@ import {
 	defaultClipSelection,
 	isValidClipSelection,
 	reconcileSessionSelection,
+	resetClipSelection,
 	selectionAroundStamp,
 } from "./logicalSessionSelection";
 
@@ -77,5 +78,15 @@ describe("selectionAroundStamp", () => {
 
 	it("uses the complete session when it is shorter than a draft", () => {
 		expect(selectionAroundStamp(2_000, 8_000)).toEqual([0, 8_000]);
+	});
+});
+
+describe("resetClipSelection", () => {
+	it("restores the normal session draft", () => {
+		expect(resetClipSelection(300_000)).toEqual([0, 15_000]);
+	});
+
+	it("restores a stamp draft without discarding its position", () => {
+		expect(resetClipSelection(300_000, 60_000)).toEqual([50_000, 65_000]);
 	});
 });

@@ -71,3 +71,13 @@ export function selectionAroundStamp(
 	const start = Math.min(Math.max(preferredStart, 0), latestStart);
 	return [start, start + length];
 }
+
+/** Restores the initial draft while retaining stamp-relative context. */
+export function resetClipSelection(
+	durationMs: number,
+	stampMs?: number,
+): SessionSelection {
+	return stampMs === undefined
+		? defaultClipSelection(durationMs)
+		: selectionAroundStamp(stampMs, durationMs);
+}
