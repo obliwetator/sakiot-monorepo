@@ -36,6 +36,9 @@ impl BotRole {
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub instance_id: String,
+    /// Address this instance serves gRPC on, published to `bot_instances` so the
+    /// web server can dial the instance that owns a guild's voice lease.
+    pub grpc_address: Option<String>,
     pub initial_role: BotRole,
     pub drain_timeout: Duration,
 }
@@ -55,6 +58,7 @@ impl RuntimeConfig {
 
         Self {
             instance_id,
+            grpc_address: crate::config::grpc_dial_addr(),
             initial_role,
             drain_timeout,
         }
@@ -181,6 +185,7 @@ mod tests {
     fn runtime() -> std::sync::Arc<RuntimeState> {
         RuntimeState::new(RuntimeConfig {
             instance_id: "test".to_string(),
+            grpc_address: Some("127.0.0.1:50053".to_string()),
             initial_role: BotRole::Active,
             drain_timeout: Duration::from_secs(30),
         })

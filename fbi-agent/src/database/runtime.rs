@@ -20,11 +20,12 @@ pub struct StoppedInstanceCleanup {
 
 pub async fn upsert_instance(pool: &Pool<Postgres>, runtime: &RuntimeState) -> DbResult<()> {
     sqlx::query!(
-        "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)
-         VALUES ($1, $2, $3, now(), now())
+        "INSERT INTO bot_instances (instance_id, role, state, grpc_address, heartbeat_at, started_at)
+         VALUES ($1, $2, $3, $4, now(), now())
          ON CONFLICT (instance_id) DO UPDATE
             SET role = EXCLUDED.role,
                 state = EXCLUDED.state,
+                grpc_address = EXCLUDED.grpc_address,
                 heartbeat_at = now()",
         runtime.config().instance_id,
         runtime.role().as_str(),
@@ -32,7 +33,8 @@ pub async fn upsert_instance(pool: &Pool<Postgres>, runtime: &RuntimeState) -> D
             "draining"
         } else {
             "active"
-        }
+        },
+        runtime.config().grpc_address.as_deref()
     )
     .execute(pool)
     .await?;

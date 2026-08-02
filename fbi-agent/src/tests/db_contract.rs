@@ -45,8 +45,13 @@ async fn insert_test_instance(
 }
 
 fn test_runtime(instance_id: String) -> Arc<RuntimeState> {
+    test_runtime_at(instance_id, Some("127.0.0.1:50053".to_string()))
+}
+
+fn test_runtime_at(instance_id: String, grpc_address: Option<String>) -> Arc<RuntimeState> {
     RuntimeState::new(RuntimeConfig {
         instance_id,
+        grpc_address,
         initial_role: BotRole::Active,
         drain_timeout: Duration::from_secs(30),
     })
@@ -1151,5 +1156,56 @@ async fn local_disconnect_releases_only_current_owner_lease(
 
     assert_eq!(own_leases, 0);
     assert_eq!(other_leases, 1);
+    Ok(())
+}
+
+async fn stored_grpc_address(
+    pool: &PgPool,
+    instance_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT grpc_address FROM bot_instances WHERE instance_id = $1",
+    )
+    .bind(instance_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// The web server dials this address to reach whichever instance owns a guild's voice
+/// lease, and the deploy engine hands every release a fresh port, so the heartbeat has
+/// to keep it current rather than only writing it once at boot.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn upsert_instance_refreshes_the_grpc_address(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let instance_id = format!("test-grpc-address-{}", unique_id());
+    let first = test_runtime_at(instance_id.clone(), Some("127.0.0.1:40000".to_string()));
+    crate::deployment::upsert_instance(&pool, &first).await?;
+    assert_eq!(
+        stored_grpc_address(&pool, &instance_id).await?,
+        Some("127.0.0.1:40000".to_string())
+    );
+
+    let restarted = test_runtime_at(instance_id.clone(), Some("127.0.0.1:40123".to_string()));
+    crate::deployment::upsert_instance(&pool, &restarted).await?;
+    assert_eq!(
+        stored_grpc_address(&pool, &instance_id).await?,
+        Some("127.0.0.1:40123".to_string())
+    );
+    Ok(())
+}
+
+/// An instance with no resolvable address must still register: the column is advisory,
+/// and refusing the heartbeat would cost it every lease it holds.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn upsert_instance_tolerates_a_missing_grpc_address(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let instance_id = format!("test-no-grpc-address-{}", unique_id());
+    let runtime = test_runtime_at(instance_id.clone(), None);
+
+    crate::deployment::upsert_instance(&pool, &runtime).await?;
+
+    assert_eq!(stored_grpc_address(&pool, &instance_id).await?, None);
     Ok(())
 }

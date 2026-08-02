@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use serenity::model::prelude::GuildId;
-use serenity::prelude::{RwLock, TypeMap};
-use songbird::SongbirdKey;
+use songbird::{Songbird, SongbirdKey};
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
@@ -18,9 +17,35 @@ use super::proto::{JamData, JamResponse};
 impl Jammer for FbiAgentGrpc {
     async fn jam_it(&self, request: Request<JamData>) -> Result<Response<JamResponse>, Status> {
         let data = request.into_inner();
-        let application_id_release = crate::config::application_id_release()
-            .map_err(|err| Status::internal(format!("invalid APPLICATION_ID_RELEASE: {err}")))?;
 
+        let guild_id = match u64::try_from(data.guild_id) {
+            Ok(id) => GuildId::new(id),
+            Err(_) => {
+                warn!("Invalid guild id from jam request: {}", data.guild_id);
+                return Err(Status::invalid_argument("guild_id must be non-negative"));
+            }
+        };
+
+        let manager = {
+            let data_guard = self.data_cache.data.read().await;
+            data_guard.get::<SongbirdKey>().cloned()
+        };
+        let Some(manager) = manager else {
+            error!("Songbird manager missing from typemap");
+            return Err(Status::internal("Songbird manager missing from typemap"));
+        };
+
+        // Answer this from our own songbird, not from the guild cache: the bot user id
+        // is shared with any draining instance, so seeing "the bot" in a voice channel
+        // says nothing about whether *this* process holds that connection.
+        if !holds_voice_connection(&manager, guild_id).await {
+            return Ok(Response::new(JamResponse {
+                resp: JamResponseEnum::NotPresent.into(),
+                cooldown_remaining_seconds: 0,
+            }));
+        }
+
+        // Only spend the cooldown once we know the clip can actually play.
         match self
             .data_cache
             .jam_cooldown
@@ -37,109 +62,50 @@ impl Jammer for FbiAgentGrpc {
             Err(err) => return Err(Status::internal(format!("database error: {err}"))),
         }
 
-        let guild_id = match u64::try_from(data.guild_id) {
-            Ok(id) => GuildId::new(id),
-            Err(_) => {
-                warn!("Invalid guild id from jam request: {}", data.guild_id);
-                return Err(Status::invalid_argument("guild_id must be non-negative"));
+        match crate::commands::voice_controls::play_clip(
+            &self.data_cache.pool,
+            &self.data_cache.media_archive,
+            &manager,
+            guild_id,
+            &data.clip_name,
+            data.user_id,
+        )
+        .await
+        {
+            Ok(message) => {
+                info!(guild_id = guild_id.get(), "{}", message);
+                Ok(Response::new(JamResponse {
+                    resp: JamResponseEnum::Ok.into(),
+                    cooldown_remaining_seconds: 0,
+                }))
             }
-        };
-
-        let guild = match self.data_cache.cache.guild(guild_id) {
-            Some(g) => g.to_owned(),
-            None => {
-                return Ok(Response::new(JamResponse {
+            Err(PlayClipError::Db(db_err)) => {
+                error!("Failed to handle gRPC jam playback: {}", db_err);
+                Err(Status::internal(format!("database error: {db_err}")))
+            }
+            // Lost the call between the check above and playback.
+            Err(PlayClipError::NotInVoice) => Ok(Response::new(JamResponse {
+                resp: JamResponseEnum::NotPresent.into(),
+                cooldown_remaining_seconds: 0,
+            })),
+            Err(err) => {
+                error!("Failed to handle gRPC jam playback: {}", err);
+                Ok(Response::new(JamResponse {
                     resp: JamResponseEnum::Unknown.into(),
                     cooldown_remaining_seconds: 0,
-                }));
-            }
-        };
-
-        for guild_channel in guild.channels.values() {
-            if guild_channel.kind != serenity::model::prelude::ChannelType::Voice {
-                continue;
-            }
-            let members = match guild_channel.members(&self.data_cache.cache) {
-                Ok(members) => members,
-                Err(err) => {
-                    warn!(
-                        channel_id = guild_channel.id.get(),
-                        error = %err,
-                        "failed to read channel members"
-                    );
-                    continue;
-                }
-            };
-
-            for member in &members {
-                if member.user.id == application_id_release {
-                    info!(
-                        "Ladies and gentlemen, We got him in c {}",
-                        guild_channel.id.get()
-                    );
-
-                    if let Err(err) = handle_play_audio_to_channel(
-                        data.guild_id,
-                        &data.clip_name,
-                        data.user_id,
-                        self.data_cache.data.clone(),
-                        self.data_cache.pool.clone(),
-                        self.data_cache.media_archive.clone(),
-                    )
-                    .await
-                    {
-                        error!("Failed to handle gRPC jam playback: {}", err);
-                        if let PlayClipError::Db(db_err) = err {
-                            return Err(Status::internal(format!("database error: {db_err}")));
-                        }
-                        return Ok(Response::new(JamResponse {
-                            resp: JamResponseEnum::Unknown.into(),
-                            cooldown_remaining_seconds: 0,
-                        }));
-                    }
-
-                    return Ok(Response::new(JamResponse {
-                        resp: JamResponseEnum::Ok.into(),
-                        cooldown_remaining_seconds: 0,
-                    }));
-                }
+                }))
             }
         }
-
-        Ok(Response::new(JamResponse {
-            resp: JamResponseEnum::NotPresent.into(),
-            cooldown_remaining_seconds: 0,
-        }))
     }
 }
 
-async fn handle_play_audio_to_channel(
-    id: i64,
-    clip_name: &str,
-    user_id: i64,
-    data: Arc<RwLock<TypeMap>>,
-    pool: sqlx::Pool<sqlx::Postgres>,
-    media_archive: crate::media_archive::MediaArchive,
-) -> Result<(), PlayClipError> {
-    let manager = {
-        let data_guard = data.read().await;
-        data_guard.get::<SongbirdKey>().cloned().ok_or_else(|| {
-            PlayClipError::User("Songbird manager missing from typemap".to_string())
-        })?
-    };
-
-    let guild_id = GuildId::new(
-        u64::try_from(id)
-            .map_err(|_| PlayClipError::User("guild_id must be non-negative".to_string()))?,
-    );
-    crate::commands::voice_controls::play_clip(
-        &pool,
-        &media_archive,
-        &manager,
-        guild_id,
-        clip_name,
-        user_id,
-    )
-    .await
-    .map(|_| ())
+/// Whether this process is connected to voice in `guild_id`.
+///
+/// Mirrors `connected_voice_connection_count`: songbird keeps a `Call` around after a
+/// disconnect, so a registered call is not on its own proof of presence.
+async fn holds_voice_connection(manager: &Arc<Songbird>, guild_id: GuildId) -> bool {
+    match manager.get(guild_id) {
+        Some(call) => call.lock().await.current_channel().is_some(),
+        None => false,
+    }
 }

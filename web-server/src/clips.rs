@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres, Row};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::permissions::{
     require_channel_access, require_guild_manager, visible_channels_for_user,
@@ -299,18 +299,51 @@ pub async fn play_clip(
         None
     };
 
+    // Route to the instance that owns this guild's voice connection, which during a
+    // blue/green drain is the old instance rather than the active one.
+    let target_address = crate::fbi_agent_registry::agent_address_for_guild(
+        pool.get_ref(),
+        &registry,
+        info.guild_id,
+    )
+    .await;
     let active_address = registry.active_address();
-    let (grpc_address, mut client) = grpc_client::connect_jammer(active_address.clone())
-        .await
-        .map_err(|e| {
+
+    let connected = match grpc_client::connect_jammer(target_address.clone()).await {
+        Ok(connected) => connected,
+        // An instance killed outright leaves its lease behind for up to the 120s
+        // staleness window, so retry the active one. Safe only here: nothing has been
+        // dispatched yet, so there is no risk of playing the clip twice.
+        Err(e) if target_address != active_address => {
+            grpc_client::record_failure("jammer_connect");
+            warn!(
+                grpc_address = %target_address,
+                "Voice lease owner is unreachable; retrying the active agent: {}",
+                e,
+            );
+            grpc_client::connect_jammer(active_address.clone())
+                .await
+                .map_err(|e| {
+                    grpc_client::record_failure("jammer_connect");
+                    error!(
+                        grpc_address = %active_address,
+                        "Failed to connect to Jammer gRPC service: {}",
+                        e,
+                    );
+                    AppError::GrpcError(e.to_string())
+                })?
+        }
+        Err(e) => {
             grpc_client::record_failure("jammer_connect");
             error!(
-                grpc_address = %active_address,
+                grpc_address = %target_address,
                 "Failed to connect to Jammer gRPC service: {}",
                 e,
             );
-            AppError::GrpcError(e.to_string())
-        })?;
+            return Err(AppError::GrpcError(e.to_string()));
+        }
+    };
+    let (grpc_address, mut client) = connected;
 
     let request = tonic::Request::new(JamData {
         clip_name: resolved_clip_id.unwrap_or_else(|| info.clip_name.clone()),

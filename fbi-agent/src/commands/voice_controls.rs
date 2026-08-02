@@ -15,6 +15,10 @@ pub enum PlayClipError {
     Db(#[from] DbError),
     #[error(transparent)]
     Media(#[from] crate::media_archive::MediaArchiveError),
+    /// This instance holds no voice connection for the guild. Distinct from `User` so
+    /// the gRPC path can answer `NotPresent` rather than a generic failure.
+    #[error("I am not currently in a voice channel.")]
+    NotInVoice,
     #[error("{0}")]
     User(String),
 }
@@ -24,6 +28,7 @@ impl PlayClipError {
         match self {
             Self::Db(_) => "Database error. Try again later.".to_string(),
             Self::Media(_) => "Clip media is unavailable. Try again later.".to_string(),
+            Self::NotInVoice => self.to_string(),
             Self::User(message) => message.clone(),
         }
     }
@@ -44,11 +49,7 @@ pub async fn play_clip(
 
     let handler = match manager.get(guild_id) {
         Some(h) => h,
-        None => {
-            return Err(PlayClipError::User(
-                "I am not currently in a voice channel.".to_string(),
-            ));
-        }
+        None => return Err(PlayClipError::NotInVoice),
     };
 
     let clip_path = media_archive

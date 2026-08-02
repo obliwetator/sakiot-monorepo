@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bot_instances (instance_id, role, state, grpc_address, heartbeat_at, started_at)\n         VALUES ($1, $2, $3, $4, now(), now())\n         ON CONFLICT (instance_id) DO UPDATE\n            SET role = EXCLUDED.role,\n                state = EXCLUDED.state,\n                grpc_address = EXCLUDED.grpc_address,\n                heartbeat_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7acf533a33321e14e2eed93986d04af5851ae229a5f15dd4370dbbf924cc0a20"
+}
