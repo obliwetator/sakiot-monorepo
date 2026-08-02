@@ -21,8 +21,10 @@ use web_server::audio::{
     LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
     download_audio, download_session, get_audio, get_clip_waveform_data,
     get_current_month_permission, get_live_stems, get_recording_events, get_session_events,
-    get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
-    live_playlist, live_segment, live_state, rebuild_session_waveform, remove_session_silence,
+    get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
+    get_waveform_data, live_playlist, live_segment, live_state,
+    rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
     remove_silence, session_live_playlist, session_live_segment, spawn_hls_reaper,
 };
 #[cfg(feature = "dev-login")]
@@ -193,7 +195,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(rebuild_session_waveform)
             .service(download_session)
             .service(create_session_clip)
+            .service(get_session_silence_removal_status)
             .service(remove_session_silence)
+            .service(get_session_silence_free)
+            .service(get_session_silence_free_waveform)
+            .service(rebuild_session_silence_free_waveform)
             .service(session_live_playlist)
             .service(session_live_segment)
             .service(get_session_segment)

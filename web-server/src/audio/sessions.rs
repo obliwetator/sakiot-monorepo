@@ -18,7 +18,7 @@ use crate::media_archive::{MediaArchive, RemoteDisposition};
 use crate::permissions::visible_channels_for_user;
 
 use super::live::LiveContainer;
-use super::paths::{clips_path, recording_path, waveform_path};
+use super::paths::{clips_path, no_silence_recording_path, recording_path, waveform_path};
 use super::types::{StartEnd, WaveformProgressContainer};
 
 /// Waveform points per second of session audio. Four keeps a 20 second clip
@@ -719,6 +719,23 @@ pub struct SessionWaveformResponse {
     pub data: Option<String>,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SilenceFreeSessionResponse {
+    pub status: String,
+    pub progress: i16,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SilenceFreeSessionQuery {
+    pub download: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SilenceRemovalQuery {
+    /// Replace an existing silence-free session instead of reusing it.
+    pub force: Option<bool>,
+}
+
 #[derive(Clone, Debug)]
 enum PartKind {
     Audio { path: PathBuf, source_start_ms: i64 },
@@ -785,14 +802,108 @@ pub async fn download_session(
 }
 
 #[utoipa::path(
-    post,
+    get,
+    path = "/api/audio/sessions/{recording_session_id}/silence-free",
+    tag = "audio",
+    params(
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("download" = Option<bool>, Query, description = "Download instead of inline playback"),
+    ),
+    responses(
+        (status = 200, description = "Cached silence-free Ogg/Opus", content_type = "audio/ogg"),
+        (status = 401, description = "Missing access token", body = crate::errors::ApiError),
+        (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
+        (status = 404, description = "Silence-free session has not been generated", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
+#[route(
+    "/audio/sessions/{recording_session_id}/silence-free",
+    method = "GET",
+    method = "HEAD"
+)]
+pub async fn get_session_silence_free(
+    path: web::Path<i64>,
+    query: web::Query<SilenceFreeSessionQuery>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<Pool<Postgres>>,
+) -> Result<NamedFile, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let session_id = path.into_inner();
+    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let output = session_silence_free_path(&access)?;
+    let disposition = if query.download.unwrap_or(false) {
+        actix_web::http::header::DispositionType::Attachment
+    } else {
+        actix_web::http::header::DispositionType::Inline
+    };
+    let file = NamedFile::open_async(output).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::FileNotFound
+        } else {
+            AppError::IoError(error)
+        }
+    })?;
+    Ok(
+        file.set_content_disposition(actix_web::http::header::ContentDisposition {
+            disposition,
+            parameters: vec![],
+        }),
+    )
+}
+
+#[utoipa::path(
+    get,
     path = "/api/audio/sessions/{recording_session_id}/remove-silence",
     tag = "audio",
     params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
-    request_body = StartEnd,
     responses(
-        (status = 200, description = "Composed silence-free Ogg/Opus", content_type = "audio/ogg"),
-        (status = 400, description = "Invalid range", body = crate::errors::ApiError),
+        (status = 200, description = "Current silence-removal status", body = SilenceFreeSessionResponse),
+        (status = 400, description = "Session is not finalized", body = crate::errors::ApiError),
+        (status = 401, description = "Missing access token", body = crate::errors::ApiError),
+        (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
+#[get("/audio/sessions/{recording_session_id}/remove-silence")]
+pub async fn get_session_silence_removal_status(
+    path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<Pool<Postgres>>,
+    progress: web::Data<WaveformProgressContainer>,
+) -> Result<web::Json<SilenceFreeSessionResponse>, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let session_id = path.into_inner();
+    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let output = session_silence_free_path(&access)?;
+    let cache_key = silence_removal_progress_key(session_id);
+
+    let value = progress.0.read().await.get(&cache_key).copied();
+    if let Some(value) = value {
+        return Ok(web::Json(if value < 0 {
+            silence_removal_response("failed", 0)
+        } else {
+            silence_removal_response("processing", value.clamp(0, 99))
+        }));
+    }
+    if tokio::fs::try_exists(output).await? {
+        return Ok(web::Json(silence_removal_response("ready", 100)));
+    }
+    Ok(web::Json(silence_removal_response("idle", 0)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/audio/sessions/{recording_session_id}/remove-silence",
+    tag = "audio",
+    params(
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("force" = Option<bool>, Query, description = "Replace an existing silence-free session"),
+    ),
+    responses(
+        (status = 200, description = "Silence-free session is ready", body = SilenceFreeSessionResponse),
+        (status = 202, description = "Silence removal started or is already running", body = SilenceFreeSessionResponse),
+        (status = 400, description = "Session is not finalized", body = crate::errors::ApiError),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
         (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
         (status = 500, description = "Composition failed", body = crate::errors::ApiError),
@@ -802,33 +913,112 @@ pub async fn download_session(
 #[post("/audio/sessions/{recording_session_id}/remove-silence")]
 pub async fn remove_session_silence(
     path: web::Path<i64>,
-    range: web::Json<StartEnd>,
+    query: web::Query<SilenceRemovalQuery>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
+    progress: web::Data<WaveformProgressContainer>,
     media: web::Data<MediaArchive>,
-) -> Result<NamedFile, AppError> {
+) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, token.user_id).await?;
-    let output = temporary_ogg_path("session-silence-free");
-    compose_session(
-        &pool,
-        &access,
-        range.start.map(f64::from),
-        range.end.map(f64::from),
-        true,
-        &output,
-        media.get_ref(),
-    )
-    .await?;
-    schedule_temporary_cleanup(output.clone());
-    Ok(NamedFile::open_async(output)
+    let output = session_silence_free_path(&access)?;
+    let cache_key = silence_removal_progress_key(session_id);
+
+    if let Some(value) = progress.0.read().await.get(&cache_key).copied()
+        && value >= 0
+    {
+        return Ok(HttpResponse::Accepted()
+            .json(silence_removal_response("processing", value.clamp(0, 99))));
+    }
+    let force = query.force.unwrap_or(false);
+    if !force && tokio::fs::try_exists(&output).await? {
+        progress.0.write().await.remove(&cache_key);
+        return Ok(HttpResponse::Ok().json(silence_removal_response("ready", 100)));
+    }
+    if let Some(parent) = output.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    {
+        let mut values = progress.0.write().await;
+        if let Some(value) = values.get(&cache_key).copied()
+            && value >= 0
+        {
+            return Ok(HttpResponse::Accepted()
+                .json(silence_removal_response("processing", value.clamp(0, 99))));
+        }
+        values.insert(cache_key.clone(), 0);
+    }
+
+    if force
+        && let Err(error) = tokio::fs::remove_file(&output).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        progress.0.write().await.remove(&cache_key);
+        return Err(AppError::IoError(error));
+    }
+    let (silence_waveform_key, silence_waveform_output) = session_waveform_cache(session_id, true);
+    if force {
+        progress.0.write().await.remove(&silence_waveform_key);
+        let _ = tokio::fs::remove_file(&silence_waveform_output).await;
+    }
+
+    let temporary = output.with_extension(format!("{}.tmp.ogg", uuid::Uuid::new_v4()));
+    let pool_clone = pool.clone();
+    let progress_clone = progress.clone();
+    let media_clone = media.clone();
+    tokio::spawn(async move {
+        progress_clone.0.write().await.insert(cache_key.clone(), 1);
+        let composition_progress = CompositionProgress {
+            cache_key: cache_key.clone(),
+            progress: progress_clone.clone(),
+            completed: 99,
+        };
+        if let Err(error) = compose_session_with_progress(
+            &pool_clone,
+            &access,
+            None,
+            None,
+            true,
+            &temporary,
+            composition_progress,
+            media_clone.get_ref(),
+        )
         .await
-        .map_err(AppError::IoError)?
-        .set_content_disposition(actix_web::http::header::ContentDisposition {
-            disposition: actix_web::http::header::DispositionType::Attachment,
-            parameters: vec![],
-        }))
+        {
+            tracing::error!(session_id, "session silence removal failed: {}", error);
+            let _ = tokio::fs::remove_file(temporary).await;
+            progress_clone.0.write().await.insert(cache_key, -1);
+            return;
+        }
+        if let Err(error) = tokio::fs::rename(&temporary, &output).await {
+            tracing::error!(
+                session_id,
+                "persisting silence-free session failed: {}",
+                error
+            );
+            let _ = tokio::fs::remove_file(temporary).await;
+            progress_clone.0.write().await.insert(cache_key, -1);
+            return;
+        }
+        let _ = tokio::fs::remove_file(silence_waveform_output).await;
+        progress_clone.0.write().await.remove(&silence_waveform_key);
+        progress_clone.0.write().await.remove(&cache_key);
+    });
+
+    Ok(HttpResponse::Accepted().json(silence_removal_response("processing", 0)))
+}
+
+fn silence_removal_progress_key(session_id: i64) -> String {
+    format!("logical-session-{session_id}-silence-removal")
+}
+
+fn silence_removal_response(status: &str, progress: i16) -> SilenceFreeSessionResponse {
+    SilenceFreeSessionResponse {
+        status: status.to_owned(),
+        progress,
+    }
 }
 
 #[utoipa::path(
@@ -946,33 +1136,8 @@ pub async fn get_session_waveform(
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
     require_session_access(&pool, session_id, token.user_id).await?;
-    let cache_key = format!("logical-session-{session_id}");
-    let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
-
-    {
-        let mut map = progress.0.write().await;
-        if let Some(value) = map.get(&cache_key).copied() {
-            if value < 0 {
-                map.remove(&cache_key);
-                return Err(AppError::InternalError);
-            }
-            return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-                progress: value.min(99),
-                building: true,
-                data: None,
-            }));
-        }
-    }
-
-    if tokio::fs::try_exists(&output).await.unwrap_or(false) {
-        return waveform_file_response(&output).await;
-    }
-
-    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-        progress: 0,
-        building: false,
-        data: None,
-    }))
+    let (cache_key, output) = session_waveform_cache(session_id, false);
+    session_waveform_status(&cache_key, &output, &progress).await
 }
 
 #[utoipa::path(
@@ -1000,8 +1165,7 @@ pub async fn rebuild_session_waveform(
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, token.user_id).await?;
-    let cache_key = format!("logical-session-{session_id}");
-    let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
+    let (cache_key, output) = session_waveform_cache(session_id, false);
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -1079,6 +1243,190 @@ pub async fn rebuild_session_waveform(
         building: true,
         data: None,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/audio/sessions/{recording_session_id}/silence-free/waveform",
+    tag = "audio",
+    params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
+    responses(
+        (status = 200, description = "Silence-free session waveform status and peaks", body = SessionWaveformResponse),
+        (status = 400, description = "Session is not finalized", body = crate::errors::ApiError),
+        (status = 401, description = "Missing access token", body = crate::errors::ApiError),
+        (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
+        (status = 404, description = "Silence-free session has not been generated", body = crate::errors::ApiError),
+        (status = 500, description = "Waveform generation failed", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
+#[get("/audio/sessions/{recording_session_id}/silence-free/waveform")]
+pub async fn get_session_silence_free_waveform(
+    path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<Pool<Postgres>>,
+    progress: web::Data<WaveformProgressContainer>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let session_id = path.into_inner();
+    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let source = session_silence_free_path(&access)?;
+    if !tokio::fs::try_exists(&source).await? {
+        return Err(AppError::FileNotFound);
+    }
+    let (cache_key, output) = session_waveform_cache(session_id, true);
+    if waveform_is_stale(&output, &source).await {
+        let _ = tokio::fs::remove_file(&output).await;
+    }
+    session_waveform_status(&cache_key, &output, &progress).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/audio/sessions/{recording_session_id}/silence-free/waveform/rebuild",
+    tag = "audio",
+    params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
+    responses(
+        (status = 200, description = "Silence-free waveform rebuild started or already running", body = SessionWaveformResponse),
+        (status = 400, description = "Session is not finalized", body = crate::errors::ApiError),
+        (status = 401, description = "Missing access token", body = crate::errors::ApiError),
+        (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
+        (status = 404, description = "Silence-free session has not been generated", body = crate::errors::ApiError),
+        (status = 500, description = "Waveform generation failed", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
+#[post("/audio/sessions/{recording_session_id}/silence-free/waveform/rebuild")]
+pub async fn rebuild_session_silence_free_waveform(
+    path: web::Path<i64>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<Pool<Postgres>>,
+    progress: web::Data<WaveformProgressContainer>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let session_id = path.into_inner();
+    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let source = session_silence_free_path(&access)?;
+    if !tokio::fs::try_exists(&source).await? {
+        return Err(AppError::FileNotFound);
+    }
+    let (cache_key, output) = session_waveform_cache(session_id, true);
+    if let Some(parent) = output.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    {
+        let mut map = progress.0.write().await;
+        if let Some(value) = map.get(&cache_key).copied() {
+            if value >= 0 {
+                return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+                    progress: value.min(99),
+                    building: true,
+                    data: None,
+                }));
+            }
+            map.remove(&cache_key);
+        }
+        map.insert(cache_key.clone(), 0);
+    }
+
+    let progress_clone = progress.clone();
+    let cache_key_clone = cache_key.clone();
+    let source_version = tokio::fs::metadata(&source)
+        .await
+        .and_then(|metadata| metadata.modified())?;
+    tokio::spawn(async move {
+        let generation = crate::waveform::generate_peaks_background(
+            source.to_string_lossy().into_owned(),
+            output.to_string_lossy().into_owned(),
+            cache_key_clone.clone(),
+            crate::waveform::PeakDensity::PerSecond(SESSION_PEAKS_PER_SECOND),
+            progress_clone.clone(),
+            None,
+            None,
+        )
+        .await;
+        if let Err(err) = generation {
+            tracing::error!(
+                session_id,
+                "silence-free session waveform generation failed: {}",
+                err
+            );
+            progress_clone.0.write().await.insert(cache_key_clone, -1);
+            return;
+        }
+        let current_version = tokio::fs::metadata(&source)
+            .await
+            .and_then(|metadata| metadata.modified());
+        if current_version.as_ref().ok() != Some(&source_version) {
+            let _ = tokio::fs::remove_file(output).await;
+            progress_clone.0.write().await.remove(&cache_key_clone);
+            tracing::warn!(
+                session_id,
+                "discarded silence-free waveform because its source changed"
+            );
+        }
+    });
+
+    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+        progress: 0,
+        building: true,
+        data: None,
+    }))
+}
+
+async fn session_waveform_status(
+    cache_key: &str,
+    output: &Path,
+    progress: &web::Data<WaveformProgressContainer>,
+) -> Result<HttpResponse, AppError> {
+    {
+        let mut map = progress.0.write().await;
+        if let Some(value) = map.get(cache_key).copied() {
+            if value < 0 {
+                map.remove(cache_key);
+                return Err(AppError::InternalError);
+            }
+            return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+                progress: value.min(99),
+                building: true,
+                data: None,
+            }));
+        }
+    }
+
+    if tokio::fs::try_exists(output).await.unwrap_or(false) {
+        return waveform_file_response(output).await;
+    }
+
+    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+        progress: 0,
+        building: false,
+        data: None,
+    }))
+}
+
+fn session_waveform_cache(session_id: i64, silence_free: bool) -> (String, PathBuf) {
+    let suffix = if silence_free { "-silence-free" } else { "" };
+    let cache_key = format!("logical-session-{session_id}{suffix}");
+    let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
+    (cache_key, output)
+}
+
+async fn waveform_is_stale(waveform: &Path, source: &Path) -> bool {
+    let Ok(waveform_modified) = tokio::fs::metadata(waveform)
+        .await
+        .and_then(|metadata| metadata.modified())
+    else {
+        return false;
+    };
+    let Ok(source_modified) = tokio::fs::metadata(source)
+        .await
+        .and_then(|metadata| metadata.modified())
+    else {
+        return false;
+    };
+    waveform_modified < source_modified
 }
 
 async fn waveform_file_response(path: &Path) -> Result<HttpResponse, AppError> {
@@ -1231,10 +1579,18 @@ async fn compose_session_inner(
         filter.push_str(&format!("[a{index}]"));
     }
     filter.push_str(&format!("concat=n={}:v=0:a=1[joined]", selected.len()));
+    let track_original_timeline = remove_silence && progress.is_some();
     let output_label = if remove_silence {
-        filter.push_str(
-            ";[joined]silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB[out]",
-        );
+        if track_original_timeline {
+            filter.push_str(
+                ";[joined]asplit=2[progress_audio][silence_input];\
+                 [silence_input]silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB[out]",
+            );
+        } else {
+            filter.push_str(
+                ";[joined]silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB[out]",
+            );
+        }
         "[out]"
     } else {
         "[joined]"
@@ -1247,11 +1603,25 @@ async fn compose_session_inner(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
+    if track_original_timeline {
+        // silenceremove compresses output timestamps, so its out_time_us cannot
+        // be compared with the original session duration. A cheap null output
+        // keeps FFmpeg's reported timestamp on the uncompressed input timeline.
+        command.args(["-map", "[progress_audio]", "-f", "null", "-"]);
+    }
     if progress.is_some() {
         command.args(["-progress", "pipe:2", "-nostats"]);
     }
 
-    let mut child = command.spawn().map_err(AppError::IoError)?;
+    let mut child = command.spawn().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AppError::ServiceUnavailable(
+                "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
+            )
+        } else {
+            AppError::IoError(error)
+        }
+    })?;
     let stderr = child
         .stderr
         .take()
@@ -1407,6 +1777,23 @@ fn milliseconds_as_seconds(milliseconds: i64) -> String {
     format!("{:.3}", milliseconds.max(0) as f64 / 1_000.0)
 }
 
+fn session_silence_free_path(access: &SessionAccess) -> Result<PathBuf, AppError> {
+    if access.state != "finalized" {
+        return Err(AppError::BadRequest(
+            "Silence removal is available after the recording is finalized".into(),
+        ));
+    }
+    let ended_at_ms = access
+        .ended_at_ms
+        .ok_or_else(|| AppError::BadRequest("Finalized recording has no end timestamp".into()))?;
+    Ok(PathBuf::from(no_silence_recording_path())
+        .join("logical_sessions")
+        .join(format!(
+            "{}-{}-{ended_at_ms}.ogg",
+            access.session_id, access.started_at_ms
+        )))
+}
+
 fn temporary_ogg_path(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{}.ogg", uuid::Uuid::new_v4()))
 }
@@ -1421,7 +1808,8 @@ fn schedule_temporary_cleanup(path: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionAccess, composition_progress_percent, timeline_end_ms, validate_segment_name,
+        SessionAccess, composition_progress_percent, session_silence_free_path, timeline_end_ms,
+        validate_segment_name,
     };
 
     fn access(state: &str) -> SessionAccess {
@@ -1441,6 +1829,16 @@ mod tests {
     fn pending_timeline_stops_at_original_pause() {
         assert_eq!(timeline_end_ms(&access("pending")), 5_000);
         assert_eq!(timeline_end_ms(&access("finalized")), 9_000);
+    }
+
+    #[test]
+    fn silence_free_cache_identity_uses_the_finalized_session_timestamps() {
+        let path = session_silence_free_path(&access("finalized")).unwrap();
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("1-1000-9000.ogg")
+        );
+        assert!(session_silence_free_path(&access("active")).is_err());
     }
 
     #[test]

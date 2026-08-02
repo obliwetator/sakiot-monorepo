@@ -19,7 +19,8 @@ Changes spanning these contracts can therefore be committed atomically.
 ## Local Development
 
 One command brings up a local debug environment for `web-server` on any
-machine (Docker plus `sqlx-cli` required):
+machine (Docker, `sqlx-cli`, FFmpeg—including `ffprobe`—and `audiowaveform`
+are required):
 
 ```sh
 scripts/dev.sh

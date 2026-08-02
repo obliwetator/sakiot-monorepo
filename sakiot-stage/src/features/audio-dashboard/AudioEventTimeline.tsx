@@ -1,9 +1,11 @@
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Collapse from "@mui/material/Collapse";
 import Popover from "@mui/material/Popover";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
 	type AudioTimelineEvent,
 	buildEventTimelineModel,
@@ -239,7 +241,9 @@ export function AudioEventTimeline(props: {
 	onSeek: (offsetMs: number) => void;
 }) {
 	const plotRef = useRef<HTMLDivElement | null>(null);
+	const contentId = useId();
 	const [plotWidth, setPlotWidth] = useState(0);
+	const [expanded, setExpanded] = useState(false);
 	const [picker, setPicker] = useState<{
 		anchor: HTMLElement;
 		cluster: TimelinePointCluster;
@@ -264,7 +268,7 @@ export function AudioEventTimeline(props: {
 	);
 
 	useEffect(() => {
-		if (model.lanes.length === 0) return;
+		if (!expanded || model.lanes.length === 0) return;
 		const plot = plotRef.current;
 		if (!plot) return;
 		setPlotWidth(plot.clientWidth);
@@ -273,7 +277,7 @@ export function AudioEventTimeline(props: {
 		});
 		observer.observe(plot);
 		return () => observer.disconnect();
-	}, [model.lanes.length]);
+	}, [expanded, model.lanes.length]);
 
 	useEffect(() => {
 		if (
@@ -303,307 +307,342 @@ export function AudioEventTimeline(props: {
 			aria-label="Recording event timeline"
 			sx={{ minWidth: 0 }}
 		>
-			<TimelineRow sx={{ mb: 0.5 }}>
+			<Button
+				fullWidth
+				size="small"
+				aria-expanded={expanded}
+				aria-controls={contentId}
+				onClick={() => {
+					setExpanded((current) => !current);
+					setPicker(null);
+				}}
+				sx={{
+					minHeight: 24,
+					height: 24,
+					px: 0.75,
+					py: 0,
+					border: "1px solid rgba(148, 163, 184, 0.14)",
+					borderRadius: 0.75,
+					bgcolor: "rgba(148, 163, 184, 0.04)",
+					color: "text.secondary",
+					textTransform: "none",
+					justifyContent: "stretch",
+				}}
+			>
 				<Box
 					sx={{
 						display: "flex",
-						alignItems: "baseline",
+						alignItems: "center",
 						justifyContent: "space-between",
 						gap: 1,
+						width: "100%",
 					}}
 				>
-					<Typography variant="caption" fontWeight={700}>
+					<Typography variant="caption" component="span" fontWeight={700}>
 						Event timeline
 					</Typography>
-					<Typography variant="caption" color="text.secondary">
-						{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
-						{intervalCount > 0
-							? ` · ${intervalCount} state period${intervalCount === 1 ? "" : "s"}`
-							: ""}
-					</Typography>
-				</Box>
-			</TimelineRow>
-
-			<Box sx={{ display: "flex", minWidth: 0 }}>
-				<Box
-					aria-hidden="true"
-					sx={{ width: TIMELINE_GUTTER_WIDTH, flex: "0 0 auto" }}
-				>
-					{model.lanes.map((lane) => (
-						<Box
-							key={lane.id}
+					<Box component="span" sx={{ display: "flex", alignItems: "center" }}>
+						<Typography variant="caption" component="span" color="inherit">
+							{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
+							{intervalCount > 0
+								? ` · ${intervalCount} period${intervalCount === 1 ? "" : "s"}`
+								: ""}
+						</Typography>
+						<ExpandMoreIcon
 							sx={{
-								height: laneHeight(lane),
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "flex-end",
-								pr: 1.5,
-								minWidth: 0,
+								fontSize: 17,
+								ml: 0.25,
+								transform: expanded ? "rotate(180deg)" : "none",
+								transition: "transform 150ms ease",
 							}}
-						>
-							<Typography
-								variant="caption"
-								color="text.secondary"
-								noWrap
-								title={lane.label}
-							>
-								{lane.label}
-							</Typography>
-						</Box>
-					))}
+						/>
+					</Box>
 				</Box>
+			</Button>
 
-				<Box
-					ref={plotRef}
-					sx={{
-						position: "relative",
-						flex: 1,
-						minWidth: 0,
-					}}
-				>
-					{model.lanes.map((lane, laneIndex) => {
-						const height = laneHeight(lane);
-						const isFirstLane = laneIndex === 0;
-						const isLastLane = laneIndex === model.lanes.length - 1;
-						return (
+			<Collapse in={expanded} unmountOnExit id={contentId}>
+				<Box sx={{ display: "flex", minWidth: 0, mt: 0.5 }}>
+					<Box
+						aria-hidden="true"
+						sx={{ width: TIMELINE_GUTTER_WIDTH, flex: "0 0 auto" }}
+					>
+						{model.lanes.map((lane) => (
 							<Box
 								key={lane.id}
 								sx={{
-									position: "relative",
-									height,
-									bgcolor:
-										laneIndex % 2 === 0
-											? "rgba(148, 163, 184, 0.11)"
-											: "rgba(148, 163, 184, 0.04)",
-									boxShadow: isLastLane
-										? "none"
-										: "inset 0 -1px 0 rgba(148, 163, 184, 0.14)",
-									borderTopLeftRadius: isFirstLane ? LANE_RADIUS_PX : 0,
-									borderTopRightRadius: isFirstLane ? LANE_RADIUS_PX : 0,
-									borderBottomLeftRadius: isLastLane ? LANE_RADIUS_PX : 0,
-									borderBottomRightRadius: isLastLane ? LANE_RADIUS_PX : 0,
+									height: laneHeight(lane),
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "flex-end",
+									pr: 1.5,
+									minWidth: 0,
 								}}
 							>
-								{lane.intervals.map((interval) => {
-									const left = percent(interval.startMs, props.durationMs);
-									const width = percent(
-										interval.endMs - interval.startMs,
-										props.durationMs,
-									);
-									const widthPx = (width / 100) * plotWidth;
-									return (
-										<Tooltip
-											key={interval.id}
-											title={
-												<IntervalTooltip
-													interval={interval}
-													startedAtMs={props.startedAtMs}
-												/>
-											}
-											arrow
-										>
-											<Box
-												component="button"
-												type="button"
-												aria-label={`${interval.label}, ${formatTimelineOffset(interval.startMs)} to ${formatTimelineOffset(interval.endMs)}`}
-												onClick={(event) => {
-													const bounds =
-														event.currentTarget.getBoundingClientRect();
-													const fraction =
-														(event.clientX - bounds.left) /
-														Math.max(1, bounds.width);
-													props.onSeek(
-														interval.startMs +
-															fraction * (interval.endMs - interval.startMs),
-													);
-												}}
-												sx={{
-													position: "absolute",
-													left: `${left}%`,
-													top:
-														LANE_PADDING_PX + interval.track * TRACK_HEIGHT_PX,
-													width: `max(3px, ${width}%)`,
-													height: TRACK_HEIGHT_PX - 6,
-													p: 0,
-													px: widthPx >= 60 ? 0.75 : 0,
-													overflow: "hidden",
-													border: 0,
-													// Rounded ends mean the state starts and stops
-													// inside the recording; square ends mean it runs
-													// past that edge of the timeline.
-													borderTopLeftRadius: interval.startsAtBoundary
-														? 0
-														: 999,
-													borderBottomLeftRadius: interval.startsAtBoundary
-														? 0
-														: 999,
-													borderTopRightRadius: interval.endsAtBoundary
-														? 0
-														: 999,
-													borderBottomRightRadius: interval.endsAtBoundary
-														? 0
-														: 999,
-													bgcolor: interval.color,
-													boxShadow:
-														"inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(2,6,23,0.5)",
-													color: "#0f172a",
-													cursor: "pointer",
-													fontSize: 10,
-													fontWeight: 700,
-													lineHeight: 1,
-													textAlign: "left",
-													whiteSpace: "nowrap",
-													textOverflow: "ellipsis",
-													zIndex: 1,
-													"&:hover, &:focus-visible": {
-														filter: "brightness(1.14)",
-														zIndex: 4,
-													},
-												}}
-											>
-												{widthPx >= 60 ? interval.label : ""}
-											</Box>
-										</Tooltip>
-									);
-								})}
-
-								{(clustersByLane.get(lane.id) ?? []).map((cluster) => {
-									const clustered = cluster.points.length > 1;
-									const markerSize = clustered ? 16 : 11;
-									return (
-										<Tooltip
-											key={cluster.id}
-											title={
-												<PointTooltip
-													cluster={cluster}
-													startedAtMs={props.startedAtMs}
-												/>
-											}
-											arrow
-										>
-											<Box
-												component="button"
-												type="button"
-												aria-label={
-													clustered
-														? `${cluster.points.length} events between ${formatTimelineOffset(cluster.startMs)} and ${formatTimelineOffset(cluster.endMs)}`
-														: `${cluster.points[0].label} at ${formatTimelineOffset(cluster.offsetMs)}`
-												}
-												onClick={(event) => {
-													if (clustered) {
-														setPicker({
-															anchor: event.currentTarget,
-															cluster,
-														});
-													} else {
-														props.onSeek(cluster.points[0].offsetMs);
-													}
-												}}
-												sx={{
-													position: "absolute",
-													// No clamping: the marker must sit exactly above
-													// the same instant on the waveform and scrubber.
-													left: `${percent(cluster.offsetMs, props.durationMs)}%`,
-													top:
-														LANE_PADDING_PX +
-														cluster.track * TRACK_HEIGHT_PX +
-														TRACK_HEIGHT_PX / 2,
-													transform: "translate(-50%, -50%)",
-													width: markerSize,
-													height: markerSize,
-													p: 0,
-													border: 0,
-													borderRadius: clustered ? "50%" : 0,
-													clipPath: clustered
-														? undefined
-														: markerShape(cluster.laneId),
-													bgcolor: clusterColor(cluster),
-													color: "white",
-													cursor: "pointer",
-													fontSize: 9,
-													fontWeight: 800,
-													lineHeight: `${markerSize}px`,
-													boxShadow:
-														"0 0 0 1.25px rgba(255,255,255,0.85), 0 1px 3px rgba(2,6,23,0.7)",
-													zIndex: 3,
-													"&:hover, &:focus-visible": {
-														transform: "translate(-50%, -50%) scale(1.2)",
-														zIndex: 5,
-													},
-												}}
-											>
-												{clustered ? cluster.points.length : ""}
-											</Box>
-										</Tooltip>
-									);
-								})}
+								<Typography
+									variant="caption"
+									color="text.secondary"
+									noWrap
+									title={lane.label}
+								>
+									{lane.label}
+								</Typography>
 							</Box>
-						);
-					})}
+						))}
+					</Box>
 
-					{/* After the lanes so the guides sit above their fills, but below
+					<Box
+						ref={plotRef}
+						sx={{
+							position: "relative",
+							flex: 1,
+							minWidth: 0,
+						}}
+					>
+						{model.lanes.map((lane, laneIndex) => {
+							const height = laneHeight(lane);
+							const isFirstLane = laneIndex === 0;
+							const isLastLane = laneIndex === model.lanes.length - 1;
+							return (
+								<Box
+									key={lane.id}
+									sx={{
+										position: "relative",
+										height,
+										bgcolor:
+											laneIndex % 2 === 0
+												? "rgba(148, 163, 184, 0.11)"
+												: "rgba(148, 163, 184, 0.04)",
+										boxShadow: isLastLane
+											? "none"
+											: "inset 0 -1px 0 rgba(148, 163, 184, 0.14)",
+										borderTopLeftRadius: isFirstLane ? LANE_RADIUS_PX : 0,
+										borderTopRightRadius: isFirstLane ? LANE_RADIUS_PX : 0,
+										borderBottomLeftRadius: isLastLane ? LANE_RADIUS_PX : 0,
+										borderBottomRightRadius: isLastLane ? LANE_RADIUS_PX : 0,
+									}}
+								>
+									{lane.intervals.map((interval) => {
+										const left = percent(interval.startMs, props.durationMs);
+										const width = percent(
+											interval.endMs - interval.startMs,
+											props.durationMs,
+										);
+										const widthPx = (width / 100) * plotWidth;
+										return (
+											<Tooltip
+												key={interval.id}
+												title={
+													<IntervalTooltip
+														interval={interval}
+														startedAtMs={props.startedAtMs}
+													/>
+												}
+												arrow
+											>
+												<Box
+													component="button"
+													type="button"
+													aria-label={`${interval.label}, ${formatTimelineOffset(interval.startMs)} to ${formatTimelineOffset(interval.endMs)}`}
+													onClick={(event) => {
+														const bounds =
+															event.currentTarget.getBoundingClientRect();
+														const fraction =
+															(event.clientX - bounds.left) /
+															Math.max(1, bounds.width);
+														props.onSeek(
+															interval.startMs +
+																fraction * (interval.endMs - interval.startMs),
+														);
+													}}
+													sx={{
+														position: "absolute",
+														left: `${left}%`,
+														top:
+															LANE_PADDING_PX +
+															interval.track * TRACK_HEIGHT_PX,
+														width: `max(3px, ${width}%)`,
+														height: TRACK_HEIGHT_PX - 6,
+														p: 0,
+														px: widthPx >= 60 ? 0.75 : 0,
+														overflow: "hidden",
+														border: 0,
+														// Rounded ends mean the state starts and stops
+														// inside the recording; square ends mean it runs
+														// past that edge of the timeline.
+														borderTopLeftRadius: interval.startsAtBoundary
+															? 0
+															: 999,
+														borderBottomLeftRadius: interval.startsAtBoundary
+															? 0
+															: 999,
+														borderTopRightRadius: interval.endsAtBoundary
+															? 0
+															: 999,
+														borderBottomRightRadius: interval.endsAtBoundary
+															? 0
+															: 999,
+														bgcolor: interval.color,
+														boxShadow:
+															"inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(2,6,23,0.5)",
+														color: "#0f172a",
+														cursor: "pointer",
+														fontSize: 10,
+														fontWeight: 700,
+														lineHeight: 1,
+														textAlign: "left",
+														whiteSpace: "nowrap",
+														textOverflow: "ellipsis",
+														zIndex: 1,
+														"&:hover, &:focus-visible": {
+															filter: "brightness(1.14)",
+															zIndex: 4,
+														},
+													}}
+												>
+													{widthPx >= 60 ? interval.label : ""}
+												</Box>
+											</Tooltip>
+										);
+									})}
+
+									{(clustersByLane.get(lane.id) ?? []).map((cluster) => {
+										const clustered = cluster.points.length > 1;
+										const markerSize = clustered ? 16 : 11;
+										return (
+											<Tooltip
+												key={cluster.id}
+												title={
+													<PointTooltip
+														cluster={cluster}
+														startedAtMs={props.startedAtMs}
+													/>
+												}
+												arrow
+											>
+												<Box
+													component="button"
+													type="button"
+													aria-label={
+														clustered
+															? `${cluster.points.length} events between ${formatTimelineOffset(cluster.startMs)} and ${formatTimelineOffset(cluster.endMs)}`
+															: `${cluster.points[0].label} at ${formatTimelineOffset(cluster.offsetMs)}`
+													}
+													onClick={(event) => {
+														if (clustered) {
+															setPicker({
+																anchor: event.currentTarget,
+																cluster,
+															});
+														} else {
+															props.onSeek(cluster.points[0].offsetMs);
+														}
+													}}
+													sx={{
+														position: "absolute",
+														// No clamping: the marker must sit exactly above
+														// the same instant on the waveform and scrubber.
+														left: `${percent(cluster.offsetMs, props.durationMs)}%`,
+														top:
+															LANE_PADDING_PX +
+															cluster.track * TRACK_HEIGHT_PX +
+															TRACK_HEIGHT_PX / 2,
+														transform: "translate(-50%, -50%)",
+														width: markerSize,
+														height: markerSize,
+														p: 0,
+														border: 0,
+														borderRadius: clustered ? "50%" : 0,
+														clipPath: clustered
+															? undefined
+															: markerShape(cluster.laneId),
+														bgcolor: clusterColor(cluster),
+														color: "white",
+														cursor: "pointer",
+														fontSize: 9,
+														fontWeight: 800,
+														lineHeight: `${markerSize}px`,
+														boxShadow:
+															"0 0 0 1.25px rgba(255,255,255,0.85), 0 1px 3px rgba(2,6,23,0.7)",
+														zIndex: 3,
+														"&:hover, &:focus-visible": {
+															transform: "translate(-50%, -50%) scale(1.2)",
+															zIndex: 5,
+														},
+													}}
+												>
+													{clustered ? cluster.points.length : ""}
+												</Box>
+											</Tooltip>
+										);
+									})}
+								</Box>
+							);
+						})}
+
+						{/* After the lanes so the guides sit above their fills, but below
 					    the markers, which own the foreground. */}
-					<TimelineGrid />
+						<TimelineGrid />
 
-					{playheadPercent !== null && (
-						<TimelinePlayhead percent={playheadPercent} />
-					)}
+						{playheadPercent !== null && (
+							<TimelinePlayhead percent={playheadPercent} />
+						)}
+					</Box>
 				</Box>
-			</Box>
 
-			<TimelineRow sx={{ mt: 0.5 }} labelAlign="flex-start">
-				<Box sx={{ position: "relative", height: 18 }}>
-					{TIMELINE_AXIS_FRACTIONS.map((fraction, index) => (
-						<Box
-							key={fraction}
-							sx={{
-								position: "absolute",
-								top: 0,
-								left: `${fraction * 100}%`,
-								// Quarter marks crowd the narrow layout; the ends and the
-								// midpoint stay readable at every width.
-								display:
-									index % 2 === 1 ? { xs: "none", sm: "block" } : "block",
-							}}
-						>
+				<TimelineRow sx={{ mt: 0.5 }} labelAlign="flex-start">
+					<Box sx={{ position: "relative", height: 18 }}>
+						{TIMELINE_AXIS_FRACTIONS.map((fraction, index) => (
 							<Box
-								aria-hidden="true"
+								key={fraction}
 								sx={{
 									position: "absolute",
 									top: 0,
-									left: 0,
-									ml: gridLineOffset(fraction),
-									width: "1px",
-									height: AXIS_TICK_HEIGHT_PX,
-									bgcolor: TIMELINE_GRID_COLOR,
-								}}
-							/>
-							<Typography
-								variant="caption"
-								color="text.secondary"
-								sx={{
-									display: "block",
-									mt: `${AXIS_TICK_HEIGHT_PX}px`,
-									transform: axisLabelTransform(fraction),
-									whiteSpace: "nowrap",
-									fontVariantNumeric: "tabular-nums",
-									lineHeight: 1.2,
+									left: `${fraction * 100}%`,
+									// Quarter marks crowd the narrow layout; the ends and the
+									// midpoint stay readable at every width.
+									display:
+										index % 2 === 1 ? { xs: "none", sm: "block" } : "block",
 								}}
 							>
-								{formatTimelineOffset(fraction * props.durationMs)}
-							</Typography>
-						</Box>
-					))}
-				</Box>
-			</TimelineRow>
+								<Box
+									aria-hidden="true"
+									sx={{
+										position: "absolute",
+										top: 0,
+										left: 0,
+										ml: gridLineOffset(fraction),
+										width: "1px",
+										height: AXIS_TICK_HEIGHT_PX,
+										bgcolor: TIMELINE_GRID_COLOR,
+									}}
+								/>
+								<Typography
+									variant="caption"
+									color="text.secondary"
+									sx={{
+										display: "block",
+										mt: `${AXIS_TICK_HEIGHT_PX}px`,
+										transform: axisLabelTransform(fraction),
+										whiteSpace: "nowrap",
+										fontVariantNumeric: "tabular-nums",
+										lineHeight: 1.2,
+									}}
+								>
+									{formatTimelineOffset(fraction * props.durationMs)}
+								</Typography>
+							</Box>
+						))}
+					</Box>
+				</TimelineRow>
 
-			<ClusterPicker
-				anchor={picker?.anchor ?? null}
-				cluster={picker?.cluster ?? null}
-				startedAtMs={props.startedAtMs}
-				onClose={() => setPicker(null)}
-				onSeek={props.onSeek}
-			/>
+				<ClusterPicker
+					anchor={picker?.anchor ?? null}
+					cluster={picker?.cluster ?? null}
+					startedAtMs={props.startedAtMs}
+					onClose={() => setPicker(null)}
+					onSeek={props.onSeek}
+				/>
+			</Collapse>
 		</Box>
 	);
 }

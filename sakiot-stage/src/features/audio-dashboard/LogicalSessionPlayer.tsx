@@ -1,6 +1,4 @@
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
@@ -10,11 +8,14 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
+import LinearProgress from "@mui/material/LinearProgress";
 import MenuItem from "@mui/material/MenuItem";
 import Paper from "@mui/material/Paper";
 import Select from "@mui/material/Select";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import type Hls from "hls.js";
@@ -35,6 +36,7 @@ import {
 	nearestSelectionEdge,
 	type SelectionEdge,
 } from "./clipSelection";
+import { isResetClipSelectionShortcut } from "./clipSelectionShortcuts";
 import {
 	isValidClipSelection,
 	reconcileSessionSelection,
@@ -48,14 +50,40 @@ import {
 	normalizeSessionSegments,
 	type PlaybackSegment,
 } from "./logicalSessionTimeline";
+import { PlaybackControls } from "./PlaybackControls";
+import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
-import { TimelineRow } from "./timelineLayout";
+import { SilenceFreePlayer } from "./SilenceFreePlayer";
 
 const ARROW_SEEK_MS = 5_000;
 const CTRL_ARROW_SEEK_MS = 30_000;
 const CLIP_ARROW_SEEK_MS = 100;
 const CLIP_SHIFT_ARROW_SEEK_MS = 1_000;
 const CLIP_CTRL_ARROW_SEEK_MS = 5_000;
+
+type SilenceRemovalStatus = {
+	status: "idle" | "processing" | "ready" | "failed";
+	progress: number;
+};
+
+function parseSilenceRemovalStatus(value: unknown): SilenceRemovalStatus {
+	if (!value || typeof value !== "object") {
+		return { status: "failed", progress: 0 };
+	}
+	const candidate = value as { status?: unknown; progress?: unknown };
+	const status =
+		candidate.status === "processing" ||
+		candidate.status === "ready" ||
+		candidate.status === "failed"
+			? candidate.status
+			: "idle";
+	const progress =
+		typeof candidate.progress === "number" &&
+		Number.isFinite(candidate.progress)
+			? Math.round(Math.min(100, Math.max(0, candidate.progress)))
+			: 0;
+	return { status, progress };
+}
 
 function absoluteMediaUrl(path: string): string {
 	return new URL(
@@ -79,6 +107,17 @@ function shortcutTargetIsInteractive(target: EventTarget | null): boolean {
 		Boolean(
 			target.closest(
 				'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="slider"]',
+			),
+		)
+	);
+}
+
+function shortcutTargetAcceptsTextInput(target: EventTarget | null): boolean {
+	return (
+		target instanceof HTMLElement &&
+		Boolean(
+			target.closest(
+				'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
 			),
 		)
 	);
@@ -174,8 +213,22 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [selection, setSelection] = useState<[number, number]>([0, 0]);
 	const [volume, setVolume] = useState(1);
 	const [playbackRate, setPlaybackRate] = useState(1);
-	const [actionMessage, setActionMessage] = useState<string | null>(null);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [clipMessage, setClipMessage] = useState<string | null>(null);
+	const [clipError, setClipError] = useState<string | null>(null);
+	const [sessionMessage, setSessionMessage] = useState<string | null>(null);
+	const [sessionError, setSessionError] = useState<string | null>(null);
+	const [sessionAction, setSessionAction] = useState<
+		"download" | "silence" | "silence-download" | null
+	>(null);
+	const [playbackTab, setPlaybackTab] = useState<"normal" | "silence">(
+		"normal",
+	);
+	const [silenceFreeUrl, setSilenceFreeUrl] = useState<string | null>(null);
+	const [silenceRemoval, setSilenceRemoval] = useState<SilenceRemovalStatus>({
+		status: "idle",
+		progress: 0,
+	});
 	const [selectionHint, setSelectionHint] = useState<string | null>(null);
 	const [clipName, setClipName] = useState("");
 	const [previewing, setPreviewing] = useState(false);
@@ -197,6 +250,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const clipEditorRef = useRef<HTMLDivElement | null>(null);
 	const selectionManifestRef = useRef<SelectionManifest | null>(null);
 	const selectionRef = useRef<SessionSelection>([0, 0]);
+	const silenceRemovalRequestedRef = useRef(false);
+	const silenceFreeMediaUrl = useMemo(
+		() => absoluteMediaUrl(`audio/sessions/${props.sessionId}/silence-free`),
+		[props.sessionId],
+	);
 	/** Where a selection preview stops, and where it resumes when looping. */
 	const playbackBoundRef = useRef<{
 		stopMs: number;
@@ -237,7 +295,6 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		volumeRef.current = volume;
 		if (audioRef.current) audioRef.current.volume = volume;
 	}, [volume]);
-
 	useEffect(() => {
 		if (!manifest) return;
 		durationRef.current = manifest.duration_ms;
@@ -606,6 +663,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	useEffect(() => {
 		const handlePlaybackShortcut = (event: KeyboardEvent) => {
+			if (
+				isResetClipSelectionShortcut(event) &&
+				!shortcutTargetAcceptsTextInput(event.target)
+			) {
+				event.preventDefault();
+				resetSelection();
+				return;
+			}
+			if (playbackTab !== "normal") return;
 			if (shortcutTargetIsInteractive(event.target)) return;
 			if (event.ctrlKey || event.metaKey || event.altKey) {
 				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -637,13 +703,6 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				return;
 			}
 
-			if (event.key === "r" || event.key === "R") {
-				if (event.repeat) return;
-				event.preventDefault();
-				resetSelection();
-				return;
-			}
-
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			event.preventDefault();
 			const distance = stampClipRequested
@@ -664,6 +723,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		return () => window.removeEventListener("keydown", handlePlaybackShortcut);
 	}, [
 		resetSelection,
+		playbackTab,
 		seek,
 		setNearestEdgeFromPlayhead,
 		setSelectionEdgeFromPlayhead,
@@ -671,53 +731,175 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		togglePlay,
 	]);
 
-	const downloadRange = async (removeSilence: boolean) => {
+	const selectPlaybackTab = useCallback(
+		(nextTab: "normal" | "silence") => {
+			if (nextTab === "silence") {
+				clearPlaybackBound();
+				generationRef.current += 1;
+				stopSource();
+				playingRef.current = false;
+				setPlaying(false);
+			}
+			setPlaybackTab(nextTab);
+		},
+		[clearPlaybackBound, stopSource],
+	);
+
+	const applySilenceRemovalStatus = useCallback(
+		(result: SilenceRemovalStatus) => {
+			setSilenceRemoval(result);
+			if (result.status === "ready") {
+				setSilenceFreeUrl(silenceFreeMediaUrl);
+				if (silenceRemovalRequestedRef.current) {
+					silenceRemovalRequestedRef.current = false;
+					setSessionMessage("Silence-free session ready.");
+					selectPlaybackTab("silence");
+				}
+				return;
+			}
+			setSilenceFreeUrl(null);
+			if (result.status === "failed") {
+				silenceRemovalRequestedRef.current = false;
+				setSessionError("Silence removal failed. You can try again.");
+			}
+		},
+		[selectPlaybackTab, silenceFreeMediaUrl],
+	);
+
+	useEffect(() => {
+		let cancelled = false;
+		silenceRemovalRequestedRef.current = false;
+		setSilenceFreeUrl(null);
+		setSilenceRemoval({ status: "idle", progress: 0 });
+		setSessionError(null);
+		setSessionMessage(null);
+		setPlaybackTab("normal");
+		if (manifest?.state !== "finalized") return;
+
+		void authedFetch(`audio/sessions/${props.sessionId}/remove-silence`)
+			.then(async (response) => {
+				if (!response.ok) return;
+				const result = parseSilenceRemovalStatus(await response.json());
+				if (!cancelled) applySilenceRemovalStatus(result);
+			})
+			.catch(() => {
+				// A temporary status lookup failure leaves the action available.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [applySilenceRemovalStatus, manifest?.state, props.sessionId]);
+
+	useEffect(() => {
+		if (silenceRemoval.status !== "processing") return;
+		let cancelled = false;
+		let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+
+		const poll = async () => {
+			try {
+				const response = await authedFetch(
+					`audio/sessions/${props.sessionId}/remove-silence`,
+				);
+				if (response.ok) {
+					const result = parseSilenceRemovalStatus(await response.json());
+					if (cancelled) return;
+					applySilenceRemovalStatus(result);
+					if (result.status !== "processing") return;
+				}
+			} catch {
+				// Keep polling: the background job is independent of this request.
+			}
+			if (!cancelled) timeout = globalThis.setTimeout(poll, 1_000);
+		};
+
+		timeout = globalThis.setTimeout(poll, 750);
+		return () => {
+			cancelled = true;
+			if (timeout !== undefined) globalThis.clearTimeout(timeout);
+		};
+	}, [applySilenceRemovalStatus, props.sessionId, silenceRemoval.status]);
+
+	const downloadSession = async () => {
+		setSessionAction("download");
 		setActionError(null);
-		setActionMessage(null);
-		const query = new URLSearchParams({
-			start: String(selection[0] / 1_000),
-			end: String(selection[1] / 1_000),
-		});
-		if (removeSilence) query.set("remove_silence", "true");
-		const response = await authedFetch(
-			`audio/sessions/${props.sessionId}/download?${query}`,
-		);
-		if (!response.ok) {
-			setActionError(`Composition failed (${response.status}).`);
-			return;
+		setSessionError(null);
+		setSessionMessage(null);
+		try {
+			const response = await authedFetch(
+				`audio/sessions/${props.sessionId}/download`,
+			);
+			if (!response.ok) {
+				setSessionError(`Session download failed (${response.status}).`);
+				return;
+			}
+			saveBlob(await response.blob(), `session-${props.sessionId}.ogg`);
+		} catch {
+			setSessionError("Session download failed.");
+		} finally {
+			setSessionAction(null);
 		}
-		saveBlob(
-			await response.blob(),
-			`session-${props.sessionId}${removeSilence ? "-silence-free" : ""}.ogg`,
-		);
 	};
 
-	const removeSilenceRange = async () => {
+	const createSilenceFreeSession = async (force = false) => {
+		setSessionAction("silence");
+		silenceRemovalRequestedRef.current = true;
+		setSilenceRemoval({ status: "processing", progress: 0 });
 		setActionError(null);
-		const response = await authedFetch(
-			`audio/sessions/${props.sessionId}/remove-silence`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					start: selection[0] / 1_000,
-					end: selection[1] / 1_000,
-				}),
-			},
-		);
-		if (!response.ok) {
-			setActionError(`Silence removal failed (${response.status}).`);
-			return;
+		setSessionError(null);
+		setSessionMessage(null);
+		try {
+			const response = await authedFetch(
+				`audio/sessions/${props.sessionId}/remove-silence${force ? "?force=true" : ""}`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					// Silence removal is a session action, never a Clip window range.
+					body: JSON.stringify({}),
+				},
+			);
+			if (!response.ok) {
+				silenceRemovalRequestedRef.current = false;
+				setSilenceRemoval({ status: "idle", progress: 0 });
+				setSessionError(`Silence removal failed (${response.status}).`);
+				return;
+			}
+			applySilenceRemovalStatus(
+				parseSilenceRemovalStatus(await response.json()),
+			);
+		} catch {
+			silenceRemovalRequestedRef.current = false;
+			setSilenceRemoval({ status: "idle", progress: 0 });
+			setSessionError("Silence removal failed.");
+		} finally {
+			setSessionAction(null);
 		}
-		saveBlob(
-			await response.blob(),
-			`session-${props.sessionId}-silence-free.ogg`,
-		);
+	};
+
+	const downloadSilenceFreeSession = async () => {
+		setSessionAction("silence-download");
+		setSessionError(null);
+		try {
+			const response = await authedFetch(
+				`audio/sessions/${props.sessionId}/silence-free?download=true`,
+			);
+			if (!response.ok) {
+				setSessionError(`Silence-free download failed (${response.status}).`);
+				return;
+			}
+			saveBlob(
+				await response.blob(),
+				`session-${props.sessionId}-silence-free.ogg`,
+			);
+		} catch {
+			setSessionError("Silence-free download failed.");
+		} finally {
+			setSessionAction(null);
+		}
 	};
 
 	const createSelectedClip = async () => {
-		setActionError(null);
-		setActionMessage(null);
+		setClipError(null);
+		setClipMessage(null);
 		try {
 			const response = await createClip({
 				recording_session_id: props.sessionId,
@@ -725,10 +907,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				end: selection[1] / 1_000,
 				name: clipName.trim() || undefined,
 			}).unwrap();
-			setActionMessage(`Clip created: ${response.name}`);
+			setClipMessage(`Clip created: ${response.name}`);
 			setClipName("");
 		} catch {
-			setActionError("Clip creation failed. Select 1-20 seconds.");
+			setClipError("Clip creation failed. Select 1-20 seconds.");
 		}
 	};
 
@@ -791,113 +973,168 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			</Typography>
 
 			<Paper variant="outlined" sx={{ p: 2, my: 2 }}>
-				<TimelineRow label="Waveform" labelAlign="flex-start" sx={{ mb: 1 }}>
-					<SessionWaveform
-						key={props.sessionId}
-						sessionId={props.sessionId}
+				<Tabs
+					value={playbackTab}
+					onChange={(_event, value: "normal" | "silence") =>
+						selectPlaybackTab(value)
+					}
+					sx={{ minHeight: 32, mb: 1 }}
+				>
+					<Tab label="Normal" value="normal" sx={{ minHeight: 32, py: 0 }} />
+					{silenceFreeUrl && (
+						<Tab
+							label="Silence-free"
+							value="silence"
+							sx={{ minHeight: 32, py: 0 }}
+						/>
+					)}
+				</Tabs>
+
+				<Box sx={{ display: playbackTab === "normal" ? "block" : "none" }}>
+					<SessionPlaybackTimeline
+						waveform={
+							<SessionWaveform
+								key={props.sessionId}
+								sessionId={props.sessionId}
+								positionMs={displayedPositionMs}
+								durationMs={manifest.duration_ms}
+								onSeek={seek}
+							/>
+						}
 						positionMs={displayedPositionMs}
 						durationMs={manifest.duration_ms}
 						onSeek={seek}
-					/>
-				</TimelineRow>
-
-				<TimelineRow label="Position">
-					<Slider
-						aria-label="Logical playback position"
-						min={0}
-						max={Math.max(0.001, durationSeconds)}
-						step={0.01}
-						value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
-						onChange={(_event, value) =>
-							setSeekPreviewMs(Number(value) * 1_000)
+						onSeekPreview={setSeekPreviewMs}
+						positionAriaLabel="Logical playback position"
+						rightDetail={
+							<Typography
+								variant="body2"
+								color="text.secondary"
+								sx={{ fontVariantNumeric: "tabular-nums" }}
+							>
+								Real time{" "}
+								{new Date(
+									manifest.started_at_ms + displayedPositionMs,
+								).toLocaleString()}
+							</Typography>
 						}
-						onChangeCommitted={(_event, value) => {
-							const nextPositionMs = Number(value) * 1_000;
-							setSeekPreviewMs(null);
-							seek(nextPositionMs);
-						}}
-						valueLabelDisplay="auto"
-						valueLabelFormat={formatDuration}
-						sx={{
-							display: "block",
-							py: 1.5,
-							"& .MuiSlider-thumb, & .MuiSlider-track": {
-								transition: "none",
-							},
-						}}
-					/>
-				</TimelineRow>
-
-				<TimelineRow sx={{ mb: 1.5 }}>
-					<Stack
-						direction={{ xs: "column", sm: "row" }}
-						justifyContent="space-between"
-						spacing={0.5}
 					>
-						<Typography
-							variant="body2"
-							sx={{ fontVariantNumeric: "tabular-nums" }}
-						>
-							Recording {formatDuration(displayedPositionMs / 1_000)} /{" "}
-							{formatDuration(durationSeconds)}
-						</Typography>
-						<Typography
-							variant="body2"
-							color="text.secondary"
-							sx={{ fontVariantNumeric: "tabular-nums" }}
-						>
-							Real time{" "}
-							{new Date(
-								manifest.started_at_ms + displayedPositionMs,
-							).toLocaleString()}
-						</Typography>
-					</Stack>
-				</TimelineRow>
+						<AudioEventTimeline
+							events={manifest.events}
+							durationMs={manifest.duration_ms}
+							positionMs={displayedPositionMs}
+							startedAtMs={manifest.started_at_ms}
+							onSeek={seek}
+						/>
+					</SessionPlaybackTimeline>
+					<PlaybackControls
+						playing={playing}
+						onTogglePlay={togglePlay}
+						volume={volume}
+						onVolumeChange={setVolume}
+						playbackRate={playbackRate}
+						onPlaybackRateChange={setPlaybackRate}
+					/>
+				</Box>
 
-				<AudioEventTimeline
-					events={manifest.events}
-					durationMs={manifest.duration_ms}
-					positionMs={displayedPositionMs}
-					startedAtMs={manifest.started_at_ms}
-					onSeek={seek}
-				/>
-			</Paper>
+				{playbackTab === "silence" && silenceFreeUrl && (
+					<SilenceFreePlayer
+						key={silenceFreeUrl}
+						sessionId={props.sessionId}
+						url={silenceFreeUrl}
+					/>
+				)}
 
-			<Stack
-				direction={{ xs: "column", md: "row" }}
-				spacing={2}
-				alignItems="center"
-			>
-				<Button
-					variant="contained"
-					onClick={togglePlay}
-					startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}
+				<Stack
+					direction={{ xs: "column", sm: "row" }}
+					spacing={1}
+					flexWrap="wrap"
+					useFlexGap
+					sx={{ mt: 1 }}
 				>
-					{playing ? "Pause" : "Play"}
-				</Button>
-				<Box sx={{ minWidth: 180, flex: 1 }}>
-					<Typography variant="caption">Volume</Typography>
-					<Slider
-						min={0}
-						max={1}
-						step={0.05}
-						value={volume}
-						onChange={(_event, value) => setVolume(Number(value))}
-					/>
-				</Box>
-				<Box sx={{ minWidth: 180, flex: 1 }}>
-					<Typography variant="caption">
-						Speed {playbackRate.toFixed(2)}×
-					</Typography>
-					<Slider
-						min={0.5}
-						max={2}
-						step={0.25}
-						value={playbackRate}
-						onChange={(_event, value) => setPlaybackRate(Number(value))}
-					/>
-				</Box>
-			</Stack>
+					<Button
+						variant="outlined"
+						onClick={() => void downloadSession()}
+						disabled={sessionAction !== null}
+					>
+						{sessionAction === "download" ? "Preparing…" : "Download session"}
+					</Button>
+					{!silenceFreeUrl && (
+						<Button
+							variant="contained"
+							onClick={() => void createSilenceFreeSession()}
+							disabled={
+								sessionAction !== null ||
+								silenceRemoval.status === "processing" ||
+								manifest.state !== "finalized"
+							}
+							title={
+								manifest.state === "finalized"
+									? undefined
+									: "Silence removal is available after the recording is finalized"
+							}
+						>
+							{sessionAction === "silence" ||
+							silenceRemoval.status === "processing"
+								? `Removing silence… ${silenceRemoval.progress}%`
+								: "Remove silence"}
+						</Button>
+					)}
+					{silenceFreeUrl && (
+						<Button
+							variant="outlined"
+							onClick={() => void createSilenceFreeSession(true)}
+							disabled={
+								sessionAction !== null || silenceRemoval.status === "processing"
+							}
+						>
+							{sessionAction === "silence"
+								? "Regenerating…"
+								: "Regenerate silence-free"}
+						</Button>
+					)}
+					{silenceFreeUrl && (
+						<Button
+							variant="outlined"
+							onClick={() => void downloadSilenceFreeSession()}
+							disabled={sessionAction !== null}
+						>
+							{sessionAction === "silence-download"
+								? "Preparing…"
+								: "Download silence-free"}
+						</Button>
+					)}
+				</Stack>
+				{silenceRemoval.status === "processing" && (
+					<Box sx={{ mt: 1, maxWidth: 560 }}>
+						<Stack direction="row" justifyContent="space-between" mb={0.5}>
+							<Typography variant="body2">Removing silence</Typography>
+							<Typography variant="body2">
+								{silenceRemoval.progress}%
+							</Typography>
+						</Stack>
+						<LinearProgress
+							variant="determinate"
+							value={silenceRemoval.progress}
+							aria-label="Silence removal progress"
+						/>
+						<Typography variant="caption" color="text.secondary">
+							This can continue in the background; progress resumes if you
+							refresh the page.
+						</Typography>
+					</Box>
+				)}
+				{sessionMessage && (
+					<Alert severity="success" sx={{ mt: 1 }}>
+						{sessionMessage}
+					</Alert>
+				)}
+				{(sessionError || actionError) && (
+					<Alert severity="error" sx={{ mt: 1 }}>
+						{sessionError ?? actionError}
+					</Alert>
+				)}
+			</Paper>
 
 			<Paper ref={clipEditorRef} sx={{ p: 2, my: 2 }}>
 				<Stack
@@ -967,15 +1204,6 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					spacing={1}
 					flexWrap="wrap"
 				>
-					<Button variant="outlined" onClick={() => void downloadRange(false)}>
-						Download range
-					</Button>
-					<Button variant="outlined" onClick={() => void downloadRange(true)}>
-						Download without silence
-					</Button>
-					<Button variant="outlined" onClick={() => void removeSilenceRange()}>
-						Remove silence
-					</Button>
 					<TextField
 						size="small"
 						label="Clip name"
@@ -990,14 +1218,14 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						Create clip
 					</Button>
 				</Stack>
-				{actionMessage && (
+				{clipMessage && (
 					<Alert severity="success" sx={{ mt: 2 }}>
-						{actionMessage}
+						{clipMessage}
 					</Alert>
 				)}
-				{actionError && (
+				{clipError && (
 					<Alert severity="error" sx={{ mt: 2 }}>
-						{actionError}
+						{clipError}
 					</Alert>
 				)}
 			</Paper>

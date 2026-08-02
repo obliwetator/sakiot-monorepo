@@ -153,9 +153,25 @@ export const apiSlice = createApi({
 			query: (recording_session_id) =>
 				`audio/sessions/${recording_session_id}/waveform`,
 		}),
+		getSilenceFreeSessionWaveform: builder.query<
+			SessionWaveformResponse,
+			string
+		>({
+			query: (recording_session_id) =>
+				`audio/sessions/${recording_session_id}/silence-free/waveform`,
+		}),
 		rebuildSessionWaveform: builder.mutation<SessionWaveformResponse, string>({
 			query: (recording_session_id) => ({
 				url: `audio/sessions/${recording_session_id}/waveform/rebuild`,
+				method: "POST",
+			}),
+		}),
+		rebuildSilenceFreeSessionWaveform: builder.mutation<
+			SessionWaveformResponse,
+			string
+		>({
+			query: (recording_session_id) => ({
+				url: `audio/sessions/${recording_session_id}/silence-free/waveform/rebuild`,
 				method: "POST",
 			}),
 		}),
@@ -426,7 +442,9 @@ export const {
 	useGetLiveStemsQuery,
 	useGetSessionManifestQuery,
 	useGetSessionWaveformQuery,
+	useGetSilenceFreeSessionWaveformQuery,
 	useRebuildSessionWaveformMutation,
+	useRebuildSilenceFreeSessionWaveformMutation,
 	useCreateSessionClipMutation,
 	useGetClipsQuery,
 	useDeleteClipMutation,

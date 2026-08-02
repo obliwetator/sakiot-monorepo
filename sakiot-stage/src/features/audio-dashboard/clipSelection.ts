@@ -6,7 +6,7 @@ export type SelectionEdge = "start" | "end";
 export const DETAIL_WINDOWS_MS = [
 	5_000, 10_000, 30_000, 60_000, 300_000, 1_800_000,
 ] as const;
-export const DEFAULT_DETAIL_WINDOW_MS = 60_000;
+export const DEFAULT_DETAIL_WINDOW_FRACTION = 0.1;
 
 /** Keeps a dragged edge off the very edge of the view so you can see context. */
 const PAN_MARGIN_FRACTION = 0.08;
@@ -21,17 +21,30 @@ export function clampMs(valueMs: number, durationMs: number): number {
 	return Math.min(Math.max(valueMs, 0), Math.max(0, durationMs));
 }
 
+/** The initial detail viewport occupies ten percent of the whole session. */
+export function defaultDetailWindowMs(durationMs: number): number {
+	if (!Number.isFinite(durationMs)) return 0;
+	return Math.max(0, durationMs) * DEFAULT_DETAIL_WINDOW_FRACTION;
+}
+
 /** Steps to the next zoom preset; `direction` 1 zooms in, -1 zooms out. */
-export function zoomDetailWindow(windowMs: number, direction: 1 | -1): number {
-	const index = DETAIL_WINDOWS_MS.findIndex(
-		(candidate) => candidate >= windowMs,
-	);
-	const current = index === -1 ? DETAIL_WINDOWS_MS.length - 1 : index;
-	const next = Math.min(
-		DETAIL_WINDOWS_MS.length - 1,
-		Math.max(0, current - direction),
-	);
-	return DETAIL_WINDOWS_MS[next];
+export function zoomDetailWindow(
+	windowMs: number,
+	direction: 1 | -1,
+	additionalStopMs?: number,
+): number {
+	const stops = Array.from(
+		new Set([
+			...DETAIL_WINDOWS_MS,
+			...(additionalStopMs !== undefined && additionalStopMs > 0
+				? [additionalStopMs]
+				: []),
+		]),
+	).sort((left, right) => left - right);
+	if (direction === 1) {
+		return stops.findLast((candidate) => candidate < windowMs) ?? windowMs;
+	}
+	return stops.find((candidate) => candidate > windowMs) ?? windowMs;
 }
 
 function windowOfWidth(startMs: number, widthMs: number, durationMs: number) {
@@ -96,6 +109,17 @@ export function changedEdge(
 	if (next[0] !== previous[0]) return "start";
 	if (next[1] !== previous[1]) return "end";
 	return null;
+}
+
+/** True when both edges moved together without changing the selected length. */
+export function selectionShiftedAsBand(
+	previous: SessionSelection,
+	next: SessionSelection,
+): boolean {
+	if (next[0] === previous[0] || next[1] === previous[1]) return false;
+	const previousLength = previous[1] - previous[0];
+	const nextLength = next[1] - next[0];
+	return Math.abs(nextLength - previousLength) < 0.001;
 }
 
 /**
@@ -213,6 +237,20 @@ export function applyEdge(
 	return [selection[0], Math.max(value, selection[0])];
 }
 
+/** Moves one edge without allowing it to leave the visible clip window. */
+export function applyEdgeWithinWindow(
+	selection: SessionSelection,
+	edge: SelectionEdge,
+	valueMs: number,
+	durationMs: number,
+	window: TimeWindow,
+): SessionSelection {
+	const startLimit = Math.min(window.startMs, window.endMs);
+	const endLimit = Math.max(window.startMs, window.endMs);
+	const value = Math.min(Math.max(valueMs, startLimit), endLimit);
+	return applyEdge(selection, edge, value, durationMs);
+}
+
 export function nudgeEdge(
 	selection: SessionSelection,
 	edge: SelectionEdge,
@@ -265,6 +303,23 @@ export function moveSelection(
 	const length = selection[1] - selection[0];
 	const limit = Math.max(0, durationMs - length);
 	const start = Math.min(Math.max(selection[0] + deltaMs, 0), limit);
+	return [start, start + length];
+}
+
+/** Slides a selection without allowing either edge to leave the detail view. */
+export function moveSelectionWithinWindow(
+	selection: SessionSelection,
+	deltaMs: number,
+	window: TimeWindow,
+): SessionSelection {
+	const startLimit = Math.min(window.startMs, window.endMs);
+	const endLimit = Math.max(window.startMs, window.endMs);
+	const length = Math.max(0, selection[1] - selection[0]);
+	if (length > endLimit - startLimit) return selection;
+	const start = Math.min(
+		Math.max(selection[0] + deltaMs, startLimit),
+		endLimit - length,
+	);
 	return [start, start + length];
 }
 

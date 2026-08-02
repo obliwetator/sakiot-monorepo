@@ -2,10 +2,16 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import LinearProgress from "@mui/material/LinearProgress";
 import Typography from "@mui/material/Typography";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { useRebuildSessionWaveformMutation } from "../../app/apiSlice";
+import {
+	useRebuildSessionWaveformMutation,
+	useRebuildSilenceFreeSessionWaveformMutation,
+} from "../../app/apiSlice";
+import { formatSessionTimecode } from "../../utils/formatTime";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
 import { useSessionWaveformPeaks, WaveformCanvas } from "./WaveformCanvas";
+import type { WaveformEnvelope } from "./waveformPeaks";
 
 const WAVEFORM_HEIGHT_PX = 132;
 
@@ -14,12 +20,23 @@ export function SessionWaveform(props: {
 	positionMs: number;
 	durationMs: number;
 	onSeek: (positionMs: number) => void;
+	silenceFree?: boolean;
 }) {
 	const [rebuilding, setRebuilding] = useState(false);
 	const [rebuildProgress, setRebuildProgress] = useState(0);
-	const { query, peaks } = useSessionWaveformPeaks(props.sessionId);
+	const { query, peaks } = useSessionWaveformPeaks(
+		props.sessionId,
+		props.silenceFree,
+	);
 	const { currentData: data, isError, refetch } = query;
-	const [rebuildWaveform, rebuildState] = useRebuildSessionWaveformMutation();
+	const [rebuildNormalWaveform, normalRebuildState] =
+		useRebuildSessionWaveformMutation();
+	const [rebuildSilenceFreeWaveform, silenceFreeRebuildState] =
+		useRebuildSilenceFreeSessionWaveformMutation();
+	const rebuildState = props.silenceFree
+		? silenceFreeRebuildState
+		: normalRebuildState;
+	const waveformName = props.silenceFree ? "Silence-free" : "Combined";
 
 	const pollRebuild = useCallback(async () => {
 		const result = await refetch();
@@ -46,30 +63,27 @@ export function SessionWaveform(props: {
 	const startRebuild = async () => {
 		setRebuildProgress(0);
 		try {
-			await rebuildWaveform(props.sessionId).unwrap();
+			const rebuild = props.silenceFree
+				? rebuildSilenceFreeWaveform
+				: rebuildNormalWaveform;
+			await rebuild(props.sessionId).unwrap();
 			setRebuilding(true);
 		} catch {
 			setRebuilding(false);
 		}
 	};
 
-	const playhead =
-		props.durationMs > 0
-			? Math.min(100, Math.max(0, (props.positionMs / props.durationMs) * 100))
-			: 0;
 	const buildInProgress =
 		rebuilding || rebuildState.isLoading || data?.building === true;
 	const waveformError = isError || rebuildState.isError;
 
 	return (
-		<Box
-			sx={{
-				position: "relative",
-				height: WAVEFORM_HEIGHT_PX,
-				borderRadius: 1,
-				overflow: "hidden",
-				bgcolor: "rgba(168, 85, 247, 0.18)",
-			}}
+		<SessionWaveformDisplay
+			peaks={peaks}
+			positionMs={props.positionMs}
+			durationMs={props.durationMs}
+			onSeek={props.onSeek}
+			label={`${waveformName} logical recording waveform`}
 		>
 			{buildInProgress && !waveformError && (
 				<Box
@@ -86,7 +100,7 @@ export function SessionWaveform(props: {
 					}}
 				>
 					<Typography variant="caption">
-						Building combined waveform ({rebuildProgress}%)
+						Building {waveformName.toLowerCase()} waveform ({rebuildProgress}%)
 					</Typography>
 					<LinearProgress variant="determinate" value={rebuildProgress} />
 				</Box>
@@ -103,7 +117,7 @@ export function SessionWaveform(props: {
 					}}
 				>
 					<Typography color="text.secondary" variant="caption">
-						Combined waveform has not been built.
+						{waveformName} waveform has not been built.
 					</Typography>
 				</Box>
 			)}
@@ -119,17 +133,10 @@ export function SessionWaveform(props: {
 					}}
 				>
 					<Typography color="error" variant="caption">
-						Combined waveform unavailable.
+						{waveformName} waveform unavailable.
 					</Typography>
 				</Box>
 			)}
-			<WaveformCanvas
-				peaks={peaks}
-				height={WAVEFORM_HEIGHT_PX}
-				label="Combined logical recording waveform"
-				onSeekFraction={(fraction) => props.onSeek(fraction * props.durationMs)}
-			/>
-			<TimelineGrid />
 			<Button
 				size="small"
 				variant="contained"
@@ -139,6 +146,83 @@ export function SessionWaveform(props: {
 			>
 				{data?.data ? "Rebuild waveform" : "Build waveform"}
 			</Button>
+		</SessionWaveformDisplay>
+	);
+}
+
+export function SessionWaveformDisplay(props: {
+	peaks: WaveformEnvelope;
+	positionMs: number;
+	durationMs: number;
+	onSeek: (positionMs: number) => void;
+	label: string;
+	children?: ReactNode;
+}) {
+	const [hoverFraction, setHoverFraction] = useState<number | null>(null);
+	const playhead =
+		props.durationMs > 0
+			? Math.min(100, Math.max(0, (props.positionMs / props.durationMs) * 100))
+			: 0;
+
+	return (
+		<Box
+			sx={{
+				position: "relative",
+				height: WAVEFORM_HEIGHT_PX,
+				borderRadius: 1,
+				overflow: "hidden",
+				bgcolor: "rgba(168, 85, 247, 0.18)",
+			}}
+		>
+			<WaveformCanvas
+				peaks={props.peaks}
+				height={WAVEFORM_HEIGHT_PX}
+				label={props.label}
+				onSeekFraction={(fraction) => props.onSeek(fraction * props.durationMs)}
+				onHoverFraction={setHoverFraction}
+			/>
+			<TimelineGrid />
+			{hoverFraction !== null && (
+				<Box
+					aria-hidden="true"
+					sx={{
+						position: "absolute",
+						top: 0,
+						bottom: 0,
+						left: `${hoverFraction * 100}%`,
+						borderLeft: "1px solid rgba(125, 211, 252, 0.85)",
+						pointerEvents: "none",
+						zIndex: 3,
+					}}
+				>
+					<Typography
+						variant="caption"
+						sx={{
+							position: "absolute",
+							top: 6,
+							px: 0.75,
+							py: 0.25,
+							borderRadius: 0.75,
+							bgcolor: "rgba(2, 6, 23, 0.9)",
+							color: "info.light",
+							fontVariantNumeric: "tabular-nums",
+							whiteSpace: "nowrap",
+							transform:
+								hoverFraction < 0.1
+									? "translateX(4px)"
+									: hoverFraction > 0.9
+										? "translateX(calc(-100% - 4px))"
+										: "translateX(-50%)",
+						}}
+					>
+						{formatSessionTimecode(
+							(hoverFraction * props.durationMs) / 1_000,
+							props.durationMs / 1_000,
+						)}
+					</Typography>
+				</Box>
+			)}
+			{props.children}
 			<TimelinePlayhead percent={playhead} />
 		</Box>
 	);

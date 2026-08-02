@@ -227,9 +227,57 @@ export interface paths {
 			path?: never;
 			cookie?: never;
 		};
-		get?: never;
+		get: operations["get_session_silence_removal_status"];
 		put?: never;
 		post: operations["remove_session_silence"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/silence-free": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_silence_free"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/silence-free/waveform": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_silence_free_waveform"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/silence-free/waveform/rebuild": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["rebuild_session_silence_free_waveform"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -556,6 +604,11 @@ export interface components {
 			data?: string | null;
 			/** Format: int32 */
 			progress: number;
+		};
+		SilenceFreeSessionResponse: {
+			/** Format: int32 */
+			progress: number;
+			status: string;
 		};
 		StampInfo: {
 			/** Format: int64 */
@@ -1666,7 +1719,7 @@ export interface operations {
 			};
 		};
 	};
-	remove_session_silence: {
+	get_session_silence_removal_status: {
 		parameters: {
 			query?: never;
 			header?: never;
@@ -1676,22 +1729,80 @@ export interface operations {
 			};
 			cookie?: never;
 		};
-		requestBody: {
-			content: {
-				"application/json": components["schemas"]["StartEnd"];
-			};
-		};
+		requestBody?: never;
 		responses: {
-			/** @description Composed silence-free Ogg/Opus */
+			/** @description Current silence-removal status */
 			200: {
 				headers: {
 					[name: string]: unknown;
 				};
 				content: {
-					"audio/ogg": unknown;
+					"application/json": components["schemas"]["SilenceFreeSessionResponse"];
 				};
 			};
-			/** @description Invalid range */
+			/** @description Session is not finalized */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	remove_session_silence: {
+		parameters: {
+			query?: {
+				/** @description Replace an existing silence-free session */
+				force?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Silence-free session is ready */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SilenceFreeSessionResponse"];
+				};
+			};
+			/** @description Silence removal started or is already running */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SilenceFreeSessionResponse"];
+				};
+			};
+			/** @description Session is not finalized */
 			400: {
 				headers: {
 					[name: string]: unknown;
@@ -1719,6 +1830,195 @@ export interface operations {
 				};
 			};
 			/** @description Composition failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_silence_free: {
+		parameters: {
+			query?: {
+				/** @description Download instead of inline playback */
+				download?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Cached silence-free Ogg/Opus */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Silence-free session has not been generated */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_silence_free_waveform: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Silence-free session waveform status and peaks */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionWaveformResponse"];
+				};
+			};
+			/** @description Session is not finalized */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Silence-free session has not been generated */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Waveform generation failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	rebuild_session_silence_free_waveform: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Silence-free waveform rebuild started or already running */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionWaveformResponse"];
+				};
+			};
+			/** @description Session is not finalized */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more audible channels inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Silence-free session has not been generated */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Waveform generation failed */
 			500: {
 				headers: {
 					[name: string]: unknown;

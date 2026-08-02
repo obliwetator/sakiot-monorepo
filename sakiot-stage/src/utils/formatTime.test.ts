@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 import {
 	formatBytes,
 	formatDuration,
+	formatSessionTimecode,
 	formatTimeSince,
 	formatUptime,
+	parseSessionTimecode,
 } from "./formatTime";
 
 describe("formatTime utilities", () => {
@@ -11,6 +13,21 @@ describe("formatTime utilities", () => {
 		expect(formatDuration(3661.9)).toBe("01:01:01");
 		expect(formatDuration(Number.NaN)).toBe("00:00:00");
 		expect(formatDuration(Number.POSITIVE_INFINITY)).toBe("00:00:00");
+	});
+
+	it("formats session timecodes according to recording length", () => {
+		expect(formatSessionTimecode(65, 3_599)).toBe("01:05");
+		expect(formatSessionTimecode(65, 3_600)).toBe("00:01:05");
+		expect(formatSessionTimecode(90_061, 100_000)).toBe("25:01:01");
+		expect(formatSessionTimecode(Number.NaN, 3_600)).toBe("00:00:00");
+	});
+
+	it("parses duration-aware session timecodes", () => {
+		expect(parseSessionTimecode("1:05", 3_599)).toBe(65);
+		expect(parseSessionTimecode("1:01:05", 10_000)).toBe(3_665);
+		expect(parseSessionTimecode("00:60", 3_599)).toBeNull();
+		expect(parseSessionTimecode("01:00", 30)).toBeNull();
+		expect(parseSessionTimecode("01:05", 3_600)).toBeNull();
 	});
 
 	it("formats uptime and time-since text", () => {

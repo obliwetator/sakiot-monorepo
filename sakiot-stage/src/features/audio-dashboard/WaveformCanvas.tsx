@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useGetSessionWaveformQuery } from "../../app/apiSlice";
+import {
+	useGetSessionWaveformQuery,
+	useGetSilenceFreeSessionWaveformQuery,
+} from "../../app/apiSlice";
 import { drawSessionWaveform } from "./sessionWaveformCanvas";
 import {
 	decodeWaveformPeaks,
@@ -11,8 +14,17 @@ import {
  * Decoded peaks for a session. The query is cached by RTK, so the overview and
  * the clip editor share one request; only the decode is per caller.
  */
-export function useSessionWaveformPeaks(sessionId: string) {
-	const query = useGetSessionWaveformQuery(sessionId);
+export function useSessionWaveformPeaks(
+	sessionId: string,
+	silenceFree = false,
+) {
+	const normalQuery = useGetSessionWaveformQuery(sessionId, {
+		skip: silenceFree,
+	});
+	const silenceFreeQuery = useGetSilenceFreeSessionWaveformQuery(sessionId, {
+		skip: !silenceFree,
+	});
+	const query = silenceFree ? silenceFreeQuery : normalQuery;
 	const encoded = query.currentData?.data;
 	const peaks = useMemo(
 		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
@@ -29,6 +41,7 @@ export function WaveformCanvas(props: {
 	startFraction?: number;
 	endFraction?: number;
 	onSeekFraction?: (fraction: number) => void;
+	onHoverFraction?: (fraction: number | null) => void;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const { peaks, height, startFraction = 0, endFraction = 1 } = props;
@@ -66,9 +79,33 @@ export function WaveformCanvas(props: {
 				((event) => {
 					const bounds = event.currentTarget.getBoundingClientRect();
 					props.onSeekFraction?.(
-						(event.clientX - bounds.left) / Math.max(1, bounds.width),
+						Math.min(
+							1,
+							Math.max(
+								0,
+								(event.clientX - bounds.left) / Math.max(1, bounds.width),
+							),
+						),
 					);
 				})
+			}
+			onPointerMove={
+				props.onHoverFraction &&
+				((event) => {
+					const bounds = event.currentTarget.getBoundingClientRect();
+					props.onHoverFraction?.(
+						Math.min(
+							1,
+							Math.max(
+								0,
+								(event.clientX - bounds.left) / Math.max(1, bounds.width),
+							),
+						),
+					);
+				})
+			}
+			onPointerLeave={
+				props.onHoverFraction && (() => props.onHoverFraction?.(null))
 			}
 			style={{
 				width: "100%",

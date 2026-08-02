@@ -2,13 +2,16 @@ import { describe, expect, test } from "bun:test";
 import {
 	advanceFineDrag,
 	applyEdge,
+	applyEdgeWithinWindow,
 	beginFineDrag,
 	canSetSelectionEdge,
 	changedEdge,
 	constrainFineDragToLens,
 	constrainFineDragToWindow,
+	defaultDetailWindowMs,
 	fineDragMultiplier,
 	moveSelection,
+	moveSelectionWithinWindow,
 	nearestSelectionEdge,
 	nudgeEdge,
 	panWindowToInclude,
@@ -17,6 +20,7 @@ import {
 	rollingEdgeStrength,
 	rollingRulerWindow,
 	selectionFitsWindow,
+	selectionShiftedAsBand,
 	selectionWindowGeometry,
 	setNearestSelectionEdge,
 	shiftWindow,
@@ -29,6 +33,18 @@ import {
 } from "./clipSelection";
 
 const SESSION_MS = 22_484_000; // 6h14m44s, the recording that motivated this.
+
+describe("defaultDetailWindowMs", () => {
+	test("uses ten percent of the session", () => {
+		expect(defaultDetailWindowMs(SESSION_MS)).toBe(2_248_400);
+		expect(defaultDetailWindowMs(30_000)).toBe(3_000);
+	});
+
+	test("handles invalid and negative durations", () => {
+		expect(defaultDetailWindowMs(-10_000)).toBe(0);
+		expect(defaultDetailWindowMs(Number.NaN)).toBe(0);
+	});
+});
 
 describe("windowForSelection", () => {
 	test("centres the window on the selection", () => {
@@ -154,6 +170,26 @@ describe("changedEdge", () => {
 	});
 });
 
+describe("selectionShiftedAsBand", () => {
+	test("recognises both edges moving by the same amount", () => {
+		expect(selectionShiftedAsBand([10_000, 20_000], [15_000, 25_000])).toBe(
+			true,
+		);
+	});
+
+	test("rejects edge edits, resizes, and stationary selections", () => {
+		expect(selectionShiftedAsBand([10_000, 20_000], [11_000, 20_000])).toBe(
+			false,
+		);
+		expect(selectionShiftedAsBand([10_000, 20_000], [11_000, 22_000])).toBe(
+			false,
+		);
+		expect(selectionShiftedAsBand([10_000, 20_000], [10_000, 20_000])).toBe(
+			false,
+		);
+	});
+});
+
 describe("selectionFitsWindow", () => {
 	test("tells a clip-sized selection from a whole-session one", () => {
 		expect(selectionFitsWindow([0, 12_000], 60_000)).toBe(true);
@@ -184,6 +220,17 @@ describe("window geometry", () => {
 		expect(zoomDetailWindow(60_000, -1)).toBe(300_000);
 		expect(zoomDetailWindow(5_000, 1)).toBe(5_000);
 		expect(zoomDetailWindow(1_800_000, -1)).toBe(1_800_000);
+	});
+
+	test("keeps a duration-relative default as an extra zoom stop", () => {
+		const defaultWindowMs = defaultDetailWindowMs(SESSION_MS);
+
+		expect(zoomDetailWindow(defaultWindowMs, 1, defaultWindowMs)).toBe(
+			1_800_000,
+		);
+		expect(zoomDetailWindow(1_800_000, -1, defaultWindowMs)).toBe(
+			defaultWindowMs,
+		);
 	});
 
 	test("clips a long band without inventing handles at the window edges", () => {
@@ -296,6 +343,34 @@ describe("applyEdge", () => {
 	});
 });
 
+describe("applyEdgeWithinWindow", () => {
+	const window = { startMs: 100_000, endMs: 160_000 };
+
+	test("stops the left handle at the clip-window start", () => {
+		expect(
+			applyEdgeWithinWindow(
+				[110_000, 125_000],
+				"start",
+				-1_000_000_000,
+				SESSION_MS,
+				window,
+			),
+		).toEqual([100_000, 125_000]);
+	});
+
+	test("stops the right handle at the clip-window end", () => {
+		expect(
+			applyEdgeWithinWindow(
+				[110_000, 125_000],
+				"end",
+				1_000_000_000,
+				SESSION_MS,
+				window,
+			),
+		).toEqual([110_000, 160_000]);
+	});
+});
+
 describe("direction-aware edge controls", () => {
 	const selection: [number, number] = [10_000, 20_000];
 
@@ -340,6 +415,43 @@ describe("moveSelection", () => {
 		expect(
 			moveSelection([SESSION_MS - 10_000, SESSION_MS], 50_000, SESSION_MS),
 		).toEqual([SESSION_MS - 10_000, SESSION_MS]);
+	});
+});
+
+describe("moveSelectionWithinWindow", () => {
+	const window = { startMs: 100_000, endMs: 160_000 };
+
+	test("slides both edges inside the visible clip window", () => {
+		expect(
+			moveSelectionWithinWindow([110_000, 125_000], 10_000, window),
+		).toEqual([120_000, 135_000]);
+	});
+
+	test("stops when the left edge reaches the window start", () => {
+		expect(
+			moveSelectionWithinWindow([110_000, 125_000], -50_000, window),
+		).toEqual([100_000, 115_000]);
+	});
+
+	test("stops when the right edge reaches the window end", () => {
+		expect(
+			moveSelectionWithinWindow([110_000, 125_000], 50_000, window),
+		).toEqual([145_000, 160_000]);
+	});
+
+	test("stays pinned during arbitrarily far off-screen pointer travel", () => {
+		const selection: [number, number] = [110_000, 125_000];
+		expect(
+			moveSelectionWithinWindow(selection, -1_000_000_000, window),
+		).toEqual([100_000, 115_000]);
+		expect(moveSelectionWithinWindow(selection, 1_000_000_000, window)).toEqual(
+			[145_000, 160_000],
+		);
+	});
+
+	test("does not move a selection wider than the clip window", () => {
+		const selection: [number, number] = [90_000, 170_000];
+		expect(moveSelectionWithinWindow(selection, 5_000, window)).toBe(selection);
 	});
 });
 

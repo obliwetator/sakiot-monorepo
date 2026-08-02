@@ -21,7 +21,9 @@ pub use reaper::spawn_hls_reaper;
 pub use serve::{download_audio, get_audio};
 pub use sessions::{
     create_session_clip, download_session, get_session_events, get_session_manifest,
-    get_session_segment, get_session_waveform, rebuild_session_waveform, remove_session_silence,
+    get_session_segment, get_session_silence_free, get_session_silence_free_waveform,
+    get_session_silence_removal_status, get_session_waveform,
+    rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
     session_live_playlist, session_live_segment,
 };
 pub use silence::{SilenceJobContainer, remove_silence};

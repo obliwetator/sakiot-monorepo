@@ -11,8 +11,10 @@ use web_server::admin::voice_settings::{
 use web_server::audio::{
     LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
     download_audio, download_session, get_audio, get_recording_events, get_session_events,
-    get_session_manifest, get_session_segment, get_session_waveform, get_waveform_data,
-    live_playlist, live_segment, live_state, rebuild_session_waveform, remove_session_silence,
+    get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
+    get_waveform_data, live_playlist, live_segment, live_state,
+    rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
     remove_silence, session_live_playlist, session_live_segment,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
@@ -133,7 +135,11 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
                     .service(rebuild_session_waveform)
                     .service(download_session)
                     .service(create_session_clip)
+                    .service(get_session_silence_removal_status)
                     .service(remove_session_silence)
+                    .service(get_session_silence_free)
+                    .service(get_session_silence_free_waveform)
+                    .service(rebuild_session_silence_free_waveform)
                     .service(session_live_playlist)
                     .service(session_live_segment)
                     .service(get_session_segment)
@@ -153,6 +159,9 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
     let forbidden_gets = [
         format!("/api/audio/sessions/{session_id}/manifest"),
         format!("/api/audio/sessions/{session_id}/events"),
+        format!("/api/audio/sessions/{session_id}/silence-free"),
+        format!("/api/audio/sessions/{session_id}/silence-free/waveform"),
+        format!("/api/audio/sessions/{session_id}/remove-silence"),
         format!("/api/audio/sessions/{session_id}/waveform"),
         format!("/api/audio/sessions/{session_id}/download"),
         format!("/api/audio/sessions/{session_id}/segments/{first_audio_id}"),
@@ -191,6 +200,7 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
 
     for uri in [
         format!("/api/audio/sessions/{session_id}/waveform/rebuild"),
+        format!("/api/audio/sessions/{session_id}/silence-free/waveform/rebuild"),
         format!("/api/audio/sessions/{session_id}/clips"),
         format!("/api/audio/sessions/{session_id}/remove-silence"),
         format!(

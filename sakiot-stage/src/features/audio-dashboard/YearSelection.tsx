@@ -92,6 +92,9 @@ export function YearSelection() {
 					px: { xs: 1, md: 2 },
 					height: { md: "100%" },
 					overflowY: { md: "auto" },
+					// Vertical scrolling must not implicitly turn this hidden-scrollbar
+					// container into a horizontally pannable one.
+					overflowX: "hidden",
 					// Hide scrollbar (Firefox / IE / WebKit)
 					scrollbarWidth: "none",
 					msOverflowStyle: "none",

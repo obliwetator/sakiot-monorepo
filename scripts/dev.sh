@@ -120,6 +120,12 @@ db_up() {
     ensure_data_dirs
 }
 
+ensure_media_tools() {
+    need ffmpeg "install the FFmpeg package (Ubuntu/Debian: sudo apt install ffmpeg)"
+    need ffprobe "installed alongside FFmpeg (Ubuntu/Debian: sudo apt install ffmpeg)"
+    need audiowaveform "install audiowaveform (Ubuntu: sudo add-apt-repository ppa:chris-needham/ppa, then sudo apt update && sudo apt install audiowaveform)"
+}
+
 run_server() {
     if ! command -v cargo-watch >/dev/null 2>&1; then
         log "cargo-watch missing (auto-rebuild on save)."
@@ -144,6 +150,7 @@ stop_db_on_exit() {
 }
 
 cmd_up() {
+    ensure_media_tools
     db_up
     trap stop_db_on_exit EXIT
     prompt_fetch_fixtures
