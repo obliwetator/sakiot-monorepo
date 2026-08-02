@@ -74,7 +74,7 @@ export function WaveformCanvas(props: {
 				width: "100%",
 				height,
 				display: "block",
-				cursor: props.onSeekFraction ? "pointer" : "default",
+				cursor: props.onSeekFraction ? "pointer" : "inherit",
 			}}
 		/>
 	);

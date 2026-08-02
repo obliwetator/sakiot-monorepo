@@ -35,6 +35,7 @@ import {
 	reconcileSessionSelection,
 	type SelectionManifest,
 	type SessionSelection,
+	selectionAroundStamp,
 } from "./logicalSessionSelection";
 import {
 	isolateSessionChannel,
@@ -46,6 +47,9 @@ import { TimelineRow } from "./timelineLayout";
 
 const ARROW_SEEK_MS = 5_000;
 const CTRL_ARROW_SEEK_MS = 30_000;
+const CLIP_ARROW_SEEK_MS = 100;
+const CLIP_SHIFT_ARROW_SEEK_MS = 1_000;
+const CLIP_CTRL_ARROW_SEEK_MS = 5_000;
 
 function absoluteMediaUrl(path: string): string {
 	return new URL(
@@ -91,12 +95,19 @@ function isSameMediaSegment(
 
 export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const location = useLocation();
-	const deepLinkedPositionMs = useMemo(() => {
-		const rawPosition = new URLSearchParams(location.search).get("t");
+	const deepLink = useMemo(() => {
+		const params = new URLSearchParams(location.search);
+		const rawPosition = params.get("t");
 		if (rawPosition === null) return null;
 		const seconds = Number(rawPosition);
-		return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1_000 : null;
+		if (!Number.isFinite(seconds) || seconds < 0) return null;
+		return {
+			positionMs: seconds * 1_000,
+			fromStamp: params.get("clip") === "stamp",
+		};
 	}, [location.search]);
+	const deepLinkedPositionMs = deepLink?.positionMs ?? null;
+	const stampClipRequested = deepLink?.fromStamp === true;
 	const [finalizedSessionId, setFinalizedSessionId] = useState<string | null>(
 		null,
 	);
@@ -176,6 +187,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const rateRef = useRef(1);
 	const volumeRef = useRef(1);
 	const appliedDeepLinkRef = useRef<string | null>(null);
+	const clipEditorRef = useRef<HTMLDivElement | null>(null);
 	const selectionManifestRef = useRef<SelectionManifest | null>(null);
 	const selectionRef = useRef<SessionSelection>([0, 0]);
 	/** Where a selection preview stops, and where it resumes when looping. */
@@ -415,12 +427,22 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	useEffect(() => {
 		if (!manifest || deepLinkedPositionMs === null) return;
-		const deepLinkKey = `${props.sessionId}:${deepLinkedPositionMs}`;
+		const deepLinkKey = `${props.sessionId}:${deepLinkedPositionMs}:${stampClipRequested}`;
 		if (appliedDeepLinkRef.current === deepLinkKey) return;
 		appliedDeepLinkRef.current = deepLinkKey;
+		const positionMs = Math.min(deepLinkedPositionMs, manifest.duration_ms);
 		setSeekPreviewMs(null);
-		startAtRef.current(deepLinkedPositionMs, false);
-	}, [deepLinkedPositionMs, manifest, props.sessionId]);
+		startAtRef.current(positionMs, false);
+		if (stampClipRequested) {
+			setSelection(selectionAroundStamp(positionMs, manifest.duration_ms));
+			requestAnimationFrame(() => {
+				clipEditorRef.current?.scrollIntoView({
+					behavior: "smooth",
+					block: "center",
+				});
+			});
+		}
+	}, [deepLinkedPositionMs, manifest, props.sessionId, stampClipRequested]);
 
 	useEffect(
 		() => () => {
@@ -562,7 +584,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			event.preventDefault();
-			const distance = event.ctrlKey ? CTRL_ARROW_SEEK_MS : ARROW_SEEK_MS;
+			const distance = stampClipRequested
+				? event.ctrlKey || event.metaKey
+					? CLIP_CTRL_ARROW_SEEK_MS
+					: event.shiftKey
+						? CLIP_SHIFT_ARROW_SEEK_MS
+						: CLIP_ARROW_SEEK_MS
+				: event.ctrlKey || event.metaKey
+					? CTRL_ARROW_SEEK_MS
+					: ARROW_SEEK_MS;
 			const direction = event.key === "ArrowRight" ? 1 : -1;
 			setSeekPreviewMs(null);
 			seek(positionRef.current + direction * distance);
@@ -570,7 +600,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		window.addEventListener("keydown", handlePlaybackShortcut);
 		return () => window.removeEventListener("keydown", handlePlaybackShortcut);
-	}, [seek, setSelectionEdgeFromPlayhead, togglePlay]);
+	}, [seek, setSelectionEdgeFromPlayhead, stampClipRequested, togglePlay]);
 
 	const downloadRange = async (removeSilence: boolean) => {
 		setActionError(null);
@@ -800,7 +830,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				</Box>
 			</Stack>
 
-			<Paper sx={{ p: 2, my: 2 }}>
+			<Paper ref={clipEditorRef} sx={{ p: 2, my: 2 }}>
 				<Stack
 					direction="row"
 					spacing={1}
@@ -815,15 +845,29 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					{clipSelectionIsValid && (
 						<Chip label="Valid clip duration" color="success" size="small" />
 					)}
+					{stampClipRequested && (
+						<Chip label="Drafted from stamp" color="info" size="small" />
+					)}
 				</Stack>
+				{stampClipRequested && (
+					<Typography variant="caption" color="text.secondary">
+						Fine seek: Arrow 0.1s · Shift+Arrow 1s · Ctrl/⌘+Arrow 5s · I/O set
+						the clip boundaries.
+					</Typography>
+				)}
 
 				<ClipRangeEditor
+					key={`${props.sessionId}:${stampClipRequested ? deepLinkedPositionMs : "session"}`}
 					sessionId={props.sessionId}
 					durationMs={manifest.duration_ms}
 					selection={selection}
+					initialFocusMs={
+						stampClipRequested ? (deepLinkedPositionMs ?? undefined) : undefined
+					}
 					onSelectionChange={setSelection}
 					positionMs={displayedPositionMs}
 					onSeek={seek}
+					onSeekPreview={setSeekPreviewMs}
 					onSetEdgeFromPlayhead={setSelectionEdgeFromPlayhead}
 					onPreview={togglePreview}
 					previewing={previewing}
@@ -831,19 +875,21 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					onLoopChange={setLoopSelection}
 				/>
 
-				<Slider
-					aria-label="Logical action range"
-					min={0}
-					max={Math.max(1, manifest.duration_ms)}
-					step={100}
-					value={selection}
-					onChange={(_event, value) => {
-						if (Array.isArray(value)) setSelection([value[0], value[1]]);
-					}}
-					valueLabelDisplay="auto"
-					valueLabelFormat={(value) => formatDuration(value / 1_000)}
-					disableSwap
-				/>
+				{!stampClipRequested && (
+					<Slider
+						aria-label="Logical action range"
+						min={0}
+						max={Math.max(1, manifest.duration_ms)}
+						step={100}
+						value={selection}
+						onChange={(_event, value) => {
+							if (Array.isArray(value)) setSelection([value[0], value[1]]);
+						}}
+						valueLabelDisplay="auto"
+						valueLabelFormat={(value) => formatDuration(value / 1_000)}
+						disableSwap
+					/>
+				)}
 				<Stack
 					direction={{ xs: "column", sm: "row" }}
 					spacing={1}

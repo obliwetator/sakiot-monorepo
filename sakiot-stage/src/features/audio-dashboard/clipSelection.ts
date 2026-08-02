@@ -53,6 +53,19 @@ export function windowCenter(window: TimeWindow): number {
 	return (window.startMs + window.endMs) / 2;
 }
 
+/** Slides a fixed-width detail window, stopping at either recording boundary. */
+export function shiftWindow(
+	window: TimeWindow,
+	deltaMs: number,
+	durationMs: number,
+): TimeWindow {
+	return windowOfWidth(
+		window.startMs + deltaMs,
+		window.endMs - window.startMs,
+		durationMs,
+	);
+}
+
 export function selectionFitsWindow(
 	selection: SessionSelection,
 	windowMs: number,
@@ -113,6 +126,72 @@ export function windowFraction(valueMs: number, window: TimeWindow): number {
 	return (valueMs - window.startMs) / width;
 }
 
+/**
+ * A half-width viewport that rolls inside a fixed precision range. Wherever
+ * possible, the current value appears directly beneath the pointer.
+ */
+export function rollingRulerWindow(
+	allowedWindow: TimeWindow,
+	valueMs: number,
+	pointerFraction: number,
+	visibleWidthMs = (allowedWindow.endMs - allowedWindow.startMs) / 2,
+): TimeWindow {
+	const allowedWidth = Math.max(0, allowedWindow.endMs - allowedWindow.startMs);
+	if (allowedWidth <= 0) return allowedWindow;
+	const width = Math.min(allowedWidth, Math.max(0, visibleWidthMs));
+	if (width <= 0) return allowedWindow;
+	const pointer = Math.min(1, Math.max(0, pointerFraction));
+	const start = Math.min(
+		Math.max(valueMs - pointer * width, allowedWindow.startMs),
+		allowedWindow.endMs - width,
+	);
+	return { startMs: start, endMs: start + width };
+}
+
+/** Signed edge pressure: -1 at the left edge, +1 at the right, 0 centrally. */
+export function rollingEdgeStrength(
+	pointerXPx: number,
+	leftPx: number,
+	widthPx: number,
+	edgeZonePx: number,
+): number {
+	const width = Math.max(1, widthPx);
+	const zone = Math.min(Math.max(1, edgeZonePx), width / 2);
+	const localX = pointerXPx - leftPx;
+	if (localX < zone) return -Math.min(1, (zone - localX) / zone);
+	if (localX > width - zone) {
+		return Math.min(1, (localX - (width - zone)) / zone);
+	}
+	return 0;
+}
+
+export interface SelectionWindowGeometry {
+	startFraction: number;
+	endFraction: number;
+	startHandleVisible: boolean;
+	endHandleVisible: boolean;
+	overlaps: boolean;
+}
+
+/**
+ * Clips a selection band to the visible window without pretending that an
+ * off-screen endpoint is a draggable handle parked on the window boundary.
+ */
+export function selectionWindowGeometry(
+	selection: SessionSelection,
+	window: TimeWindow,
+): SelectionWindowGeometry {
+	const rawStart = windowFraction(selection[0], window);
+	const rawEnd = windowFraction(selection[1], window);
+	return {
+		startFraction: Math.min(1, Math.max(0, rawStart)),
+		endFraction: Math.min(1, Math.max(0, rawEnd)),
+		startHandleVisible: rawStart >= 0 && rawStart <= 1,
+		endHandleVisible: rawEnd >= 0 && rawEnd <= 1,
+		overlaps: selection[1] >= window.startMs && selection[0] <= window.endMs,
+	};
+}
+
 export function windowMsPerPixel(window: TimeWindow, widthPx: number): number {
 	if (widthPx <= 0) return 0;
 	return (window.endMs - window.startMs) / widthPx;
@@ -156,26 +235,102 @@ export function moveSelection(
 	return [start, start + length];
 }
 
-/**
- * Pointer precision while dragging: moving away from the handle vertically
- * scales the horizontal travel down, the way iOS scrubbing does.
- */
+export const FINE_DRAG_START_PX = 32;
+export const ULTRA_FINE_DRAG_START_PX = 160;
+
+export interface PrecisionZoneBounds {
+	topPx: number;
+	bottomPx: number;
+}
+
+/** Screen-space band occupied by the active vertical precision level. */
+export function precisionZoneBounds(
+	dragStartYPx: number,
+	multiplier: number,
+	viewportHeightPx: number,
+): PrecisionZoneBounds {
+	const viewportHeight = Math.max(0, viewportHeightPx);
+	const fineBoundary = Math.min(
+		viewportHeight,
+		Math.max(0, dragStartYPx - FINE_DRAG_START_PX),
+	);
+	const ultraBoundary = Math.min(
+		viewportHeight,
+		Math.max(0, dragStartYPx - ULTRA_FINE_DRAG_START_PX),
+	);
+	if (multiplier >= 100) return { topPx: 0, bottomPx: ultraBoundary };
+	if (multiplier >= 10) {
+		return { topPx: ultraBoundary, bottomPx: fineBoundary };
+	}
+	return { topPx: fineBoundary, bottomPx: viewportHeight };
+}
+
+/** Pulling upward from a handle reduces horizontal travel in two wide zones. */
 export function fineDragMultiplier(dyPx: number): number {
-	const distance = Math.abs(dyPx);
-	if (!Number.isFinite(distance) || distance < 24) return 1;
-	if (distance < 96) return 10;
+	if (!Number.isFinite(dyPx)) return 1;
+	const upwardDistance = Math.max(0, -dyPx);
+	if (upwardDistance < FINE_DRAG_START_PX) return 1;
+	if (upwardDistance < ULTRA_FINE_DRAG_START_PX) return 10;
 	return 100;
+}
+
+/** Gives the precision lens enough surrounding context to make drift visible. */
+export function precisionLensWindowMs(
+	baseWindowMs: number,
+	multiplier: number,
+): number {
+	if (multiplier >= 100) return Math.max(3_000, baseWindowMs / multiplier);
+	return Math.max(10_000, baseWindowMs / Math.max(1, multiplier));
 }
 
 export interface FineDragState {
 	/** Pointer x the last move was measured from. */
 	lastPx: number;
+	/** Original grabbed value; unchanged when precision levels change. */
+	originMs: number;
 	valueMs: number;
 	multiplier: number;
+	/** Fixed centre of the lens until the pointer enters another precision zone. */
+	lensAnchorMs: number;
+}
+
+/** Keeps a fine-drag value inside the currently visible editor window. */
+export function constrainFineDragToWindow(
+	state: FineDragState,
+	window: TimeWindow,
+): FineDragState {
+	return {
+		...state,
+		valueMs: Math.min(Math.max(state.valueMs, window.startMs), window.endMs),
+	};
 }
 
 export function beginFineDrag(xPx: number, valueMs: number): FineDragState {
-	return { lastPx: xPx, valueMs, multiplier: 1 };
+	return {
+		lastPx: xPx,
+		originMs: valueMs,
+		valueMs,
+		multiplier: 1,
+		lensAnchorMs: valueMs,
+	};
+}
+
+/** Stops an unnoticed long drift once the marker reaches a lens fade. */
+export function constrainFineDragToLens(
+	state: FineDragState,
+	baseWindowMs: number,
+	durationMs: number,
+): FineDragState {
+	if (state.multiplier <= 1) return state;
+	const lens = windowAround(
+		state.lensAnchorMs,
+		precisionLensWindowMs(baseWindowMs, state.multiplier),
+		durationMs,
+	);
+	return {
+		...state,
+		valueMs: Math.min(Math.max(state.valueMs, lens.startMs), lens.endMs),
+	};
 }
 
 /**
@@ -193,7 +348,14 @@ export function advanceFineDrag(
 		state.valueMs +
 		((pointer.xPx - state.lastPx) * pointer.msPerPx) / multiplier;
 	return {
-		state: { lastPx: pointer.xPx, valueMs, multiplier },
+		state: {
+			lastPx: pointer.xPx,
+			originMs: state.originMs,
+			valueMs,
+			multiplier,
+			lensAnchorMs:
+				multiplier === state.multiplier ? state.lensAnchorMs : valueMs,
+		},
 		valueMs,
 	};
 }

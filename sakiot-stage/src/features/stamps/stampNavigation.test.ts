@@ -19,7 +19,7 @@ describe("buildStampPlaybackTarget", () => {
 				"10",
 			),
 		).toEqual({
-			path: "/dashboard/10/audio/session/373?t=11.5",
+			path: "/dashboard/10/audio/session/373?t=11.5&clip=stamp",
 			relativeSeconds: 11.5,
 			scope: "session",
 		});

@@ -31,7 +31,7 @@ export function buildStampPlaybackTarget(
 			(stamp.stamp_ts - stamp.session_started_at_ms + stamp.offset_ms) / 1_000,
 		);
 		return {
-			path: `/dashboard/${encodeURIComponent(guildId)}/audio/session/${encodeURIComponent(sessionId)}?t=${relativeSeconds}`,
+			path: `/dashboard/${encodeURIComponent(guildId)}/audio/session/${encodeURIComponent(sessionId)}?t=${relativeSeconds}&clip=stamp`,
 			relativeSeconds,
 			scope: "session",
 		};

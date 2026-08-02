@@ -4,11 +4,19 @@ import {
 	applyEdge,
 	beginFineDrag,
 	changedEdge,
+	constrainFineDragToLens,
+	constrainFineDragToWindow,
 	fineDragMultiplier,
 	moveSelection,
 	nudgeEdge,
 	panWindowToInclude,
+	precisionLensWindowMs,
+	precisionZoneBounds,
+	rollingEdgeStrength,
+	rollingRulerWindow,
 	selectionFitsWindow,
+	selectionWindowGeometry,
+	shiftWindow,
 	windowAround,
 	windowCenter,
 	windowForSelection,
@@ -106,6 +114,28 @@ describe("windowAround", () => {
 	});
 });
 
+describe("shiftWindow", () => {
+	const window = { startMs: 100_000, endMs: 160_000 };
+
+	test("slides the window without changing its width", () => {
+		expect(shiftWindow(window, 25_000, SESSION_MS)).toEqual({
+			startMs: 125_000,
+			endMs: 185_000,
+		});
+	});
+
+	test("stops at either end of the recording", () => {
+		expect(shiftWindow(window, -200_000, SESSION_MS)).toEqual({
+			startMs: 0,
+			endMs: 60_000,
+		});
+		expect(shiftWindow(window, SESSION_MS, SESSION_MS)).toEqual({
+			startMs: SESSION_MS - 60_000,
+			endMs: SESSION_MS,
+		});
+	});
+});
+
 describe("changedEdge", () => {
 	test("names the edge that moved", () => {
 		expect(changedEdge([0, 10_000], [500, 10_000])).toBe("start");
@@ -151,6 +181,73 @@ describe("window geometry", () => {
 		expect(zoomDetailWindow(60_000, -1)).toBe(300_000);
 		expect(zoomDetailWindow(5_000, 1)).toBe(5_000);
 		expect(zoomDetailWindow(1_800_000, -1)).toBe(1_800_000);
+	});
+
+	test("clips a long band without inventing handles at the window edges", () => {
+		expect(
+			selectionWindowGeometry([0, SESSION_MS], {
+				startMs: 100_000,
+				endMs: 160_000,
+			}),
+		).toEqual({
+			startFraction: 0,
+			endFraction: 1,
+			startHandleVisible: false,
+			endHandleVisible: false,
+			overlaps: true,
+		});
+	});
+
+	test("keeps real endpoints draggable when they are inside the window", () => {
+		expect(
+			selectionWindowGeometry([110_000, 140_000], {
+				startMs: 100_000,
+				endMs: 160_000,
+			}),
+		).toEqual({
+			startFraction: 1 / 6,
+			endFraction: 2 / 3,
+			startHandleVisible: true,
+			endHandleVisible: true,
+			overlaps: true,
+		});
+	});
+});
+
+describe("rolling fine ruler", () => {
+	const allowed = { startMs: 95_000, endMs: 105_000 };
+
+	test("places the value beneath the pointer inside the allowed range", () => {
+		const ruler = rollingRulerWindow(allowed, 100_000, 0.9);
+
+		expect(ruler).toEqual({ startMs: 95_500, endMs: 100_500 });
+		expect(windowFraction(100_000, ruler)).toBeCloseTo(0.9, 10);
+	});
+
+	test("rolls to either hard limit without leaving the allowed range", () => {
+		expect(rollingRulerWindow(allowed, 95_000, 0)).toEqual({
+			startMs: 95_000,
+			endMs: 100_000,
+		});
+		expect(rollingRulerWindow(allowed, 105_000, 1)).toEqual({
+			startMs: 100_000,
+			endMs: 105_000,
+		});
+	});
+
+	test("can zoom the visible ruler without changing its allowed range", () => {
+		expect(rollingRulerWindow(allowed, 100_000, 0.5, 1_000)).toEqual({
+			startMs: 99_500,
+			endMs: 100_500,
+		});
+	});
+
+	test("reports signed pressure only inside the edge zones", () => {
+		expect(rollingEdgeStrength(0, 0, 1_000, 40)).toBe(-1);
+		expect(rollingEdgeStrength(20, 0, 1_000, 40)).toBe(-0.5);
+		expect(rollingEdgeStrength(500, 0, 1_000, 40)).toBe(0);
+		expect(rollingEdgeStrength(980, 0, 1_000, 40)).toBe(0.5);
+		expect(rollingEdgeStrength(1_000, 0, 1_000, 40)).toBe(1);
 	});
 });
 
@@ -219,14 +316,64 @@ describe("moveSelection", () => {
 describe("fineDragMultiplier", () => {
 	test("stays coarse near the handle", () => {
 		expect(fineDragMultiplier(0)).toBe(1);
-		expect(fineDragMultiplier(23)).toBe(1);
+		expect(fineDragMultiplier(-31)).toBe(1);
 	});
 
-	test("steps up as the pointer moves away, in either direction", () => {
-		expect(fineDragMultiplier(24)).toBe(10);
-		expect(fineDragMultiplier(-95)).toBe(10);
-		expect(fineDragMultiplier(96)).toBe(100);
-		expect(fineDragMultiplier(-400)).toBe(100);
+	test("uses wide precision zones only above the handle", () => {
+		expect(fineDragMultiplier(-32)).toBe(10);
+		expect(fineDragMultiplier(-159)).toBe(10);
+		expect(fineDragMultiplier(-160)).toBe(100);
+		expect(fineDragMultiplier(400)).toBe(1);
+	});
+});
+
+describe("precisionLensWindowMs", () => {
+	test("keeps useful context at both fine levels", () => {
+		expect(precisionLensWindowMs(60_000, 10)).toBe(10_000);
+		expect(precisionLensWindowMs(60_000, 100)).toBe(3_000);
+		expect(precisionLensWindowMs(300_000, 10)).toBe(30_000);
+	});
+
+	test("prevents a fine drag drifting beyond the visible fades", () => {
+		const drag = {
+			...beginFineDrag(500, 100_000),
+			multiplier: 10,
+			lensAnchorMs: 100_000,
+			valueMs: 120_000,
+		};
+
+		expect(constrainFineDragToLens(drag, 60_000, SESSION_MS).valueMs).toBe(
+			105_000,
+		);
+	});
+
+	test("keeps a playhead inside its clip window", () => {
+		const drag = beginFineDrag(500, 100_000);
+		const window = { startMs: 95_000, endMs: 105_000 };
+
+		expect(
+			constrainFineDragToWindow({ ...drag, valueMs: 90_000 }, window).valueMs,
+		).toBe(95_000);
+		expect(
+			constrainFineDragToWindow({ ...drag, valueMs: 110_000 }, window).valueMs,
+		).toBe(105_000);
+	});
+});
+
+describe("precisionZoneBounds", () => {
+	test("describes the normal, fine, and ultra vertical bands", () => {
+		expect(precisionZoneBounds(500, 1, 1_000)).toEqual({
+			topPx: 468,
+			bottomPx: 1_000,
+		});
+		expect(precisionZoneBounds(500, 10, 1_000)).toEqual({
+			topPx: 340,
+			bottomPx: 468,
+		});
+		expect(precisionZoneBounds(500, 100, 1_000)).toEqual({
+			topPx: 0,
+			bottomPx: 340,
+		});
 	});
 });
 
@@ -244,24 +391,28 @@ describe("advanceFineDrag", () => {
 	test("moves ten times slower once the pointer pulls away", () => {
 		const drag = beginFineDrag(500, 100_000);
 
-		const moved = advanceFineDrag(drag, { xPx: 600, dyPx: 40, msPerPx });
+		const moved = advanceFineDrag(drag, { xPx: 600, dyPx: -40, msPerPx });
 
 		expect(moved.valueMs).toBe(100_500);
 	});
 
-	test("re-anchors on the current value so precision changes do not jump", () => {
+	test("changes precision without jumping the current value", () => {
 		let drag = beginFineDrag(500, 100_000);
 		const coarse = advanceFineDrag(drag, { xPx: 600, dyPx: 0, msPerPx });
 		drag = coarse.state;
 
-		const atThreshold = advanceFineDrag(drag, { xPx: 600, dyPx: 40, msPerPx });
+		const atThreshold = advanceFineDrag(drag, {
+			xPx: 600,
+			dyPx: -40,
+			msPerPx,
+		});
 
 		expect(atThreshold.valueMs).toBe(coarse.valueMs);
 		expect(atThreshold.state.multiplier).toBe(10);
 
 		const finer = advanceFineDrag(atThreshold.state, {
 			xPx: 620,
-			dyPx: 40,
+			dyPx: -40,
 			msPerPx,
 		});
 
@@ -270,11 +421,42 @@ describe("advanceFineDrag", () => {
 
 	test("returns to full rate when the pointer comes back", () => {
 		let drag = beginFineDrag(500, 100_000);
-		drag = advanceFineDrag(drag, { xPx: 600, dyPx: 200, msPerPx }).state;
+		drag = advanceFineDrag(drag, { xPx: 600, dyPx: -200, msPerPx }).state;
 
 		const back = advanceFineDrag(drag, { xPx: 600, dyPx: 0, msPerPx });
 
 		expect(back.state.multiplier).toBe(1);
 		expect(back.valueMs).toBe(100_050);
+	});
+
+	test("anchors each precision level on the unchanged current value", () => {
+		let drag = beginFineDrag(500, 100_000);
+		drag = advanceFineDrag(drag, {
+			xPx: 520,
+			dyPx: 0,
+			msPerPx,
+		}).state;
+		const entered = advanceFineDrag(drag, {
+			xPx: 520,
+			dyPx: -40,
+			msPerPx,
+		});
+		drag = entered.state;
+		const enteredUltra = advanceFineDrag(drag, {
+			xPx: 540,
+			dyPx: -160,
+			msPerPx,
+		});
+		const returnedToFine = advanceFineDrag(enteredUltra.state, {
+			xPx: 540,
+			dyPx: -40,
+			msPerPx,
+		});
+
+		expect(entered.state.lensAnchorMs).toBe(entered.valueMs);
+		expect(enteredUltra.state.lensAnchorMs).toBe(enteredUltra.valueMs);
+		expect(returnedToFine.state.lensAnchorMs).toBe(returnedToFine.valueMs);
+		expect(entered.state.originMs).toBe(100_000);
+		expect(enteredUltra.state.originMs).toBe(100_000);
 	});
 });
