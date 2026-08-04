@@ -308,6 +308,11 @@ function ClipsLayout(props: {
 						key={selectedClip.clip_id}
 						clip={selectedClip}
 						absoluteStartMs={absoluteStartMs}
+						canRename={canDeleteClip(
+							props.guildSelected,
+							props.currentUserId,
+							selectedClip.user_id,
+						)}
 					/>
 				)}
 			</Box>

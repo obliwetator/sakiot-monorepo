@@ -182,13 +182,14 @@ export const apiSlice = createApi({
 				start: number;
 				end: number;
 				name?: string;
+				silence_free?: boolean;
 			}
 		>({
-			query: ({ recording_session_id, start, end, name }) => ({
+			query: ({ recording_session_id, start, end, name, silence_free }) => ({
 				url: `audio/sessions/${recording_session_id}/clips`,
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: { start, end, name },
+				body: { start, end, name, silence_free },
 			}),
 			invalidatesTags: ["Clips"],
 		}),
@@ -212,6 +213,18 @@ export const apiSlice = createApi({
 				invalidatesTags: ["Clips"],
 			},
 		),
+		renameClip: builder.mutation<
+			void,
+			{ guild_id: string; clip_id: string; name: string }
+		>({
+			query: ({ guild_id, clip_id, name }) => ({
+				url: `audio/clips/${guild_id}/${encodeURIComponent(clip_id)}`,
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: { name },
+			}),
+			invalidatesTags: ["Clips"],
+		}),
 		createClip: builder.mutation<
 			CreateClipResponse,
 			{
@@ -448,6 +461,7 @@ export const {
 	useCreateSessionClipMutation,
 	useGetClipsQuery,
 	useDeleteClipMutation,
+	useRenameClipMutation,
 	useJamItMutation,
 	useRemoveSilenceMutation,
 	useCheckSilenceFileQuery,

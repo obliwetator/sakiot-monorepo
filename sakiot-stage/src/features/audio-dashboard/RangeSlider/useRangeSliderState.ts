@@ -1,5 +1,9 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useCallback, useEffect, useState } from "react";
+import {
+	playbackShortcutTargetAcceptsText,
+	playbackShortcutTargetOwnsArrows,
+} from "../playbackShortcuts";
 
 const ArrowKeySkip = 5;
 const CtrlArrowKeySkip = 30;
@@ -93,8 +97,11 @@ export function useRangeSliderState(args: {
 
 	useEffect(() => {
 		const handleArrowKeys = (event: KeyboardEvent) => {
+			if (playbackShortcutTargetOwnsArrows(event.target)) return;
 			if (event.key === "ArrowRight") {
-				const skip = event.ctrlKey ? CtrlArrowKeySkip : ArrowKeySkip;
+				event.preventDefault();
+				const skip =
+					event.ctrlKey || event.metaKey ? CtrlArrowKeySkip : ArrowKeySkip;
 				setStartEnd((s) => {
 					const next = Math.min(
 						s[0] + skip,
@@ -105,7 +112,9 @@ export function useRangeSliderState(args: {
 					return [next, s[1]];
 				});
 			} else if (event.key === "ArrowLeft") {
-				const skip = event.ctrlKey ? CtrlArrowKeySkip : ArrowKeySkip;
+				event.preventDefault();
+				const skip =
+					event.ctrlKey || event.metaKey ? CtrlArrowKeySkip : ArrowKeySkip;
 				setStartEnd((s) => {
 					const next = Math.max(s[0] - skip, 0);
 					args.audioRef.currentTime = next;
@@ -145,14 +154,8 @@ export function useRangeSliderState(args: {
 	useEffect(() => {
 		const handleSpace = (event: KeyboardEvent) => {
 			if (event.key !== " " && event.code !== "Space") return;
-			const target = event.target as HTMLElement | null;
-			if (
-				target &&
-				(target.tagName === "INPUT" ||
-					target.tagName === "TEXTAREA" ||
-					target.isContentEditable)
-			)
-				return;
+			if (playbackShortcutTargetAcceptsText(event.target)) return;
+			if (event.repeat) return;
 			event.preventDefault();
 			togglePlay();
 		};

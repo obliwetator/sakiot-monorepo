@@ -1,22 +1,36 @@
 import DownloadIcon from "@mui/icons-material/Download";
+import EditIcon from "@mui/icons-material/Edit";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import DialogContentText from "@mui/material/DialogContentText";
+import IconButton from "@mui/material/IconButton";
 import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { BASE_API_URL, type ClipData } from "../../app/apiSlice";
+import {
+	BASE_API_URL,
+	type ClipData,
+	useRenameClipMutation,
+} from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
+import { BaseDialog } from "../../shared/BaseDialog";
 import { formatDuration } from "../../utils/formatTime";
+import {
+	playbackShortcutTargetAcceptsText,
+	playbackShortcutTargetOwnsArrows,
+} from "../audio-dashboard/playbackShortcuts";
 import { JamIt } from "../audio-dashboard/RangeSlider/JamIt";
 import { ClipWaveform } from "./ClipWaveform";
 
@@ -28,17 +42,6 @@ function absoluteMediaUrl(path: string): string {
 		path,
 		new URL(BASE_API_URL, window.location.origin),
 	).toString();
-}
-
-function shortcutTargetIsInteractive(target: EventTarget | null): boolean {
-	return (
-		target instanceof HTMLElement &&
-		Boolean(
-			target.closest(
-				'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="slider"]',
-			),
-		)
-	);
 }
 
 function formatClipSize(bytes: number | null | undefined): string {
@@ -76,9 +79,97 @@ function MetadataItem(props: { label: string; value: ReactNode }) {
 	);
 }
 
+function RenameClipButton(props: { clip: ClipData }) {
+	const [open, setOpen] = useState(false);
+	const [name, setName] = useState(props.clip.name ?? "");
+	const [error, setError] = useState<string | undefined>();
+	const [renameClip, { isLoading }] = useRenameClipMutation();
+	const trimmedName = name.trim();
+	const nameLength = Array.from(trimmedName).length;
+	const unchanged = trimmedName === (props.clip.name ?? "").trim();
+	const canSubmit = nameLength > 0 && nameLength <= 255 && !unchanged;
+
+	const handleOpen = () => {
+		setName(props.clip.name ?? "");
+		setError(undefined);
+		setOpen(true);
+	};
+	const handleClose = () => {
+		if (!isLoading) setOpen(false);
+	};
+	const handleRename = async () => {
+		if (!canSubmit) {
+			if (nameLength === 0) setError("Enter a clip name.");
+			return;
+		}
+		setError(undefined);
+		try {
+			await renameClip({
+				guild_id: props.clip.guild_id,
+				clip_id: props.clip.clip_id,
+				name: trimmedName,
+			}).unwrap();
+			setOpen(false);
+		} catch {
+			setError("Could not rename the clip. Please try again.");
+		}
+	};
+
+	return (
+		<>
+			<Tooltip title="Rename clip">
+				<IconButton size="small" onClick={handleOpen} aria-label="Rename clip">
+					<EditIcon fontSize="small" />
+				</IconButton>
+			</Tooltip>
+			<BaseDialog
+				open={open}
+				onClose={handleClose}
+				title="Rename clip"
+				error={error}
+				busy={isLoading}
+				actions={
+					<>
+						<Button onClick={handleClose} disabled={isLoading}>
+							Cancel
+						</Button>
+						<Button
+							variant="contained"
+							onClick={() => void handleRename()}
+							disabled={isLoading || !canSubmit}
+						>
+							{isLoading ? "Saving..." : "Save"}
+						</Button>
+					</>
+				}
+			>
+				<DialogContentText>Enter a new name for this clip.</DialogContentText>
+				<TextField
+					value={name}
+					onChange={(event) => setName(event.currentTarget.value)}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" && canSubmit && !isLoading) {
+							event.preventDefault();
+							void handleRename();
+						}
+					}}
+					autoFocus
+					margin="dense"
+					label="Clip name"
+					fullWidth
+					autoComplete="off"
+					disabled={isLoading}
+					slotProps={{ htmlInput: { maxLength: 255 } }}
+				/>
+			</BaseDialog>
+		</>
+	);
+}
+
 export function ClipPlayer(props: {
 	clip: ClipData;
 	absoluteStartMs: number | null;
+	canRename: boolean;
 }) {
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const positionRef = useRef(0);
@@ -197,7 +288,10 @@ export function ClipPlayer(props: {
 
 	useEffect(() => {
 		const handleShortcut = (event: KeyboardEvent) => {
-			if (shortcutTargetIsInteractive(event.target)) return;
+			if (playbackShortcutTargetAcceptsText(event.target)) return;
+			if (event.ctrlKey || event.metaKey || event.altKey) {
+				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+			}
 			if (event.key === " " || event.code === "Space") {
 				if (event.repeat) return;
 				event.preventDefault();
@@ -205,10 +299,12 @@ export function ClipPlayer(props: {
 				return;
 			}
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+			if (playbackShortcutTargetOwnsArrows(event.target)) return;
 			event.preventDefault();
-			const distance = event.ctrlKey
-				? CTRL_ARROW_SEEK_SECONDS
-				: ARROW_SEEK_SECONDS;
+			const distance =
+				event.ctrlKey || event.metaKey
+					? CTRL_ARROW_SEEK_SECONDS
+					: ARROW_SEEK_SECONDS;
 			const direction = event.key === "ArrowRight" ? 1 : -1;
 			setSeekPreview(null);
 			seek(positionRef.current + direction * distance);
@@ -238,7 +334,12 @@ export function ClipPlayer(props: {
 			? null
 			: props.absoluteStartMs + displayedPosition * 1_000;
 	const sourceSessionPath = props.clip.recording_session_id
-		? `${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/audio/session/${encodeURIComponent(props.clip.recording_session_id)}?${new URLSearchParams({ t: String(props.clip.start_time) })}`
+		? `${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/audio/session/${encodeURIComponent(props.clip.recording_session_id)}?${new URLSearchParams(
+				{
+					t: String(props.clip.start_time),
+					...(props.clip.silence_free ? { timeline: "silence-free" } : {}),
+				},
+			)}`
 		: null;
 
 	return (
@@ -258,9 +359,15 @@ export function ClipPlayer(props: {
 					gap={1}
 				>
 					<Box sx={{ minWidth: 0 }}>
-						<Typography variant="h5" sx={{ overflowWrap: "anywhere" }}>
-							{props.clip.name || "Unnamed clip"}
-						</Typography>
+						<Stack direction="row" alignItems="center" spacing={0.5}>
+							<Typography
+								variant="h5"
+								sx={{ minWidth: 0, overflowWrap: "anywhere" }}
+							>
+								{props.clip.name || "Unnamed clip"}
+							</Typography>
+							{props.canRename && <RenameClipButton clip={props.clip} />}
+						</Stack>
 						<Typography variant="body2" color="text.secondary">
 							Clip {props.clip.clip_id}
 						</Typography>
@@ -290,7 +397,11 @@ export function ClipPlayer(props: {
 						value={props.clip.channel_id}
 					/>
 					<MetadataItem
-						label="Source offset"
+						label={
+							props.clip.silence_free
+								? "Silence-free source offset"
+								: "Source offset"
+						}
 						value={formatDuration(props.clip.start_time)}
 					/>
 					<MetadataItem

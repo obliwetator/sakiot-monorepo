@@ -46,6 +46,7 @@ import {
 	setNearestSelectionEdge,
 	shiftWindow,
 	type TimeWindow,
+	transformSelectionWithWindow,
 	ULTRA_FINE_DRAG_START_PX,
 	windowAround,
 	windowCenter,
@@ -128,6 +129,7 @@ interface ViewDragSession {
 	widthPx: number;
 	msPerPx: number;
 	origin: TimeWindow;
+	originSelection: SessionSelection;
 	fine?: FineDragState;
 	fineRange?: TimeWindow;
 	moved: boolean;
@@ -174,6 +176,8 @@ export function ClipRangeEditor(props: {
 	previewing: boolean;
 	loop: boolean;
 	onLoopChange: (loop: boolean) => void;
+	/** Draw peaks from the compressed silence-free session timeline. */
+	silenceFree?: boolean;
 }) {
 	const { durationMs, onSelectionChange, selection } = props;
 	const defaultWindowMs = defaultDetailWindowMs(durationMs);
@@ -200,6 +204,10 @@ export function ClipRangeEditor(props: {
 					windowAround(props.positionMs, defaultWindowMs, durationMs),
 	);
 	const previousSelectionRef = useRef(selection);
+	const selectionRef = useRef(selection);
+	useEffect(() => {
+		selectionRef.current = selection;
+	}, [selection]);
 	// Read when the view is recomputed, but never a reason to recompute it:
 	// the view must not chase the playhead frame by frame during playback.
 	const positionRef = useRef(props.positionMs);
@@ -256,13 +264,46 @@ export function ClipRangeEditor(props: {
 		});
 	}, [durationMs, selection, windowMs]);
 
+	const synchronizeSelectionWithView = useCallback(
+		(
+			sourceSelection: SessionSelection,
+			sourceView: TimeWindow,
+			nextView: TimeWindow,
+		) => {
+			const nextSelection = transformSelectionWithWindow(
+				sourceSelection,
+				sourceView,
+				nextView,
+			);
+			const current = selectionRef.current;
+			if (nextSelection[0] !== current[0] || nextSelection[1] !== current[1]) {
+				selectionRef.current = nextSelection;
+				draggedSelectionRef.current = nextSelection;
+				onSelectionChange(nextSelection);
+			}
+			return nextSelection;
+		},
+		[onSelectionChange],
+	);
+
 	const zoom = useCallback(
 		(direction: 1 | -1) => {
-			setWindowMs((current) =>
-				zoomDetailWindow(current, direction, defaultWindowMs),
+			const nextWindowMs = zoomDetailWindow(
+				windowMs,
+				direction,
+				defaultWindowMs,
 			);
+			if (nextWindowMs === windowMs) return;
+			const nextView = windowAround(
+				windowCenter(view),
+				Math.min(nextWindowMs, Math.max(durationMs, 1)),
+				durationMs,
+			);
+			synchronizeSelectionWithView(selectionRef.current, view, nextView);
+			setWindowMs(nextWindowMs);
+			setView(nextView);
 		},
-		[defaultWindowMs],
+		[defaultWindowMs, durationMs, synchronizeSelectionWithView, view, windowMs],
 	);
 
 	// Ctrl/⌘ so an ordinary scroll past a widget in the middle of a long page
@@ -339,7 +380,10 @@ export function ClipRangeEditor(props: {
 	}, [endDrag, endViewDrag, onSelectionChange]);
 
 	const msPerPx = windowMsPerPixel(view, plotWidth);
-	const { peaks } = useSessionWaveformPeaks(props.sessionId);
+	const { peaks } = useSessionWaveformPeaks(
+		props.sessionId,
+		props.silenceFree ?? false,
+	);
 	const selectionMs = selection[1] - selection[0];
 	const valid = isValidClipSelection(selection);
 	const suggestedEdge = nearestSelectionEdge(selection, props.positionMs);
@@ -685,10 +729,16 @@ export function ClipRangeEditor(props: {
 			)?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
 		const widthPx = Math.max(1, bounds.width);
 		let origin = view;
+		let originSelection = selectionRef.current;
 		if (kind === "overview") {
 			const pointerMs = ((event.clientX - bounds.left) / widthPx) * durationMs;
 			if (pointerMs < view.startMs || pointerMs > view.endMs) {
 				origin = windowAround(pointerMs, view.endMs - view.startMs, durationMs);
+				originSelection = synchronizeSelectionWithView(
+					originSelection,
+					view,
+					origin,
+				);
 				setView(origin);
 			}
 		}
@@ -706,6 +756,7 @@ export function ClipRangeEditor(props: {
 					? durationMs / widthPx
 					: (view.endMs - view.startMs) / widthPx,
 			origin,
+			originSelection,
 			fine:
 				kind === "detail"
 					? beginFineDrag(
@@ -802,7 +853,13 @@ export function ClipRangeEditor(props: {
 		}
 		if (!drag.moved && Math.abs(deltaPx) < VIEW_DRAG_THRESHOLD_PX) return;
 		drag.moved = true;
-		setView(shiftWindow(drag.origin, deltaPx * drag.msPerPx, durationMs));
+		const nextView = shiftWindow(
+			drag.origin,
+			deltaPx * drag.msPerPx,
+			durationMs,
+		);
+		synchronizeSelectionWithView(drag.originSelection, drag.origin, nextView);
+		setView(nextView);
 	};
 
 	const finishViewDrag = (event: ReactPointerEvent<HTMLElement>) => {

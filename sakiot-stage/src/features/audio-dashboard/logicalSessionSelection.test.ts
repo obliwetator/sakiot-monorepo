@@ -5,6 +5,7 @@ import {
 	reconcileSessionSelection,
 	resetClipSelection,
 	selectionAroundStamp,
+	selectionContainsPosition,
 } from "./logicalSessionSelection";
 
 describe("reconcileSessionSelection", () => {
@@ -63,6 +64,19 @@ describe("isValidClipSelection", () => {
 		expect(isValidClipSelection([5_000, 6_000])).toBe(true);
 		expect(isValidClipSelection([5_000, 25_000])).toBe(true);
 		expect(isValidClipSelection([5_000, 25_001])).toBe(false);
+	});
+});
+
+describe("selectionContainsPosition", () => {
+	it("includes both loop boundaries", () => {
+		expect(selectionContainsPosition([10_000, 20_000], 10_000)).toBe(true);
+		expect(selectionContainsPosition([10_000, 20_000], 15_000)).toBe(true);
+		expect(selectionContainsPosition([10_000, 20_000], 20_000)).toBe(true);
+	});
+
+	it("rejects seeks outside the loop", () => {
+		expect(selectionContainsPosition([10_000, 20_000], 9_999)).toBe(false);
+		expect(selectionContainsPosition([10_000, 20_000], 20_001)).toBe(false);
 	});
 });
 

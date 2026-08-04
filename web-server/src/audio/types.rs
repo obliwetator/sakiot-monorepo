@@ -37,6 +37,7 @@ pub struct StartEnd {
     pub start: Option<f32>,
     pub end: Option<f32>,
     pub name: Option<String>,
+    pub silence_free: Option<bool>,
 }
 
 #[derive(Debug)]

@@ -19,16 +19,15 @@ export function ClipWaveform(props: {
 	durationSeconds: number;
 	onSeek: (seconds: number) => void;
 }) {
-	const [requestKey, setRequestKey] = useState<number | null>(null);
-	const [generating, setGenerating] = useState(false);
-	const { data, isError } = useGetClipWaveformQuery(
+	const [requestKey, setRequestKey] = useState<number | undefined>();
+	const [generating, setGenerating] = useState(true);
+	const { currentData: data, isError } = useGetClipWaveformQuery(
 		{
 			guild_id: props.guildId,
 			clip_id: props.clipId,
-			timestamp: requestKey ?? undefined,
+			timestamp: requestKey,
 		},
 		{
-			skip: requestKey === null,
 			pollingInterval: generating ? 1_000 : 0,
 		},
 	);
@@ -95,7 +94,7 @@ export function ClipWaveform(props: {
 					}}
 				>
 					<Typography color="text.secondary" variant="caption">
-						Clip waveform has not been loaded.
+						Clip waveform has not been built.
 					</Typography>
 				</Box>
 			)}
@@ -134,7 +133,7 @@ export function ClipWaveform(props: {
 					disabled={generating}
 					sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
 				>
-					Build waveform
+					{waveformError ? "Retry waveform" : "Build waveform"}
 				</Button>
 			)}
 			<Box

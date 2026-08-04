@@ -54,6 +54,14 @@ export function isValidClipSelection(selection: SessionSelection): boolean {
 	);
 }
 
+/** Whether a playhead or seek target is inside the selected playback range. */
+export function selectionContainsPosition(
+	selection: SessionSelection,
+	positionMs: number,
+): boolean {
+	return positionMs >= selection[0] && positionMs <= selection[1];
+}
+
 /**
  * Starts a clip draft around the moment that prompted a stamp. Most of the
  * context is placed before the stamp because people usually stamp just after

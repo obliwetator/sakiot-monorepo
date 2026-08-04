@@ -44,6 +44,7 @@ import {
 	type SelectionManifest,
 	type SessionSelection,
 	selectionAroundStamp,
+	selectionContainsPosition,
 } from "./logicalSessionSelection";
 import {
 	isolateSessionChannel,
@@ -51,6 +52,10 @@ import {
 	type PlaybackSegment,
 } from "./logicalSessionTimeline";
 import { PlaybackControls } from "./PlaybackControls";
+import {
+	playbackShortcutTargetAcceptsText,
+	playbackShortcutTargetOwnsArrows,
+} from "./playbackShortcuts";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
 import { SilenceFreePlayer } from "./SilenceFreePlayer";
@@ -101,28 +106,6 @@ function saveBlob(blob: Blob, fileName: string) {
 	URL.revokeObjectURL(url);
 }
 
-function shortcutTargetIsInteractive(target: EventTarget | null): boolean {
-	return (
-		target instanceof HTMLElement &&
-		Boolean(
-			target.closest(
-				'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="slider"]',
-			),
-		)
-	);
-}
-
-function shortcutTargetAcceptsTextInput(target: EventTarget | null): boolean {
-	return (
-		target instanceof HTMLElement &&
-		Boolean(
-			target.closest(
-				'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
-			),
-		)
-	);
-}
-
 function isSameMediaSegment(
 	left: PlaybackSegment | null,
 	right: PlaybackSegment | undefined,
@@ -149,6 +132,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		return {
 			positionMs: seconds * 1_000,
 			fromStamp: params.get("clip") === "stamp",
+			silenceFree: params.get("timeline") === "silence-free",
 		};
 	}, [location.search]);
 	const deepLinkedPositionMs = deepLink?.positionMs ?? null;
@@ -210,6 +194,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [positionMs, setPositionMs] = useState(0);
 	const [seekPreviewMs, setSeekPreviewMs] = useState<number | null>(null);
 	const [playing, setPlaying] = useState(false);
+	const [silencePositionMs, setSilencePositionMs] = useState(0);
+	const [silenceSeekPreviewMs, setSilenceSeekPreviewMs] = useState<
+		number | null
+	>(null);
+	const [silenceDurationMs, setSilenceDurationMs] = useState(0);
+	const [silencePlaying, setSilencePlaying] = useState(false);
+	const [silencePlaybackError, setSilencePlaybackError] = useState<
+		string | null
+	>(null);
 	const [selection, setSelection] = useState<[number, number]>([0, 0]);
 	const [volume, setVolume] = useState(1);
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -236,6 +229,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [createClip, clipState] = useCreateSessionClipMutation();
 
 	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const silenceAudioRef = useRef<HTMLAudioElement | null>(null);
 	const hlsRef = useRef<Hls | null>(null);
 	const animationRef = useRef<number | null>(null);
 	const generationRef = useRef(0);
@@ -243,6 +237,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const playingRef = useRef(false);
 	const activeSegmentRef = useRef<PlaybackSegment | null>(null);
 	const durationRef = useRef(0);
+	const silenceDurationRef = useRef(0);
+	const silencePositionRef = useRef(0);
+	const silencePlayingRef = useRef(false);
 	const segmentsRef = useRef<PlaybackSegment[]>([]);
 	const rateRef = useRef(1);
 	const volumeRef = useRef(1);
@@ -250,6 +247,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const clipEditorRef = useRef<HTMLDivElement | null>(null);
 	const selectionManifestRef = useRef<SelectionManifest | null>(null);
 	const selectionRef = useRef<SessionSelection>([0, 0]);
+	const normalSelectionRef = useRef<SessionSelection>([0, 0]);
+	const silenceSelectionRef = useRef<SessionSelection | null>(null);
+	const playbackTabRef = useRef<"normal" | "silence">("normal");
+	const loopSelectionRef = useRef(false);
 	const silenceRemovalRequestedRef = useRef(false);
 	const silenceFreeMediaUrl = useMemo(
 		() => absoluteMediaUrl(`audio/sessions/${props.sessionId}/silence-free`),
@@ -260,9 +261,16 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		stopMs: number;
 		loopToMs: number | null;
 	} | null>(null);
+	const silencePlaybackBoundRef = useRef<{
+		stopMs: number;
+		loopToMs: number | null;
+	} | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
+	const startSilenceAtRef = useRef<
+		(position: number, autoplay: boolean) => void
+	>(() => {});
 
 	useEffect(() => {
 		if (manifest?.state === "finalized") {
@@ -274,6 +282,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		positionRef.current = positionMs;
 	}, [positionMs]);
 	useEffect(() => {
+		silencePositionRef.current = silencePositionMs;
+	}, [silencePositionMs]);
+	useEffect(() => {
 		if (!selectionHint) return;
 		const timeout = globalThis.setTimeout(() => setSelectionHint(null), 4_000);
 		return () => globalThis.clearTimeout(timeout);
@@ -282,18 +293,28 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		playingRef.current = playing;
 	}, [playing]);
 	useEffect(() => {
+		silencePlayingRef.current = silencePlaying;
+	}, [silencePlaying]);
+	useEffect(() => {
 		selectionRef.current = selection;
 	}, [selection]);
+	useEffect(() => {
+		loopSelectionRef.current = loopSelection;
+	}, [loopSelection]);
 	useEffect(() => {
 		segmentsRef.current = segments;
 	}, [segments]);
 	useEffect(() => {
 		rateRef.current = playbackRate;
 		if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+		if (silenceAudioRef.current) {
+			silenceAudioRef.current.playbackRate = playbackRate;
+		}
 	}, [playbackRate]);
 	useEffect(() => {
 		volumeRef.current = volume;
 		if (audioRef.current) audioRef.current.volume = volume;
+		if (silenceAudioRef.current) silenceAudioRef.current.volume = volume;
 	}, [volume]);
 	useEffect(() => {
 		if (!manifest) return;
@@ -304,13 +325,16 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		};
 		const previousSelectionManifest = selectionManifestRef.current;
 		selectionManifestRef.current = nextSelectionManifest;
-		setSelection((current) =>
-			reconcileSessionSelection(
-				current,
-				previousSelectionManifest,
-				nextSelectionManifest,
-			),
+		const nextSelection = reconcileSessionSelection(
+			normalSelectionRef.current,
+			previousSelectionManifest,
+			nextSelectionManifest,
 		);
+		normalSelectionRef.current = nextSelection;
+		if (playbackTabRef.current === "normal") {
+			selectionRef.current = nextSelection;
+			setSelection(nextSelection);
+		}
 		setPositionMs((current) => Math.min(current, manifest.duration_ms));
 		setSeekPreviewMs((current) =>
 			current === null ? null : Math.min(current, manifest.duration_ms),
@@ -335,6 +359,72 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const clearPlaybackBound = useCallback(() => {
 		playbackBoundRef.current = null;
 		setPreviewing(false);
+	}, []);
+
+	const stopSilenceSource = useCallback(() => {
+		const audio = silenceAudioRef.current;
+		if (audio) audio.pause();
+		silencePlayingRef.current = false;
+		setSilencePlaying(false);
+	}, []);
+
+	const clearSilencePlaybackBound = useCallback(() => {
+		silencePlaybackBoundRef.current = null;
+		setPreviewing(false);
+	}, []);
+
+	const disableLoopSelection = useCallback(() => {
+		if (!loopSelectionRef.current) return;
+		loopSelectionRef.current = false;
+		setLoopSelection(false);
+	}, []);
+
+	const startSilenceAt = useCallback(
+		(requestedPosition: number, autoplay: boolean) => {
+			const audio = silenceAudioRef.current;
+			const duration = silenceDurationRef.current;
+			const position = Math.max(0, Math.min(requestedPosition, duration));
+			silencePositionRef.current = position;
+			setSilencePositionMs(position);
+			setSilenceSeekPreviewMs(null);
+			if (!audio) return;
+			try {
+				audio.currentTime = position / 1_000;
+			} catch {
+				setSilencePlaybackError("Silence-free audio could not be seeked.");
+				return;
+			}
+			if (!autoplay || position >= duration) {
+				audio.pause();
+				silencePlayingRef.current = false;
+				setSilencePlaying(false);
+				return;
+			}
+			setSilencePlaybackError(null);
+			void audio.play().catch(() => {
+				silencePlayingRef.current = false;
+				setSilencePlaying(false);
+				clearSilencePlaybackBound();
+				setSilencePlaybackError(
+					"Browser blocked or failed silence-free playback.",
+				);
+			});
+		},
+		[clearSilencePlaybackBound],
+	);
+	startSilenceAtRef.current = startSilenceAt;
+
+	const applySilencePlaybackBound = useCallback((atMs: number): boolean => {
+		const bound = silencePlaybackBoundRef.current;
+		if (!bound || atMs < bound.stopMs) return false;
+		if (bound.loopToMs !== null) {
+			startSilenceAtRef.current(bound.loopToMs, true);
+			return true;
+		}
+		silencePlaybackBoundRef.current = null;
+		setPreviewing(false);
+		startSilenceAtRef.current(bound.stopMs, false);
+		return true;
 	}, []);
 
 	/**
@@ -377,6 +467,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			activeSegmentRef.current = null;
 			playingRef.current = false;
 			setPlaying(false);
+			clearPlaybackBound();
 			return;
 		}
 		activeSegmentRef.current = segment;
@@ -405,6 +496,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		const mediaUrl = segment.media_url;
 		if (!mediaUrl) {
+			if (applyPlaybackBound(segmentLimit)) return;
 			startAtRef.current(segmentLimit, segmentLimit < durationMs);
 			return;
 		}
@@ -433,13 +525,21 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				setActionError("Browser blocked or failed audio playback.");
 				playingRef.current = false;
 				setPlaying(false);
+				clearPlaybackBound();
 			});
 		};
+		audio.addEventListener("pause", () => {
+			if (generationRef.current !== generation) return;
+			playingRef.current = false;
+			setPlaying(false);
+			clearPlaybackBound();
+		});
 		audio.addEventListener("timeupdate", () => {
 			if (generationRef.current !== generation) return;
 			const logical = segment.start_ms + audio.currentTime * 1_000;
 			if (applyPlaybackBound(logical)) return;
 			if (logical >= segmentLimit - 20) {
+				if (applyPlaybackBound(segmentLimit)) return;
 				startAtRef.current(segmentLimit, segmentLimit < durationMs);
 				return;
 			}
@@ -448,6 +548,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		});
 		audio.addEventListener("ended", () => {
 			if (generationRef.current === generation) {
+				if (applyPlaybackBound(segmentLimit)) return;
 				startAtRef.current(segmentLimit, segmentLimit < durationMs);
 			}
 		});
@@ -458,6 +559,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				);
 				playingRef.current = false;
 				setPlaying(false);
+				clearPlaybackBound();
 			}
 		});
 
@@ -494,16 +596,81 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	};
 	startAtRef.current = startAt;
 
+	const updateSilenceDuration = useCallback(
+		(audio: HTMLAudioElement) => {
+			if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+			const duration = audio.duration * 1_000;
+			const previousDuration = silenceDurationRef.current;
+			silenceDurationRef.current = duration;
+			setSilenceDurationMs(duration);
+			audio.volume = volumeRef.current;
+			audio.playbackRate = rateRef.current;
+
+			const current = silenceSelectionRef.current;
+			const nextSelection = reconcileSessionSelection(
+				current ?? [0, 0],
+				current && previousDuration > 0
+					? { recordingSessionId: "silence-free", durationMs: previousDuration }
+					: null,
+				{ recordingSessionId: "silence-free", durationMs: duration },
+			);
+			silenceSelectionRef.current = nextSelection;
+			if (playbackTabRef.current === "silence") {
+				selectionRef.current = nextSelection;
+				setSelection(nextSelection);
+			}
+
+			if (deepLink?.silenceFree && deepLinkedPositionMs !== null) {
+				const deepLinkKey = `${props.sessionId}:${deepLinkedPositionMs}:silence-free`;
+				if (appliedDeepLinkRef.current !== deepLinkKey) {
+					appliedDeepLinkRef.current = deepLinkKey;
+					startSilenceAtRef.current(
+						Math.min(deepLinkedPositionMs, duration),
+						false,
+					);
+				}
+			}
+		},
+		[deepLink?.silenceFree, deepLinkedPositionMs, props.sessionId],
+	);
+
 	useEffect(() => {
-		if (!manifest || deepLinkedPositionMs === null) return;
+		if (!silencePlaying) return;
+		let frame: number | null = null;
+		const update = () => {
+			const audio = silenceAudioRef.current;
+			if (!audio || audio.paused) return;
+			const nextPosition = audio.currentTime * 1_000;
+			if (applySilencePlaybackBound(nextPosition)) return;
+			silencePositionRef.current = nextPosition;
+			setSilencePositionMs(nextPosition);
+			frame = requestAnimationFrame(update);
+		};
+		frame = requestAnimationFrame(update);
+		return () => {
+			if (frame !== null) cancelAnimationFrame(frame);
+		};
+	}, [applySilencePlaybackBound, silencePlaying]);
+
+	useEffect(() => {
+		if (!manifest || deepLinkedPositionMs === null || deepLink?.silenceFree)
+			return;
 		const deepLinkKey = `${props.sessionId}:${deepLinkedPositionMs}:${stampClipRequested}`;
 		if (appliedDeepLinkRef.current === deepLinkKey) return;
 		appliedDeepLinkRef.current = deepLinkKey;
 		const positionMs = Math.min(deepLinkedPositionMs, manifest.duration_ms);
 		setSeekPreviewMs(null);
+		clearPlaybackBound();
+		disableLoopSelection();
 		startAtRef.current(positionMs, false);
 		if (stampClipRequested) {
-			setSelection(selectionAroundStamp(positionMs, manifest.duration_ms));
+			const nextSelection = selectionAroundStamp(
+				positionMs,
+				manifest.duration_ms,
+			);
+			normalSelectionRef.current = nextSelection;
+			selectionRef.current = nextSelection;
+			setSelection(nextSelection);
 			requestAnimationFrame(() => {
 				clipEditorRef.current?.scrollIntoView({
 					behavior: "smooth",
@@ -511,14 +678,23 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				});
 			});
 		}
-	}, [deepLinkedPositionMs, manifest, props.sessionId, stampClipRequested]);
+	}, [
+		clearPlaybackBound,
+		deepLinkedPositionMs,
+		deepLink?.silenceFree,
+		disableLoopSelection,
+		manifest,
+		props.sessionId,
+		stampClipRequested,
+	]);
 
 	useEffect(
 		() => () => {
 			generationRef.current += 1;
 			stopSource();
+			stopSilenceSource();
 		},
-		[stopSource],
+		[stopSilenceSource, stopSource],
 	);
 
 	const seekWithinBound = useCallback((nextPositionMs: number) => {
@@ -554,13 +730,63 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	const seek = useCallback(
 		(nextPositionMs: number) => {
-			// Going somewhere by hand ends the preview rather than letting the bound
-			// yank playback back at the next check.
 			setSelectionHint(null);
-			clearPlaybackBound();
-			seekWithinBound(nextPositionMs);
+			const target = Math.max(0, Math.min(nextPositionMs, durationRef.current));
+			const loopRemainsEnabled =
+				loopSelectionRef.current &&
+				selectionContainsPosition(selectionRef.current, target);
+			if (!loopRemainsEnabled) {
+				clearPlaybackBound();
+				disableLoopSelection();
+			} else if (playbackBoundRef.current) {
+				playbackBoundRef.current = {
+					stopMs: selectionRef.current[1],
+					loopToMs: selectionRef.current[0],
+				};
+			}
+			seekWithinBound(target);
 		},
-		[clearPlaybackBound, seekWithinBound],
+		[clearPlaybackBound, disableLoopSelection, seekWithinBound],
+	);
+
+	const seekSilence = useCallback(
+		(nextPositionMs: number) => {
+			setSelectionHint(null);
+			setSilenceSeekPreviewMs(null);
+			const target = Math.max(
+				0,
+				Math.min(nextPositionMs, silenceDurationRef.current),
+			);
+			const loopRemainsEnabled =
+				loopSelectionRef.current &&
+				selectionContainsPosition(selectionRef.current, target);
+			if (!loopRemainsEnabled) {
+				clearSilencePlaybackBound();
+				disableLoopSelection();
+			} else if (silencePlaybackBoundRef.current) {
+				silencePlaybackBoundRef.current = {
+					stopMs: selectionRef.current[1],
+					loopToMs: selectionRef.current[0],
+				};
+			}
+			const audio = silenceAudioRef.current;
+			if (audio) {
+				try {
+					audio.currentTime = target / 1_000;
+				} catch {
+					setSilencePlaybackError("Silence-free audio could not be seeked.");
+					return;
+				}
+			}
+			silencePositionRef.current = target;
+			setSilencePositionMs(target);
+			if (silencePlaybackBoundRef.current) applySilencePlaybackBound(target);
+		},
+		[
+			applySilencePlaybackBound,
+			clearSilencePlaybackBound,
+			disableLoopSelection,
+		],
 	);
 
 	const selectPlaybackChannel = useCallback(
@@ -575,8 +801,8 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 
 	const togglePlay = useCallback(() => {
-		clearPlaybackBound();
 		if (playingRef.current) {
+			clearPlaybackBound();
 			generationRef.current += 1;
 			stopSource();
 			playingRef.current = false;
@@ -584,52 +810,144 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			return;
 		}
 		setActionError(null);
+		const activeSelection = selectionRef.current;
+		if (loopSelectionRef.current && activeSelection[1] > activeSelection[0]) {
+			playbackBoundRef.current = {
+				stopMs: activeSelection[1],
+				loopToMs: activeSelection[0],
+			};
+			setPreviewing(true);
+			const currentPosition = positionRef.current;
+			const start =
+				currentPosition >= activeSelection[0] &&
+				currentPosition < activeSelection[1]
+					? currentPosition
+					: activeSelection[0];
+			startAtRef.current(start, true);
+			return;
+		}
+		clearPlaybackBound();
 		const start =
 			positionRef.current >= durationRef.current ? 0 : positionRef.current;
 		startAtRef.current(start, true);
 	}, [clearPlaybackBound, stopSource]);
 
-	const setSelectionEdgeFromPlayhead = useCallback((edge: SelectionEdge) => {
-		const current = selectionRef.current;
-		const positionMs = positionRef.current;
-		if (!canSetSelectionEdge(current, edge, positionMs)) {
-			setSelectionHint(
-				edge === "start"
-					? "The playhead is at or beyond the right edge. Use O or E for that side."
-					: "The playhead is at or before the left edge. Use I or E for that side.",
-			);
+	const toggleSilencePlay = useCallback(() => {
+		if (silencePlayingRef.current) {
+			clearSilencePlaybackBound();
+			stopSilenceSource();
 			return;
 		}
-		setSeekPreviewMs(null);
-		setSelectionHint(null);
-		const next = applyEdge(current, edge, positionMs, durationRef.current);
+		setSilencePlaybackError(null);
+		const activeSelection = selectionRef.current;
+		if (loopSelectionRef.current && activeSelection[1] > activeSelection[0]) {
+			silencePlaybackBoundRef.current = {
+				stopMs: activeSelection[1],
+				loopToMs: activeSelection[0],
+			};
+			setPreviewing(true);
+			const currentPosition = silencePositionRef.current;
+			const start =
+				currentPosition >= activeSelection[0] &&
+				currentPosition < activeSelection[1]
+					? currentPosition
+					: activeSelection[0];
+			startSilenceAtRef.current(start, true);
+			return;
+		}
+		clearSilencePlaybackBound();
+		const start =
+			silencePositionRef.current >= silenceDurationRef.current
+				? 0
+				: silencePositionRef.current;
+		startSilenceAtRef.current(start, true);
+	}, [clearSilencePlaybackBound, stopSilenceSource]);
+
+	const activePosition = useCallback(
+		() =>
+			playbackTabRef.current === "silence"
+				? silencePositionRef.current
+				: positionRef.current,
+		[],
+	);
+	const activeDuration = useCallback(
+		() =>
+			playbackTabRef.current === "silence"
+				? silenceDurationRef.current
+				: durationRef.current,
+		[],
+	);
+	const storeActiveSelection = useCallback((next: SessionSelection) => {
 		selectionRef.current = next;
+		if (playbackTabRef.current === "silence") {
+			silenceSelectionRef.current = next;
+		} else {
+			normalSelectionRef.current = next;
+		}
 		setSelection(next);
 	}, []);
+
+	const setSelectionEdgeFromPlayhead = useCallback(
+		(edge: SelectionEdge) => {
+			const current = selectionRef.current;
+			const positionMs = activePosition();
+			if (!canSetSelectionEdge(current, edge, positionMs)) {
+				setSelectionHint(
+					edge === "start"
+						? "The playhead is at or beyond the right edge. Use O or E for that side."
+						: "The playhead is at or before the left edge. Use I or E for that side.",
+				);
+				return;
+			}
+			if (playbackTabRef.current === "silence") {
+				setSilenceSeekPreviewMs(null);
+			} else {
+				setSeekPreviewMs(null);
+			}
+			setSelectionHint(null);
+			const next = applyEdge(current, edge, positionMs, activeDuration());
+			storeActiveSelection(next);
+		},
+		[activeDuration, activePosition, storeActiveSelection],
+	);
 
 	const setNearestEdgeFromPlayhead = useCallback(() => {
 		setSelectionEdgeFromPlayhead(
-			nearestSelectionEdge(selectionRef.current, positionRef.current),
+			nearestSelectionEdge(selectionRef.current, activePosition()),
 		);
-	}, [setSelectionEdgeFromPlayhead]);
+	}, [activePosition, setSelectionEdgeFromPlayhead]);
 
-	const changeSelection = useCallback((next: SessionSelection) => {
-		setSelectionHint(null);
-		selectionRef.current = next;
-		setSelection(next);
-	}, []);
+	const changeSelection = useCallback(
+		(next: SessionSelection) => {
+			setSelectionHint(null);
+			storeActiveSelection(next);
+		},
+		[storeActiveSelection],
+	);
 
 	const resetSelection = useCallback(() => {
-		clearPlaybackBound();
+		if (playbackTabRef.current === "silence") {
+			clearSilencePlaybackBound();
+		} else {
+			clearPlaybackBound();
+		}
 		setSelectionHint(null);
 		const stampMs =
-			stampClipRequested && deepLinkedPositionMs !== null
+			playbackTabRef.current === "normal" &&
+			stampClipRequested &&
+			deepLinkedPositionMs !== null
 				? deepLinkedPositionMs
 				: undefined;
-		const next = resetClipSelection(durationRef.current, stampMs);
-		selectionRef.current = next;
-		setSelection(next);
-	}, [clearPlaybackBound, deepLinkedPositionMs, stampClipRequested]);
+		const next = resetClipSelection(activeDuration(), stampMs);
+		storeActiveSelection(next);
+	}, [
+		activeDuration,
+		clearPlaybackBound,
+		clearSilencePlaybackBound,
+		deepLinkedPositionMs,
+		stampClipRequested,
+		storeActiveSelection,
+	]);
 
 	const togglePreview = useCallback(() => {
 		if (playbackBoundRef.current) {
@@ -644,35 +962,177 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		setActionError(null);
 		playbackBoundRef.current = {
 			stopMs: selectionRef.current[1],
-			loopToMs: loopSelection ? selectionRef.current[0] : null,
+			loopToMs: loopSelectionRef.current ? selectionRef.current[0] : null,
 		};
 		setPreviewing(true);
 		setSeekPreviewMs(null);
 		startAtRef.current(selectionRef.current[0], true);
-	}, [clearPlaybackBound, loopSelection, stopSource]);
+	}, [clearPlaybackBound, stopSource]);
 
-	// A loop toggled mid-preview takes effect on the current pass.
+	const toggleSilencePreview = useCallback(() => {
+		if (silencePlaybackBoundRef.current) {
+			clearSilencePlaybackBound();
+			stopSilenceSource();
+			return;
+		}
+		if (selectionRef.current[1] <= selectionRef.current[0]) return;
+		setSilencePlaybackError(null);
+		silencePlaybackBoundRef.current = {
+			stopMs: selectionRef.current[1],
+			loopToMs: loopSelectionRef.current ? selectionRef.current[0] : null,
+		};
+		setPreviewing(true);
+		setSilenceSeekPreviewMs(null);
+		startSilenceAtRef.current(selectionRef.current[0], true);
+	}, [clearSilencePlaybackBound, stopSilenceSource]);
+
+	const toggleActivePlay = useCallback(() => {
+		if (playbackTabRef.current === "silence") toggleSilencePlay();
+		else togglePlay();
+	}, [togglePlay, toggleSilencePlay]);
+
+	const toggleActivePreview = useCallback(() => {
+		if (playbackTabRef.current === "silence") toggleSilencePreview();
+		else togglePreview();
+	}, [togglePreview, toggleSilencePreview]);
+
+	const seekActive = useCallback(
+		(position: number) => {
+			if (playbackTabRef.current === "silence") seekSilence(position);
+			else seek(position);
+		},
+		[seek, seekSilence],
+	);
+
+	const changeLoopSelection = useCallback(
+		(enabled: boolean) => {
+			const activeSelection = selectionRef.current;
+			if (enabled && activeSelection[1] <= activeSelection[0]) return;
+			loopSelectionRef.current = enabled;
+			setLoopSelection(enabled);
+			if (playbackTabRef.current === "silence") {
+				if (!enabled) {
+					const bound = silencePlaybackBoundRef.current;
+					if (bound) {
+						silencePlaybackBoundRef.current = {
+							...bound,
+							loopToMs: null,
+						};
+					}
+					return;
+				}
+				setSilenceSeekPreviewMs(null);
+				if (silencePlaybackBoundRef.current) {
+					silencePlaybackBoundRef.current = {
+						stopMs: activeSelection[1],
+						loopToMs: activeSelection[0],
+					};
+					setPreviewing(true);
+					startSilenceAtRef.current(
+						activeSelection[0],
+						silencePlayingRef.current,
+					);
+					return;
+				}
+				clearSilencePlaybackBound();
+				startSilenceAtRef.current(activeSelection[0], false);
+				return;
+			}
+			if (!enabled) {
+				const bound = playbackBoundRef.current;
+				if (bound) playbackBoundRef.current = { ...bound, loopToMs: null };
+				return;
+			}
+
+			setSeekPreviewMs(null);
+			if (playbackBoundRef.current) {
+				playbackBoundRef.current = {
+					stopMs: activeSelection[1],
+					loopToMs: activeSelection[0],
+				};
+				setPreviewing(true);
+				startAtRef.current(activeSelection[0], playingRef.current);
+				return;
+			}
+
+			clearPlaybackBound();
+			startAtRef.current(activeSelection[0], false);
+		},
+		[clearPlaybackBound, clearSilencePlaybackBound],
+	);
+
+	// Keep a live preview bound aligned with selection edits. Moving the range
+	// away from the playhead ends the preview and disables loop mode.
 	useEffect(() => {
+		if (playbackTab === "silence") {
+			const playheadInsideSelection = selectionContainsPosition(
+				selection,
+				silencePositionRef.current,
+			);
+			if (loopSelection && !playheadInsideSelection) {
+				clearSilencePlaybackBound();
+				disableLoopSelection();
+				return;
+			}
+			const bound = silencePlaybackBoundRef.current;
+			if (!bound) return;
+			if (!playheadInsideSelection) {
+				clearSilencePlaybackBound();
+				return;
+			}
+			silencePlaybackBoundRef.current = {
+				stopMs: selection[1],
+				loopToMs: loopSelection ? selectionRef.current[0] : null,
+			};
+			if (silencePositionRef.current >= selection[1]) {
+				applySilencePlaybackBound(silencePositionRef.current);
+			}
+			return;
+		}
+		const playheadInsideSelection = selectionContainsPosition(
+			selection,
+			positionRef.current,
+		);
+		if (loopSelection && !playheadInsideSelection) {
+			clearPlaybackBound();
+			disableLoopSelection();
+			return;
+		}
 		const bound = playbackBoundRef.current;
 		if (!bound) return;
+		if (!playheadInsideSelection) {
+			clearPlaybackBound();
+			return;
+		}
 		playbackBoundRef.current = {
-			stopMs: bound.stopMs,
+			stopMs: selection[1],
 			loopToMs: loopSelection ? selectionRef.current[0] : null,
 		};
-	}, [loopSelection]);
+		if (positionRef.current >= selection[1]) {
+			applyPlaybackBound(positionRef.current);
+		}
+	}, [
+		applyPlaybackBound,
+		applySilencePlaybackBound,
+		clearPlaybackBound,
+		clearSilencePlaybackBound,
+		disableLoopSelection,
+		loopSelection,
+		playbackTab,
+		selection,
+	]);
 
 	useEffect(() => {
 		const handlePlaybackShortcut = (event: KeyboardEvent) => {
 			if (
 				isResetClipSelectionShortcut(event) &&
-				!shortcutTargetAcceptsTextInput(event.target)
+				!playbackShortcutTargetAcceptsText(event.target)
 			) {
 				event.preventDefault();
 				resetSelection();
 				return;
 			}
-			if (playbackTab !== "normal") return;
-			if (shortcutTargetIsInteractive(event.target)) return;
+			if (playbackShortcutTargetAcceptsText(event.target)) return;
 			if (event.ctrlKey || event.metaKey || event.altKey) {
 				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			}
@@ -680,7 +1140,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			if (event.key === " " || event.code === "Space") {
 				if (event.repeat) return;
 				event.preventDefault();
-				togglePlay();
+				toggleActivePlay();
 				return;
 			}
 
@@ -704,19 +1164,22 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			}
 
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+			if (playbackShortcutTargetOwnsArrows(event.target)) return;
 			event.preventDefault();
-			const distance = stampClipRequested
-				? event.ctrlKey || event.metaKey
-					? CLIP_CTRL_ARROW_SEEK_MS
-					: event.shiftKey
-						? CLIP_SHIFT_ARROW_SEEK_MS
-						: CLIP_ARROW_SEEK_MS
-				: event.ctrlKey || event.metaKey
-					? CTRL_ARROW_SEEK_MS
-					: ARROW_SEEK_MS;
+			const distance =
+				playbackTab === "normal" && stampClipRequested
+					? event.ctrlKey || event.metaKey
+						? CLIP_CTRL_ARROW_SEEK_MS
+						: event.shiftKey
+							? CLIP_SHIFT_ARROW_SEEK_MS
+							: CLIP_ARROW_SEEK_MS
+					: event.ctrlKey || event.metaKey
+						? CTRL_ARROW_SEEK_MS
+						: ARROW_SEEK_MS;
 			const direction = event.key === "ArrowRight" ? 1 : -1;
-			setSeekPreviewMs(null);
-			seek(positionRef.current + direction * distance);
+			if (playbackTab === "silence") setSilenceSeekPreviewMs(null);
+			else setSeekPreviewMs(null);
+			seekActive(activePosition() + direction * distance);
 		};
 
 		window.addEventListener("keydown", handlePlaybackShortcut);
@@ -724,25 +1187,49 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	}, [
 		resetSelection,
 		playbackTab,
-		seek,
+		activePosition,
+		seekActive,
 		setNearestEdgeFromPlayhead,
 		setSelectionEdgeFromPlayhead,
 		stampClipRequested,
-		togglePlay,
+		toggleActivePlay,
 	]);
 
 	const selectPlaybackTab = useCallback(
 		(nextTab: "normal" | "silence") => {
+			if (nextTab === playbackTabRef.current) return;
+			setSelectionHint(null);
+			disableLoopSelection();
 			if (nextTab === "silence") {
 				clearPlaybackBound();
 				generationRef.current += 1;
 				stopSource();
 				playingRef.current = false;
 				setPlaying(false);
+			} else {
+				clearSilencePlaybackBound();
+				stopSilenceSource();
 			}
+			playbackTabRef.current = nextTab;
+			const nextSelection =
+				nextTab === "silence"
+					? (silenceSelectionRef.current ??
+						resetClipSelection(silenceDurationRef.current))
+					: normalSelectionRef.current;
+			if (nextTab === "silence") {
+				silenceSelectionRef.current = nextSelection;
+			}
+			selectionRef.current = nextSelection;
+			setSelection(nextSelection);
 			setPlaybackTab(nextTab);
 		},
-		[clearPlaybackBound, stopSource],
+		[
+			clearPlaybackBound,
+			clearSilencePlaybackBound,
+			disableLoopSelection,
+			stopSilenceSource,
+			stopSource,
+		],
 	);
 
 	const applySilenceRemovalStatus = useCallback(
@@ -750,20 +1237,31 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			setSilenceRemoval(result);
 			if (result.status === "ready") {
 				setSilenceFreeUrl(silenceFreeMediaUrl);
-				if (silenceRemovalRequestedRef.current) {
+				if (
+					silenceRemovalRequestedRef.current ||
+					deepLink?.silenceFree === true
+				) {
 					silenceRemovalRequestedRef.current = false;
-					setSessionMessage("Silence-free session ready.");
+					if (!deepLink?.silenceFree) {
+						setSessionMessage("Silence-free session ready.");
+					}
 					selectPlaybackTab("silence");
 				}
 				return;
 			}
+			if (playbackTabRef.current === "silence") {
+				selectPlaybackTab("normal");
+			}
 			setSilenceFreeUrl(null);
+			silenceDurationRef.current = 0;
+			setSilenceDurationMs(0);
+			setSilenceSeekPreviewMs(null);
 			if (result.status === "failed") {
 				silenceRemovalRequestedRef.current = false;
 				setSessionError("Silence removal failed. You can try again.");
 			}
 		},
-		[selectPlaybackTab, silenceFreeMediaUrl],
+		[deepLink?.silenceFree, selectPlaybackTab, silenceFreeMediaUrl],
 	);
 
 	useEffect(() => {
@@ -773,7 +1271,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		setSilenceRemoval({ status: "idle", progress: 0 });
 		setSessionError(null);
 		setSessionMessage(null);
+		playbackTabRef.current = "normal";
 		setPlaybackTab("normal");
+		silenceSelectionRef.current = null;
+		silenceDurationRef.current = 0;
+		silencePositionRef.current = 0;
+		setSilenceDurationMs(0);
+		setSilencePositionMs(0);
+		setSilenceSeekPreviewMs(null);
+		setSilencePlaybackError(null);
 		if (manifest?.state !== "finalized") return;
 
 		void authedFetch(`audio/sessions/${props.sessionId}/remove-silence`)
@@ -906,6 +1412,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				start: selection[0] / 1_000,
 				end: selection[1] / 1_000,
 				name: clipName.trim() || undefined,
+				silence_free: playbackTab === "silence",
 			}).unwrap();
 			setClipMessage(`Clip created: ${response.name}`);
 			setClipName("");
@@ -925,8 +1432,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	const durationSeconds = manifest.duration_ms / 1_000;
 	const displayedPositionMs = seekPreviewMs ?? positionMs;
+	const activeDurationMs =
+		playbackTab === "silence" ? silenceDurationMs : manifest.duration_ms;
+	const activeDisplayedPositionMs =
+		playbackTab === "silence"
+			? (silenceSeekPreviewMs ?? silencePositionMs)
+			: displayedPositionMs;
 	const currentSegment = segments.find(
 		(segment) =>
+			playbackTab === "normal" &&
 			displayedPositionMs >= segment.start_ms &&
 			displayedPositionMs < segment.end_ms,
 	);
@@ -935,6 +1449,48 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 	return (
 		<Box sx={{ pb: 4 }}>
+			{silenceFreeUrl && (
+				// biome-ignore lint/a11y/useMediaCaption: user voice recordings do not have a caption track
+				<audio
+					key={silenceFreeUrl}
+					ref={silenceAudioRef}
+					crossOrigin="use-credentials"
+					preload="metadata"
+					src={silenceFreeUrl}
+					onLoadedMetadata={(event) =>
+						updateSilenceDuration(event.currentTarget)
+					}
+					onDurationChange={(event) =>
+						updateSilenceDuration(event.currentTarget)
+					}
+					onTimeUpdate={(event) => {
+						const nextPosition = event.currentTarget.currentTime * 1_000;
+						if (applySilencePlaybackBound(nextPosition)) return;
+						silencePositionRef.current = nextPosition;
+						setSilencePositionMs(nextPosition);
+					}}
+					onPlay={() => {
+						silencePlayingRef.current = true;
+						setSilencePlaying(true);
+					}}
+					onPause={() => {
+						silencePlayingRef.current = false;
+						setSilencePlaying(false);
+					}}
+					onEnded={() => {
+						silencePlayingRef.current = false;
+						setSilencePlaying(false);
+						clearSilencePlaybackBound();
+					}}
+					onError={() => {
+						silencePlayingRef.current = false;
+						setSilencePlaying(false);
+						clearSilencePlaybackBound();
+						setSilencePlaybackError("Silence-free audio could not be loaded.");
+					}}
+					style={{ display: "none" }}
+				/>
+			)}
 			<Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 2 }}>
 				<Chip label={`Session ${manifest.recording_session_id}`} />
 				<Chip
@@ -1039,9 +1595,19 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 				{playbackTab === "silence" && silenceFreeUrl && (
 					<SilenceFreePlayer
-						key={silenceFreeUrl}
 						sessionId={props.sessionId}
-						url={silenceFreeUrl}
+						durationMs={silenceDurationMs}
+						positionMs={silencePositionMs}
+						seekPreviewMs={silenceSeekPreviewMs}
+						playing={silencePlaying}
+						volume={volume}
+						playbackRate={playbackRate}
+						playbackError={silencePlaybackError}
+						onSeek={seekSilence}
+						onSeekPreview={setSilenceSeekPreviewMs}
+						onTogglePlay={toggleSilencePlay}
+						onVolumeChange={setVolume}
+						onPlaybackRateChange={setPlaybackRate}
 					/>
 				)}
 
@@ -1145,17 +1711,18 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					sx={{ mb: 1.5 }}
 				>
 					<Typography>
-						Selected range: {formatDuration(selection[0] / 1_000)} –{" "}
+						{playbackTab === "silence" ? "Silence-free selected" : "Selected"}{" "}
+						range: {formatDuration(selection[0] / 1_000)} –{" "}
 						{formatDuration(selection[1] / 1_000)}
 					</Typography>
 					{clipSelectionIsValid && (
 						<Chip label="Valid clip duration" color="success" size="small" />
 					)}
-					{stampClipRequested && (
+					{playbackTab === "normal" && stampClipRequested && (
 						<Chip label="Drafted from stamp" color="info" size="small" />
 					)}
 				</Stack>
-				{stampClipRequested && (
+				{playbackTab === "normal" && stampClipRequested && (
 					<Typography variant="caption" color="text.secondary">
 						Fine seek: Arrow 0.1s · Shift+Arrow 1s · Ctrl/⌘+Arrow 5s · I/O set
 						the left/right edges · E sets the nearest edge.
@@ -1163,32 +1730,43 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				)}
 
 				<ClipRangeEditor
-					key={`${props.sessionId}:${stampClipRequested ? deepLinkedPositionMs : "session"}`}
+					key={`${props.sessionId}:${playbackTab}:${stampClipRequested ? deepLinkedPositionMs : "session"}`}
 					sessionId={props.sessionId}
-					durationMs={manifest.duration_ms}
+					durationMs={activeDurationMs}
 					selection={selection}
 					initialFocusMs={
-						stampClipRequested ? (deepLinkedPositionMs ?? undefined) : undefined
+						playbackTab === "normal" && stampClipRequested
+							? (deepLinkedPositionMs ?? undefined)
+							: undefined
 					}
 					onSelectionChange={changeSelection}
-					positionMs={displayedPositionMs}
-					onSeek={seek}
-					onSeekPreview={setSeekPreviewMs}
+					positionMs={activeDisplayedPositionMs}
+					onSeek={seekActive}
+					onSeekPreview={
+						playbackTab === "silence"
+							? setSilenceSeekPreviewMs
+							: setSeekPreviewMs
+					}
 					onSetEdgeFromPlayhead={setSelectionEdgeFromPlayhead}
 					onSetNearestEdgeFromPlayhead={setNearestEdgeFromPlayhead}
 					edgeHint={selectionHint}
 					onReset={resetSelection}
-					onPreview={togglePreview}
+					onPreview={toggleActivePreview}
 					previewing={previewing}
 					loop={loopSelection}
-					onLoopChange={setLoopSelection}
+					onLoopChange={changeLoopSelection}
+					silenceFree={playbackTab === "silence"}
 				/>
 
-				{!stampClipRequested && (
+				{(playbackTab === "silence" || !stampClipRequested) && (
 					<Slider
-						aria-label="Logical action range"
+						aria-label={
+							playbackTab === "silence"
+								? "Silence-free action range"
+								: "Logical action range"
+						}
 						min={0}
-						max={Math.max(1, manifest.duration_ms)}
+						max={Math.max(1, activeDurationMs)}
 						step={100}
 						value={selection}
 						onChange={(_event, value) => {

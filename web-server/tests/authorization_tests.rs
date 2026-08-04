@@ -19,7 +19,7 @@ use web_server::audio::{
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
-use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips};
+use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
 use web_server::permissions::visible_channels_for_user;
 use web_server::stamps::get_stamps;
 
@@ -643,8 +643,9 @@ async fn forbidden_cross_guild_requests_are_rejected(
                     .service(live_state)
                     .service(live_segment)
                     .service(get_clips)
-                    .service(get_clip)
                     .service(create_clip)
+                    .service(rename_clip)
+                    .service(get_clip)
                     .service(delete_clip)
                     .service(get_stamps),
             ),
@@ -698,6 +699,32 @@ async fn forbidden_cross_guild_requests_are_rejected(
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = test::TestRequest::put()
+        .uri("/api/audio/clips/2/forbidden-clip")
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"name": "not allowed"}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let req = test::TestRequest::put()
+        .uri("/api/audio/clips/1/own-clip")
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"name": "  renamed clip  "}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let name = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT name FROM clips WHERE guild_id = $1 AND clip_id = 'own-clip'",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(name.as_deref(), Some("renamed clip"));
 
     let req = test::TestRequest::delete()
         .uri("/api/audio/clips/1/own-clip")

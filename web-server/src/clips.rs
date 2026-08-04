@@ -1,7 +1,7 @@
 use actix_web::{
     HttpMessage, HttpRequest, HttpResponse, delete, get,
     http::header::{ContentDisposition, DispositionType},
-    post, route, web,
+    post, put, route, web,
 };
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,11 @@ fn is_valid_recording_file_name(file_name: &str) -> bool {
         && !file_name.chars().any(char::is_control)
 }
 
+fn normalized_clip_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.chars().count() <= 255).then_some(name)
+}
+
 #[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct ClipInfo {
     clip_id: String,
@@ -57,6 +62,7 @@ pub struct ClipInfo {
     channel_id: i64,
     start_time: f32,
     recording_session_id: Option<String>,
+    silence_free: bool,
 }
 
 #[route(
@@ -168,7 +174,8 @@ pub async fn get_clips(
         guild_id,
         channel_id,
         start_time,
-        recording_session_id
+        recording_session_id,
+        silence_free
         FROM clips
         WHERE guild_id = $1
           AND deleted_at IS NULL
@@ -234,6 +241,7 @@ pub async fn get_clips(
                 recording_session_id: row
                     .try_get::<Option<i64>, _>("recording_session_id")?
                     .map(|session_id| session_id.to_string()),
+                silence_free: row.try_get("silence_free")?,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -567,6 +575,76 @@ pub async fn create_clip(
     }))
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct RenameClipBody {
+    name: String,
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/audio/clips/{guild_id}/{clip_id}",
+    tag = "clips",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("clip_id" = String, Path, description = "Clip id"),
+    ),
+    request_body = RenameClipBody,
+    responses(
+        (status = 200, description = "Clip renamed"),
+        (status = 400, description = "Invalid clip name", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Not clip owner or guild manager", body = crate::errors::ApiError),
+        (status = 404, description = "Clip not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
+#[put("/audio/clips/{guild_id}/{clip_id}")]
+pub async fn rename_clip(
+    req: HttpRequest,
+    pool: web::Data<Pool<Postgres>>,
+    path: web::Path<(i64, String)>,
+    body: web::Json<RenameClipBody>,
+) -> Result<HttpResponse, AppError> {
+    let (guild_id, clip_id) = path.into_inner();
+    let user_id = req
+        .extensions()
+        .get::<Token<Access>>()
+        .map(|t| t.user_id)
+        .ok_or(AppError::Unauthorized)?;
+    let name = normalized_clip_name(&body.name).ok_or_else(|| {
+        AppError::BadRequest("Clip name must be between 1 and 255 characters".into())
+    })?;
+
+    let row = sqlx::query(
+        "SELECT user_id FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(guild_id)
+    .bind(&clip_id)
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
+    if row.try_get::<Option<i64>, _>("user_id")? != Some(user_id) {
+        require_guild_manager(&req, &pool, guild_id).await?;
+    }
+
+    let result = sqlx::query(
+        "UPDATE clips SET name = $3 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(guild_id)
+    .bind(&clip_id)
+    .bind(name)
+    .execute(pool.get_ref())
+    .await?;
+
+    if result.rows_affected() != 1 {
+        return Err(AppError::ClipNotFound);
+    }
+
+    info!(guild_id, clip_id, "clip renamed");
+    Ok(HttpResponse::Ok().finish())
+}
+
 #[utoipa::path(
     delete,
     path = "/api/audio/clips/{guild_id}/{clip_id}",
@@ -632,7 +710,7 @@ pub async fn delete(
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_recording_file_name;
+    use super::{is_valid_recording_file_name, normalized_clip_name};
 
     #[test]
     fn validates_recording_file_name_for_clip_creation() {
@@ -644,5 +722,16 @@ mod tests {
         assert!(!is_valid_recording_file_name("bad'name"));
         assert!(!is_valid_recording_file_name("bad\"name"));
         assert!(!is_valid_recording_file_name("bad\nname"));
+    }
+
+    #[test]
+    fn validates_and_trims_clip_names() {
+        assert_eq!(
+            normalized_clip_name("  renamed clip  "),
+            Some("renamed clip")
+        );
+        assert_eq!(normalized_clip_name("  \n\t"), None);
+        assert!(normalized_clip_name(&"x".repeat(255)).is_some());
+        assert_eq!(normalized_clip_name(&"x".repeat(256)), None);
     }
 }

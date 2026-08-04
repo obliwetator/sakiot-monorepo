@@ -24,6 +24,7 @@ import {
 	selectionWindowGeometry,
 	setNearestSelectionEdge,
 	shiftWindow,
+	transformSelectionWithWindow,
 	windowAround,
 	windowCenter,
 	windowForSelection,
@@ -152,6 +153,55 @@ describe("shiftWindow", () => {
 			startMs: SESSION_MS - 60_000,
 			endMs: SESSION_MS,
 		});
+	});
+});
+
+describe("transformSelectionWithWindow", () => {
+	test("moves the clip range with a panned session window", () => {
+		expect(
+			transformSelectionWithWindow(
+				[110_000, 125_000],
+				{ startMs: 100_000, endMs: 160_000 },
+				{ startMs: 250_000, endMs: 310_000 },
+			),
+		).toEqual([260_000, 275_000]);
+	});
+
+	test("scales the clip range proportionally when zooming", () => {
+		expect(
+			transformSelectionWithWindow(
+				[115_000, 145_000],
+				{ startMs: 100_000, endMs: 160_000 },
+				{ startMs: 115_000, endMs: 145_000 },
+			),
+		).toEqual([122_500, 137_500]);
+		expect(
+			transformSelectionWithWindow(
+				[122_500, 137_500],
+				{ startMs: 115_000, endMs: 145_000 },
+				{ startMs: 100_000, endMs: 160_000 },
+			),
+		).toEqual([115_000, 145_000]);
+	});
+
+	test("repairs an out-of-window range before moving it", () => {
+		expect(
+			transformSelectionWithWindow(
+				[60_000, 75_000],
+				{ startMs: 100_000, endMs: 160_000 },
+				{ startMs: 200_000, endMs: 260_000 },
+			),
+		).toEqual([200_000, 215_000]);
+	});
+
+	test("fits an oversized range to the destination window", () => {
+		expect(
+			transformSelectionWithWindow(
+				[80_000, 180_000],
+				{ startMs: 100_000, endMs: 160_000 },
+				{ startMs: 220_000, endMs: 250_000 },
+			),
+		).toEqual([220_000, 250_000]);
 	});
 });
 

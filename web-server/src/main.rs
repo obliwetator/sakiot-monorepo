@@ -32,7 +32,7 @@ use web_server::auth::dev_login;
 use web_server::auth::{
     AccessKeys, AuthMiddleware, discord_login, logout, oauth_start, refresh_jwt,
 };
-use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip};
+use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip, rename_clip};
 use web_server::config::Config;
 use web_server::dashboard;
 use web_server::fbi_agent_registry::{
@@ -185,6 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // Before get_clip: its {clip_id:.*} is greedy and would otherwise
             // match /audio/clips/waveform/... too.
             .service(get_clip_waveform_data)
+            .service(rename_clip)
             .service(get_clip)
             .service(get_stamps)
             .service(play_clip)

@@ -108,7 +108,7 @@ export interface paths {
 			cookie?: never;
 		};
 		get?: never;
-		put?: never;
+		put: operations["rename_clip"];
 		post?: never;
 		delete: operations["delete"];
 		options?: never;
@@ -474,6 +474,7 @@ export interface components {
 			original_file_name?: string | null;
 			recording_session_id?: string | null;
 			saved_file_name?: string | null;
+			silence_free: boolean;
 			/** Format: int64 */
 			size?: number | null;
 			/** Format: float */
@@ -548,6 +549,9 @@ export interface components {
 		RemoveSilenceResponse: {
 			message: string;
 			url: string;
+		};
+		RenameClipBody: {
+			name: string;
 		};
 		SessionDownloadQuery: {
 			/** Format: double */
@@ -654,6 +658,7 @@ export interface components {
 			/** Format: float */
 			end?: number | null;
 			name?: string | null;
+			silence_free?: boolean | null;
 			/** Format: float */
 			start?: number | null;
 		};
@@ -1240,6 +1245,78 @@ export interface operations {
 			};
 			/** @description Missing guild or channel permission */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	rename_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Clip id */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["RenameClipBody"];
+			};
+		};
+		responses: {
+			/** @description Clip renamed */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid clip name */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Not clip owner or guild manager */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

@@ -79,6 +79,40 @@ export function shiftWindow(
 	);
 }
 
+/**
+ * Carries a selection through a viewport pan or zoom. The selection keeps its
+ * fractional position in the viewport and scales with its width. If an older
+ * independent viewport move left the selection outside, fit it back into the
+ * source viewport first so the next interaction repairs the state.
+ */
+export function transformSelectionWithWindow(
+	selection: SessionSelection,
+	fromWindow: TimeWindow,
+	toWindow: TimeWindow,
+): SessionSelection {
+	const fromStart = Math.min(fromWindow.startMs, fromWindow.endMs);
+	const fromEnd = Math.max(fromWindow.startMs, fromWindow.endMs);
+	const toStart = Math.min(toWindow.startMs, toWindow.endMs);
+	const toEnd = Math.max(toWindow.startMs, toWindow.endMs);
+	const fromWidth = fromEnd - fromStart;
+	const toWidth = toEnd - toStart;
+	if (fromWidth <= 0 || toWidth <= 0) return [toStart, toStart];
+
+	const selectionWidth = Math.min(
+		Math.max(0, selection[1] - selection[0]),
+		fromWidth,
+	);
+	const fittedStart = Math.min(
+		Math.max(selection[0], fromStart),
+		fromEnd - selectionWidth,
+	);
+	const scale = toWidth / fromWidth;
+	return [
+		toStart + (fittedStart - fromStart) * scale,
+		toStart + (fittedStart + selectionWidth - fromStart) * scale,
+	];
+}
+
 export function selectionFitsWindow(
 	selection: SessionSelection,
 	windowMs: number,
