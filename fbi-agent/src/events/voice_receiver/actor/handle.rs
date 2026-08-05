@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -11,7 +11,7 @@ use serenity::{
     model::id::{ChannelId, GuildId},
 };
 use sqlx::{Pool, Postgres};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::warn;
 
 use super::RecorderActor;
@@ -28,6 +28,10 @@ pub(in crate::events::voice_receiver) struct RecorderHandle {
     guild_metrics: Arc<crate::GuildRecordingMetrics>,
     channel_metrics: Arc<crate::GuildRecordingMetrics>,
     current_channel_id: Arc<AtomicU64>,
+    actor_id: Arc<()>,
+    stopping: Arc<AtomicBool>,
+    shutdown_tx: watch::Sender<Option<i64>>,
+    terminated_rx: watch::Receiver<bool>,
 }
 
 impl RecorderHandle {
@@ -51,7 +55,11 @@ impl RecorderHandle {
         };
         let stats = Arc::new(RecorderStats::default());
         let current_channel_id = Arc::new(AtomicU64::new(channel_id.get()));
+        let actor_id = Arc::new(());
+        let stopping = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel(COMMAND_CAPACITY);
+        let (shutdown_tx, shutdown_rx) = watch::channel(None);
+        let (terminated_tx, terminated_rx) = watch::channel(false);
         let actor = RecorderActor {
             pool,
             ctx,
@@ -71,8 +79,9 @@ impl RecorderHandle {
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
             voice_session_ended: false,
             registry,
+            actor_id: Arc::clone(&actor_id),
         };
-        tokio::spawn(actor.run(rx));
+        tokio::spawn(actor.run(rx, shutdown_rx, terminated_tx));
 
         Self {
             tx,
@@ -81,7 +90,41 @@ impl RecorderHandle {
             guild_metrics,
             channel_metrics,
             current_channel_id,
+            actor_id,
+            stopping,
+            shutdown_tx,
+            terminated_rx,
         }
+    }
+
+    pub(in crate::events::voice_receiver) fn is_stopping(&self) -> bool {
+        self.stopping.load(Ordering::Acquire)
+    }
+
+    pub(in crate::events::voice_receiver) fn same_actor(&self, actor_id: &Arc<()>) -> bool {
+        Arc::ptr_eq(&self.actor_id, actor_id)
+    }
+
+    pub(in crate::events::voice_receiver) fn actor_id(&self) -> Arc<()> {
+        Arc::clone(&self.actor_id)
+    }
+
+    /// Requests actor shutdown through an unbounded watch signal. Terminal
+    /// delivery must not compete with the bounded packet/control queue.
+    pub(in crate::events::voice_receiver) fn request_shutdown(&self, at_ms: i64) {
+        self.stopping.store(true, Ordering::Release);
+        self.shutdown_tx.send_replace(Some(at_ms));
+    }
+
+    /// Waits until cleanup completed, or until the actor task disappeared.
+    /// A dropped sender means the task panicked; registry cleanup can still
+    /// remove its dead handle and permit a fresh actor.
+    pub(in crate::events::voice_receiver) async fn wait_terminated(&self) {
+        let mut terminated_rx = self.terminated_rx.clone();
+        if *terminated_rx.borrow() {
+            return;
+        }
+        let _ = terminated_rx.wait_for(|terminated| *terminated).await;
     }
 
     pub(in crate::events::voice_receiver) fn stats(&self) -> &RecorderStats {
@@ -184,12 +227,6 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
         old_channel_id: Option<ChannelId>,
         new_channel_id: Option<ChannelId>,
         afk_channel_id: Option<ChannelId>,
-        at_ms: i64,
-    },
-    /// The bot's voice call for this guild was removed. The actor pauses all
-    /// open logical sessions and terminates; pending-session expiry is handled
-    /// by the global expiry task.
-    VoiceSessionEnded {
         at_ms: i64,
     },
 }

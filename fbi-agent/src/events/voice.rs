@@ -236,6 +236,29 @@ pub(crate) fn spawn_reconciliation(
 }
 
 async fn reconcile_voice_sessions(custom: &crate::Custom) {
+    // Serenity updates its cache before invoking event handlers. Reconcile
+    // metrics from that independent snapshot so a skipped handler cannot keep
+    // stale presence and start-time entries indefinitely.
+    let mut current_voice_users = std::collections::HashSet::new();
+    for guild_id in custom.cache.guilds() {
+        if let Some(guild) = custom.cache.guild(guild_id) {
+            for (user_id, voice_state) in &guild.voice_states {
+                if voice_state.channel_id.is_some() {
+                    current_voice_users.insert(crate::VoiceUserKey {
+                        guild_id: guild_id.get(),
+                        user_id: user_id.get(),
+                    });
+                }
+            }
+        }
+    }
+    {
+        let data_read = custom.data.read().await;
+        if let Some(metrics) = data_read.get::<crate::BotMetricsKey>() {
+            metrics.prune_stale_voice_metrics(&current_voice_users);
+        }
+    }
+
     match crate::database::logical_recordings::recover_stale_sessions(
         &custom.pool,
         chrono::Utc::now().timestamp_millis(),

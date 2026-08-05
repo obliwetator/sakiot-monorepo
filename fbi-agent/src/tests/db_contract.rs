@@ -462,7 +462,7 @@ async fn silent_resumed_session_can_pause_before_next_fragment(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn startup_recovery_reclaims_same_instance_even_with_fresh_heartbeat(
+async fn startup_recovery_keeps_fragmentless_active_session_of_fresh_same_instance(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let base = unique_id();
@@ -499,21 +499,125 @@ async fn startup_recovery_reclaims_same_instance_even_with_fresh_heartbeat(
     let report =
         logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
             .await?;
-    assert_eq!(report.stale_active_finalized, 1);
+    assert_eq!(report.stale_active_finalized, 0);
     assert_eq!(report.stale_pending_released, 1);
     let active: (String, Option<String>) =
         sqlx::query_as("SELECT state, end_reason FROM recording_sessions WHERE id = $1")
             .bind(active_id)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(active.0, "finalized");
-    assert_eq!(active.1.as_deref(), Some("owner_lost"));
+    assert_eq!(active.0, "active");
+    assert_eq!(active.1, None);
     let pending: (String, Option<String>) =
         sqlx::query_as("SELECT state, owner_instance_id FROM recording_sessions WHERE id = $1")
             .bind(pending_id)
             .fetch_one(&pool)
             .await?;
     assert_eq!(pending, ("pending".to_string(), None));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn startup_recovery_skips_active_sessions_of_overlapping_live_instance(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // A second process sharing the same instance id (overlapping drain) keeps
+    // both its `bot_instances` heartbeat and the fragment heartbeats of the
+    // recordings it is still writing fresh. The newcomer must not finalize
+    // those sessions mid-recording.
+    let base = unique_id();
+    let owner = format!("test-overlapping-owner-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, owner_instance_id)
+         VALUES ($1, $2, $3, $3, 'active', to_timestamp(1700300000), $4)
+         RETURNING id",
+    )
+    .bind(base)
+    .bind(base + 1)
+    .bind(base + 2)
+    .bind(&owner)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
+             recording_owner_instance_id, recording_heartbeat_at, recording_session_id,
+             segment_index)
+         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5, now(), $6, 0)",
+    )
+    .bind(format!("{base}-live.ogg"))
+    .bind(base)
+    .bind(base + 2)
+    .bind(base + 1)
+    .bind(&owner)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let report =
+        logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
+            .await?;
+    assert_eq!(report.stale_active_finalized, 0);
+    let state: String = sqlx::query_scalar("SELECT state FROM recording_sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(state, "active");
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn startup_recovery_finalizes_own_active_session_after_recording_heartbeat_stales(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // A crashed process whose fragments stopped being heartbeat-written (but
+    // whose bot_instances row is still fresh from the restart window) must be
+    // reclaimed by the newcomer with the same instance id.
+    let base = unique_id();
+    let owner = format!("test-restarted-owner-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, owner_instance_id)
+         VALUES ($1, $2, $3, $3, 'active', to_timestamp(1700300000), $4)
+         RETURNING id",
+    )
+    .bind(base)
+    .bind(base + 1)
+    .bind(base + 2)
+    .bind(&owner)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
+             recording_owner_instance_id, recording_heartbeat_at, recording_session_id,
+             segment_index)
+         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5,
+                 now() - interval '3 minutes', $6, 0)",
+    )
+    .bind(format!("{base}-stale.ogg"))
+    .bind(base)
+    .bind(base + 2)
+    .bind(base + 1)
+    .bind(&owner)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let report =
+        logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
+            .await?;
+    assert_eq!(report.stale_active_finalized, 1);
+    let state: String = sqlx::query_scalar("SELECT state FROM recording_sessions WHERE id = $1")
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(state, "finalized");
     Ok(())
 }
 

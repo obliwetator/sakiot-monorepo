@@ -550,6 +550,15 @@ pub async fn recover_stale_sessions(
     .await?
     .rows_affected();
 
+    // Reclaiming a session whose owner instance is gone. The `starting_instance_id`
+    // branch must NOT fire while the old process with the same instance id is
+    // still alive (an overlapping release during a drain keeps its own
+    // `bot_instances` heartbeat fresh, so that row cannot distinguish the two
+    // processes). Fragments the old process is still writing carry a fresh
+    // `recording_heartbeat_at`, so gate the reclaim on that instead. Require a
+    // stale unfinished/reaped fragment as crash evidence: an active session
+    // with no such fragment can be a live, silent post-handoff session and is
+    // safe for the restarted process to reuse.
     let stale_active_finalized = sqlx::query(
         "UPDATE recording_sessions rs
             SET state = 'finalized',
@@ -567,7 +576,21 @@ pub async fn recover_stale_sessions(
           WHERE rs.state = 'active'
             AND rs.owner_instance_id IS NOT NULL
             AND (
-                ($2::text IS NOT NULL AND rs.owner_instance_id = $2)
+                ($2::text IS NOT NULL AND rs.owner_instance_id = $2
+                    AND EXISTS (
+                        SELECT 1 FROM audio_files af
+                         WHERE af.recording_session_id = rs.id
+                           AND af.recording_owner_instance_id = rs.owner_instance_id
+                           AND (af.end_ts IS NULL OR af.reaped IS TRUE)
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM audio_files af
+                         WHERE af.recording_session_id = rs.id
+                          AND af.recording_owner_instance_id = rs.owner_instance_id
+                           AND af.end_ts IS NULL
+                           AND af.recording_heartbeat_at
+                               > now() - ($1::double precision * interval '1 second')
+                    ))
                 OR NOT EXISTS (
                     SELECT 1
                       FROM bot_instances bi

@@ -54,32 +54,48 @@ impl RecordingCoordinatorRegistry {
         channel_id: ChannelId,
         metrics: Arc<crate::BotMetrics>,
     ) -> actor::RecorderHandle {
-        let mut actors = self.actors.lock().await;
-        if let Some(actor) = actors.get(&guild_id.get()) {
-            return actor.clone();
+        loop {
+            let stopping_actor = {
+                let mut actors = self.actors.lock().await;
+                if let Some(actor) = actors.get(&guild_id.get()) {
+                    if !actor.is_stopping() {
+                        return actor.clone();
+                    }
+                    Some(actor.clone())
+                } else {
+                    let actor = actor::RecorderHandle::new(
+                        pool.clone(),
+                        ctx.clone(),
+                        guild_id,
+                        channel_id,
+                        metrics.clone(),
+                        Some(Arc::clone(self)),
+                    )
+                    .await;
+                    actors.insert(guild_id.get(), actor.clone());
+                    return actor;
+                }
+            };
+
+            if let Some(actor) = stopping_actor {
+                actor.wait_terminated().await;
+                self.remove_if(guild_id, &actor.actor_id()).await;
+            }
         }
-        let actor = actor::RecorderHandle::new(
-            pool,
-            ctx,
-            guild_id,
-            channel_id,
-            metrics,
-            Some(Arc::clone(self)),
-        )
-        .await;
-        actors.insert(guild_id.get(), actor.clone());
-        actor
     }
 
     async fn get(&self, guild_id: GuildId) -> Option<actor::RecorderHandle> {
         self.actors.lock().await.get(&guild_id.get()).cloned()
     }
 
-    /// Removes the guild's entry, dropping the actor handle held here. The
-    /// actor itself is the only caller; it runs this once its open sessions
-    /// are closed so a reconnect creates a fresh actor.
-    async fn remove(&self, guild_id: GuildId) {
-        self.actors.lock().await.remove(&guild_id.get());
+    async fn remove_if(&self, guild_id: GuildId, actor_id: &Arc<()>) {
+        let mut actors = self.actors.lock().await;
+        if actors
+            .get(&guild_id.get())
+            .is_some_and(|actor| actor.same_actor(actor_id))
+        {
+            actors.remove(&guild_id.get());
+        }
     }
 }
 
@@ -204,9 +220,8 @@ async fn coordinator_from_ctx(ctx: &Context, guild_id: GuildId) -> Option<actor:
 }
 
 /// Notifies the guild's recorder actor that its voice call was removed so it
-/// can pause open sessions and terminate. Best effort: if no actor is
-/// registered (or the message cannot be delivered) the actor either already
-/// exited or will exit through its handle-drop path.
+/// can pause open sessions and terminate. Waits for cleanup so a reconnect
+/// cannot attach its receiver to an actor already committed to exiting.
 pub(crate) async fn notify_voice_session_ended(
     data: &Arc<RwLock<TypeMap>>,
     guild_id: GuildId,
@@ -220,9 +235,10 @@ pub(crate) async fn notify_voice_session_ended(
         return;
     };
     if let Some(actor) = registry.get(guild_id).await {
-        actor
-            .send_control(actor::RecorderCommand::VoiceSessionEnded { at_ms })
-            .await;
+        let actor_id = actor.actor_id();
+        actor.request_shutdown(at_ms);
+        actor.wait_terminated().await;
+        registry.remove_if(guild_id, &actor_id).await;
     }
 }
 

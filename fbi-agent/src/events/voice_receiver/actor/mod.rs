@@ -25,7 +25,7 @@ use serenity::{
     model::id::{ChannelId, GuildId},
 };
 use sqlx::{Pool, Postgres};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use super::{
     recordings::{RecorderStats, Recordings},
@@ -59,6 +59,9 @@ struct RecorderActor {
     /// Registry entry for this guild; the actor removes itself on exit so a
     /// later reconnect starts with fresh state. `None` for unregistered actors.
     registry: Option<Arc<super::RecordingCoordinatorRegistry>>,
+    /// Stable identity prevents an exiting actor from removing a newer
+    /// registry generation after a panic/recovery race.
+    actor_id: Arc<()>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -68,13 +71,28 @@ struct PlannedHandoff {
 }
 
 impl RecorderActor {
-    async fn run(mut self, mut rx: mpsc::Receiver<RecorderCommand>) {
+    async fn run(
+        mut self,
+        mut rx: mpsc::Receiver<RecorderCommand>,
+        mut shutdown_rx: watch::Receiver<Option<i64>>,
+        terminated_tx: watch::Sender<bool>,
+    ) {
         let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
         let mut reaper = tokio::time::interval(REAPER_INTERVAL);
         let mut deadlines = tokio::time::interval(DEADLINE_INTERVAL);
 
         loop {
             tokio::select! {
+                biased;
+                changed = shutdown_rx.changed() => {
+                    let at_ms = if changed.is_ok() {
+                        (*shutdown_rx.borrow()).unwrap_or_else(|| chrono::Utc::now().timestamp_millis())
+                    } else {
+                        chrono::Utc::now().timestamp_millis()
+                    };
+                    self.handle_voice_session_ended(at_ms).await;
+                    break;
+                }
                 command = rx.recv() => {
                     let Some(command) = command else {
                         self.handle_voice_session_ended(chrono::Utc::now().timestamp_millis())
@@ -82,9 +100,6 @@ impl RecorderActor {
                         break;
                     };
                     self.handle_command(command).await;
-                    if self.voice_session_ended {
-                        break;
-                    }
                 }
                 _ = heartbeat.tick() => {
                     self.heartbeat_active_recordings().await;
@@ -102,6 +117,7 @@ impl RecorderActor {
             .await;
         self.clear_receiver_state();
         self.remove_from_registry().await;
+        terminated_tx.send_replace(true);
     }
 
     async fn handle_command(&mut self, command: RecorderCommand) {
@@ -173,9 +189,6 @@ impl RecorderActor {
                     at_ms,
                 )
                 .await;
-            }
-            RecorderCommand::VoiceSessionEnded { at_ms } => {
-                self.handle_voice_session_ended(at_ms).await;
             }
         }
     }

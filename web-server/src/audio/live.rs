@@ -32,6 +32,28 @@ use crate::errors::AppError;
 
 use super::paths::recording_path;
 
+pub(crate) const CACHE_ACCESS_MARKER: &str = ".sakiot-cache-access";
+const CACHE_ACCESS_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Refreshes rebuildable-cache activity for cap eviction and stale reaping.
+/// Best effort: serving media remains more important than marker persistence.
+pub(crate) async fn mark_cache_access(directory: &Path) {
+    let marker = directory.join(CACHE_ACCESS_MARKER);
+    if let Ok(metadata) = tokio::fs::metadata(&marker).await
+        && let Ok(modified) = metadata.modified()
+        && modified
+            .elapsed()
+            .is_ok_and(|age| age < CACHE_ACCESS_REFRESH_INTERVAL)
+    {
+        return;
+    }
+    if let Err(error) =
+        tokio::fs::write(marker, chrono::Utc::now().timestamp_millis().to_string()).await
+    {
+        warn!(path = %directory.display(), ?error, "cache access marker update failed");
+    }
+}
+
 /// How long the drain waits for tail to reach the end of the finalized
 /// source file before terminating it anyway.
 const TAIL_CATCHUP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -43,7 +65,27 @@ const PIPELINE_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 const PIPELINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default, Debug)]
-pub struct LiveContainer(pub RwLock<HashMap<String, Arc<Mutex<JobState>>>>);
+pub struct LiveContainer {
+    pub(crate) jobs: RwLock<HashMap<String, Arc<Mutex<JobState>>>>,
+    /// Per-key creation locks: only one job may spawn per recording, so two
+    /// concurrent first requests cannot start duplicate ffmpeg pipelines into
+    /// the same `hls-{stem}` directory. Locks live as long as the job map;
+    /// retaining them also serializes retries after a failed spawn.
+    locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+impl LiveContainer {
+    /// Serializes job creation for one recording. The returned guard is held
+    /// for the whole spawn; while it is held, any other request for the same
+    /// key waits and then reuses the completed entry.
+    async fn key_lock(&self, id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.locks.lock().await;
+        locks
+            .entry(id.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+}
 
 #[derive(Debug)]
 pub struct JobState {
@@ -477,7 +519,7 @@ async fn spawn_job(
         child: Some(child),
     }));
     container
-        .0
+        .jobs
         .write()
         .await
         .insert(key_id(&key), state.clone());
@@ -543,10 +585,28 @@ pub(crate) async fn ensure_job(
     key: RecordingKey,
 ) -> Result<Arc<Mutex<JobState>>, AppError> {
     let id = key_id(&key);
-    if let Some(s) = container.0.read().await.get(&id).cloned() {
+    if let Some(s) = container.jobs.read().await.get(&id).cloned() {
         return Ok(s);
     }
 
+    // Serialize creation for this key: a concurrent first request waits here
+    // and then reuses the entry the winner inserts, so only one ffmpeg
+    // pipeline writes the shared `hls-{stem}` directory.
+    let key_guard = container.key_lock(&id).await;
+    let _key_guard = key_guard.lock().await;
+    if let Some(s) = container.jobs.read().await.get(&id).cloned() {
+        return Ok(s);
+    }
+
+    ensure_job_locked(container, pool, key).await
+}
+
+async fn ensure_job_locked(
+    container: web::Data<LiveContainer>,
+    pool: web::Data<Pool<Postgres>>,
+    key: RecordingKey,
+) -> Result<Arc<Mutex<JobState>>, AppError> {
+    let id = key_id(&key);
     let src = source_path(&key).await.ok_or(AppError::FileNotFound)?;
 
     // Probe BEFORE the on-disk cache shortcut: a stale `hls-*` dir from a
@@ -576,7 +636,7 @@ pub(crate) async fn ensure_job(
                 finalized: true,
                 child: None,
             }));
-            container.0.write().await.insert(id, s.clone());
+            container.jobs.write().await.insert(id, s.clone());
             return Ok(s);
         }
         HlsCacheAction::PurgeStaleLive => {
@@ -592,12 +652,6 @@ pub(crate) async fn ensure_job(
         HlsCacheAction::BuildFresh => {}
     }
 
-    {
-        let r = container.0.read().await;
-        if let Some(s) = r.get(&id).cloned() {
-            return Ok(s);
-        }
-    }
     spawn_job(container, pool, key, src, out_dir, is_live).await
 }
 
@@ -625,6 +679,7 @@ pub async fn live_playlist(
     .await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     let _ = ensure_job(container, pool, key.clone()).await?;
+    mark_cache_access(&key.live_dir(&recording_path())).await;
     let pl = key.live_playlist_path(&recording_path());
     let body = tokio::fs::read(&pl)
         .await
@@ -720,6 +775,7 @@ pub async fn live_segment(
         return Err(AppError::BadRequest("reserved name".into()));
     }
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
+    mark_cache_access(&key.live_dir(&recording_path())).await;
     let path = key.live_segment_path(&recording_path(), &seg);
     let f = NamedFile::open_async(&path)
         .await
@@ -740,6 +796,17 @@ pub async fn live_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn creation_lock_survives_failed_job_retries() {
+        let container = LiveContainer::default();
+        let first = container.key_lock("recording").await;
+        let retry = container.key_lock("recording").await;
+        let other = container.key_lock("other-recording").await;
+
+        assert!(Arc::ptr_eq(&first, &retry));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
 
     #[tokio::test]
     async fn hls_cache_action_builds_when_playlist_missing() {

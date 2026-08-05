@@ -374,7 +374,7 @@ async fn cache_bytes(pool: &Pool<Postgres>) -> Result<u64, crate::errors::AppErr
     Ok(total)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum CacheEntryKind {
     File,
     Directory,
@@ -445,7 +445,8 @@ async fn collect_hls_cache(
                 let bytes = directory_bytes(&child.path()).await?;
                 *total = total.saturating_add(bytes);
                 entries.push(CacheEntry {
-                    order_ms: modified_ms(&metadata),
+                    order_ms: cache_directory_activity_ms(&child.path(), modified_ms(&metadata))
+                        .await,
                     path: child.path(),
                     bytes,
                     kind: CacheEntryKind::Directory,
@@ -484,6 +485,20 @@ fn modified_ms(metadata: &std::fs::Metadata) -> i64 {
         .unwrap_or(i64::MAX)
 }
 
+async fn cache_directory_activity_ms(path: &Path, fallback_ms: i64) -> i64 {
+    let directory_ms = tokio::fs::metadata(path)
+        .await
+        .ok()
+        .map(|metadata| modified_ms(&metadata))
+        .unwrap_or(fallback_ms);
+    let marker_ms = tokio::fs::metadata(path.join(crate::audio::live::CACHE_ACCESS_MARKER))
+        .await
+        .ok()
+        .map(|metadata| modified_ms(&metadata))
+        .unwrap_or(i64::MIN);
+    fallback_ms.max(directory_ms).max(marker_ms)
+}
+
 async fn remove_cache_entry(entry: &CacheEntry) -> Result<bool, crate::errors::AppError> {
     let result = match entry.kind {
         CacheEntryKind::File => tokio::fs::remove_file(&entry.path).await,
@@ -499,16 +514,31 @@ async fn remove_cache_entry(entry: &CacheEntry) -> Result<bool, crate::errors::A
     }
 }
 
+/// Directory entries (`hls-*`/`mix-*`) modified within this window are left
+/// alone by the cap eviction: a live pipeline rewrites its directory every few
+/// seconds while a player may be reading it, and deleting it mid-stream would
+/// corrupt the playback. The dedicated HLS reaper removes truly stale dirs.
+const CACHE_DIR_EVICTION_MIN_AGE_MS: i64 = 60 * 60 * 1000;
+
 async fn enforce_cache_cap(
     mut entries: Vec<CacheEntry>,
     mut total: u64,
     max_bytes: u64,
 ) -> Result<(u64, u64), crate::errors::AppError> {
     entries.sort_by_key(|entry| entry.order_ms);
+    let now_ms = chrono::Utc::now().timestamp_millis();
     let mut removed = 0u64;
     for entry in entries {
         if total <= max_bytes {
             break;
+        }
+        if entry.kind == CacheEntryKind::Directory {
+            // Re-read activity immediately before deletion. A pipeline or
+            // player may have refreshed the directory after collection.
+            let activity_ms = cache_directory_activity_ms(&entry.path, entry.order_ms).await;
+            if activity_ms.saturating_add(CACHE_DIR_EVICTION_MIN_AGE_MS) > now_ms {
+                continue;
+            }
         }
         if remove_cache_entry(&entry).await? {
             total = total.saturating_sub(entry.bytes);
@@ -582,6 +612,48 @@ mod tests {
         assert_eq!(enforce_cache_cap(entries, 9, 4).await?, (1, 4));
         assert!(!oldest.exists());
         assert!(newest.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cache_cap_skips_recently_modified_directories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs::FileTimes;
+
+        let directory = tempfile::tempdir()?;
+        let live = directory.path().join("hls-live");
+        let stale = directory.path().join("hls-stale");
+        tokio::fs::create_dir_all(&live).await?;
+        tokio::fs::create_dir_all(&stale).await?;
+        tokio::fs::write(live.join("seg.m4s"), b"123").await?;
+        tokio::fs::write(stale.join("seg.m4s"), b"456").await?;
+        let live_marker = live.join(crate::audio::live::CACHE_ACCESS_MARKER);
+        tokio::fs::write(&live_marker, b"old access").await?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let old_time = std::time::SystemTime::now()
+            - std::time::Duration::from_millis((CACHE_DIR_EVICTION_MIN_AGE_MS + 1) as u64);
+        std::fs::File::open(&live)?.set_times(FileTimes::new().set_modified(old_time))?;
+        std::fs::File::open(&stale)?.set_times(FileTimes::new().set_modified(old_time))?;
+        std::fs::File::open(&live_marker)?.set_times(FileTimes::new().set_modified(old_time))?;
+        tokio::fs::write(&live_marker, now_ms.to_string()).await?;
+        let entries = vec![
+            CacheEntry {
+                order_ms: now_ms - CACHE_DIR_EVICTION_MIN_AGE_MS - 1,
+                path: stale.clone(),
+                bytes: 3,
+                kind: CacheEntryKind::Directory,
+            },
+            CacheEntry {
+                order_ms: now_ms - CACHE_DIR_EVICTION_MIN_AGE_MS - 1,
+                path: live.clone(),
+                bytes: 3,
+                kind: CacheEntryKind::Directory,
+            },
+        ];
+
+        assert_eq!(enforce_cache_cap(entries, 6, 4).await?, (1, 3));
+        assert!(!stale.exists());
+        assert!(live.exists());
         Ok(())
     }
 

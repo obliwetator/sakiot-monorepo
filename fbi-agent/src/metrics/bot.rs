@@ -1,6 +1,7 @@
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Histogram;
 use serenity::prelude::TypeMapKey;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64};
 use std::time::Instant;
@@ -103,6 +104,36 @@ impl BotMetrics {
         self.voice_users.clear();
         self.user_start_times.clear();
         let _ = self.voice_update_tx.send(());
+    }
+
+    /// Reconciles event-driven presence metrics against Serenity's current
+    /// cache snapshot. This repairs handler events skipped during draining or
+    /// transient routing gaps without an O(users²) scan after every event.
+    pub fn prune_stale_voice_metrics(&self, current_voice_users: &HashSet<VoiceUserKey>) {
+        let current_user_ids: HashSet<u64> =
+            current_voice_users.iter().map(|key| key.user_id).collect();
+        let previous_lengths = (
+            self.voice_users.len(),
+            self.active_recording_users.len(),
+            self.user_start_times.len(),
+        );
+
+        self.voice_users
+            .retain(|key, _| current_voice_users.contains(key));
+        self.active_recording_users
+            .retain(|key, _| current_voice_users.contains(key));
+        self.user_start_times
+            .retain(|user_id, _| current_user_ids.contains(user_id));
+
+        if previous_lengths
+            != (
+                self.voice_users.len(),
+                self.active_recording_users.len(),
+                self.user_start_times.len(),
+            )
+        {
+            let _ = self.voice_update_tx.send(());
+        }
     }
 
     pub fn track_recording_started(
@@ -276,4 +307,65 @@ impl Default for BotMetrics {
 pub struct BotMetricsKey;
 impl TypeMapKey for BotMetricsKey {
     type Value = Arc<BotMetrics>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_reconciles_presence_metrics_with_cache_snapshot() {
+        let metrics = BotMetrics::default();
+        metrics.user_start_times.insert(1, 100);
+        metrics.user_start_times.insert(2, 200);
+        metrics.track_voice_presence(
+            10,
+            1,
+            Some(VoiceUserPresence {
+                channel_id: 100,
+                is_bot: false,
+                server_mute: false,
+                server_deaf: false,
+                self_mute: false,
+                self_deaf: false,
+                suppress: false,
+                streaming: false,
+                video: false,
+            }),
+        );
+
+        metrics.track_voice_presence(
+            10,
+            2,
+            Some(VoiceUserPresence {
+                channel_id: 200,
+                is_bot: false,
+                server_mute: false,
+                server_deaf: false,
+                self_mute: false,
+                self_deaf: false,
+                suppress: false,
+                streaming: false,
+                video: false,
+            }),
+        );
+        metrics.active_recording_users.insert(
+            VoiceUserKey {
+                guild_id: 10,
+                user_id: 2,
+            },
+            200,
+        );
+
+        let current = HashSet::from([VoiceUserKey {
+            guild_id: 10,
+            user_id: 1,
+        }]);
+        metrics.prune_stale_voice_metrics(&current);
+
+        assert!(metrics.user_start_times.contains_key(&1));
+        assert!(!metrics.user_start_times.contains_key(&2));
+        assert_eq!(metrics.voice_users.len(), 1);
+        assert!(metrics.active_recording_users.is_empty());
+    }
 }

@@ -166,6 +166,12 @@ pub(crate) async fn teardown_voice_session_with_operation(
     let Some(manager) = manager else {
         error!("Songbird manager missing while tearing down voice session");
         release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
+        crate::events::voice_receiver::notify_voice_session_ended(
+            data,
+            guild_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
         refresh_active_voice_connection_gauge(data, None).await;
         return VoiceTeardownReport {
             manager_missing: true,
@@ -646,6 +652,14 @@ async fn retain_or_release_after_failure(
             "failed to remove disconnected call: {}", err
         );
     }
+    if !current_channel_is_some(manager.get(guild_id)).await {
+        crate::events::voice_receiver::notify_voice_session_ended(
+            &ctx.data,
+            guild_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+    }
     refresh_active_voice_connection_gauge(&ctx.data, Some(manager)).await;
 }
 
@@ -765,6 +779,14 @@ async fn cleanup_failed_fresh_join(
 ) {
     if let Err(remove_err) = manager.remove(guild_id).await {
         error!("failed to clean up failed voice join: {}", remove_err);
+    }
+    if !current_channel_is_some(manager.get(guild_id)).await {
+        crate::events::voice_receiver::notify_voice_session_ended(
+            data,
+            guild_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
     }
     refresh_active_voice_connection_gauge(data, Some(manager)).await;
 }

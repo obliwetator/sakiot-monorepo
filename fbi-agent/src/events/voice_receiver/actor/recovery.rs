@@ -499,7 +499,7 @@ impl RecorderActor {
     /// released and a future reconnect starts with a fresh actor.
     pub(super) async fn remove_from_registry(&self) {
         if let Some(registry) = &self.registry {
-            registry.remove(self.guild_id).await;
+            registry.remove_if(self.guild_id, &self.actor_id).await;
         }
     }
 

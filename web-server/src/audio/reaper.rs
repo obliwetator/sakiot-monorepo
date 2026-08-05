@@ -132,15 +132,23 @@ async fn sweep_files(root: &str) -> std::io::Result<u32> {
     Ok(removed)
 }
 
-/// Whether `path`'s mtime is more than `max_age` in the past. Unreadable
-/// metadata or a future mtime counts as "not old" (left alone).
+/// Whether `path`'s newest activity timestamp is more than `max_age` in the
+/// past. HLS/mix readers refresh a marker because reads do not change mtime.
+/// Unreadable metadata or a future timestamp counts as "not old".
 async fn is_older_than(path: &Path, now: SystemTime, max_age: Duration) -> bool {
     let Ok(meta) = tokio::fs::metadata(path).await else {
         return false;
     };
-    let Ok(mtime) = meta.modified() else {
+    let Ok(mut mtime) = meta.modified() else {
         return false;
     };
+    if meta.is_dir()
+        && let Ok(marker_meta) =
+            tokio::fs::metadata(path.join(super::live::CACHE_ACCESS_MARKER)).await
+        && let Ok(marker_mtime) = marker_meta.modified()
+    {
+        mtime = mtime.max(marker_mtime);
+    }
     now.duration_since(mtime)
         .map(|age| age > max_age)
         .unwrap_or(false)
@@ -190,6 +198,23 @@ mod tests {
         assert_eq!(sweep_hls(&root.path().to_string_lossy()).await?, 2);
         assert!(!hls.exists());
         assert!(!mix.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn active_hls_reader_marker_prevents_reaping() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let hls = root.path().join("hls-active");
+        tokio::fs::create_dir_all(&hls).await?;
+        tokio::fs::write(hls.join("seg_00000.m4s"), b"segment").await?;
+        let marker = hls.join(crate::audio::live::CACHE_ACCESS_MARKER);
+        tokio::fs::write(&marker, b"old access").await?;
+        age(&hls, HLS_MAX_AGE + Duration::from_secs(1))?;
+        age(&marker, HLS_MAX_AGE + Duration::from_secs(1))?;
+        tokio::fs::write(&marker, b"recent access").await?;
+
+        assert_eq!(sweep_hls(&root.path().to_string_lossy()).await?, 0);
+        assert!(hls.exists());
         Ok(())
     }
 }

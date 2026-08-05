@@ -298,6 +298,7 @@ pub async fn session_live_playlist(
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let key = fragment_key(&fragment);
     let _ = super::live::ensure_job(container, pool, key.clone()).await?;
+    super::live::mark_cache_access(&key.live_dir(&recording_path())).await;
     let playlist = key.live_playlist_path(&recording_path());
     let body = tokio::fs::read(playlist)
         .await
@@ -330,7 +331,9 @@ pub async fn session_live_segment(
     validate_segment_name(&segment)?;
     require_session_access(&pool, session_id, token.user_id).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
-    let path = fragment_key(&fragment).live_segment_path(&recording_path(), &segment);
+    let key = fragment_key(&fragment);
+    super::live::mark_cache_access(&key.live_dir(&recording_path())).await;
+    let path = key.live_segment_path(&recording_path(), &segment);
     let file = NamedFile::open_async(path)
         .await
         .map_err(|_| AppError::FileNotFound)?;
