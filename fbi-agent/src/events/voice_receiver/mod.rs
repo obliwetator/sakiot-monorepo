@@ -3,6 +3,7 @@ use serenity::{
     async_trait,
     client::Context,
     model::id::{ChannelId, GuildId},
+    prelude::{RwLock, TypeMap},
 };
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler};
 use sqlx::{Pool, Postgres};
@@ -46,7 +47,7 @@ impl serenity::prelude::TypeMapKey for RecordingCoordinatorRegistryKey {
 
 impl RecordingCoordinatorRegistry {
     async fn get_or_create(
-        &self,
+        self: &Arc<Self>,
         pool: Pool<Postgres>,
         ctx: Arc<Context>,
         guild_id: GuildId,
@@ -57,13 +58,28 @@ impl RecordingCoordinatorRegistry {
         if let Some(actor) = actors.get(&guild_id.get()) {
             return actor.clone();
         }
-        let actor = actor::RecorderHandle::new(pool, ctx, guild_id, channel_id, metrics).await;
+        let actor = actor::RecorderHandle::new(
+            pool,
+            ctx,
+            guild_id,
+            channel_id,
+            metrics,
+            Some(Arc::clone(self)),
+        )
+        .await;
         actors.insert(guild_id.get(), actor.clone());
         actor
     }
 
     async fn get(&self, guild_id: GuildId) -> Option<actor::RecorderHandle> {
         self.actors.lock().await.get(&guild_id.get()).cloned()
+    }
+
+    /// Removes the guild's entry, dropping the actor handle held here. The
+    /// actor itself is the only caller; it runs this once its open sessions
+    /// are closed so a reconnect creates a fresh actor.
+    async fn remove(&self, guild_id: GuildId) {
+        self.actors.lock().await.remove(&guild_id.get());
     }
 }
 
@@ -90,7 +106,8 @@ impl Receiver {
                     guild_id = guild_id.get(),
                     "recording coordinator registry missing; using unregistered actor"
                 );
-                actor::RecorderHandle::new(pool, ctx.clone(), guild_id, channel_id, metrics).await
+                actor::RecorderHandle::new(pool, ctx.clone(), guild_id, channel_id, metrics, None)
+                    .await
             }
         };
         Self {
@@ -184,6 +201,29 @@ async fn coordinator_from_ctx(ctx: &Context, guild_id: GuildId) -> Option<actor:
         data.get::<RecordingCoordinatorRegistryKey>().cloned()
     }?;
     registry.get(guild_id).await
+}
+
+/// Notifies the guild's recorder actor that its voice call was removed so it
+/// can pause open sessions and terminate. Best effort: if no actor is
+/// registered (or the message cannot be delivered) the actor either already
+/// exited or will exit through its handle-drop path.
+pub(crate) async fn notify_voice_session_ended(
+    data: &Arc<RwLock<TypeMap>>,
+    guild_id: GuildId,
+    at_ms: i64,
+) {
+    let registry = {
+        let data_read = data.read().await;
+        data_read.get::<RecordingCoordinatorRegistryKey>().cloned()
+    };
+    let Some(registry) = registry else {
+        return;
+    };
+    if let Some(actor) = registry.get(guild_id).await {
+        actor
+            .send_control(actor::RecorderCommand::VoiceSessionEnded { at_ms })
+            .await;
+    }
 }
 
 pub(crate) async fn begin_handoff(

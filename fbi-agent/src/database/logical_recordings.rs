@@ -480,22 +480,6 @@ pub async fn resume_pending_user(
 }
 
 pub async fn expire_pending_sessions(pool: &Pool<Postgres>, now_ms: i64) -> DbResult<u64> {
-    expire_pending_sessions_scoped(pool, now_ms, None).await
-}
-
-pub async fn expire_pending_sessions_for_guild(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    now_ms: i64,
-) -> DbResult<u64> {
-    expire_pending_sessions_scoped(pool, now_ms, Some(guild_id)).await
-}
-
-async fn expire_pending_sessions_scoped(
-    pool: &Pool<Postgres>,
-    now_ms: i64,
-    guild_id: Option<i64>,
-) -> DbResult<u64> {
     let mut tx = pool.begin().await?;
     let rows = sqlx::query(
         "SELECT id,
@@ -505,7 +489,6 @@ async fn expire_pending_sessions_scoped(
                 current_channel_id
            FROM recording_sessions
           WHERE state = 'pending'
-            AND ($2::bigint IS NULL OR guild_id = $2)
             AND (
                 (pending_deadline_at IS NOT NULL
                     AND pending_deadline_at <= to_timestamp($1::double precision / 1000.0))
@@ -515,7 +498,6 @@ async fn expire_pending_sessions_scoped(
           FOR UPDATE",
     )
     .bind(now_ms)
-    .bind(guild_id)
     .fetch_all(&mut *tx)
     .await?;
 

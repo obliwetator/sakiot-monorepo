@@ -269,17 +269,19 @@ async fn update_guilds(guild_cached: &[Guild], handler: &Handler) -> DbResult<()
         return Ok(());
     }
 
-    let mut query_builder: sqlx::QueryBuilder<Postgres> =
-        sqlx::QueryBuilder::new("INSERT INTO guilds (id, owner_id) ");
+    for chunk in guild_cached.chunks(BIND_LIMIT / 2) {
+        let mut query_builder: sqlx::QueryBuilder<Postgres> =
+            sqlx::QueryBuilder::new("INSERT INTO guilds (id, owner_id) ");
 
-    query_builder
-        .push_values(guild_cached.iter().take(BIND_LIMIT / 2), |mut b, guild| {
-            b.push_bind(guild.id.to_i64())
-                .push_bind(guild.owner_id.to_i64());
-        })
-        .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
+        query_builder
+            .push_values(chunk, |mut b, guild| {
+                b.push_bind(guild.id.to_i64())
+                    .push_bind(guild.owner_id.to_i64());
+            })
+            .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
 
-    query_builder.build().execute(&handler.database).await?;
+        query_builder.build().execute(&handler.database).await?;
+    }
 
     Ok(())
 }

@@ -53,6 +53,12 @@ struct RecorderActor {
     planned_handoff: Option<PlannedHandoff>,
     has_afk_channel: bool,
     pending_cap_seconds: i64,
+    /// Set when the guild's voice call has been removed; the run loop exits
+    /// after the current command is handled.
+    voice_session_ended: bool,
+    /// Registry entry for this guild; the actor removes itself on exit so a
+    /// later reconnect starts with fresh state. `None` for unregistered actors.
+    registry: Option<Arc<super::RecordingCoordinatorRegistry>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,9 +77,14 @@ impl RecorderActor {
             tokio::select! {
                 command = rx.recv() => {
                     let Some(command) = command else {
+                        self.handle_voice_session_ended(chrono::Utc::now().timestamp_millis())
+                            .await;
                         break;
                     };
                     self.handle_command(command).await;
+                    if self.voice_session_ended {
+                        break;
+                    }
                 }
                 _ = heartbeat.tick() => {
                     self.heartbeat_active_recordings().await;
@@ -90,6 +101,7 @@ impl RecorderActor {
         self.finalize_all_active_recordings(VoiceEventType::WriterClose, chrono::Utc::now())
             .await;
         self.clear_receiver_state();
+        self.remove_from_registry().await;
     }
 
     async fn handle_command(&mut self, command: RecorderCommand) {
@@ -161,6 +173,9 @@ impl RecorderActor {
                     at_ms,
                 )
                 .await;
+            }
+            RecorderCommand::VoiceSessionEnded { at_ms } => {
+                self.handle_voice_session_ended(at_ms).await;
             }
         }
     }

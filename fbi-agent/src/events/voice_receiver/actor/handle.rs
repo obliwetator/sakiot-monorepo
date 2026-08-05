@@ -37,6 +37,7 @@ impl RecorderHandle {
         guild_id: GuildId,
         channel_id: ChannelId,
         metrics: Arc<crate::BotMetrics>,
+        registry: Option<Arc<super::super::RecordingCoordinatorRegistry>>,
     ) -> Self {
         let guild_metrics = metrics.guild_metrics(guild_id.get());
         let channel_metrics = metrics.channel_metrics(guild_id.get(), channel_id.get());
@@ -68,6 +69,8 @@ impl RecorderHandle {
             planned_handoff: None,
             has_afk_channel: false,
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+            voice_session_ended: false,
+            registry,
         };
         tokio::spawn(actor.run(rx));
 
@@ -181,6 +184,12 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
         old_channel_id: Option<ChannelId>,
         new_channel_id: Option<ChannelId>,
         afk_channel_id: Option<ChannelId>,
+        at_ms: i64,
+    },
+    /// The bot's voice call for this guild was removed. The actor pauses all
+    /// open logical sessions and terminates; pending-session expiry is handled
+    /// by the global expiry task.
+    VoiceSessionEnded {
         at_ms: i64,
     },
 }

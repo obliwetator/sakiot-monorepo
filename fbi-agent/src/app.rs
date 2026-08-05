@@ -10,6 +10,41 @@ use crate::{BotMetrics, BotMetricsKey, Custom, HasBossMusic, deployment, event_h
 
 type AppResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
+/// How often the global task finalizes pending logical recording sessions
+/// whose grace or cap deadline has passed. Replaces the former per-guild
+/// 1-second tick inside each recorder actor, which kept one task and one
+/// transaction per guild alive forever.
+const PENDING_EXPIRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn start_pending_expiry(
+    pool: Pool<Postgres>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(PENDING_EXPIRY_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(err) =
+                        crate::database::logical_recordings::expire_pending_sessions(
+                            &pool,
+                            chrono::Utc::now().timestamp_millis(),
+                        )
+                        .await
+                    {
+                        warn!("pending session expiry failed: {}", err);
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
+            }
+        }
+    })
+}
+
 pub(crate) async fn run() -> AppResult<()> {
     dotenvy::dotenv().ok();
     install_crypto_provider()?;
@@ -94,6 +129,7 @@ async fn run_registered_instance(
     let heartbeat =
         deployment::start_heartbeat(pool.to_owned(), runtime.clone(), shutdown_rx.clone());
     let reconciliation = crate::events::voice::spawn_reconciliation(custom, shutdown_rx.clone());
+    let pending_expiry = start_pending_expiry(pool.to_owned(), shutdown_rx.clone());
     let shutdown_monitor = crate::shutdown::spawn_shutdown_monitor(
         runtime.clone(),
         pool.to_owned(),
@@ -106,6 +142,7 @@ async fn run_registered_instance(
         grpc,
         heartbeat,
         reconciliation,
+        pending_expiry,
         shutdown_monitor,
     };
     let first_exit = tasks.wait_for_first_exit().await;
@@ -151,6 +188,7 @@ enum TaskKind {
     Grpc,
     Heartbeat,
     Reconciliation,
+    PendingExpiry,
     ShutdownMonitor,
 }
 
@@ -161,6 +199,7 @@ impl TaskKind {
             Self::Grpc => "gRPC",
             Self::Heartbeat => "heartbeat",
             Self::Reconciliation => "reconciliation",
+            Self::PendingExpiry => "pending session expiry",
             Self::ShutdownMonitor => "shutdown monitor",
         }
     }
@@ -171,6 +210,7 @@ struct RuntimeTasks {
     grpc: JoinHandle<Result<(), crate::grpc::GrpcServerError>>,
     heartbeat: JoinHandle<()>,
     reconciliation: JoinHandle<()>,
+    pending_expiry: JoinHandle<()>,
     shutdown_monitor: JoinHandle<
         Result<crate::shutdown::ShutdownMonitorExit, crate::shutdown::ShutdownMonitorError>,
     >,
@@ -183,6 +223,7 @@ impl RuntimeTasks {
             result = &mut self.grpc => ObservedTaskExit::Grpc(result),
             result = &mut self.heartbeat => ObservedTaskExit::Heartbeat(result),
             result = &mut self.reconciliation => ObservedTaskExit::Reconciliation(result),
+            result = &mut self.pending_expiry => ObservedTaskExit::PendingExpiry(result),
             result = &mut self.shutdown_monitor => ObservedTaskExit::ShutdownMonitor(result),
         }
     }
@@ -199,6 +240,12 @@ impl RuntimeTasks {
             &mut self.reconciliation,
             selected == TaskKind::Reconciliation,
             TaskKind::Reconciliation,
+        )
+        .await;
+        stop_task(
+            &mut self.pending_expiry,
+            selected == TaskKind::PendingExpiry,
+            TaskKind::PendingExpiry,
         )
         .await;
         stop_task(
@@ -243,6 +290,7 @@ enum ObservedTaskExit {
     Grpc(Result<Result<(), crate::grpc::GrpcServerError>, JoinError>),
     Heartbeat(Result<(), JoinError>),
     Reconciliation(Result<(), JoinError>),
+    PendingExpiry(Result<(), JoinError>),
     ShutdownMonitor(
         Result<
             Result<crate::shutdown::ShutdownMonitorExit, crate::shutdown::ShutdownMonitorError>,
@@ -258,6 +306,7 @@ impl ObservedTaskExit {
             Self::Grpc(_) => TaskKind::Grpc,
             Self::Heartbeat(_) => TaskKind::Heartbeat,
             Self::Reconciliation(_) => TaskKind::Reconciliation,
+            Self::PendingExpiry(_) => TaskKind::PendingExpiry,
             Self::ShutdownMonitor(_) => TaskKind::ShutdownMonitor,
         }
     }
@@ -306,11 +355,13 @@ fn classify_first_exit(exit: ObservedTaskExit) -> SupervisorDecision {
         ObservedTaskExit::Grpc(Err(err)) => join_failure(TaskKind::Grpc, err),
         ObservedTaskExit::Heartbeat(Err(err)) => join_failure(TaskKind::Heartbeat, err),
         ObservedTaskExit::Reconciliation(Err(err)) => join_failure(TaskKind::Reconciliation, err),
+        ObservedTaskExit::PendingExpiry(Err(err)) => join_failure(TaskKind::PendingExpiry, err),
         ObservedTaskExit::ShutdownMonitor(Err(err)) => join_failure(TaskKind::ShutdownMonitor, err),
         ObservedTaskExit::Discord(Ok(Ok(()))) => unexpected_exit(TaskKind::Discord),
         ObservedTaskExit::Grpc(Ok(Ok(()))) => unexpected_exit(TaskKind::Grpc),
         ObservedTaskExit::Heartbeat(Ok(())) => unexpected_exit(TaskKind::Heartbeat),
         ObservedTaskExit::Reconciliation(Ok(())) => unexpected_exit(TaskKind::Reconciliation),
+        ObservedTaskExit::PendingExpiry(Ok(())) => unexpected_exit(TaskKind::PendingExpiry),
         ObservedTaskExit::ShutdownMonitor(Ok(Ok(
             crate::shutdown::ShutdownMonitorExit::Cancelled,
         ))) => unexpected_exit(TaskKind::ShutdownMonitor),

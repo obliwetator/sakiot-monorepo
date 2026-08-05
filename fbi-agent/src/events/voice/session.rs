@@ -192,6 +192,12 @@ pub(crate) async fn teardown_voice_session_with_operation(
     let connected_after = current_channel_is_some(manager.get(guild_id)).await;
     if !connected_after {
         release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
+        crate::events::voice_receiver::notify_voice_session_ended(
+            data,
+            guild_id,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
     }
 
     refresh_active_voice_connection_gauge(data, Some(&manager)).await;

@@ -463,15 +463,43 @@ impl RecorderActor {
                 );
             }
         }
+    }
 
-        if let Err(err) = crate::database::logical_recordings::expire_pending_sessions_for_guild(
-            &self.pool,
-            self.guild_id.to_i64(),
-            now_ms,
-        )
-        .await
-        {
-            warn!("pending logical recording expiry failed: {}", err);
+    /// The guild's voice call was removed (or the actor lost every handle).
+    /// Pause all open logical sessions as a bot departure, then let the run
+    /// loop terminate. Pending-session expiry is handled by the global expiry
+    /// task, so nothing needs this actor alive after the departure is recorded.
+    pub(super) async fn handle_voice_session_ended(&mut self, at_ms: i64) {
+        if self.voice_session_ended {
+            return;
+        }
+        self.voice_session_ended = true;
+        if let Some(planned) = self.planned_handoff.take() {
+            self.pause_all_for_departure(
+                planned.from_channel_id,
+                planned.to_channel_id,
+                if planned.to_channel_id.is_some() {
+                    "handoff"
+                } else {
+                    "bot_departure"
+                },
+                false,
+                at_ms,
+            )
+            .await;
+        } else {
+            self.pause_all_for_departure(self.channel_id, None, "bot_departure", false, at_ms)
+                .await;
+        }
+        self.disconnected_at_ms = 0;
+        self.recoverable_disconnect_deadline_ms = 0;
+    }
+
+    /// Drops this guild's entry from the recorder registry so the sender is
+    /// released and a future reconnect starts with a fresh actor.
+    pub(super) async fn remove_from_registry(&self) {
+        if let Some(registry) = &self.registry {
+            registry.remove(self.guild_id).await;
         }
     }
 
