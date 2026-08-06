@@ -30,9 +30,9 @@ On first run it generates a root `.env` with local values (random JWT and dev
 login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
 that points the frontend at the local API. It then starts Postgres via
 `compose.dev.yml`, runs migrations, seeds a dev account and guild, asks how many
-staging recordings to copy (`0` skips), and starts `web-server` under
-`cargo watch` with the `dev-login` feature, so saving a Rust file rebuilds and
-restarts the server. Discord OAuth is not needed:
+staging recordings, clips and stamps to copy (`0` skips each), and starts
+`web-server` under `cargo watch` with the `dev-login` feature, so saving a Rust
+file rebuilds and restarts the server. Discord OAuth is not needed:
 the frontend's dev login button calls `/api/dev_login` using
 `VITE_DEV_LOGIN_SECRET`.
 
@@ -52,8 +52,8 @@ Other subcommands:
 scripts/dev.sh db              # only start Postgres + migrate + seed
 scripts/dev.sh down            # stop Postgres
 scripts/dev.sh reset           # drop the local database volume and re-seed
-scripts/dev.sh fetch-fixtures  # copy recent recordings from staging (see below)
-scripts/dev.sh fetch <what>    # copy one recording/session by URL or id (see below)
+scripts/dev.sh fetch-fixtures  # copy recordings/clips/stamps from staging (see below)
+scripts/dev.sh fetch <what>    # copy one recording/session/clip/stamp (see below)
 scripts/dev.sh clean           # drop the db volume + delete fetched fixture files
 ```
 
@@ -66,17 +66,30 @@ to avoid entering the SSH target when the startup prompt requests recordings:
 ```sh
 SAKIOT_DEV_SSH=user@vps-host
 # Or invoke the standalone command directly:
-SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20
+SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5
 # optionally: --guild <id>
 ```
 
-A positive count replaces the previously managed fixture recordings and media;
-it does not touch unrelated local data. Entering `0` at startup keeps the
-existing fixture set, whose recording count is shown in the prompt. The remote
-export and media download complete before replacement begins, so a remote
-failure leaves the previous set intact.
+Recordings are taken newest-first, because a recent one is usually what is being
+debugged. Clips and stamps accumulate over the whole history and the interesting
+ones are as likely to be old as new, so `--clips` and `--stamps` take a random
+sample instead; the run says how large the pool was:
 
-### Pulling one specific recording
+```
+[dev] sampling 5 of 412 clip(s) in staging at random
+```
+
+A positive `--count` replaces the previously managed fixture recordings and
+media; it does not touch unrelated local data. It is the only selection that
+re-answers "which recordings do I want?", so it is the only one that replaces
+anything: `--count 0` keeps the existing set even when the same run asks for
+clips or stamps, and `--clips`/`--stamps` only ever add. Tracking rows in
+`media_objects` for a replaced recording are dropped with it — the FK is
+`ON DELETE RESTRICT`, and the local server re-reconciles what it still has on
+its next pass. The remote export and media download complete before replacement
+begins, so a remote failure leaves the previous set intact.
+
+### Pulling one specific recording, clip or stamp
 
 When a particular production file misbehaves or makes a good test sample, hand
 its dashboard URL straight to `fetch`:
@@ -84,14 +97,48 @@ its dashboard URL straight to `fetch`:
 ```sh
 scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/763782256980131892/2026/7/1785336946781-161172393719496704
 scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/session/384
+scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/clips/2ae61e36-ada8-45df-baed-8aa26386c826
 scripts/dev.sh fetch 1785336946781-161172393719496704   # bare file name
+scripts/dev.sh fetch 2ae61e36-ada8-45df-baed-8aa26386c826  # bare clip UUID
 scripts/dev.sh fetch 384                                # bare id, resolved remotely
+scripts/dev.sh fetch --stamp 1204                       # stamps have no URL of their own
 ```
 
 A file URL pulls that fragment; a session URL pulls every fragment of the
 logical session. Both also pull the parent `recording_sessions` row plus its
 gaps and timeline events. Unlike `--count`, this **adds** to the fixture set
 instead of replacing it, and re-running the same fetch is a no-op.
+
+### Clips and stamps travel with their session
+
+A clip or a stamp is an annotation on a recording session, so neither means
+anything on its own and the selection is widened in both directions:
+
+- naming a clip or a stamp pulls the session behind it **whole** — every
+  fragment, not just the one the annotation happens to sit on. Both listings are
+  gated on the viewer being allowed to see *every* fragment of the session, so a
+  partial import would land rows nothing can display;
+- naming a recording or a session pulls the clips and stamps hanging off it, so
+  an imported session looks the way it does in the source instead of arriving
+  stripped of every annotation.
+
+A pre-session clip names its source recording in `original_file_name` rather than
+through `recording_session_id`, and that recording is pulled too. A session whose
+fragments have all been reaped still comes across when a clip or stamp points at
+it — it is the only thing the annotation hangs off.
+
+Clip media (`clips/{YYYY}/{MM}/{uuid}.ogg`) is downloaded alongside the
+recordings, and archive-pruned clips are materialized first, the same way
+recordings are.
+
+`clips.clip_id` is a UUID minted at capture time, so it survives the import
+untouched: a `/clips/<uuid>` URL works verbatim against the destination, exactly
+as a file URL does. Stamps have no stable key — `stamps.id` is a dense sequence
+that means something different in every environment — so their ids are always
+reissued, and a re-import recognizes a stamp it has already seen by what actually
+identifies an occurrence: who stamped whom, in which channel, at which
+`stamp_ts`. The stamp page is per guild (`/stamps/<guild_id>`), which is what the
+run prints.
 
 The audio event timeline draws from three tables, so all three come across.
 `recording_session_events` feeds the "recording" lane; `voice_state_events` feeds
@@ -108,6 +155,9 @@ production and a `staging.patrykstyla.com` one from staging. Override with
 `--source prod|staging`, or set `SAKIOT_DEV_SOURCE` in `.env` for bare ids. A
 bare number can be either an `audio_files.id` or a `recording_sessions.id`; the
 script looks it up and asks for `--recording` or `--session` only if both match.
+`stamps.id` is deliberately left out of that guess — it is a third dense sequence,
+so including it would make almost every bare number ambiguous; name a stamp with
+`--stamp` instead. A bare UUID can only be a clip, so it needs no disambiguation.
 
 URLs stay portable. `file_name`, guild, channel, year and month survive the
 import unchanged, and a session keeps its source `recording_sessions.id` when the
@@ -121,25 +171,35 @@ rather than displacing anything, and the run says so:
 
 `audio_files.id` is always reissued: nothing addresses a recording by it, while
 `media_objects` and `stamps` reference it, so preserving it would only risk
-collisions. The command prints the URLs to open when it finishes.
+collisions. An imported stamp is repointed at the id its recording landed on, so
+it stays attached to the fragment it was placed on rather than to whichever row
+happens to hold that number in the destination. The command prints the URLs to
+open when it finishes.
 
-### Copying a production recording into staging
+### Copying production data into staging
 
 `--into staging` puts the same selection into the staging instance instead of
 the local dev database, for reproducing something on `staging.patrykstyla.com`:
 
 ```sh
 scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../audio/session/384 --into staging
+scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../clips/2ae61e36-... --into staging
+scripts/dev.sh fetch --stamp 1204 --source prod --into staging
 ```
+
+It takes one named recording, session, clip or stamp — never a bulk or random
+sample, which is not what reproducing a specific report needs.
 
 It asks for confirmation first, and the copy is deliberately obvious afterwards:
 
 - every imported session gets an `imported_from_production` event at offset 0 of
   its staging timeline, carrying the origin URL, the origin session id, who ran
   the import, and when — visible as a marker in the session player;
-- each recording is appended to
-  `/var/lib/sakiot-staging/data/.imported-from-production.list`;
-- the run prints a banner naming the target database and media directory.
+- each recording, clip and stamp is appended to
+  `/var/lib/sakiot-staging/data/.imported-from-production.list` — a stamp by its
+  production id and `stamp_ts`, since staging reissues the id;
+- the run prints a banner naming the target database, the media directory, and
+  how many recordings, clips and stamps are about to cross.
 
 Importing the rows and files is not enough to make a recording *reachable*. The
 listing goes through `visible_channels_for_user`, which returns 403 unless the
@@ -156,9 +216,9 @@ table on startup and is not a member of a production guild, so the entry
 disappears on its next restart — re-run the fetch to restore it.
 
 The command finishes with a pass/fail line per precondition — media files on
-disk, the `@everyone` role, voice channel rows, `guilds_present`, and the
-`dev_login` account's access — instead of reporting success on data that nothing
-can serve.
+disk, the imported clip and stamp rows, the `@everyone` role, voice channel rows,
+`guilds_present`, and the `dev_login` account's access — instead of reporting
+success on data that nothing can serve.
 
 ### Remote access details
 
@@ -173,12 +233,30 @@ command:
 SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" scripts/dev.sh fetch-fixtures
 ```
 
-Archive-pruned recordings are materialized and SHA-256 verified before `rsync`.
-The workflow first tries the source environment/binary directly, then
-`sudo -n -u sakiot`. Override unusual layouts with
+Each candidate is accepted only if it actually holds `SELECT` on `audio_files`,
+`recording_sessions`, `clips` and `stamps`, so a role that can connect but was
+never granted the tables is rejected up front instead of failing mid-export.
+Writing into staging is probed the same way, for `INSERT`.
+
+Archive-pruned recordings and clips are materialized and SHA-256 verified before
+`rsync` (`web_server media restore --audio-file-ids` / `--clip-ids`). The workflow
+first tries the source environment/binary directly, then `sudo -n -u sakiot`.
+
+Clips are checked on the source disk first and only the genuinely absent ones are
+requested, so the archive is usually not involved at all. The two failures are
+also weighted differently: a fetch whose *audio* never arrives is not worth
+having, so a failed recording restore aborts, while a failed clip restore warns
+and carries on — the rows and recordings are still useful, and the run ends by
+naming each clip that imported without audio. That also keeps the script working
+against a deployment older than `media restore --clip-ids`, which would otherwise
+reject the call outright.
+
+Override unusual layouts with
 `SAKIOT_DEV_REMOTE_WEB_BINARY`, `SAKIOT_DEV_REMOTE_ENV_FILE`,
 `SAKIOT_DEV_REMOTE_DB`, `SAKIOT_DEV_REMOTE_DATA`, or a complete
-`SAKIOT_DEV_REMOTE_HYDRATE` command. Writing into staging uses
+`SAKIOT_DEV_REMOTE_HYDRATE` command — which is invoked as
+`$SAKIOT_DEV_REMOTE_HYDRATE --audio-file-ids <ids>` or
+`--clip-ids <ids>`, so it must accept the selector flag. Writing into staging uses
 `SAKIOT_DEV_STAGING_ENV_FILE`, `SAKIOT_DEV_STAGING_DB`,
 `SAKIOT_DEV_STAGING_DATA`, `SAKIOT_DEV_STAGING_PSQL` and
 `SAKIOT_DEV_STAGING_RSYNC_PATH`.

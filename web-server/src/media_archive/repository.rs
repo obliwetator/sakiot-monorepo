@@ -406,6 +406,13 @@ pub(crate) async fn recording_source_path(
     source_path(pool, &SourceId::Recording(audio_file_id)).await
 }
 
+pub(crate) async fn clip_source_path(
+    pool: &Pool<Postgres>,
+    clip_id: &str,
+) -> Result<Option<PathBuf>, AppError> {
+    source_path(pool, &SourceId::Clip(clip_id.to_owned())).await
+}
+
 async fn available_from_row(
     pool: &Pool<Postgres>,
     row: sqlx::postgres::PgRow,
@@ -465,6 +472,31 @@ pub(crate) async fn list_available_recordings(
           ORDER BY id",
     )
     .bind(audio_file_ids)
+    .fetch_all(pool)
+    .await?;
+    let mut objects = Vec::with_capacity(rows.len());
+    for row in rows {
+        objects.push(available_from_row(pool, row).await?);
+    }
+    Ok(objects)
+}
+
+pub(crate) async fn list_available_clips(
+    pool: &Pool<Postgres>,
+    clip_ids: &[String],
+) -> Result<Vec<AvailableObject>, AppError> {
+    if clip_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+           FROM media_objects
+          WHERE state = 'available'
+            AND verified_at IS NOT NULL
+            AND clip_id = ANY($1)
+          ORDER BY id",
+    )
+    .bind(clip_ids)
     .fetch_all(pool)
     .await?;
     let mut objects = Vec::with_capacity(rows.len());

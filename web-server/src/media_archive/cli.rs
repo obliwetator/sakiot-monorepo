@@ -71,6 +71,30 @@ pub async fn run_media_command(arguments: &[String]) -> CliResult<()> {
             }
             print_status(&pool).await?;
         }
+        [command, flag, ids] if command == "restore" && flag == "--clip-ids" => {
+            let media = require_archive().await?;
+            let ids = parse_clip_ids(ids)?;
+            let objects = repository::list_available_clips(&pool, &ids).await?;
+            restore_objects(&pool, &media, objects).await?;
+            let mut unavailable = Vec::new();
+            for id in &ids {
+                let path = repository::clip_source_path(&pool, id).await?;
+                let exists = match path {
+                    Some(path) => tokio::fs::try_exists(path).await.unwrap_or(false),
+                    None => false,
+                };
+                if !exists {
+                    unavailable.push(id.clone());
+                }
+            }
+            if !unavailable.is_empty() {
+                return Err(format!(
+                    "selected clip(s) are neither local nor available in the archive: {unavailable:?}"
+                )
+                .into());
+            }
+            print_status(&pool).await?;
+        }
         _ => return Err(usage().into()),
     }
     Ok(())
@@ -274,8 +298,23 @@ fn parse_ids(value: &str) -> CliResult<Vec<i64>> {
     Ok(ids)
 }
 
+fn parse_clip_ids(value: &str) -> CliResult<Vec<String>> {
+    let mut ids = value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err("--clip-ids requires comma-separated clip ids".into());
+    }
+    Ok(ids)
+}
+
 fn usage() -> &'static str {
-    "usage: web_server media status | media migrate --dry-run | media migrate --wait | media verify | media restore --all"
+    "usage: web_server media status | media migrate --dry-run | media migrate --wait | media verify | media restore --all | media restore --audio-file-ids <ids> | media restore --clip-ids <ids>"
 }
 
 #[expect(clippy::print_stdout, reason = "operator CLI writes requested results")]

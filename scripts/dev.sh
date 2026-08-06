@@ -5,18 +5,27 @@
 #   scripts/dev.sh db              # only db + migrate + seed
 #   scripts/dev.sh down            # stop local postgres
 #   scripts/dev.sh reset           # drop local db volume, then db
-#   scripts/dev.sh fetch-fixtures  # pull recent recordings from staging (needs SSH)
-#   scripts/dev.sh fetch <what>    # pull one recording/session by dashboard URL or id
+#   scripts/dev.sh fetch-fixtures  # pull recordings/clips/stamps from staging (needs SSH)
+#   scripts/dev.sh fetch <what>    # pull one recording/session/clip/stamp by URL or id
 #   scripts/dev.sh clean           # drop db volume + delete fetched fixture files
 #
-# 'fetch' takes anything that identifies a recording: a full dashboard URL, the
-# path part of one, a bare file name, or a bare numeric id.
+# 'fetch' takes anything that identifies a recording or a clip: a full dashboard
+# URL, the path part of one, a bare file name, a bare clip UUID, or a bare
+# numeric id. Stamps have no URL of their own, so they are named with --stamp.
 #
 #   scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../audio/763.../2026/7/17853-16117
 #   scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../audio/session/384
+#   scripts/dev.sh fetch https://patrykstyla.com/dashboard/850.../clips/2ae61e36-ada8-45df-baed-8aa26386c826
 #   scripts/dev.sh fetch 1785336946781-161172393719496704
 #   scripts/dev.sh fetch --session 384 --source prod
-#   scripts/dev.sh fetch <url> --into staging   # copy a prod recording into staging
+#   scripts/dev.sh fetch --stamp 1204 --source prod
+#   scripts/dev.sh fetch <url> --into staging   # copy prod data into staging
+#
+# Clips and stamps always travel with the session they belong to, and a session
+# always brings its own clips and stamps. Bulk fetches take the most recent
+# recordings and a random sample of clips/stamps:
+#
+#   scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -187,6 +196,22 @@ is_uint() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
+# clips.clip_id is a v4 UUID, so a token of that shape can only be a clip and
+# never an audio_files.file_name (timestamp-userid, digits and one dash).
+is_uuid() {
+    [[ "$1" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+}
+
+# Postgres rejects an empty IN (), and half these lists are legitimately empty
+# for a clip-only or stamp-only selection.
+id_list() { # id_list <comma-separated ids> -> the list, or a value nothing matches
+    printf '%s' "${1:--1}"
+}
+
+text_list() { # text_list <quoted csv> -> the list, or a value nothing matches
+    printf '%s' "${1:-''}"
+}
+
 # Production and staging are two instances on the same VPS (see STAGING.md), so
 # a source is just a set of four paths.
 resolve_source() { # resolve_source prod|staging
@@ -247,6 +272,14 @@ parse_selector() {
             SELECTOR_VALUE=$name
             return
             ;;
+        */clips/*)
+            name=${path##*/clips/}
+            name=${name%%/*}
+            is_uuid "$name" || die "not a clip id in '$token': '$name'"
+            SELECTOR_KIND=clip
+            SELECTOR_VALUE=$name
+            return
+            ;;
         */audio/*)
             # <channel_id>/<year>/<month>/<file_name>
             tail=${path##*/audio/}
@@ -267,8 +300,16 @@ parse_selector() {
     esac
     if is_uint "$path"; then
         # audio_files.id and recording_sessions.id are separate sequences, so a
-        # bare number is resolved against the source database.
+        # bare number is resolved against the source database. stamps.id is
+        # deliberately left out of that guess: it is a third dense sequence, so
+        # including it would make almost every bare number ambiguous. Name a
+        # stamp with --stamp instead.
         SELECTOR_KIND=numeric
+        SELECTOR_VALUE=$path
+        return
+    fi
+    if is_uuid "$path"; then
+        SELECTOR_KIND=clip
         SELECTOR_VALUE=$path
         return
     fi
@@ -308,8 +349,8 @@ selector_predicate() {
 # the database and still hold no grant on a single table. These ask the server
 # for the privilege itself, so a candidate is only accepted when the work will
 # actually succeed. Dollar-quoted so the whole probe survives the remote shell.
-READ_PROBE_SQL='SELECT $$ok$$ WHERE has_table_privilege($$audio_files$$, $$SELECT$$) AND has_table_privilege($$recording_sessions$$, $$SELECT$$)'
-WRITE_PROBE_SQL='SELECT $$ok$$ WHERE has_table_privilege($$audio_files$$, $$INSERT$$) AND has_table_privilege($$recording_sessions$$, $$INSERT$$)'
+READ_PROBE_SQL='SELECT $$ok$$ WHERE has_table_privilege($$audio_files$$, $$SELECT$$) AND has_table_privilege($$recording_sessions$$, $$SELECT$$) AND has_table_privilege($$clips$$, $$SELECT$$) AND has_table_privilege($$stamps$$, $$SELECT$$)'
+WRITE_PROBE_SQL='SELECT $$ok$$ WHERE has_table_privilege($$audio_files$$, $$INSERT$$) AND has_table_privilege($$recording_sessions$$, $$INSERT$$) AND has_table_privilege($$clips$$, $$INSERT$$) AND has_table_privilege($$stamps$$, $$INSERT$$)'
 
 probe_remote_psql() { # probe_remote_psql <psql command> <probe sql>
     local candidate=$1 sql=$2 cmd out
@@ -346,9 +387,9 @@ configure_remote_psql() {
         1. the service env file  . $REMOTE_ENV_FILE  (needs read access to it)
         2. sudo -n -u postgres psql -d $REMOTE_DB    (needs passwordless sudo)
         3. psql -d $REMOTE_DB                        (needs SELECT granted to your role)
-      Connecting is not enough: each candidate must hold SELECT on audio_files and
-      recording_sessions, so a role that can log in but was never granted the tables
-      is rejected here instead of failing mid-export.
+      Connecting is not enough: each candidate must hold SELECT on audio_files,
+      recording_sessions, clips and stamps, so a role that can log in but was never
+      granted the tables is rejected here instead of failing mid-export.
       Fix one of the three, or override with SAKIOT_DEV_REMOTE_PSQL.
       To see which you have:  ssh $SAKIOT_DEV_SSH 'psql -d $REMOTE_DB -Atc \"SELECT has_table_privilege(''audio_files'',''SELECT'')\"'"
 }
@@ -362,14 +403,17 @@ fetch_tsv() { # fetch_tsv "<select query>"
     fi
 }
 
-hydrate_remote_recordings() { # hydrate_remote_recordings <comma-separated audio_file ids>
-    local ids=$1 command sudo_command
+# Returns non-zero rather than dying: how much a failure matters depends on what
+# could not be materialized, so the caller decides.
+hydrate_remote_media() { # hydrate_remote_media <what> <--audio-file-ids|--clip-ids> <ids>
+    local what=$1 flag=$2 ids=$3 command sudo_command
+    [ -n "$ids" ] || return 0
     if [ -n "${SAKIOT_DEV_REMOTE_HYDRATE:-}" ]; then
-        command="$SAKIOT_DEV_REMOTE_HYDRATE $(sh_quote "$ids")"
+        command="$SAKIOT_DEV_REMOTE_HYDRATE $(sh_quote "$flag") $(sh_quote "$ids")"
     else
-        command="set -a; . $(sh_quote "$REMOTE_ENV_FILE"); set +a; $(sh_quote "$REMOTE_BINARY") media restore --audio-file-ids $(sh_quote "$ids")"
+        command="set -a; . $(sh_quote "$REMOTE_ENV_FILE"); set +a; $(sh_quote "$REMOTE_BINARY") media restore $(sh_quote "$flag") $(sh_quote "$ids")"
     fi
-    log "materializing selected remote-only $SOURCE_LABEL recordings"
+    log "materializing selected remote-only $SOURCE_LABEL $what"
     sudo_command="sudo -n -u sakiot /bin/bash -lc $(sh_quote "$command")"
     if [ "$SAKIOT_DEV_SSH" = local ]; then
         bash -lc "$command" 2>/dev/null && return
@@ -381,7 +425,20 @@ hydrate_remote_recordings() { # hydrate_remote_recordings <comma-separated audio
         # shellcheck disable=SC2029
         ssh -n "$SAKIOT_DEV_SSH" "$sudo_command" && return
     fi
-    die "could not hydrate $SOURCE_LABEL archive media. Grant env/data access, passwordless sudo -u sakiot, or set SAKIOT_DEV_REMOTE_HYDRATE."
+    return 1
+}
+
+# One round trip for the whole list: each remote call is a fresh connection, and
+# an ssh inside a read loop reads the loop's own stdin out from under it.
+remote_missing_files() { # remote_missing_files <file of paths relative to REMOTE_DATA>
+    local check rel
+    check=$(while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        printf 'test -f %s || printf %%s\\\\n %s\n' \
+            "$(sh_quote "$REMOTE_DATA/$rel")" "$(sh_quote "$rel")"
+    done < "$1")
+    [ -n "$check" ] || return 0
+    remote_capture "$check"
 }
 
 psql_dest() { # SQL on stdin, against the destination of this fetch
@@ -431,7 +488,8 @@ configure_dest_psql() {
         1. the service env file  . $env_file  (needs read access to it)
         2. sudo -n -u sakiot with the same env file (needs passwordless sudo)
         3. psql -d $db                        (needs INSERT granted to your role)
-      Each candidate must hold INSERT on audio_files and recording_sessions.
+      Each candidate must hold INSERT on audio_files, recording_sessions, clips
+      and stamps.
       Fix one of the three, or override with SAKIOT_DEV_STAGING_PSQL."
 }
 
@@ -487,12 +545,16 @@ clear_fixture_media() {
     find "$data_dir" -depth -type d -empty -delete 2>/dev/null || true
 }
 
-# Imports a logical selection (sessions + fragments + gaps + events) into the
-# destination. A session keeps its source id when the destination has it free,
-# so a /audio/session/<id> URL stays portable; audio_files.id is always reissued
-# because nothing addresses a recording by it and other tables reference it.
-# audio_files.file_name embeds the capture timestamp and the Discord user id, so
-# it is stable across environments and is what makes re-imports a no-op.
+# Imports a logical selection (sessions + fragments + gaps + events + clips +
+# stamps) into the destination. A session keeps its source id when the
+# destination has it free, so a /audio/session/<id> URL stays portable;
+# audio_files.id is always reissued because nothing addresses a recording by it
+# and other tables reference it. audio_files.file_name embeds the capture
+# timestamp and the Discord user id, so it is stable across environments and is
+# what makes re-imports a no-op. clips.clip_id is a UUID and plays the same role
+# for clips, which is what keeps a /clips/<uuid> URL portable too; stamps have
+# no stable key, so their identity is reconstructed from what actually
+# identifies an occurrence.
 import_selection() { # import_selection <tmpdir> [marker-details-json]
     local tmp=$1 marker=${2:-}
     {
@@ -501,6 +563,8 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
         emit_temp_copy _imp_audio audio_files "$tmp/audio_files.tsv"
         emit_temp_copy _imp_gaps recording_gaps "$tmp/recording_gaps.tsv"
         emit_temp_copy _imp_events recording_session_events "$tmp/recording_session_events.tsv"
+        emit_temp_copy _imp_clips clips "$tmp/clips.tsv"
+        emit_temp_copy _imp_stamps stamps "$tmp/stamps.tsv"
 
         # Live-ownership columns point at bot instances of the source deployment.
         echo "UPDATE _imp_sessions SET owner_instance_id = NULL;"
@@ -521,11 +585,39 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
                WHERE a.recording_session_id IS NOT NULL
                  AND existing.recording_session_id IS NOT NULL
               ON CONFLICT (old_id) DO NOTHING;"
+        # A session whose fragments were all reaped has no file_name to pin it,
+        # so a clip that already made the trip is the only thing that says which
+        # destination session this one already is. Without this a clip-driven
+        # re-import would insert a second copy of that session every time.
+        echo "INSERT INTO _session_map (old_id, new_id, reused)
+              SELECT DISTINCT ON (c.recording_session_id)
+                     c.recording_session_id, existing.recording_session_id, true
+                FROM _imp_clips c
+                JOIN clips existing ON existing.clip_id = c.clip_id
+               WHERE c.recording_session_id IS NOT NULL
+                 AND existing.recording_session_id IS NOT NULL
+              ON CONFLICT (old_id) DO NOTHING;"
+        # stamps.audio_file_id is an FK to a column this import reissues, so the
+        # old-to-new pairing has to be recorded rather than inferred later.
+        # Fragments already in the destination map to the row that is there.
+        echo "CREATE TEMP TABLE _audio_map (
+                  old_id bigint PRIMARY KEY,
+                  new_id bigint NOT NULL
+              ) ON COMMIT DROP;"
+        echo "INSERT INTO _audio_map (old_id, new_id)
+              SELECT a.id, existing.id
+                FROM _imp_audio a
+                JOIN audio_files existing ON existing.file_name = a.file_name
+              ON CONFLICT (old_id) DO NOTHING;"
         echo "DELETE FROM _imp_audio a USING audio_files existing
                WHERE existing.file_name = a.file_name;"
+        # Fragmentless sessions are normally noise, but one that a selected clip
+        # or stamp hangs off is the whole reason this import is running.
         echo "DELETE FROM _imp_sessions s
                WHERE EXISTS (SELECT 1 FROM _session_map m WHERE m.old_id = s.id)
-                  OR NOT EXISTS (SELECT 1 FROM _imp_audio a WHERE a.recording_session_id = s.id);"
+                  OR (NOT EXISTS (SELECT 1 FROM _imp_audio a WHERE a.recording_session_id = s.id)
+                      AND NOT EXISTS (SELECT 1 FROM _imp_clips c WHERE c.recording_session_id = s.id)
+                      AND NOT EXISTS (SELECT 1 FROM _imp_stamps st WHERE st.recording_session_id = s.id));"
         # Keeping the source session id makes a /audio/session/<id> URL work
         # verbatim against the destination, the way a file URL already does.
         # Lifting the sequence above both what exists and what is about to be
@@ -556,7 +648,16 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
                 FROM _session_map m WHERE m.old_id = e.recording_session_id;"
         echo "UPDATE _imp_sessions s SET id = m.new_id
                 FROM _session_map m WHERE m.old_id = s.id;"
-        echo "UPDATE _imp_audio SET id = nextval(pg_get_serial_sequence('public.audio_files', 'id'));"
+        # Drawn once into a side table so the fresh id is remembered; a bare
+        # UPDATE ... = nextval() overwrites the only copy of the old one, and
+        # stamps still have to be pointed at the row it became.
+        echo "CREATE TEMP TABLE _audio_new ON COMMIT DROP AS
+              SELECT id AS old_id,
+                     nextval(pg_get_serial_sequence('public.audio_files', 'id')) AS new_id
+                FROM _imp_audio;"
+        echo "INSERT INTO _audio_map (old_id, new_id)
+              SELECT old_id, new_id FROM _audio_new ON CONFLICT (old_id) DO NOTHING;"
+        echo "UPDATE _imp_audio a SET id = n.new_id FROM _audio_new n WHERE n.old_id = a.id;"
         echo "UPDATE _imp_gaps SET id = nextval(pg_get_serial_sequence('public.recording_gaps', 'id'));"
         echo "UPDATE _imp_events SET id = nextval(pg_get_serial_sequence('public.recording_session_events', 'id'));"
 
@@ -569,6 +670,39 @@ import_selection() { # import_selection <tmpdir> [marker-details-json]
         echo "INSERT INTO audio_files SELECT * FROM _imp_audio;"
         echo "INSERT INTO recording_gaps SELECT * FROM _imp_gaps;"
         echo "INSERT INTO recording_session_events SELECT * FROM _imp_events;"
+
+        # clip_id is the primary key and a UUID minted at capture time, so it is
+        # both the stable address a /clips/<uuid> URL uses and what makes a
+        # re-import a no-op. A clip whose session did not make the trip is landed
+        # unattached rather than pointed at whatever the destination happens to
+        # keep under that id.
+        echo "UPDATE _imp_clips c
+                 SET recording_session_id =
+                     (SELECT m.new_id FROM _session_map m WHERE m.old_id = c.recording_session_id)
+               WHERE c.recording_session_id IS NOT NULL;"
+        echo "DELETE FROM _imp_clips c USING clips existing WHERE existing.clip_id = c.clip_id;"
+        echo "INSERT INTO clips SELECT * FROM _imp_clips;"
+
+        # stamps.id is a dense sequence with nothing stable behind it, so
+        # identity is reconstructed from what actually identifies an occurrence:
+        # who stamped whom, where, and when. Deduplicating before the remap keeps
+        # that key made of columns the import does not rewrite.
+        echo "DELETE FROM _imp_stamps s USING stamps existing
+               WHERE existing.guild_id = s.guild_id
+                 AND existing.channel_id = s.channel_id
+                 AND existing.target_user_id = s.target_user_id
+                 AND existing.stamper_user_id = s.stamper_user_id
+                 AND existing.stamp_ts = s.stamp_ts;"
+        echo "UPDATE _imp_stamps s
+                 SET recording_session_id =
+                     (SELECT m.new_id FROM _session_map m WHERE m.old_id = s.recording_session_id)
+               WHERE s.recording_session_id IS NOT NULL;"
+        echo "UPDATE _imp_stamps s
+                 SET audio_file_id =
+                     (SELECT m.new_id FROM _audio_map m WHERE m.old_id = s.audio_file_id)
+               WHERE s.audio_file_id IS NOT NULL;"
+        echo "UPDATE _imp_stamps SET id = nextval(pg_get_serial_sequence('public.stamps', 'id'));"
+        echo "INSERT INTO stamps SELECT * FROM _imp_stamps;"
 
         # Voice state and connection events feed every timeline lane except
         # "recording", and all the markers on the single-recording view.
@@ -641,13 +775,23 @@ prune_managed_fixtures() { # prune_managed_fixtures <keep-names> <managed-names>
                 FROM audio_files af
                 JOIN _managed m ON m.file_name = af.file_name
                WHERE af.recording_session_id IS NOT NULL;"
+        # media_objects.audio_file_id is ON DELETE RESTRICT, so the archive
+        # bookkeeping has to go first or the whole prune aborts. A tracking row
+        # for a recording that is being dropped has nothing left to track: the
+        # local server re-reconciles what it still has on its next pass.
+        echo "DELETE FROM media_objects mo
+               USING audio_files af, _managed m
+               WHERE mo.audio_file_id = af.id
+                 AND af.file_name = m.file_name
+                 AND NOT EXISTS (SELECT 1 FROM _keep k WHERE k.file_name = af.file_name);"
         echo "DELETE FROM audio_files af USING _managed m
                WHERE af.file_name = m.file_name
                  AND NOT EXISTS (SELECT 1 FROM _keep k WHERE k.file_name = af.file_name);"
         echo "DELETE FROM recording_sessions rs USING _touched_sessions t
                WHERE rs.id = t.id
                  AND NOT EXISTS (SELECT 1 FROM audio_files af WHERE af.recording_session_id = rs.id)
-                 AND NOT EXISTS (SELECT 1 FROM clips c WHERE c.recording_session_id = rs.id);"
+                 AND NOT EXISTS (SELECT 1 FROM clips c WHERE c.recording_session_id = rs.id)
+                 AND NOT EXISTS (SELECT 1 FROM stamps st WHERE st.recording_session_id = rs.id);"
         echo "COMMIT;"
     } | psql_dest >/dev/null
 }
@@ -670,30 +814,47 @@ sql_name_list() { # sql_name_list <file of file names> -> quoted IN-list
 
 # Prints the destination coordinates of everything just imported, so the URL
 # that was pasted in has an equivalent on the other side. file_name, guild,
-# channel, year and month survive the import unchanged; session ids do not.
+# channel, year and month survive the import unchanged, and so does clip_id;
+# session ids may not, and stamp ids never do.
 report_destination() { # report_destination <tmpdir> <base-url>
     local tmp=$1 base=$2 names sessions="" remapped
     names=$(sql_name_list "$tmp/new-recordings.list")
-    [ -n "$names" ] || return 0
     : > "$tmp/dest-sessions.tsv"
+    [ -n "$names" ] || [ -s "$tmp/clip_meta.tsv" ] || [ -s "$tmp/stamp_meta.tsv" ] || return 0
     log "open in $base:"
-    while IFS=$'\t' read -r guild channel year month name session; do
-        [ -n "$name" ] || continue
-        printf '        %s/dashboard/%s/audio/%s/%s/%s/%s\n' \
-            "$base" "$guild" "$channel" "$year" "$month" "$name"
-        if [ -n "$session" ]; then
-            sessions+="$guild/$session"$'\n'
-            printf '%s\t%s\n' "$name" "$session" >> "$tmp/dest-sessions.tsv"
-        fi
-    done < <(dest_tsv "SELECT guild_id, channel_id, year, month, file_name,
-                             COALESCE(recording_session_id::text, '')
-                        FROM audio_files
-                       WHERE file_name IN ($names)
-                       ORDER BY start_ts, file_name")
-    while IFS=/ read -r guild session; do
-        [ -n "$session" ] || continue
-        printf '        %s/dashboard/%s/audio/session/%s\n' "$base" "$guild" "$session"
-    done < <(printf '%s' "$sessions" | sort -u)
+    if [ -n "$names" ]; then
+        while IFS=$'\t' read -r guild channel year month name session; do
+            [ -n "$name" ] || continue
+            printf '        %s/dashboard/%s/audio/%s/%s/%s/%s\n' \
+                "$base" "$guild" "$channel" "$year" "$month" "$name"
+            if [ -n "$session" ]; then
+                sessions+="$guild/$session"$'\n'
+                printf '%s\t%s\n' "$name" "$session" >> "$tmp/dest-sessions.tsv"
+            fi
+        done < <(dest_tsv "SELECT guild_id, channel_id, year, month, file_name,
+                                 COALESCE(recording_session_id::text, '')
+                            FROM audio_files
+                           WHERE file_name IN ($names)
+                           ORDER BY start_ts, file_name")
+        while IFS=/ read -r guild session; do
+            [ -n "$session" ] || continue
+            printf '        %s/dashboard/%s/audio/session/%s\n' "$base" "$guild" "$session"
+        done < <(printf '%s' "$sessions" | sort -u)
+    fi
+
+    # clip_id crosses unchanged, so a clip URL only ever needs its host swapped.
+    while IFS=$'\t' read -r clip guild; do
+        [ -n "$clip" ] || continue
+        printf '        %s/dashboard/%s/clips/%s\n' "$base" "$guild" "$clip"
+    done < <(cut -f1,2 "$tmp/clip_meta.tsv")
+
+    # Stamps have no address of their own — the guild stamp list is where they
+    # surface — and their ids are reissued, so name the page and the count.
+    while IFS=$'\t' read -r guild total; do
+        [ -n "$guild" ] || continue
+        printf '        %s/stamps/%s   (%s stamp(s) in this import)\n' "$base" "$guild" "$total"
+    done < <(cut -f2 "$tmp/stamp_meta.tsv" | sort | uniq -c \
+        | awk '{ printf "%s\t%s\n", $2, $1 }')
 
     # A session keeps its source id unless the destination already had one, so
     # say which ones moved instead of leaving the URL above to be puzzled over.
@@ -893,18 +1054,24 @@ EOF
       Run one of the commands above, then re-run this fetch to install and verify."
 }
 
-confirm_staging_write() { # confirm_staging_write <recording count> <staging data dir>
+confirm_staging_write() { # confirm_staging_write <tmpdir> <staging data dir>
+    local tmp=$1 dest=$2
     printf '\n'
     printf '\033[1;33m  ############################################################\033[0m\n'
-    printf '\033[1;33m  #  COPYING %-4s PRODUCTION RECORDING(S) INTO STAGING        #\033[0m\n' "$1"
+    printf '\033[1;33m  #  COPYING PRODUCTION DATA INTO STAGING                     #\033[0m\n'
     printf '\033[1;33m  ############################################################\033[0m\n'
+    printf '  selection       : %s recording(s), %s clip(s), %s stamp(s)\n' \
+        "$(wc -l < "$tmp/audio_files.tsv")" \
+        "$(wc -l < "$tmp/clips.tsv")" \
+        "$(wc -l < "$tmp/stamps.tsv")"
     echo "  target database : ${SAKIOT_DEV_STAGING_DB:-sakiot_staging} on $SAKIOT_DEV_SSH"
-    echo "  target media dir: $2"
+    echo "  target media dir: $dest"
     echo "  Every imported session gets an 'imported_from_production' event at"
-    echo "  offset 0 of its staging timeline, and each recording is appended to"
-    echo "  $2/$STAGING_IMPORT_MANIFEST."
+    echo "  offset 0 of its staging timeline, and every recording, clip and stamp"
+    echo "  is appended to $dest/$STAGING_IMPORT_MANIFEST."
     echo "  A session keeps its production id unless staging already uses it, in"
-    echo "  which case the run says which id it landed on instead."
+    echo "  which case the run says which id it landed on instead. Clips keep their"
+    echo "  UUID, so a clip URL works there verbatim; stamp ids are always reissued."
     printf '\n'
     [ "$ASSUME_YES" -eq 1 ] && { log "proceeding (--yes)"; return; }
     [ -t 0 ] || die "refusing to write to staging without a terminal; pass --yes"
@@ -915,6 +1082,38 @@ confirm_staging_write() { # confirm_staging_write <recording count> <staging dat
         [Yy]*) ;;
         *) die "aborted" ;;
     esac
+}
+
+# Clip media is usually still on the source disk, so asking the archive for
+# every selected clip would be a round trip that mostly restores what is already
+# there. Only the genuinely absent ones are requested, which also means a source
+# deployment too old to understand 'media restore --clip-ids' is never invoked
+# unless a clip really has been pruned.
+hydrate_missing_clips() { # hydrate_missing_clips <tmpdir>
+    local tmp=$1 wanted
+    awk -F'\t' '$5 != "" { printf "clips/%s\t%s\n", $5, $1 }' "$tmp/clip_meta.tsv" \
+        > "$tmp/clip-media.tsv"
+    cut -f1 "$tmp/clip-media.tsv" > "$tmp/clip-media.list"
+    [ -s "$tmp/clip-media.list" ] || return 0
+    remote_missing_files "$tmp/clip-media.list" | sort -u > "$tmp/clip-media-missing.list"
+    [ -s "$tmp/clip-media-missing.list" ] || return 0
+
+    wanted=$(awk -F'\t' 'NR == FNR { want[$1]; next } ($1 in want) { print $2 }' \
+        "$tmp/clip-media-missing.list" "$tmp/clip-media.tsv" | sort -u | paste -sd, -)
+    hydrate_remote_media clips --clip-ids "$wanted" && return 0
+
+    # Rows and recordings are still worth importing, and the run ends by naming
+    # every media file that did not arrive, so this reports rather than aborts.
+    log "WARNING: could not materialize $(wc -l < "$tmp/clip-media-missing.list") archived clip file(s)."
+    log "         The clip rows still import; their audio will be missing until either"
+    log "         the source deployment is redeployed with a web_server that knows"
+    log "         'media restore --clip-ids', or the archive is reachable there."
+}
+
+log_selection_counts() { # log_selection_counts <tmpdir> <source label>
+    log "  recordings: $(wc -l < "$1/audio_files.tsv") row(s) from $2"
+    log "  clips:      $(wc -l < "$1/clips.tsv") row(s)"
+    log "  stamps:     $(wc -l < "$1/stamps.tsv") row(s)"
 }
 
 install_into_local() { # install_into_local <tmpdir>
@@ -940,7 +1139,7 @@ install_into_local() { # install_into_local <tmpdir>
     log "importing rows into local db"
     import_lookup_rows "$tmp"
     import_selection "$tmp"
-    log "  recordings: $(wc -l < "$tmp/audio_files.tsv") row(s) from $SOURCE_LABEL"
+    log_selection_counts "$tmp" "$SOURCE_LABEL"
 
     dev_id=$(env_get DEV_ACCOUNT_ID "$DEFAULT_DEV_ACCOUNT_ID")
     psql_local >/dev/null <<SQL
@@ -954,9 +1153,11 @@ SQL
     log "installing media files into $data_dir"
     rsync -a "$tmp/media/" "$data_dir/"
 
-    if [ -n "$SELECTOR_KIND" ]; then
-        # A targeted pull adds to the fixture set instead of replacing it, so
-        # the recordings already fetched for other work survive.
+    if [ "$REPLACE_FIXTURES" -eq 0 ]; then
+        # Only a positive --count re-selects "the recent recordings" and so has
+        # a set to replace. Everything else — a targeted pull, or a run that
+        # asked for clips or stamps and zero recordings — adds to the fixture
+        # set, so the recordings already fetched for other work survive.
         sort -u "$tmp/old-files.list" "$tmp/new-files.list" > "$tmp/manifest.list"
         sort -u "$tmp/old-recordings.list" "$tmp/new-recordings.list" > "$tmp/recordings.list"
     else
@@ -975,7 +1176,7 @@ SQL
 install_into_staging() { # install_into_staging <tmpdir>
     local tmp=$1 staging_data marker stamp who
     staging_data=${SAKIOT_DEV_STAGING_DATA:-/var/lib/sakiot-staging/data}
-    confirm_staging_write "$(wc -l < "$tmp/audio_files.tsv")" "$staging_data"
+    confirm_staging_write "$tmp" "$staging_data"
 
     stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     who="$(id -un)@$(hostname -s 2>/dev/null || hostname)"
@@ -985,7 +1186,7 @@ install_into_staging() { # install_into_staging <tmpdir>
     log "importing rows into staging"
     import_lookup_rows "$tmp"
     import_selection "$tmp" "$marker"
-    log "  recordings: $(wc -l < "$tmp/audio_files.tsv") row(s) from production"
+    log_selection_counts "$tmp" production
 
     STAGING_DEV_ACCOUNT_ID=$(staging_dev_account_id)
     if is_uint "$STAGING_DEV_ACCOUNT_ID" && [ "$STAGING_DEV_ACCOUNT_ID" != 0 ]; then
@@ -1016,6 +1217,16 @@ SQL
     awk -v stamp="$stamp" -v who="$who" -v url="$SELECTOR_INPUT" -F'\t' \
         '{ printf "%s\tfile_name=%s\tguild=%s\tby=%s\tfrom=%s\n", stamp, $1, $2, who, url }' \
         "$tmp/audio_files.tsv" > "$tmp/import-manifest.txt"
+    # clip_meta.tsv: clip_id guild_id channel_id user_id saved_file_name
+    awk -v stamp="$stamp" -v who="$who" -v url="$SELECTOR_INPUT" -F'\t' \
+        '{ printf "%s\tclip_id=%s\tguild=%s\tby=%s\tfrom=%s\n", stamp, $1, $2, who, url }' \
+        "$tmp/clip_meta.tsv" >> "$tmp/import-manifest.txt"
+    # stamp_meta.tsv: id guild_id channel_id target_user_id stamper_user_id stamp_ts
+    # The production id is recorded rather than the staging one: staging reissues
+    # it, and the origin id is what a report about production would name.
+    awk -v stamp="$stamp" -v who="$who" -v url="$SELECTOR_INPUT" -F'\t' \
+        '{ printf "%s\tstamp=origin:%s/ts:%s\tguild=%s\tby=%s\tfrom=%s\n", stamp, $1, $6, $2, who, url }' \
+        "$tmp/stamp_meta.tsv" >> "$tmp/import-manifest.txt"
     publish_to_staging "$tmp" "$staging_data" "$tmp/import-manifest.txt"
     log "recorded the import in $staging_data/$STAGING_IMPORT_MANIFEST"
     verify_staging_visibility "$tmp" "$staging_data"
@@ -1026,7 +1237,7 @@ SQL
 # permission baseline that a data import does not create. Check the exact
 # preconditions rather than claiming success.
 verify_staging_visibility() { # verify_staging_visibility <tmpdir> <dest data dir>
-    local tmp=$1 dest=$2 rel check missing count
+    local tmp=$1 dest=$2 rel check missing count expected names tuples
     log "checking that staging can actually serve it:"
 
     # One round trip for the whole list rather than an ssh per file: each remote
@@ -1043,6 +1254,32 @@ verify_staging_visibility() { # verify_staging_visibility <tmpdir> <dest data di
         while IFS= read -r rel; do
             if [ -n "$rel" ]; then log "    FAIL  not on disk: $rel"; fi
         done <<< "$missing"
+    fi
+
+    # clip_id survives the trip, so the imported set can be counted exactly.
+    if [ -s "$tmp/clip-ids.list" ]; then
+        names=$(sql_name_list "$tmp/clip-ids.list")
+        expected=$(wc -l < "$tmp/clip-ids.list")
+        count=$(dest_tsv "SELECT count(*) FROM clips
+                           WHERE clip_id IN ($names) AND deleted_at IS NULL")
+        if [ "${count:-0}" -eq "$expected" ]; then
+            log "    ok    $count clip row(s) present"
+        else
+            log "    FAIL  $count of $expected clip row(s) reached staging"
+        fi
+    fi
+
+    # Stamp ids are reissued, so the natural key is what can be looked up.
+    if [ -s "$tmp/stamp_meta.tsv" ]; then
+        tuples=$(awk -F'\t' '{ printf "(%s,%s),", $2, $6 }' "$tmp/stamp_meta.tsv")
+        expected=$(wc -l < "$tmp/stamp_meta.tsv")
+        count=$(dest_tsv "SELECT count(*) FROM stamps
+                           WHERE (guild_id, stamp_ts) IN (${tuples%,})")
+        if [ "${count:-0}" -ge "$expected" ]; then
+            log "    ok    $count stamp row(s) present"
+        else
+            log "    FAIL  $count of $expected stamp row(s) reached staging"
+        fi
     fi
 
     count=$(dest_tsv "SELECT count(*) FROM roles WHERE guild_id IN ($GUILD_IDS) AND role_id = guild_id")
@@ -1101,11 +1338,13 @@ import_lookup_rows() { # import_lookup_rows <tmpdir>
 }
 
 cmd_fetch_fixtures() (
-    local count=20 count_given=0 guild_filter="" selector="" forced_kind="" source_arg=""
+    local count=20 count_given=0 clips_count=0 stamps_count=0 sample_given=0
+    local guild_filter="" selector="" forced_kind="" source_arg=""
     SELECTOR_KIND=""
     SELECTOR_VALUE=""
     SELECTOR_HOST=""
     SELECTOR_INPUT=""
+    REPLACE_FIXTURES=0
     DEST=local
     ASSUME_YES=0
     STAGING_IMPORT_MANIFEST=.imported-from-production.list
@@ -1116,6 +1355,20 @@ cmd_fetch_fixtures() (
                 is_uint "$2" || die "--count must be an unsigned integer"
                 count=$2
                 count_given=1
+                shift 2
+                ;;
+            --clips)
+                [ $# -ge 2 ] || die "--clips needs a value"
+                is_uint "$2" || die "--clips must be an unsigned integer"
+                clips_count=$2
+                sample_given=1
+                shift 2
+                ;;
+            --stamps)
+                [ $# -ge 2 ] || die "--stamps needs a value"
+                is_uint "$2" || die "--stamps must be an unsigned integer"
+                stamps_count=$2
+                sample_given=1
                 shift 2
                 ;;
             --guild)
@@ -1141,6 +1394,18 @@ cmd_fetch_fixtures() (
                 forced_kind=recording
                 shift 2
                 ;;
+            --clip)
+                [ $# -ge 2 ] || die "--clip needs a value"
+                selector=$2
+                forced_kind=clip
+                shift 2
+                ;;
+            --stamp)
+                [ $# -ge 2 ] || die "--stamp needs a value"
+                selector=$2
+                forced_kind=stamp
+                shift 2
+                ;;
             --source)
                 [ $# -ge 2 ] || die "--source needs a value"
                 source_arg=$2
@@ -1153,8 +1418,10 @@ cmd_fetch_fixtures() (
                 ;;
             --yes|-y) ASSUME_YES=1; shift ;;
             -*) die "unknown flag: $1
-      supported: --count N, --guild ID, --url/--id <url-or-id>, --session ID,
-                 --recording ID|FILE_NAME, --source prod|staging, --into local|staging, --yes" ;;
+      supported: --count N, --clips N, --stamps N, --guild ID,
+                 --url/--id <url-or-id>, --session ID, --recording ID|FILE_NAME,
+                 --clip URL|UUID, --stamp ID,
+                 --source prod|staging, --into local|staging, --yes" ;;
             *)
                 [ -z "$selector" ] || die "give only one recording selector (got '$selector' and '$1')"
                 selector=$1
@@ -1170,6 +1437,7 @@ cmd_fetch_fixtures() (
 
     if [ -n "$selector" ]; then
         [ "$count_given" -eq 0 ] || die "--count fetches recent recordings; it cannot be combined with a selector"
+        [ "$sample_given" -eq 0 ] || die "--clips/--stamps sample at random; they cannot be combined with a selector"
         [ -z "$guild_filter" ] || die "--guild filters bulk fetches only; a selector already names one recording"
         SELECTOR_INPUT=$selector
         case "$forced_kind" in
@@ -1182,8 +1450,24 @@ cmd_fetch_fixtures() (
                 parse_selector "$selector"
                 [ "$SELECTOR_KIND" = numeric ] && SELECTOR_KIND=audio_id
                 ;;
+            clip)
+                parse_selector "$selector"
+                [ "$SELECTOR_KIND" = clip ] \
+                    || die "--clip needs a clip URL or UUID, not a $SELECTOR_KIND"
+                ;;
+            stamp)
+                is_uint "$selector" || die "--stamp needs a numeric stamps.id"
+                SELECTOR_KIND=stamp
+                SELECTOR_VALUE=$selector
+                ;;
             *) parse_selector "$selector" ;;
         esac
+    fi
+    # A bulk run with every dimension zeroed would otherwise walk the whole
+    # remote setup only to import nothing.
+    if [ -z "$SELECTOR_KIND" ] && [ "$count" -eq 0 ] \
+        && [ "$clips_count" -eq 0 ] && [ "$stamps_count" -eq 0 ]; then
+        die "nothing selected: pass --count, --clips or --stamps, or name one recording/session/clip/stamp"
     fi
 
     if [ -z "$source_arg" ] && [ -n "$SELECTOR_HOST" ]; then
@@ -1196,7 +1480,7 @@ cmd_fetch_fixtures() (
 
     if [ "$DEST" = staging ]; then
         [ -n "$SELECTOR_KIND" ] \
-            || die "--into staging needs one recording or session, not a bulk --count fetch"
+            || die "--into staging needs one named recording, session, clip or stamp, not a bulk fetch"
         [ "$SOURCE" = prod ] \
             || die "--into staging copies production data into staging, but the source is $SOURCE_LABEL"
     fi
@@ -1225,40 +1509,137 @@ cmd_fetch_fixtures() (
     trap 'rm -rf "${tmp:-}"' EXIT
 
     resolve_numeric_selector
-    if [ -n "$SELECTOR_KIND" ]; then
-        log "exporting $SELECTOR_KIND $SELECTOR_VALUE from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
-        fetch_tsv "SELECT id FROM audio_files WHERE $(selector_predicate) ORDER BY id" \
-            > "$tmp/audio_file_ids.tsv"
-        [ -s "$tmp/audio_file_ids.tsv" ] \
-            || die "no recording in $REMOTE_DB ($SOURCE_LABEL) matches $SELECTOR_KIND $SELECTOR_VALUE"
-    else
-        log "exporting up to $count recent recordings from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
-        fetch_tsv "SELECT id FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" \
-            > "$tmp/audio_file_ids.tsv"
-        [ -s "$tmp/audio_file_ids.tsv" ] || die "$SOURCE_LABEL has no matching recordings — nothing to fetch"
+
+    # The three seed sets. Whatever is named directly lands in one of them; the
+    # widening below fills in the rest.
+    : > "$tmp/audio_file_ids.tsv"
+    : > "$tmp/clip_ids.tsv"
+    : > "$tmp/stamp_ids.tsv"
+
+    local available
+    case "$SELECTOR_KIND" in
+        clip)
+            log "exporting clip $SELECTOR_VALUE from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+            fetch_tsv "SELECT clip_id FROM clips
+                        WHERE clip_id = $(sql_quote "$SELECTOR_VALUE") AND deleted_at IS NULL" \
+                > "$tmp/clip_ids.tsv"
+            [ -s "$tmp/clip_ids.tsv" ] \
+                || die "no live clip in $REMOTE_DB ($SOURCE_LABEL) has id $SELECTOR_VALUE"
+            ;;
+        stamp)
+            log "exporting stamp $SELECTOR_VALUE from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+            fetch_tsv "SELECT id FROM stamps WHERE id = $SELECTOR_VALUE" > "$tmp/stamp_ids.tsv"
+            [ -s "$tmp/stamp_ids.tsv" ] \
+                || die "no stamp in $REMOTE_DB ($SOURCE_LABEL) has id $SELECTOR_VALUE"
+            ;;
+        file_name|audio_id|session)
+            log "exporting $SELECTOR_KIND $SELECTOR_VALUE from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+            fetch_tsv "SELECT id FROM audio_files WHERE $(selector_predicate) ORDER BY id" \
+                > "$tmp/audio_file_ids.tsv"
+            [ -s "$tmp/audio_file_ids.tsv" ] \
+                || die "no recording in $REMOTE_DB ($SOURCE_LABEL) matches $SELECTOR_KIND $SELECTOR_VALUE"
+            ;;
+        *)
+            if [ "$count" -gt 0 ]; then
+                log "exporting up to $count recent recordings from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+                fetch_tsv "SELECT id FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" \
+                    > "$tmp/audio_file_ids.tsv"
+                [ -s "$tmp/audio_file_ids.tsv" ] \
+                    || die "$SOURCE_LABEL has no matching recordings — nothing to fetch"
+                # This is the one selection that re-answers "which recordings do
+                # I want?", so it is the only one that owns the managed set.
+                REPLACE_FIXTURES=1
+            fi
+            # Recordings are taken newest-first because a recent one is what you
+            # are usually debugging. Clips and stamps are sampled instead: they
+            # accumulate over the whole history, and the interesting ones are as
+            # likely to be old as new.
+            if [ "$clips_count" -gt 0 ]; then
+                available=$(fetch_tsv "SELECT count(*) FROM clips
+                                        WHERE deleted_at IS NULL
+                                          AND saved_file_name IS NOT NULL $guild_filter")
+                log "sampling $clips_count of ${available:-0} clip(s) in $SOURCE_LABEL at random"
+                fetch_tsv "SELECT clip_id FROM clips
+                            WHERE deleted_at IS NULL
+                              AND saved_file_name IS NOT NULL $guild_filter
+                            ORDER BY random() LIMIT $clips_count" > "$tmp/clip_ids.tsv"
+            fi
+            if [ "$stamps_count" -gt 0 ]; then
+                available=$(fetch_tsv "SELECT count(*) FROM stamps WHERE true $guild_filter")
+                log "sampling $stamps_count of ${available:-0} stamp(s) in $SOURCE_LABEL at random"
+                fetch_tsv "SELECT id FROM stamps WHERE true $guild_filter
+                            ORDER BY random() LIMIT $stamps_count" > "$tmp/stamp_ids.tsv"
+            fi
+            ;;
+    esac
+
+    local clip_ids stamp_ids seed_audio pulled_sessions="" audio_file_ids session_ids
+    clip_ids=$(sql_name_list "$tmp/clip_ids.tsv")
+    stamp_ids=$(sort -un "$tmp/stamp_ids.tsv" | paste -sd, -)
+    seed_audio=$(sort -un "$tmp/audio_file_ids.tsv" | paste -sd, -)
+
+    # A clip or a stamp is an annotation on a recording session, so it only
+    # means anything alongside one — and a session is only worth having whole:
+    # both the clip list and the stamp list hide a session unless every one of
+    # its fragments is visible to the viewer.
+    if [ -n "$clip_ids" ] || [ -n "$stamp_ids" ]; then
+        pulled_sessions=$(fetch_tsv "
+            SELECT c.recording_session_id FROM clips c
+             WHERE c.clip_id IN ($(text_list "$clip_ids"))
+               AND c.recording_session_id IS NOT NULL
+            UNION
+            SELECT COALESCE(s.recording_session_id, af.recording_session_id)
+              FROM stamps s LEFT JOIN audio_files af ON af.id = s.audio_file_id
+             WHERE s.id IN ($(id_list "$stamp_ids"))
+               AND COALESCE(s.recording_session_id, af.recording_session_id) IS NOT NULL" \
+            | sort -un | paste -sd, -)
     fi
-    local audio_file_ids
-    audio_file_ids=$(sort -un "$tmp/audio_file_ids.tsv" | paste -sd, -)
-    fetch_tsv "SELECT * FROM audio_files WHERE id IN ($audio_file_ids) ORDER BY id DESC" > "$tmp/audio_files.tsv"
+
+    # Everything wanted on the audio side: what was named directly, every
+    # fragment of a session a clip or stamp dragged in, and the lone recording a
+    # pre-session clip or stamp points at.
+    fetch_tsv "
+        SELECT id FROM audio_files WHERE id IN ($(id_list "$seed_audio"))
+        UNION
+        SELECT id FROM audio_files
+         WHERE recording_session_id IN ($(id_list "$pulled_sessions"))
+        UNION
+        SELECT af.id FROM audio_files af
+          JOIN clips c ON c.original_file_name = af.file_name
+         WHERE c.clip_id IN ($(text_list "$clip_ids"))
+           AND c.recording_session_id IS NULL
+        UNION
+        SELECT s.audio_file_id FROM stamps s
+         WHERE s.id IN ($(id_list "$stamp_ids")) AND s.audio_file_id IS NOT NULL" \
+        | sort -un > "$tmp/audio_file_ids.tsv"
+    audio_file_ids=$(paste -sd, - < "$tmp/audio_file_ids.tsv")
+    fetch_tsv "SELECT * FROM audio_files WHERE id IN ($(id_list "$audio_file_ids")) ORDER BY id DESC" \
+        > "$tmp/audio_files.tsv"
 
     # Archive-pruned originals must exist locally before rsync. Targeted
     # restore full-hash verifies existing files and atomically downloads only
-    # missing/mismatched selected recordings.
-    hydrate_remote_recordings "$audio_file_ids"
+    # missing/mismatched selected recordings. A fetch whose audio never arrives
+    # is not worth having, so this one is fatal.
+    hydrate_remote_media recordings --audio-file-ids "$audio_file_ids" \
+        || die "could not hydrate $SOURCE_LABEL archive media (recordings).
+      Grant env/data access, passwordless sudo -u sakiot, or set SAKIOT_DEV_REMOTE_HYDRATE."
 
     # The logical parent of every fragment, so the audio_files FK resolves in the
-    # destination and the session player has its gaps and timeline.
-    local session_ids
-    session_ids=$(fetch_tsv "SELECT DISTINCT recording_session_id FROM audio_files
-                              WHERE id IN ($audio_file_ids) AND recording_session_id IS NOT NULL" \
-        | sort -un | paste -sd, -)
+    # destination and the session player has its gaps and timeline. A session a
+    # clip or stamp named is kept even when every one of its fragments has since
+    # been reaped: it is still the thing the annotation hangs off.
+    { printf '%s\n' "$pulled_sessions" | tr ',' '\n'
+      fetch_tsv "SELECT DISTINCT recording_session_id FROM audio_files
+                  WHERE id IN ($(id_list "$audio_file_ids")) AND recording_session_id IS NOT NULL"
+    } | grep -E '^[0-9]+$' | sort -un > "$tmp/session_ids.list" || true
+    session_ids=$(paste -sd, - < "$tmp/session_ids.list")
     : > "$tmp/recording_sessions.tsv"
     : > "$tmp/recording_gaps.tsv"
     : > "$tmp/recording_session_events.tsv"
     # Which session each fragment came from, so a session id that could not be
     # claimed in the destination can be named rather than inferred.
     fetch_tsv "SELECT file_name, recording_session_id FROM audio_files
-                WHERE id IN ($audio_file_ids) AND recording_session_id IS NOT NULL" \
+                WHERE id IN ($(id_list "$audio_file_ids")) AND recording_session_id IS NOT NULL" \
         > "$tmp/source-sessions.tsv"
     if [ -n "$session_ids" ]; then
         fetch_tsv "SELECT * FROM recording_sessions WHERE id IN ($session_ids)" > "$tmp/recording_sessions.tsv"
@@ -1266,11 +1647,66 @@ cmd_fetch_fixtures() (
         fetch_tsv "SELECT * FROM recording_session_events WHERE recording_session_id IN ($session_ids)" > "$tmp/recording_session_events.tsv"
     fi
 
+    # The other direction: a session that made the trip brings its own clips and
+    # stamps, so an imported recording looks the way it does in the source
+    # instead of losing every annotation on it.
+    fetch_tsv "SELECT clip_id FROM clips
+                WHERE deleted_at IS NULL
+                  AND (clip_id IN ($(text_list "$clip_ids"))
+                       OR recording_session_id IN ($(id_list "$session_ids"))
+                       OR (recording_session_id IS NULL
+                           AND original_file_name IN (
+                               SELECT file_name FROM audio_files
+                                WHERE id IN ($(id_list "$audio_file_ids")))))" \
+        | sort -u > "$tmp/clip-ids.list"
+    clip_ids=$(sql_name_list "$tmp/clip-ids.list")
+    fetch_tsv "SELECT id FROM stamps
+                WHERE id IN ($(id_list "$stamp_ids"))
+                   OR recording_session_id IN ($(id_list "$session_ids"))
+                   OR audio_file_id IN ($(id_list "$audio_file_ids"))" \
+        | sort -un > "$tmp/stamp-ids.list"
+    stamp_ids=$(paste -sd, - < "$tmp/stamp-ids.list")
+
+    : > "$tmp/clips.tsv"
+    : > "$tmp/clip_meta.tsv"
+    if [ -n "$clip_ids" ]; then
+        fetch_tsv "SELECT * FROM clips WHERE clip_id IN ($clip_ids)" > "$tmp/clips.tsv"
+        fetch_tsv "SELECT clip_id, guild_id, channel_id, user_id, COALESCE(saved_file_name, '')
+                     FROM clips WHERE clip_id IN ($clip_ids)
+                    ORDER BY created_at, clip_id" > "$tmp/clip_meta.tsv"
+        hydrate_missing_clips "$tmp"
+    fi
+    : > "$tmp/stamps.tsv"
+    : > "$tmp/stamp_meta.tsv"
+    if [ -n "$stamp_ids" ]; then
+        fetch_tsv "SELECT * FROM stamps WHERE id IN ($stamp_ids)" > "$tmp/stamps.tsv"
+        fetch_tsv "SELECT id, guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts
+                     FROM stamps WHERE id IN ($stamp_ids) ORDER BY stamp_ts, id" > "$tmp/stamp_meta.tsv"
+    fi
+
+    [ -s "$tmp/audio_files.tsv" ] || [ -s "$tmp/clips.tsv" ] || [ -s "$tmp/stamps.tsv" ] \
+        || die "the selection resolved to no rows in $REMOTE_DB ($SOURCE_LABEL) — nothing to import"
+
     # audio_files columns: file_name guild_id channel_id user_id year month ...
+    # clip_meta:  clip_id guild_id channel_id user_id saved_file_name
+    # stamp_meta: id guild_id channel_id target_user_id stamper_user_id stamp_ts
+    # A clip or stamp can sit on a channel no imported fragment mentions, and
+    # both listings run through visible_channels_for_user, so their guild and
+    # channel have to come across too or nothing can see them.
     local channel_ids user_ids
-    GUILD_IDS=$(cut -f2 "$tmp/audio_files.tsv" | sort -un | paste -sd, -)
-    channel_ids=$(cut -f3 "$tmp/audio_files.tsv" | sort -un | paste -sd, -)
-    user_ids=$(cut -f4 "$tmp/audio_files.tsv" | sort -un | paste -sd, -)
+    GUILD_IDS=$( { cut -f2 "$tmp/audio_files.tsv"
+                   cut -f2 "$tmp/clip_meta.tsv"
+                   cut -f2 "$tmp/stamp_meta.tsv"; } \
+        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
+    [ -n "$GUILD_IDS" ] || die "the selection names no guild — nothing importable in it"
+    channel_ids=$( { cut -f3 "$tmp/audio_files.tsv"
+                     cut -f3 "$tmp/clip_meta.tsv"
+                     cut -f3 "$tmp/stamp_meta.tsv"; } \
+        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
+    user_ids=$( { cut -f4 "$tmp/audio_files.tsv"
+                  cut -f4 "$tmp/clip_meta.tsv"
+                  cut -f4,5 "$tmp/stamp_meta.tsv" | tr '\t' '\n'; } \
+        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
 
     # Voice events are keyed by guild and wall-clock time, not by recording, so
     # scope them to the span the imported fragments and sessions cover. Without
@@ -1284,7 +1720,7 @@ cmd_fetch_fixtures() (
                      MAX(hi) + interval $(sql_quote "$span_margin") AS hi FROM (
         SELECT to_timestamp(COALESCE(af.start_ts, 0) / 1000.0),
                to_timestamp(COALESCE(af.end_ts, af.start_ts, 0) / 1000.0)
-          FROM audio_files af WHERE af.id IN ($audio_file_ids)
+          FROM audio_files af WHERE af.id IN ($(id_list "$audio_file_ids"))
         UNION ALL
         SELECT rs.started_at, COALESCE(rs.ended_at, rs.started_at)
           FROM recording_sessions rs WHERE rs.id IN (${session_ids:--1})
@@ -1305,17 +1741,19 @@ cmd_fetch_fixtures() (
 
     # voice_state_events columns: id guild_id channel_id user_id event_type_id ...
     # Pull names and channels for the bystanders those events reference too.
-    user_ids=$( { cut -f4 "$tmp/audio_files.tsv"; cut -f4 "$tmp/voice_state_events.tsv"; } \
-        | grep -E '^[0-9]+$' | sort -un | paste -sd, -)
-    channel_ids=$( { cut -f3 "$tmp/audio_files.tsv"; cut -f3 "$tmp/voice_state_events.tsv"; } \
-        | grep -E '^[0-9]+$' | sort -un | paste -sd, -)
+    user_ids=$( { printf '%s\n' "$user_ids" | tr ',' '\n'
+                  cut -f4 "$tmp/voice_state_events.tsv"; } \
+        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
+    channel_ids=$( { printf '%s\n' "$channel_ids" | tr ',' '\n'
+                     cut -f3 "$tmp/voice_state_events.tsv"; } \
+        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
 
     fetch_tsv "SELECT * FROM guilds WHERE id IN ($GUILD_IDS)" > "$tmp/guilds.tsv"
     fetch_tsv "SELECT * FROM roles WHERE guild_id IN ($GUILD_IDS)" > "$tmp/roles.tsv"
-    fetch_tsv "SELECT * FROM channels WHERE channel_id IN ($channel_ids)" > "$tmp/channels.tsv"
-    fetch_tsv "SELECT * FROM user_names WHERE user_id IN ($user_ids)" > "$tmp/user_names.tsv"
-    fetch_tsv "SELECT * FROM user_nicknames WHERE user_id IN ($user_ids) AND guild_id IN ($GUILD_IDS)" > "$tmp/user_nicknames.tsv"
-    fetch_tsv "SELECT * FROM user_name_history WHERE user_id IN ($user_ids)" > "$tmp/user_name_history.tsv"
+    fetch_tsv "SELECT * FROM channels WHERE channel_id IN ($(id_list "$channel_ids"))" > "$tmp/channels.tsv"
+    fetch_tsv "SELECT * FROM user_names WHERE user_id IN ($(id_list "$user_ids"))" > "$tmp/user_names.tsv"
+    fetch_tsv "SELECT * FROM user_nicknames WHERE user_id IN ($(id_list "$user_ids")) AND guild_id IN ($GUILD_IDS)" > "$tmp/user_nicknames.tsv"
+    fetch_tsv "SELECT * FROM user_name_history WHERE user_id IN ($(id_list "$user_ids"))" > "$tmp/user_name_history.tsv"
     # small lookup tables, populated at runtime on the source deployment
     fetch_tsv "SELECT * FROM audio_file_finalize_reasons" > "$tmp/audio_file_finalize_reasons.tsv"
     fetch_tsv "SELECT * FROM user_name_event_types" > "$tmp/user_name_event_types.tsv"
@@ -1329,6 +1767,8 @@ cmd_fetch_fixtures() (
         printf "no_silence_voice_recordings/%s/_no_silence_%s.ogg\n", dir, $1
         printf "waveform_data/%s.dat\n", $1
     }' "$tmp/audio_files.tsv" > "$tmp/files.list"
+    # clips/{saved_file_name}, where saved_file_name is already {YYYY}/{MM}/{uuid}.ogg
+    awk -F'\t' '$5 != "" { printf "clips/%s\n", $5 }' "$tmp/clip_meta.tsv" >> "$tmp/files.list"
     cut -f1 "$tmp/audio_files.tsv" | sort -u > "$tmp/new-recordings.list"
 
     # Download completely before changing anything in the destination.
@@ -1346,38 +1786,73 @@ cmd_fetch_fixtures() (
         if [ -f "$tmp/media/$f" ]; then printf '%s\n' "$f"; fi
     done < "$tmp/files.list" | sort -u > "$tmp/new-files.list"
 
+    # A clip row whose audio did not come across still imports and still lists,
+    # it just plays nothing — say so here instead of leaving it to be found in
+    # the UI.
+    if [ -s "${tmp}/clip-media.list" ]; then
+        comm -23 <(sort -u "$tmp/clip-media.list") "$tmp/new-files.list" \
+            > "$tmp/clip-media-absent.list" || true
+        if [ -s "$tmp/clip-media-absent.list" ]; then
+            log "note: $(wc -l < "$tmp/clip-media-absent.list") clip(s) import without audio:"
+            while IFS= read -r f; do
+                if [ -n "$f" ]; then log "      $f"; fi
+            done < "$tmp/clip-media-absent.list"
+        fi
+    fi
+
+    local summary
+    summary="$(wc -l < "$tmp/audio_files.tsv") recording(s), $(wc -l < "$tmp/clips.tsv") clip(s), $(wc -l < "$tmp/stamps.tsv") stamp(s)"
     if [ "$DEST" = staging ]; then
         install_into_staging "$tmp"
         report_destination "$tmp" "${SAKIOT_DEV_STAGING_URL:-https://staging.patrykstyla.com}"
-        log "done: $(wc -l < "$tmp/audio_files.tsv") production recording(s) copied into staging and marked as imported"
+        log "done: $summary copied from production into staging and marked as imported"
     else
         ensure_data_dirs
         install_into_local "$tmp"
         report_destination "$tmp" "${SAKIOT_DEV_LOCAL_URL:-http://localhost:8081}"
-        log "done: $(wc -l < "$tmp/audio_files.tsv") recording(s) from $SOURCE_LABEL guild(s) $GUILD_IDS"
+        log "done: $summary from $SOURCE_LABEL guild(s) $GUILD_IDS"
     fi
 )
+
+local_row_count() { # local_row_count "<count query>"
+    local value
+    value=$(printf 'COPY (%s) TO STDOUT;\n' "$1" | psql_local -At 2>/dev/null) || value=""
+    printf '%s' "${value:-0}"
+}
+
+ask_count() { # ask_count <prompt> <parenthetical> -> echoes the answer
+    local prompt=$1 note=$2 answer
+    while true; do
+        printf '%s (%s) [0]: ' "$prompt" "$note" >&2
+        read -r answer
+        answer=${answer:-0}
+        if is_uint "$answer"; then
+            printf '%s' "$answer"
+            return
+        fi
+        echo "Enter an unsigned number, or 0 to skip." >&2
+    done
+}
 
 prompt_fetch_fixtures() {
     [ -t 0 ] || return
 
-    local count existing
-    existing=$(fixture_count)
-    while true; do
-        printf 'Recordings to copy from staging (%s currently available; 0 keeps them) [0]: ' "$existing"
-        read -r count
-        count=${count:-0}
-        if is_uint "$count"; then
-            break
-        fi
-        echo "Enter an unsigned number, or 0 to skip." >&2
-    done
+    # Recordings are counted from the fixture manifest because that is the set
+    # this script manages and replaces wholesale; clips and stamps are only ever
+    # added to, so the database is both the honest count and the whole story.
+    local count clips stamps
+    count=$(ask_count "Recordings to copy from staging" \
+        "$(fixture_count) currently available; 0 keeps them")
+    clips=$(ask_count "Random clips to copy from staging" \
+        "$(local_row_count "SELECT count(*) FROM clips WHERE deleted_at IS NULL") here already; adds to them, 0 skips")
+    stamps=$(ask_count "Random stamps to copy from staging" \
+        "$(local_row_count "SELECT count(*) FROM stamps") here already; adds to them, 0 skips")
 
-    if [ "$count" -eq 0 ]; then
+    if [ "$count" -eq 0 ] && [ "$clips" -eq 0 ] && [ "$stamps" -eq 0 ]; then
         log "skipping staging fixtures"
         return
     fi
-    cmd_fetch_fixtures --count "$count"
+    cmd_fetch_fixtures --count "$count" --clips "$clips" --stamps "$stamps"
 }
 
 cmd_clean() {
