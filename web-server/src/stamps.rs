@@ -1,4 +1,4 @@
-use actix_web::{HttpResponse, Responder, get, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, web};
 use sakiot_paths::RecordingKey;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
@@ -6,7 +6,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::visible_channels_for_user;
+use crate::permissions::{AsRoleQuery, listing_channels_for, require_role_preview};
 
 type DisplayFromstr = As<DisplayFromStr>;
 
@@ -49,24 +49,31 @@ pub struct StampInfo {
     get,
     path = "/api/stamps/{guild_id}",
     tag = "stamps",
-    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("as_role" = i64, Query, description = "Impersonate a guild role (managers only)"),
+    ),
     responses(
         (status = 200, description = "Recent stamps for guild", body = [StampInfo]),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Role does not exist in this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
 #[get("/stamps/{guild_id}")]
 pub async fn get_stamps(
+    req: HttpRequest,
+    query: web::Query<AsRoleQuery>,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
     token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    let permitted = visible_channels_for_user(&pool, guild_id, token.user_id).await?;
+    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
+    let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<StampInfo>::new()));
     }

@@ -5,8 +5,8 @@ use std::{
 
 use serenity::{
     all::{
-        ChannelId, ChannelType, GuildChannel, GuildId, PermissionOverwrite,
-        PermissionOverwriteType, Permissions, Role, RoleId, UserId,
+        ChannelId, ChannelType, Guild, GuildChannel, GuildId, Member, PermissionOverwrite,
+        PermissionOverwriteType, Permissions, Role, RoleId, User, UserId,
     },
     prelude::{RwLock, TypeMap},
 };
@@ -1363,5 +1363,132 @@ async fn upsert_instance_tolerates_a_missing_grpc_address(
     crate::deployment::upsert_instance(&pool, &runtime).await?;
 
     assert_eq!(stored_grpc_address(&pool, &instance_id).await?, None);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn guild_present_sync_prunes_guilds_the_bot_left(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_a = GuildId::new(unique_id() as u64);
+    let guild_b = GuildId::new(guild_a.get() + 1);
+    let guild_c = GuildId::new(guild_a.get() + 2);
+
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1), ($2), ($3)")
+        .bind(guild_a.get() as i64)
+        .bind(guild_b.get() as i64)
+        .bind(guild_c.get() as i64)
+        .execute(&pool)
+        .await?;
+
+    // The bot's guild set is now A + C; B was left behind while running and
+    // must be pruned by the next presence sync.
+    crate::database::guild_cache::sync_present_guild_ids(&pool, &[guild_a, guild_c]).await?;
+
+    let present =
+        sqlx::query_scalar::<_, i64>("SELECT guild_id FROM guilds_present ORDER BY guild_id")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(present, vec![guild_a.get() as i64, guild_c.get() as i64]);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn remove_guild_present_drops_departed_guild(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = GuildId::new(unique_id() as u64);
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
+        .bind(guild_id.get() as i64)
+        .execute(&pool)
+        .await?;
+
+    crate::database::guild_cache::remove_guild_present(&pool, guild_id).await?;
+
+    let count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM guilds_present WHERE guild_id = $1")
+            .bind(guild_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count, 0);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn sync_new_guild_populates_full_cache_and_presence(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = GuildId::new(unique_id() as u64);
+    let role_id = RoleId::new(guild_id.get() + 1);
+    let channel_id = ChannelId::new(guild_id.get() + 2);
+    let user_id = UserId::new(guild_id.get() + 3);
+
+    let mut role = Role::default();
+    role.id = role_id;
+    role.guild_id = guild_id;
+    role.name = "new-guild-role".to_string();
+    role.permissions = Permissions::VIEW_CHANNEL | Permissions::CONNECT;
+
+    let mut channel = GuildChannel::default();
+    channel.id = channel_id;
+    channel.guild_id = guild_id;
+    channel.kind = ChannelType::Voice;
+    channel.permission_overwrites = vec![PermissionOverwrite {
+        allow: Permissions::CONNECT,
+        deny: Permissions::empty(),
+        kind: PermissionOverwriteType::Role(role_id),
+    }];
+
+    let mut member = Member::default();
+    member.guild_id = guild_id;
+    let mut user = User::default();
+    user.id = user_id;
+    member.user = user;
+    member.roles = vec![role_id];
+
+    let mut guild = Guild::default();
+    guild.id = guild_id;
+    guild.owner_id = user_id;
+    guild.roles.insert(role_id, role);
+    guild.channels.insert(channel_id, channel);
+    guild.members.insert(user_id, member);
+
+    crate::database::guild_cache::sync_new_guild(&pool, &guild).await?;
+
+    let roles = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM roles WHERE guild_id = $1")
+        .bind(guild_id.get() as i64)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(roles, 1);
+    let channels =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM channels WHERE guild_id = $1")
+            .bind(guild_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(channels, 1);
+    let overwrites = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM channel_permissions WHERE channel_id = $1",
+    )
+    .bind(channel_id.get() as i64)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(overwrites, 1);
+    let user_roles =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_roles WHERE user_id = $1")
+            .bind(user_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(user_roles, 1);
+    let owner = sqlx::query_scalar::<_, i64>("SELECT owner_id FROM guilds WHERE id = $1")
+        .bind(guild_id.get() as i64)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(owner, user_id.get() as i64);
+    let present =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM guilds_present WHERE guild_id = $1")
+            .bind(guild_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(present, 1);
     Ok(())
 }

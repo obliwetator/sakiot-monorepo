@@ -9,6 +9,7 @@ use tracing::error;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
+use crate::permissions::{AsRoleQuery, listing_channels_for, require_role_preview};
 
 use super::paths::recording_path;
 use super::types::{Channels, Directories, File};
@@ -66,6 +67,7 @@ pub async fn for_entry(
             recording_session_id: None,
             channel_journey: None,
             state: None,
+            access: None,
             start_ts_ms: parsed.map(|(ts, _)| ts),
         };
         if let Some(months) = dirs.months.as_mut()
@@ -286,10 +288,32 @@ struct SessionListing {
     channel_journey: Vec<i64>,
 }
 
+/// Role-preview access level for a session spanning `journey` channels:
+/// "can-listen" when every channel is joinable, "visible-only" when every
+/// channel is at least viewable, "hidden" when any is not even viewable.
+fn session_access_level(
+    journey: &HashSet<i64>,
+    channel_access: &std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>,
+) -> &'static str {
+    let all = |predicate: fn(&crate::permissions::RoleChannelAccess) -> bool| {
+        journey
+            .iter()
+            .all(|channel| channel_access.get(channel).is_some_and(predicate))
+    };
+    if all(|access| access.joinable) {
+        "can-listen"
+    } else if all(|access| access.viewable) {
+        "visible-only"
+    } else {
+        "hidden"
+    }
+}
+
 async fn get_session_tree(
     pool: &Pool<Postgres>,
     guild_id: i64,
     permitted: &HashSet<i64>,
+    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
 ) -> Result<Vec<Channels>, AppError> {
     let rows = sqlx::query(
         "WITH listed AS (
@@ -360,9 +384,18 @@ async fn get_session_tree(
         } else {
             listing.channel_journey.iter().copied().collect()
         };
-        if !audible.iter().all(|channel| permitted.contains(channel)) {
-            continue;
-        }
+        // Role previews keep every session in the tree and annotate what the
+        // role could do with it; normal listings hide whatever the viewer
+        // cannot fully hear.
+        let access = match channel_access {
+            Some(map) => Some(session_access_level(&audible, map).to_string()),
+            None => {
+                if !audible.iter().all(|channel| permitted.contains(channel)) {
+                    continue;
+                }
+                None
+            }
+        };
         let Some(started_at) =
             chrono::DateTime::<chrono::Utc>::from_timestamp_millis(listing.started_at_ms)
         else {
@@ -396,6 +429,7 @@ async fn get_session_tree(
                         .collect(),
                 ),
                 state: Some(listing.state),
+                access,
                 start_ts_ms: Some(listing.started_at_ms),
             });
     }
@@ -583,17 +617,24 @@ pub async fn for_months(
     get,
     path = "/api/current/{guild_id}/live-stems",
     tag = "audio",
-    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("as_role" = i64, Query, description = "Impersonate a guild role (managers only)"),
+    ),
     responses(
         (status = 200, description = "Currently live recording stems", body = [String]),
         (status = 400, description = "Invalid guild id", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Role does not exist in this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
 #[get("/current/{guild_id}/live-stems")]
 pub async fn get_live_stems(
+    req: actix_web::HttpRequest,
+    query: web::Query<AsRoleQuery>,
     path: web::Path<String>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
@@ -604,8 +645,8 @@ pub async fn get_live_stems(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    let permitted =
-        crate::permissions::visible_channels_for_user(&pool, guild_id, token.user_id).await?;
+    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
+    let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
     let rows = sqlx::query(
@@ -655,18 +696,24 @@ pub async fn get_live_stems(
     get,
     path = "/api/current/{guild_id}",
     tag = "audio",
-    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("as_role" = i64, Query, description = "Impersonate a guild role (managers only)"),
+    ),
     responses(
         (status = 200, description = "Recording tree visible to current user", body = [Channels]),
         (status = 400, description = "Invalid guild id", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 404, description = "Recording directory not found", body = crate::errors::ApiError),
+        (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Role does not exist in this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
 #[get("/current/{guild_id}")]
 pub async fn get_current_month_permission(
+    req: actix_web::HttpRequest,
+    query: web::Query<AsRoleQuery>,
     path: web::Path<String>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
@@ -678,11 +725,33 @@ pub async fn get_current_month_permission(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    let permission_hashset =
-        crate::permissions::visible_channels_for_user(&pool, guild_id_as_int, token.user_id)
-            .await?;
+    require_role_preview(&req, &pool, guild_id_as_int, query.as_role).await?;
+    let (permission_hashset, channel_access) = match query.as_role {
+        Some(role_id) => {
+            let access =
+                crate::permissions::role_access_for_preview(&pool, guild_id_as_int, role_id)
+                    .await?;
+            let joinable = access
+                .iter()
+                .filter(|(_, a)| a.joinable)
+                .map(|(channel_id, _)| *channel_id)
+                .collect();
+            (joinable, Some(access))
+        }
+        None => (
+            crate::permissions::visible_channels_for_user(&pool, guild_id_as_int, token.user_id)
+                .await?,
+            None,
+        ),
+    };
 
-    let mut dirs_vec = get_session_tree(&pool, guild_id_as_int, &permission_hashset).await?;
+    let mut dirs_vec = get_session_tree(
+        &pool,
+        guild_id_as_int,
+        &permission_hashset,
+        channel_access.as_ref(),
+    )
+    .await?;
 
     if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
         tracing::error!("enrich_display_names failed: {}", e);

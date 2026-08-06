@@ -41,6 +41,7 @@ use web_server::health::healthz;
 use web_server::media_archive::{
     MediaArchive, run_media_command, spawn_archive_worker, spawn_local_cleanup,
 };
+use web_server::members::{get_guild_roles, get_role_members, get_role_view};
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
 
@@ -214,7 +215,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(set_guild_cooldown)
             .service(list_user_overrides)
             .service(set_user_override)
-            .service(delete_user_override);
+            .service(delete_user_override)
+            .service(get_guild_roles)
+            .service(get_role_members)
+            .service(get_role_view);
         let api_scope = api_scope
             .service(get_voice_settings)
             .service(put_voice_settings)

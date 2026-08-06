@@ -7,6 +7,7 @@ import {
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
 } from "../../../app/apiSlice";
+import { useAsRole } from "../../../app/useAsRole";
 import type { Dirs, UserGuilds } from "../../../Constants";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
@@ -20,8 +21,9 @@ export default function CustomizedTreeView(_props: {
 	const params = useParams();
 	const location = useLocation();
 	const navigate = useNavigate();
+	const { asRoleArg } = useAsRole();
 	const { data: channelsData, isSuccess } = useGetCurrentGuildDirsQuery(
-		params.guild_id ?? "",
+		{ guild_id: params.guild_id ?? "", ...asRoleArg },
 		{
 			skip: !params.guild_id,
 			refetchOnMountOrArgChange: true,
@@ -33,10 +35,13 @@ export default function CustomizedTreeView(_props: {
 			{ skip: !params.session_id },
 		);
 	const selectedSessionFinalized = selectedSession?.state === "finalized";
-	const { data: liveStems } = useGetLiveStemsQuery(params.guild_id ?? "", {
-		skip: !params.guild_id,
-		pollingInterval: selectedSessionFinalized ? 0 : 10_000,
-	});
+	const { data: liveStems } = useGetLiveStemsQuery(
+		{ guild_id: params.guild_id ?? "", ...asRoleArg },
+		{
+			skip: !params.guild_id,
+			pollingInterval: selectedSessionFinalized ? 0 : 10_000,
+		},
+	);
 	const liveSet = useMemo(() => new Set(liveStems ?? []), [liveStems]);
 
 	React.useEffect(() => {

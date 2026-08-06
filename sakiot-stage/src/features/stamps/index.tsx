@@ -11,8 +11,10 @@ import Typography from "@mui/material/Typography";
 import { useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
+import { useAsRole } from "../../app/useAsRole";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
+import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { buildStampPlaybackTarget } from "./stampNavigation";
 
 function formatTimestamp(ms: number): string {
@@ -23,10 +25,14 @@ export function Stamps() {
 	const navigate = useNavigate();
 	const guild = useSelector((s: RootState) => s.app.guildSelected);
 	const guildId = guild?.id ?? "";
+	const { asRoleArg } = useAsRole();
 
-	const { data, isLoading, isError, error } = useGetStampsQuery(guildId, {
-		skip: !guildId,
-	});
+	const { data, isLoading, isError, error } = useGetStampsQuery(
+		{ guild_id: guildId, ...asRoleArg },
+		{
+			skip: !guildId,
+		},
+	);
 
 	if (!guildId) {
 		return (
@@ -60,6 +66,7 @@ export function Stamps() {
 
 	return (
 		<Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1400 }}>
+			<ViewAsRoleBanner guildId={guildId} />
 			<Typography variant="h4" fontWeight={700} gutterBottom>
 				Stamps {guild ? `— ${guild.name}` : ""}
 			</Typography>

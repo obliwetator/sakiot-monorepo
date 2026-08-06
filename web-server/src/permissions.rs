@@ -175,12 +175,20 @@ impl ChannelPermissionState {
         }
     }
 
+    fn can_view(self, base_permissions: Permissions) -> bool {
+        self.applied(base_permissions)
+            .contains(Permissions::VIEW_CHANNEL)
+    }
+
     fn can_view_and_connect(self, base_permissions: Permissions) -> bool {
+        self.applied(base_permissions)
+            .contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT)
+    }
+
+    fn applied(self, base_permissions: Permissions) -> Permissions {
         let permissions = apply_overwrite(base_permissions, self.everyone);
         let permissions = apply_overwrite(permissions, self.roles);
-        let permissions = apply_overwrite(permissions, self.member);
-
-        permissions.contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT)
+        apply_overwrite(permissions, self.member)
     }
 }
 
@@ -217,11 +225,21 @@ pub async fn get_combined_perm_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<Permissions, AppError> {
+    // Owner access comes from the live `guilds.owner_id`, or from the
+    // `user_guilds.owner` flag. The flag is trusted because the agent keeps it
+    // fresh — `sync_guild_owner` rewrites it on guild owner changes and
+    // `delete_live_member` drops the row when a member leaves — and the local
+    // seed / fixture tooling writes it to grant the dev account full access to
+    // imported guilds whose real owner is somebody else.
     let owner = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (
              SELECT 1
                FROM guilds
               WHERE id = $1 AND owner_id = $2
+         ) OR EXISTS (
+             SELECT 1
+               FROM user_guilds
+              WHERE id = $1 AND user_id = $2 AND owner
          )",
     )
     .bind(guild_id)
@@ -256,6 +274,195 @@ pub async fn get_combined_perm_for_user(
     .unwrap_or(0);
 
     Ok(permissions_from_bits(permissions))
+}
+
+/// Combined permission bits a member would hold if their only role were
+/// `role_id`: the role itself plus `@everyone` (`role_id = guild_id`). This is
+/// the "view server as role" lens — Discord's preview of what a hypothetical
+/// member with a single role would see.
+pub async fn get_combined_perm_for_role(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<Permissions, AppError> {
+    let permissions = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT bit_or(r.permission)
+           FROM roles r
+          WHERE r.guild_id = $1
+            AND (r.role_id = $1 OR r.role_id = $2)",
+    )
+    .bind(guild_id)
+    .bind(role_id)
+    .fetch_one(pool.get_ref())
+    .await?
+    .unwrap_or(0);
+
+    Ok(permissions_from_bits(permissions))
+}
+
+async fn apply_single_role_overwrites(
+    pool: &web::Data<Pool<Postgres>>,
+    role_id: i64,
+    guild_id: i64,
+    channels: &mut HashMap<i64, ChannelPermissionState>,
+) -> Result<(), AppError> {
+    let role_overwrites = sqlx::query!(
+        "SELECT allow as \"allow!\", deny as \"deny!\", channel_id as \"channel_id!\"
+           FROM channel_permissions
+          WHERE kind = 'role' AND target_id = $1",
+        role_id
+    )
+    .fetch_all(pool.get_ref())
+    .await?;
+
+    for overwrite in role_overwrites {
+        if overwrite.channel_id == guild_id {
+            // Generic @everyone is already included in the base guild permissions.
+            continue;
+        }
+        if let Some(channel) = channels.get_mut(&overwrite.channel_id) {
+            channel.roles.allow |= permissions_from_bits(overwrite.allow);
+            channel.roles.deny |= permissions_from_bits(overwrite.deny);
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoleChannelAccess {
+    pub channel_id: i64,
+    pub viewable: bool,
+    pub joinable: bool,
+}
+
+/// Per-channel access a member whose only role is `role_id` would have,
+/// mirroring the user path without member-specific overwrites. `viewable` is
+/// Discord's "see the channel" (VIEW_CHANNEL); `joinable` also requires
+/// CONNECT — a channel can be visible without being joinable.
+pub async fn get_channel_access_for_role(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<Vec<RoleChannelAccess>, AppError> {
+    let base_permissions = get_combined_perm_for_role(pool, guild_id, role_id).await?;
+
+    let channels = get_voice_channel_permission_states(pool, guild_id).await?;
+    if base_permissions.contains(Permissions::ADMINISTRATOR) {
+        return Ok(channels
+            .into_keys()
+            .map(|channel_id| RoleChannelAccess {
+                channel_id,
+                viewable: true,
+                joinable: true,
+            })
+            .collect());
+    }
+
+    let mut channels = channels;
+    if role_id != guild_id {
+        // @everyone (role_id = guild_id) needs no role-overwrite pass: its
+        // per-channel overwrites are already the "everyone" state, and its
+        // guild-level permission is in the base.
+        apply_single_role_overwrites(pool, role_id, guild_id, &mut channels).await?;
+    }
+
+    Ok(channels
+        .into_iter()
+        .map(|(channel_id, state)| RoleChannelAccess {
+            channel_id,
+            viewable: state.can_view(base_permissions),
+            joinable: state.can_view_and_connect(base_permissions),
+        })
+        .collect())
+}
+
+/// Voice channels a member whose only role is `role_id` could see and join,
+/// mirroring `get_available_channels_for_user` without member-specific
+/// overwrites.
+pub async fn get_available_channels_for_role(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<HashSet<i64>, AppError> {
+    Ok(get_channel_access_for_role(pool, guild_id, role_id)
+        .await?
+        .into_iter()
+        .filter(|access| access.joinable)
+        .map(|access| access.channel_id)
+        .collect())
+}
+
+/// Resolve the channel set a listing should show: the caller's own channels,
+/// or — when impersonating a role — the channels that role alone would see.
+/// A foreign role is a 404 rather than a silently empty preview.
+pub async fn listing_channels_for(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    user_id: i64,
+    as_role: Option<i64>,
+) -> Result<HashSet<i64>, AppError> {
+    match as_role {
+        None => visible_channels_for_user(pool, guild_id, user_id).await,
+        Some(role_id) => {
+            let belongs_to_guild = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+            )
+            .bind(role_id)
+            .bind(guild_id)
+            .fetch_one(pool.get_ref())
+            .await?;
+            if !belongs_to_guild {
+                return Err(AppError::RoleNotFound);
+            }
+            get_available_channels_for_role(pool, guild_id, role_id).await
+        }
+    }
+}
+
+/// Per-channel access map for the role-preview lens, keyed by channel id and
+/// validating that the role belongs to the guild. The recording tree uses it
+/// to keep every session visible and annotate what the role could do with it.
+pub async fn role_access_for_preview(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
+    let belongs_to_guild = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+    )
+    .bind(role_id)
+    .bind(guild_id)
+    .fetch_one(pool.get_ref())
+    .await?;
+    if !belongs_to_guild {
+        return Err(AppError::RoleNotFound);
+    }
+
+    Ok(get_channel_access_for_role(pool, guild_id, role_id)
+        .await?
+        .into_iter()
+        .map(|access| (access.channel_id, access))
+        .collect())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct AsRoleQuery {
+    pub as_role: Option<i64>,
+}
+
+/// Role impersonation (view-as-role) is manager-only: someone who cannot
+/// already manage the guild must not preview what one of its roles can see.
+pub async fn require_role_preview(
+    req: &actix_web::HttpRequest,
+    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
+    guild_id: i64,
+    as_role: Option<i64>,
+) -> Result<(), crate::errors::AppError> {
+    if as_role.is_some() {
+        require_guild_manager(req, pool, guild_id).await?;
+    }
+    Ok(())
 }
 
 async fn apply_role_overwrites(
@@ -428,13 +635,36 @@ async fn require_guild_permission(
     guild_id: i64,
     required_mask: Permissions,
 ) -> Result<i64, crate::errors::AppError> {
-    use crate::auth::{Access, Token};
+    use crate::auth::{Access, AuthKind, Token};
     use actix_web::HttpMessage;
-    let user_id = req
+    let (user_id, is_dev) = req
         .extensions()
         .get::<Token<Access>>()
-        .map(|t| t.user_id)
+        .map(|t| (t.user_id, t.auth_kind == AuthKind::Dev))
         .ok_or(crate::errors::AppError::Unauthorized)?;
+
+    // Dev logins act as managers of the guilds the local tooling granted them:
+    // the seed and fixture imports write `user_guilds.owner = true`, but
+    // `guilds.owner_id` and the agent-maintained role cache hold the production
+    // owner and roles, so the checks below would otherwise 403 the dev account
+    // on every fixture guild. Mirror the frontend's `isGuildAdmin` trust in the
+    // snapshot row; real Discord logins (AuthKind::Discord) never take this path.
+    if is_dev {
+        let trusted = sqlx::query_scalar::<_, bool>(
+            "SELECT owner OR (permissions & 40) <> 0
+               FROM user_guilds
+              WHERE id = $1 AND user_id = $2",
+        )
+        .bind(guild_id)
+        .bind(user_id)
+        .fetch_optional(pool.get_ref())
+        .await?
+        .unwrap_or(false);
+        if trusted {
+            return Ok(user_id);
+        }
+    }
+
     let permissions = match get_combined_perm_for_user(pool, guild_id, user_id).await {
         Ok(permissions) => permissions,
         Err(crate::errors::AppError::DbError(sqlx::Error::RowNotFound)) => {

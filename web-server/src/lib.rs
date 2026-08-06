@@ -9,6 +9,7 @@ pub mod grpc_client;
 pub mod health;
 pub mod http_metrics;
 pub mod media_archive;
+pub mod members;
 pub mod openapi;
 pub mod permissions;
 pub mod proto;

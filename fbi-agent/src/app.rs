@@ -128,8 +128,11 @@ async fn run_registered_instance(
     let grpc = crate::grpc::spawn_server(custom.clone(), shutdown_rx.clone());
     let heartbeat =
         deployment::start_heartbeat(pool.to_owned(), runtime.clone(), shutdown_rx.clone());
-    let reconciliation = crate::events::voice::spawn_reconciliation(custom, shutdown_rx.clone());
+    let reconciliation =
+        crate::events::voice::spawn_reconciliation(custom.clone(), shutdown_rx.clone());
     let pending_expiry = start_pending_expiry(pool.to_owned(), shutdown_rx.clone());
+    let cache_resync =
+        crate::database::guild_cache::spawn_cache_resync(custom, shutdown_rx.clone());
     let shutdown_monitor = crate::shutdown::spawn_shutdown_monitor(
         runtime.clone(),
         pool.to_owned(),
@@ -143,6 +146,7 @@ async fn run_registered_instance(
         heartbeat,
         reconciliation,
         pending_expiry,
+        cache_resync,
         shutdown_monitor,
     };
     let first_exit = tasks.wait_for_first_exit().await;
@@ -189,6 +193,7 @@ enum TaskKind {
     Heartbeat,
     Reconciliation,
     PendingExpiry,
+    CacheResync,
     ShutdownMonitor,
 }
 
@@ -200,6 +205,7 @@ impl TaskKind {
             Self::Heartbeat => "heartbeat",
             Self::Reconciliation => "reconciliation",
             Self::PendingExpiry => "pending session expiry",
+            Self::CacheResync => "guild cache resync",
             Self::ShutdownMonitor => "shutdown monitor",
         }
     }
@@ -211,6 +217,7 @@ struct RuntimeTasks {
     heartbeat: JoinHandle<()>,
     reconciliation: JoinHandle<()>,
     pending_expiry: JoinHandle<()>,
+    cache_resync: JoinHandle<()>,
     shutdown_monitor: JoinHandle<
         Result<crate::shutdown::ShutdownMonitorExit, crate::shutdown::ShutdownMonitorError>,
     >,
@@ -224,6 +231,7 @@ impl RuntimeTasks {
             result = &mut self.heartbeat => ObservedTaskExit::Heartbeat(result),
             result = &mut self.reconciliation => ObservedTaskExit::Reconciliation(result),
             result = &mut self.pending_expiry => ObservedTaskExit::PendingExpiry(result),
+            result = &mut self.cache_resync => ObservedTaskExit::CacheResync(result),
             result = &mut self.shutdown_monitor => ObservedTaskExit::ShutdownMonitor(result),
         }
     }
@@ -246,6 +254,12 @@ impl RuntimeTasks {
             &mut self.pending_expiry,
             selected == TaskKind::PendingExpiry,
             TaskKind::PendingExpiry,
+        )
+        .await;
+        stop_task(
+            &mut self.cache_resync,
+            selected == TaskKind::CacheResync,
+            TaskKind::CacheResync,
         )
         .await;
         stop_task(
@@ -291,6 +305,7 @@ enum ObservedTaskExit {
     Heartbeat(Result<(), JoinError>),
     Reconciliation(Result<(), JoinError>),
     PendingExpiry(Result<(), JoinError>),
+    CacheResync(Result<(), JoinError>),
     ShutdownMonitor(
         Result<
             Result<crate::shutdown::ShutdownMonitorExit, crate::shutdown::ShutdownMonitorError>,
@@ -307,6 +322,7 @@ impl ObservedTaskExit {
             Self::Heartbeat(_) => TaskKind::Heartbeat,
             Self::Reconciliation(_) => TaskKind::Reconciliation,
             Self::PendingExpiry(_) => TaskKind::PendingExpiry,
+            Self::CacheResync(_) => TaskKind::CacheResync,
             Self::ShutdownMonitor(_) => TaskKind::ShutdownMonitor,
         }
     }
@@ -356,12 +372,14 @@ fn classify_first_exit(exit: ObservedTaskExit) -> SupervisorDecision {
         ObservedTaskExit::Heartbeat(Err(err)) => join_failure(TaskKind::Heartbeat, err),
         ObservedTaskExit::Reconciliation(Err(err)) => join_failure(TaskKind::Reconciliation, err),
         ObservedTaskExit::PendingExpiry(Err(err)) => join_failure(TaskKind::PendingExpiry, err),
+        ObservedTaskExit::CacheResync(Err(err)) => join_failure(TaskKind::CacheResync, err),
         ObservedTaskExit::ShutdownMonitor(Err(err)) => join_failure(TaskKind::ShutdownMonitor, err),
         ObservedTaskExit::Discord(Ok(Ok(()))) => unexpected_exit(TaskKind::Discord),
         ObservedTaskExit::Grpc(Ok(Ok(()))) => unexpected_exit(TaskKind::Grpc),
         ObservedTaskExit::Heartbeat(Ok(())) => unexpected_exit(TaskKind::Heartbeat),
         ObservedTaskExit::Reconciliation(Ok(())) => unexpected_exit(TaskKind::Reconciliation),
         ObservedTaskExit::PendingExpiry(Ok(())) => unexpected_exit(TaskKind::PendingExpiry),
+        ObservedTaskExit::CacheResync(Ok(())) => unexpected_exit(TaskKind::CacheResync),
         ObservedTaskExit::ShutdownMonitor(Ok(Ok(
             crate::shutdown::ShutdownMonitorExit::Cancelled,
         ))) => unexpected_exit(TaskKind::ShutdownMonitor),

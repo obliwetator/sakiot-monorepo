@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_roles (user_id, role_id)\n         VALUES\n            (30, $1), (50, $1), (40, $2), (50, $2), (60, $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fcbe3aa722dfe0740b66c0a44342502e219749996a566b8ef40ea8915013a4cd"
+}

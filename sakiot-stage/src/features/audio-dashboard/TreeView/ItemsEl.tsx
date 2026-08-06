@@ -16,11 +16,28 @@ export function ItemsEl(props: {
 	const title = props.file.channel_journey?.length
 		? `${props.file.file} · channels ${props.file.channel_journey.join(" → ")}`
 		: props.file.file;
+	const access = props.file.access;
+	const accessBadge =
+		access === "visible-only" ? (
+			<span
+				className="ml-2 text-xs font-semibold text-amber-300"
+				title="This role can see the channel but cannot join it — playback would be denied"
+			>
+				🔒 can't listen
+			</span>
+		) : access === "hidden" ? (
+			<span
+				className="ml-2 text-xs font-semibold text-red-400"
+				title="This role cannot see the channel at all"
+			>
+				🚫 hidden
+			</span>
+		) : null;
 
 	return (
 		<StyledTreeItem
 			itemId={recordingTreeItemId(props.file, props.year, props.month_name)}
-			className="bg-violet-600 overflow-hidden"
+			className={`bg-violet-600 overflow-hidden ${access === "hidden" ? "opacity-40" : access === "visible-only" ? "opacity-70" : ""}`}
 			sx={{
 				[`& > .${treeItemClasses.content}`]: {
 					borderBottom: "1px solid rgb(76 29 149)",
@@ -44,6 +61,7 @@ export function ItemsEl(props: {
 							</span>
 						)}
 					{props.isLive && <LivePill />}
+					{accessBadge}
 				</span>
 			}
 		/>

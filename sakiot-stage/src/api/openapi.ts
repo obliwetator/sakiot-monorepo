@@ -52,6 +52,54 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/roles": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_guild_roles"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/roles/{role_id}/channels": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_role_view"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/roles/{role_id}/members": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_role_members"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/voice-settings": {
 		parameters: {
 			query?: never;
@@ -498,6 +546,12 @@ export interface components {
 			year: number;
 		};
 		File: {
+			/**
+			 * @description Role-preview annotation only: "can-listen" | "visible-only" | "hidden".
+			 *     Absent in normal listings, which are filtered to what the viewer can
+			 *     actually play.
+			 */
+			access?: string | null;
 			channel_journey?: string[] | null;
 			display_name?: string | null;
 			file: string;
@@ -518,6 +572,15 @@ export interface components {
 			/** @example 268435456 */
 			permissions: string;
 		};
+		GuildRole: {
+			/** Format: int64 */
+			member_count: number;
+			name: string;
+			/** @example 268435456 */
+			permission: string;
+			/** @example 146638124288704513 */
+			role_id: string;
+		};
 		GuildVoiceSettings: {
 			is_default: boolean;
 			/** Format: int32 */
@@ -531,6 +594,12 @@ export interface components {
 			[key: string]:
 				| null
 				| {
+						/**
+						 * @description Role-preview annotation only: "can-listen" | "visible-only" | "hidden".
+						 *     Absent in normal listings, which are filtered to what the viewer can
+						 *     actually play.
+						 */
+						access?: string | null;
 						channel_journey?: string[] | null;
 						display_name?: string | null;
 						file: string;
@@ -552,6 +621,23 @@ export interface components {
 		};
 		RenameClipBody: {
 			name: string;
+		};
+		RoleChannel: {
+			can_join: boolean;
+			/** @example 146638124288704513 */
+			channel_id: string;
+			name: string;
+		};
+		RoleMember: {
+			name?: string | null;
+			/** @example 146638124288704513 */
+			user_id: string;
+		};
+		RoleView: {
+			can_manage_guild: boolean;
+			channels: components["schemas"]["RoleChannel"][];
+			/** @example 1024 */
+			permission: string;
 		};
 		SessionDownloadQuery: {
 			/** Format: double */
@@ -979,6 +1065,178 @@ export interface operations {
 			};
 		};
 	};
+	get_guild_roles: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Guild roles with member counts */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildRole"][];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description User cannot manage this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_role_view: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord role id */
+				role_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description What a member with only this role can see */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RoleView"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description User cannot manage this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_role_members: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord role id */
+				role_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Members holding the role */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RoleMember"][];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description User cannot manage this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_voice_settings: {
 		parameters: {
 			query?: never;
@@ -1215,7 +1473,10 @@ export interface operations {
 	};
 	get_clips: {
 		parameters: {
-			query?: never;
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
 			header?: never;
 			path: {
 				/** @description Discord guild id */
@@ -1245,6 +1506,15 @@ export interface operations {
 			};
 			/** @description Missing guild or channel permission */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -2226,7 +2496,10 @@ export interface operations {
 	};
 	get_current_month_permission: {
 		parameters: {
-			query?: never;
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
 			header?: never;
 			path: {
 				/** @description Discord guild id */
@@ -2263,7 +2536,16 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description Recording directory not found */
+			/** @description Missing guild or channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
 			404: {
 				headers: {
 					[name: string]: unknown;
@@ -2285,7 +2567,10 @@ export interface operations {
 	};
 	get_live_stems: {
 		parameters: {
-			query?: never;
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
 			header?: never;
 			path: {
 				/** @description Discord guild id */
@@ -2315,6 +2600,24 @@ export interface operations {
 			};
 			/** @description Missing or invalid access token */
 			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing guild or channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -2504,7 +2807,10 @@ export interface operations {
 	};
 	get_stamps: {
 		parameters: {
-			query?: never;
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
 			header?: never;
 			path: {
 				/** @description Discord guild id */
@@ -2534,6 +2840,15 @@ export interface operations {
 			};
 			/** @description Missing guild or channel permission */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

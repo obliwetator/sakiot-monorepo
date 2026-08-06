@@ -86,6 +86,12 @@ export interface WaveformResponse {
 
 export type StampData = ApiSchema["StampInfo"];
 
+export type GuildRole = ApiSchema["GuildRole"];
+
+export type RoleMember = ApiSchema["RoleMember"];
+
+export type RoleView = ApiSchema["RoleView"];
+
 export const apiSlice = createApi({
 	reducerPath: "api",
 	baseQuery: baseQueryWithReauth,
@@ -139,11 +145,19 @@ export const apiSlice = createApi({
 		logout: builder.mutation<void, void>({
 			query: () => ({ url: "logout", method: "POST" }),
 		}),
-		getCurrentGuildDirs: builder.query<Channels[], string>({
-			query: (guild_id) => `current/${guild_id}`,
+		getCurrentGuildDirs: builder.query<
+			Channels[],
+			{ guild_id: string; as_role?: string }
+		>({
+			query: ({ guild_id, as_role }) =>
+				`current/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
 		}),
-		getLiveStems: builder.query<string[], string>({
-			query: (guild_id) => `current/${guild_id}/live-stems`,
+		getLiveStems: builder.query<
+			string[],
+			{ guild_id: string; as_role?: string }
+		>({
+			query: ({ guild_id, as_role }) =>
+				`current/${guild_id}/live-stems${as_role ? `?as_role=${as_role}` : ""}`,
 		}),
 		getSessionManifest: builder.query<SessionManifest, string>({
 			query: (recording_session_id) =>
@@ -193,15 +207,20 @@ export const apiSlice = createApi({
 			}),
 			invalidatesTags: ["Clips"],
 		}),
-		getClips: builder.query<ClipData[], string>({
-			query: (guild_id) => ({
-				url: `audio/clips/${guild_id}`,
-			}),
-			providesTags: ["Clips"],
-		}),
-		getStamps: builder.query<StampData[], string>({
-			query: (guild_id) => ({
-				url: `stamps/${guild_id}`,
+		getClips: builder.query<ClipData[], { guild_id: string; as_role?: string }>(
+			{
+				query: ({ guild_id, as_role }) => ({
+					url: `audio/clips/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
+				}),
+				providesTags: ["Clips"],
+			},
+		),
+		getStamps: builder.query<
+			StampData[],
+			{ guild_id: string; as_role?: string }
+		>({
+			query: ({ guild_id, as_role }) => ({
+				url: `stamps/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
 			}),
 		}),
 		deleteClip: builder.mutation<void, { guild_id: string; file_name: string }>(
@@ -423,6 +442,22 @@ export const apiSlice = createApi({
 				{ type: "GuildVoiceSettings", id: guild_id },
 			],
 		}),
+		getGuildRoles: builder.query<GuildRole[], string>({
+			query: (guild_id) => `admin/guilds/${guild_id}/roles`,
+		}),
+		getRoleMembers: builder.query<
+			RoleMember[],
+			{ guild_id: string; role_id: string }
+		>({
+			query: ({ guild_id, role_id }) =>
+				`admin/guilds/${guild_id}/roles/${role_id}/members`,
+		}),
+		getRoleView: builder.query<RoleView, { guild_id: string; role_id: string }>(
+			{
+				query: ({ guild_id, role_id }) =>
+					`admin/guilds/${guild_id}/roles/${role_id}/channels`,
+			},
+		),
 		// Combine all 3 requests into a single query to emulate the existing Promise.all behavior
 		getAuthDetails: builder.query<AuthDetails, void>({
 			async queryFn(_arg, _queryApi, _extraOptions, fetchWithBQ) {
@@ -482,4 +517,7 @@ export const {
 	useGetGuildVoiceSettingsQuery,
 	useSetGuildVoiceSettingsMutation,
 	useDeleteGuildVoiceSettingsMutation,
+	useGetGuildRolesQuery,
+	useGetRoleMembersQuery,
+	useGetRoleViewQuery,
 } = apiSlice;

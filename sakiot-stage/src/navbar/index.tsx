@@ -44,6 +44,11 @@ function ResponsiveAppBar(props: {
 					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/admin/voice-settings`,
 				);
 				break;
+			case "Members":
+				navigate(
+					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/members`,
+				);
+				break;
 			case "Audio":
 				navigate(
 					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/audio`,
@@ -70,7 +75,7 @@ function ResponsiveAppBar(props: {
 	};
 
 	const visiblePages: PageName[] = isGuildAdmin(props.guildSelected)
-		? [...pages, "Admin", "Voice Settings"]
+		? [...pages, "Admin", "Voice Settings", "Members"]
 		: pages;
 
 	return (

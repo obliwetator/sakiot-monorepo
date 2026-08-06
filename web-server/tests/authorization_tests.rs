@@ -437,10 +437,14 @@ async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn live_guild_owner_replaces_stale_oauth_owner_snapshot(
+async fn oauth_owner_snapshot_grants_full_permissions(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
+    // The local tooling grants the dev account `owner = true` in user_guilds;
+    // the agent keeps that flag fresh (sync_guild_owner) and drops the row on
+    // member removal, so the snapshot is trusted for owner access even when
+    // `guilds.owner_id` names someone else (e.g. an imported guild).
     sqlx::query("UPDATE user_guilds SET owner = true WHERE id = $1 AND user_id = $2")
         .bind(ALLOWED_GUILD_ID)
         .bind(USER_ID)
@@ -448,16 +452,18 @@ async fn live_guild_owner_replaces_stale_oauth_owner_snapshot(
         .await?;
 
     let pool = web::Data::new(pool);
-    let former_owner = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
-    assert!(!former_owner.contains(Permissions::ADMINISTRATOR));
+    let granted = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert_eq!(granted, Permissions::all());
 
-    sqlx::query("UPDATE guilds SET owner_id = $1 WHERE id = $2")
-        .bind(USER_ID)
+    // A plain membership snapshot (owner = false) without roles stays at
+    // @everyone's level: only the flag, not the row, grants owner powers.
+    sqlx::query("UPDATE user_guilds SET owner = false WHERE id = $1 AND user_id = $2")
         .bind(ALLOWED_GUILD_ID)
+        .bind(USER_ID)
         .execute(pool.get_ref())
         .await?;
-    let current_owner = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
-    assert_eq!(current_owner, Permissions::all());
+    let demoted = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert!(!demoted.contains(Permissions::ADMINISTRATOR));
 
     Ok(())
 }

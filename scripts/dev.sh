@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Local debug environment for web_server. Runs on any dev machine.
 #
-#   scripts/dev.sh                 # up: db + migrate + seed + optional fixtures + cargo watch
+#   scripts/dev.sh                 # up: db + seed + mirror ALL of staging + cargo watch
+#   scripts/dev.sh up ask          # same, but prompt for a random sample instead
 #   scripts/dev.sh db              # only db + migrate + seed
 #   scripts/dev.sh down            # stop local postgres
 #   scripts/dev.sh reset           # drop local db volume, then db
-#   scripts/dev.sh fetch-fixtures  # pull recordings/clips/stamps from staging (needs SSH)
+#   scripts/dev.sh fetch-fixtures  # mirror ALL of staging: recordings + clips + stamps
 #   scripts/dev.sh fetch <what>    # pull one recording/session/clip/stamp by URL or id
 #   scripts/dev.sh clean           # drop db volume + delete fetched fixture files
 #
@@ -22,10 +23,13 @@
 #   scripts/dev.sh fetch <url> --into staging   # copy prod data into staging
 #
 # Clips and stamps always travel with the session they belong to, and a session
-# always brings its own clips and stamps. Bulk fetches take the most recent
-# recordings and a random sample of clips/stamps:
+# always brings its own clips and stamps. With no flags, fetch-fixtures mirrors
+# every finalized recording, clip and stamp in staging; explicit counts take
+# the most recent recordings and a random sample of clips/stamps instead:
 #
-#   scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5
+#   scripts/dev.sh fetch-fixtures                            # all of staging
+#   scripts/dev.sh fetch-fixtures --guild 362257054829641758 # all of one guild
+#   scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5   # random sample
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -158,11 +162,25 @@ stop_db_on_exit() {
     exit "$status"
 }
 
+fetch_fixtures_for_up() { # fetch_fixtures_for_up [ask]
+    # Plain `dev.sh up` mirrors all of staging so the local machine is an
+    # exact copy on every run. `dev.sh up ask` (or SAKIOT_DEV_FETCH=ask)
+    # keeps the interactive prompt for pulling a random sample from other
+    # guilds instead.
+    if [ "${1:-all}" = ask ] || [ "${SAKIOT_DEV_FETCH:-all}" = ask ]; then
+        prompt_fetch_fixtures
+    elif cmd_fetch_fixtures; then
+        log "staging mirror complete"
+    else
+        log "warning: staging mirror failed; starting without fixtures (re-run 'scripts/dev.sh fetch-fixtures')"
+    fi
+}
+
 cmd_up() {
     ensure_media_tools
     db_up
     trap stop_db_on_exit EXIT
-    prompt_fetch_fixtures
+    fetch_fixtures_for_up "$@"
     run_server
 }
 
@@ -1296,6 +1314,15 @@ verify_staging_visibility() { # verify_staging_visibility <tmpdir> <dest data di
         log "    FAIL  no voice channel rows; the recordings tree stays empty"
     fi
 
+    count=$(dest_tsv "SELECT count(*) FROM channel_permissions cp
+                       JOIN channels c ON c.channel_id = cp.channel_id
+                      WHERE c.guild_id IN ($GUILD_IDS)")
+    if [ "${count:-0}" -gt 0 ]; then
+        log "    ok    $count channel permission overwrite(s) drive visibility"
+    else
+        log "    FAIL  no channel_permissions rows; every role sees the same channels"
+    fi
+
     count=$(dest_tsv "SELECT count(*) FROM guilds_present WHERE guild_id IN ($GUILD_IDS)")
     if [ "${count:-0}" -gt 0 ]; then
         log "    ok    guild listed in guilds_present"
@@ -1332,13 +1359,15 @@ import_lookup_rows() { # import_lookup_rows <tmpdir>
     import_tsv guilds "$tmp/guilds.tsv"
     import_tsv roles "$tmp/roles.tsv"
     import_tsv channels "$tmp/channels.tsv"
+    import_tsv channel_permissions "$tmp/channel_permissions.tsv"
     import_tsv user_names "$tmp/user_names.tsv"
     import_tsv user_nicknames "$tmp/user_nicknames.tsv"
     import_tsv user_name_history "$tmp/user_name_history.tsv"
 }
 
 cmd_fetch_fixtures() (
-    local count=20 count_given=0 clips_count=0 stamps_count=0 sample_given=0
+    local count=all count_given=0 clips_count=all clips_given=0
+    local stamps_count=all stamps_given=0 sample_given=0
     local guild_filter="" selector="" forced_kind="" source_arg=""
     SELECTOR_KIND=""
     SELECTOR_VALUE=""
@@ -1352,22 +1381,27 @@ cmd_fetch_fixtures() (
         case "$1" in
             --count)
                 [ $# -ge 2 ] || die "--count needs a value"
-                is_uint "$2" || die "--count must be an unsigned integer"
+                [ "$2" = all ] || is_uint "$2" \
+                    || die "--count must be a number, 'all', or 0 to skip"
                 count=$2
                 count_given=1
                 shift 2
                 ;;
             --clips)
                 [ $# -ge 2 ] || die "--clips needs a value"
-                is_uint "$2" || die "--clips must be an unsigned integer"
+                [ "$2" = all ] || is_uint "$2" \
+                    || die "--clips must be a number, 'all', or 0 to skip"
                 clips_count=$2
+                clips_given=1
                 sample_given=1
                 shift 2
                 ;;
             --stamps)
                 [ $# -ge 2 ] || die "--stamps needs a value"
-                is_uint "$2" || die "--stamps must be an unsigned integer"
+                [ "$2" = all ] || is_uint "$2" \
+                    || die "--stamps must be a number, 'all', or 0 to skip"
                 stamps_count=$2
+                stamps_given=1
                 sample_given=1
                 shift 2
                 ;;
@@ -1436,7 +1470,7 @@ cmd_fetch_fixtures() (
     esac
 
     if [ -n "$selector" ]; then
-        [ "$count_given" -eq 0 ] || die "--count fetches recent recordings; it cannot be combined with a selector"
+        [ "$count_given" -eq 0 ] || die "--count is a bulk selection; it cannot be combined with a selector"
         [ "$sample_given" -eq 0 ] || die "--clips/--stamps sample at random; they cannot be combined with a selector"
         [ -z "$guild_filter" ] || die "--guild filters bulk fetches only; a selector already names one recording"
         SELECTOR_INPUT=$selector
@@ -1465,9 +1499,9 @@ cmd_fetch_fixtures() (
     fi
     # A bulk run with every dimension zeroed would otherwise walk the whole
     # remote setup only to import nothing.
-    if [ -z "$SELECTOR_KIND" ] && [ "$count" -eq 0 ] \
-        && [ "$clips_count" -eq 0 ] && [ "$stamps_count" -eq 0 ]; then
-        die "nothing selected: pass --count, --clips or --stamps, or name one recording/session/clip/stamp"
+    if [ -z "$SELECTOR_KIND" ] && [ "$count" = 0 ] \
+        && [ "$clips_count" = 0 ] && [ "$stamps_count" = 0 ]; then
+        die "nothing selected: pass --count, --clips or --stamps (or 'all'), or name one recording/session/clip/stamp"
     fi
 
     if [ -z "$source_arg" ] && [ -n "$SELECTOR_HOST" ]; then
@@ -1499,6 +1533,13 @@ cmd_fetch_fixtures() (
     : "${SAKIOT_DEV_SSH:?set SAKIOT_DEV_SSH=user@vps-host (personal SSH access to the VPS), or 'local' on the VPS itself}"
 
     [ "$DEST" = staging ] || [ -f "$ROOT/.env" ] || die "run 'scripts/dev.sh db' first"
+    # The import writes into the local compose db, which the up flow stops on
+    # exit — start it (migrate + seed are idempotent) instead of failing
+    # mid-import with "service \"postgres\" is not running".
+    if [ "$DEST" = local ] \
+        && ! "${COMPOSE[@]}" ps --status running postgres 2>/dev/null | grep -q Up; then
+        db_up
+    fi
     [ "$SAKIOT_DEV_SSH" = local ] || need ssh "for remote database export"
     need rsync "for file transfer"
     configure_remote_psql
@@ -1540,10 +1581,17 @@ cmd_fetch_fixtures() (
                 || die "no recording in $REMOTE_DB ($SOURCE_LABEL) matches $SELECTOR_KIND $SELECTOR_VALUE"
             ;;
         *)
-            if [ "$count" -gt 0 ]; then
-                log "exporting up to $count recent recordings from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
-                fetch_tsv "SELECT id FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" \
-                    > "$tmp/audio_file_ids.tsv"
+            if [ "$count" != 0 ]; then
+                if [ "$count" = all ]; then
+                    log "exporting every finalized recording from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+                    fetch_tsv "SELECT id FROM audio_files
+                                WHERE reaped = false AND end_ts IS NOT NULL $guild_filter" \
+                        > "$tmp/audio_file_ids.tsv"
+                else
+                    log "exporting up to $count recent recordings from $REMOTE_DB ($SOURCE_LABEL) on $SAKIOT_DEV_SSH"
+                    fetch_tsv "SELECT id FROM audio_files WHERE reaped = false AND end_ts IS NOT NULL $guild_filter ORDER BY id DESC LIMIT $count" \
+                        > "$tmp/audio_file_ids.tsv"
+                fi
                 [ -s "$tmp/audio_file_ids.tsv" ] \
                     || die "$SOURCE_LABEL has no matching recordings — nothing to fetch"
                 # This is the one selection that re-answers "which recordings do
@@ -1553,22 +1601,37 @@ cmd_fetch_fixtures() (
             # Recordings are taken newest-first because a recent one is what you
             # are usually debugging. Clips and stamps are sampled instead: they
             # accumulate over the whole history, and the interesting ones are as
-            # likely to be old as new.
-            if [ "$clips_count" -gt 0 ]; then
-                available=$(fetch_tsv "SELECT count(*) FROM clips
-                                        WHERE deleted_at IS NULL
-                                          AND saved_file_name IS NOT NULL $guild_filter")
-                log "sampling $clips_count of ${available:-0} clip(s) in $SOURCE_LABEL at random"
-                fetch_tsv "SELECT clip_id FROM clips
-                            WHERE deleted_at IS NULL
-                              AND saved_file_name IS NOT NULL $guild_filter
-                            ORDER BY random() LIMIT $clips_count" > "$tmp/clip_ids.tsv"
+            # likely to be old as new. 'all' skips the sampling and takes every
+            # clip or stamp in the selection.
+            if [ "$clips_count" != 0 ]; then
+                if [ "$clips_count" = all ]; then
+                    log "exporting every clip in $SOURCE_LABEL"
+                    fetch_tsv "SELECT clip_id FROM clips
+                                WHERE deleted_at IS NULL
+                                  AND saved_file_name IS NOT NULL $guild_filter" \
+                        > "$tmp/clip_ids.tsv"
+                else
+                    available=$(fetch_tsv "SELECT count(*) FROM clips
+                                            WHERE deleted_at IS NULL
+                                              AND saved_file_name IS NOT NULL $guild_filter")
+                    log "sampling $clips_count of ${available:-0} clip(s) in $SOURCE_LABEL at random"
+                    fetch_tsv "SELECT clip_id FROM clips
+                                WHERE deleted_at IS NULL
+                                  AND saved_file_name IS NOT NULL $guild_filter
+                                ORDER BY random() LIMIT $clips_count" > "$tmp/clip_ids.tsv"
+                fi
             fi
-            if [ "$stamps_count" -gt 0 ]; then
-                available=$(fetch_tsv "SELECT count(*) FROM stamps WHERE true $guild_filter")
-                log "sampling $stamps_count of ${available:-0} stamp(s) in $SOURCE_LABEL at random"
-                fetch_tsv "SELECT id FROM stamps WHERE true $guild_filter
-                            ORDER BY random() LIMIT $stamps_count" > "$tmp/stamp_ids.tsv"
+            if [ "$stamps_count" != 0 ]; then
+                if [ "$stamps_count" = all ]; then
+                    log "exporting every stamp in $SOURCE_LABEL"
+                    fetch_tsv "SELECT id FROM stamps WHERE true $guild_filter" \
+                        > "$tmp/stamp_ids.tsv"
+                else
+                    available=$(fetch_tsv "SELECT count(*) FROM stamps WHERE true $guild_filter")
+                    log "sampling $stamps_count of ${available:-0} stamp(s) in $SOURCE_LABEL at random"
+                    fetch_tsv "SELECT id FROM stamps WHERE true $guild_filter
+                                ORDER BY random() LIMIT $stamps_count" > "$tmp/stamp_ids.tsv"
+                fi
             fi
             ;;
     esac
@@ -1690,19 +1753,12 @@ cmd_fetch_fixtures() (
     # audio_files columns: file_name guild_id channel_id user_id year month ...
     # clip_meta:  clip_id guild_id channel_id user_id saved_file_name
     # stamp_meta: id guild_id channel_id target_user_id stamper_user_id stamp_ts
-    # A clip or stamp can sit on a channel no imported fragment mentions, and
-    # both listings run through visible_channels_for_user, so their guild and
-    # channel have to come across too or nothing can see them.
-    local channel_ids user_ids
+    local user_ids
     GUILD_IDS=$( { cut -f2 "$tmp/audio_files.tsv"
                    cut -f2 "$tmp/clip_meta.tsv"
                    cut -f2 "$tmp/stamp_meta.tsv"; } \
         | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
     [ -n "$GUILD_IDS" ] || die "the selection names no guild — nothing importable in it"
-    channel_ids=$( { cut -f3 "$tmp/audio_files.tsv"
-                     cut -f3 "$tmp/clip_meta.tsv"
-                     cut -f3 "$tmp/stamp_meta.tsv"; } \
-        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
     user_ids=$( { cut -f4 "$tmp/audio_files.tsv"
                   cut -f4 "$tmp/clip_meta.tsv"
                   cut -f4,5 "$tmp/stamp_meta.tsv" | tr '\t' '\n'; } \
@@ -1740,17 +1796,20 @@ cmd_fetch_fixtures() (
                 ORDER BY e.completed_at, e.id" > "$tmp/voice_connection_events.tsv"
 
     # voice_state_events columns: id guild_id channel_id user_id event_type_id ...
-    # Pull names and channels for the bystanders those events reference too.
+    # Pull names for the bystanders those events reference too.
     user_ids=$( { printf '%s\n' "$user_ids" | tr ',' '\n'
                   cut -f4 "$tmp/voice_state_events.tsv"; } \
-        | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
-    channel_ids=$( { printf '%s\n' "$channel_ids" | tr ',' '\n'
-                     cut -f3 "$tmp/voice_state_events.tsv"; } \
         | grep -E '^[0-9]+$' | sort -un | paste -sd, - || true)
 
     fetch_tsv "SELECT * FROM guilds WHERE id IN ($GUILD_IDS)" > "$tmp/guilds.tsv"
     fetch_tsv "SELECT * FROM roles WHERE guild_id IN ($GUILD_IDS)" > "$tmp/roles.tsv"
-    fetch_tsv "SELECT * FROM channels WHERE channel_id IN ($(id_list "$channel_ids"))" > "$tmp/channels.tsv"
+    # Every channel of the guild, not just the ones recordings landed in:
+    # the role/member permission math and the view-as-role preview need the
+    # full channel list and its overwrites to say anything useful.
+    fetch_tsv "SELECT * FROM channels WHERE guild_id IN ($GUILD_IDS)" > "$tmp/channels.tsv"
+    fetch_tsv "SELECT cp.* FROM channel_permissions cp
+               JOIN channels c ON c.channel_id = cp.channel_id
+               WHERE c.guild_id IN ($GUILD_IDS)" > "$tmp/channel_permissions.tsv"
     fetch_tsv "SELECT * FROM user_names WHERE user_id IN ($(id_list "$user_ids"))" > "$tmp/user_names.tsv"
     fetch_tsv "SELECT * FROM user_nicknames WHERE user_id IN ($(id_list "$user_ids")) AND guild_id IN ($GUILD_IDS)" > "$tmp/user_nicknames.tsv"
     fetch_tsv "SELECT * FROM user_name_history WHERE user_id IN ($(id_list "$user_ids"))" > "$tmp/user_name_history.tsv"
@@ -1820,17 +1879,17 @@ local_row_count() { # local_row_count "<count query>"
     printf '%s' "${value:-0}"
 }
 
-ask_count() { # ask_count <prompt> <parenthetical> -> echoes the answer
+ask_count() { # ask_count <prompt> <parenthetical> -> echoes 'all' or a number
     local prompt=$1 note=$2 answer
     while true; do
-        printf '%s (%s) [0]: ' "$prompt" "$note" >&2
+        printf '%s (%s) [all]: ' "$prompt" "$note" >&2
         read -r answer
-        answer=${answer:-0}
-        if is_uint "$answer"; then
+        answer=${answer:-all}
+        if [ "$answer" = all ] || is_uint "$answer"; then
             printf '%s' "$answer"
             return
         fi
-        echo "Enter an unsigned number, or 0 to skip." >&2
+        echo "Enter 'all', an unsigned number, or 0 to skip." >&2
     done
 }
 
@@ -1840,15 +1899,17 @@ prompt_fetch_fixtures() {
     # Recordings are counted from the fixture manifest because that is the set
     # this script manages and replaces wholesale; clips and stamps are only ever
     # added to, so the database is both the honest count and the whole story.
+    # Enter (the default) mirrors all of staging; a number samples at random
+    # (clips/stamps) or takes that many newest recordings; 0 skips a category.
     local count clips stamps
     count=$(ask_count "Recordings to copy from staging" \
-        "$(fixture_count) currently available; 0 keeps them")
-    clips=$(ask_count "Random clips to copy from staging" \
-        "$(local_row_count "SELECT count(*) FROM clips WHERE deleted_at IS NULL") here already; adds to them, 0 skips")
-    stamps=$(ask_count "Random stamps to copy from staging" \
-        "$(local_row_count "SELECT count(*) FROM stamps") here already; adds to them, 0 skips")
+        "all mirrors staging; $(fixture_count) currently available; 0 keeps them")
+    clips=$(ask_count "Clips to copy from staging" \
+        "all mirrors staging; $(local_row_count "SELECT count(*) FROM clips WHERE deleted_at IS NULL") here already; 0 skips")
+    stamps=$(ask_count "Stamps to copy from staging" \
+        "all mirrors staging; $(local_row_count "SELECT count(*) FROM stamps") here already; 0 skips")
 
-    if [ "$count" -eq 0 ] && [ "$clips" -eq 0 ] && [ "$stamps" -eq 0 ]; then
+    if [ "$count" = 0 ] && [ "$clips" = 0 ] && [ "$stamps" = 0 ]; then
         log "skipping staging fixtures"
         return
     fi
@@ -1880,7 +1941,7 @@ cmd_clean() {
 }
 
 case "${1:-up}" in
-    up) cmd_up ;;
+    up) cmd_up "${@:2}" ;;
     db) db_up ;;
     down) cmd_down ;;
     reset) cmd_reset ;;

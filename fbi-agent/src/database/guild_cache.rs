@@ -25,21 +25,61 @@ pub(crate) async fn update_info(handler: &Handler, ctx: &Context, guilds: &[Guil
         })
         .collect();
 
-    if let Err(err) = sync_info(handler, &guild_cached).await {
+    if let Err(err) = sync_info(&handler.database, &guild_cached).await {
         error!(error = %err, "failed to sync guild cache");
     }
 }
 
-async fn sync_info(handler: &Handler, guild_cached: &[Guild]) -> DbResult<()> {
-    update_guilds(guild_cached, handler).await?;
-    update_roles(guild_cached, handler).await?;
-    update_user_roles(guild_cached, handler).await?;
-    update_channels(guild_cached, handler).await?;
-    update_permissions(guild_cached, handler).await?;
+async fn sync_info(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
+    update_guilds(pool, guild_cached).await?;
+    update_roles(pool, guild_cached).await?;
+    update_user_roles(pool, guild_cached).await?;
+    update_channels(pool, guild_cached).await?;
+    update_permissions(pool, guild_cached).await?;
     Ok(())
 }
 
-async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
+/// Self-healing full re-sync of the guild cache tables from the live serenity
+/// cache. Discord replays nothing after a gateway gap, and a long-lived bot
+/// would otherwise keep a stale snapshot of roles, channels, permission
+/// overwrites and member role assignments until its next restart.
+pub(crate) async fn resync_guild_cache(custom: &crate::Custom) -> DbResult<()> {
+    let guild_ids: Vec<GuildId> = custom.cache.guilds();
+    let mut guild_cached = Vec::with_capacity(guild_ids.len());
+    for guild_id in &guild_ids {
+        if let Some(guild) = guild_id.to_guild_cached(&custom.cache) {
+            guild_cached.push(guild.to_owned());
+        }
+    }
+
+    sync_info(&custom.pool, &guild_cached).await?;
+    sync_present_guild_ids(&custom.pool, &guild_ids).await?;
+    Ok(())
+}
+
+/// The gateway periodically re-sends `GuildCreate` for guilds it already
+/// knows; a guild that becomes available again mid-run lands here too, so this
+/// is also where a full cache sync happens for one guild.
+pub(crate) async fn sync_new_guild(pool: &Pool<Postgres>, guild: &Guild) -> DbResult<()> {
+    sync_info(pool, std::slice::from_ref(guild)).await?;
+    upsert_guilds_present(pool, &[guild.id.to_i64()]).await
+}
+
+/// The bot leaving a guild (`guild_delete` without guild data). Only the
+/// presence row is removed: recordings and their channel/role rows are the
+/// product, and their foreign keys are not worth cascading away.
+pub(crate) async fn remove_guild_present(
+    pool: &Pool<Postgres>,
+    guild_id: serenity::model::id::GuildId,
+) -> DbResult<()> {
+    sqlx::query("DELETE FROM guilds_present WHERE guild_id = $1")
+        .bind(guild_id.to_i64())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn update_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     for guild in guild_cached {
         let roles: Vec<_> = guild.roles.iter().collect();
         for chunk in roles.chunks(BIND_LIMIT / 4) {
@@ -59,11 +99,11 @@ async fn update_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()>
                      name = EXCLUDED.name",
                 );
 
-            query_builder.build().execute(&handler.database).await?;
+            query_builder.build().execute(pool).await?;
         }
 
         let role_ids: Vec<i64> = roles.iter().map(|role| role.0.to_i64()).collect();
-        prune_stale_roles(&handler.database, guild.id.to_i64(), &role_ids).await?;
+        prune_stale_roles(pool, guild.id.to_i64(), &role_ids).await?;
     }
 
     Ok(())
@@ -107,9 +147,9 @@ pub(crate) async fn delete_live_role(pool: &Pool<Postgres>, role_id: RoleId) -> 
     Ok(())
 }
 
-async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
+async fn update_user_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     for guild in guild_cached {
-        delete_user_roles_for_guild(&handler.database, guild.id.to_i64()).await?;
+        delete_user_roles_for_guild(pool, guild.id.to_i64()).await?;
 
         let mut user_roles = Vec::new();
         for (user_id, user) in guild.members.iter() {
@@ -128,7 +168,7 @@ async fn update_user_roles(guild_cached: &[Guild], handler: &Handler) -> DbResul
                 })
                 .push(" ON CONFLICT (user_id, role_id) DO NOTHING");
 
-            query_builder.build().execute(&handler.database).await?;
+            query_builder.build().execute(pool).await?;
         }
     }
 
@@ -210,9 +250,9 @@ pub(crate) async fn delete_live_member(
     Ok(())
 }
 
-async fn update_permissions(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
+async fn update_permissions(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     for guild in guild_cached {
-        delete_channel_permissions_for_guild(&handler.database, guild.id.to_i64()).await?;
+        delete_channel_permissions_for_guild(pool, guild.id.to_i64()).await?;
 
         let mut overwrites = Vec::new();
         for channel in guild.channels.values() {
@@ -257,14 +297,14 @@ async fn update_permissions(guild_cached: &[Guild], handler: &Handler) -> DbResu
                 })
                 .push(" ON CONFLICT (channel_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, allow = EXCLUDED.allow, deny = EXCLUDED.deny");
 
-            query_builder.build().execute(&handler.database).await?;
+            query_builder.build().execute(pool).await?;
         }
     }
 
     Ok(())
 }
 
-async fn update_guilds(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
+async fn update_guilds(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     if guild_cached.is_empty() {
         return Ok(());
     }
@@ -280,7 +320,7 @@ async fn update_guilds(guild_cached: &[Guild], handler: &Handler) -> DbResult<()
             })
             .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
 
-        query_builder.build().execute(&handler.database).await?;
+        query_builder.build().execute(pool).await?;
     }
 
     Ok(())
@@ -318,7 +358,7 @@ pub(crate) async fn sync_guild_owner(
     Ok(())
 }
 
-async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
+async fn update_channels(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     for guild in guild_cached {
         let channels: Vec<_> = guild.channels.values().collect();
         for chunk in channels.chunks(BIND_LIMIT / 4) {
@@ -339,11 +379,11 @@ async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<
                      name = EXCLUDED.name",
                 );
 
-            query_builder.build().execute(&handler.database).await?;
+            query_builder.build().execute(pool).await?;
         }
 
         let channel_ids: Vec<i64> = channels.iter().map(|channel| channel.id.to_i64()).collect();
-        prune_stale_channels(&handler.database, guild.id.to_i64(), &channel_ids).await?;
+        prune_stale_channels(pool, guild.id.to_i64(), &channel_ids).await?;
     }
 
     Ok(())
@@ -511,15 +551,36 @@ pub(crate) async fn prune_stale_channels_for_test(
     prune_stale_channels(pool, guild_id, channel_ids).await
 }
 
-pub async fn update_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handler) {
-    if let Err(err) = sync_guild_present(guilds, handler).await {
+pub async fn update_guild_present(guilds: Vec<UnavailableGuild>, pool: &Pool<Postgres>) {
+    let guild_ids: Vec<GuildId> = guilds.into_iter().map(|guild| guild.id).collect();
+    if let Err(err) = sync_present_guild_ids(pool, &guild_ids).await {
         error!(error = %err, "failed to update present guilds");
     }
 }
 
-async fn sync_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handler) -> DbResult<()> {
-    let guild_ids: Vec<i64> = guilds.into_iter().map(|guild| guild.id.to_i64()).collect();
+/// `guilds_present` is exactly the bot's guild set: upsert the given ids and
+/// prune everything else.
+pub(crate) async fn sync_present_guild_ids(
+    pool: &Pool<Postgres>,
+    guild_ids: &[GuildId],
+) -> DbResult<()> {
+    let guild_ids: Vec<i64> = guild_ids.iter().copied().map(ToI64::to_i64).collect();
+    upsert_guilds_present(pool, &guild_ids).await?;
+    if guild_ids.is_empty() {
+        sqlx::query("DELETE FROM guilds_present")
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("DELETE FROM guilds_present WHERE NOT (guild_id = ANY($1))")
+            .bind(&guild_ids)
+            .execute(pool)
+            .await?;
+    }
 
+    Ok(())
+}
+
+async fn upsert_guilds_present(pool: &Pool<Postgres>, guild_ids: &[i64]) -> DbResult<()> {
     for chunk in guild_ids.chunks(BIND_LIMIT) {
         let mut query_builder: sqlx::QueryBuilder<Postgres> =
             sqlx::QueryBuilder::new("INSERT INTO guilds_present (guild_id) ");
@@ -530,19 +591,45 @@ async fn sync_guild_present(guilds: Vec<UnavailableGuild>, handler: &Handler) ->
             })
             .push(" ON CONFLICT (guild_id) DO NOTHING");
 
-        query_builder.build().execute(&handler.database).await?;
+        query_builder.build().execute(pool).await?;
     }
-
-    if guild_ids.is_empty() {
-        sqlx::query("DELETE FROM guilds_present")
-            .execute(&handler.database)
-            .await?;
-    } else {
-        sqlx::query("DELETE FROM guilds_present WHERE NOT (guild_id = ANY($1))")
-            .bind(&guild_ids)
-            .execute(&handler.database)
-            .await?;
-    }
-
     Ok(())
+}
+
+const DEFAULT_GUILD_CACHE_RESYNC_SECONDS: u64 = 900;
+
+/// Periodically re-sync the guild cache tables from the live serenity cache so
+/// a long-running bot self-heals events it missed (gateway gaps, downtime,
+/// events Discord does not replay). Interval configurable via
+/// `SAKIOT_GUILD_CACHE_RESYNC_SECONDS`; `0` disables the task.
+pub(crate) fn spawn_cache_resync(
+    custom: crate::Custom,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let interval_seconds = std::env::var("SAKIOT_GUILD_CACHE_RESYNC_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_GUILD_CACHE_RESYNC_SECONDS);
+
+    tokio::spawn(async move {
+        if interval_seconds == 0 {
+            return;
+        }
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_seconds));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(err) = resync_guild_cache(&custom).await {
+                        error!(error = %err, "periodic guild cache resync failed");
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        return;
+                    }
+                }
+            }
+        }
+    })
 }

@@ -23,6 +23,36 @@ INSERT INTO roles (guild_id, role_id, permission, name)
 VALUES (111111111111111111, 111111111111111111, 1049600, '@everyone')
 ON CONFLICT DO NOTHING;
 
+-- Sample roles so the members page has something to filter by out of the box.
+-- 8 = ADMINISTRATOR, 32 = MANAGE_GUILD, 1024 = VIEW_CHANNEL.
+INSERT INTO roles (guild_id, role_id, permission, name)
+VALUES
+    (111111111111111111, 111111111111111112, 40, 'Moderator'),
+    (111111111111111111, 111111111111111113, 1024, 'VIP')
+ON CONFLICT DO NOTHING;
+
+-- Sample members with names (user_names) and, for one, a guild nickname.
+INSERT INTO user_names (user_id, username, global_name)
+VALUES
+    (100000000000000001, 'alice', NULL),
+    (100000000000000002, 'bob', 'Bobby'),
+    (100000000000000003, 'carol', NULL),
+    (100000000000000004, 'dave', NULL)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO user_nicknames (user_id, guild_id, nickname)
+VALUES (100000000000000002, 111111111111111111, 'BobbyNick')
+ON CONFLICT DO NOTHING;
+
+-- alice and carol moderate; bob and carol are VIPs; dave has no role.
+INSERT INTO user_roles (user_id, role_id)
+VALUES
+    (100000000000000001, 111111111111111112),
+    (100000000000000003, 111111111111111112),
+    (100000000000000002, 111111111111111113),
+    (100000000000000003, 111111111111111113)
+ON CONFLICT DO NOTHING;
+
 INSERT INTO channels (channel_id, guild_id, type, name)
 VALUES
     (111111111111111112, 111111111111111111, 2, 'General Voice'),

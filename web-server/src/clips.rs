@@ -12,7 +12,8 @@ use sqlx::{Pool, Postgres, Row};
 use tracing::{error, info, warn};
 
 use crate::permissions::{
-    require_channel_access, require_guild_manager, visible_channels_for_user,
+    AsRoleQuery, listing_channels_for, require_channel_access, require_guild_manager,
+    require_role_preview, visible_channels_for_user,
 };
 use crate::proto::jammer::JamData;
 use crate::proto::jammer::jam_response::JamResponseEnum;
@@ -138,25 +139,31 @@ pub async fn get_clip(
     get,
     path = "/api/audio/clips/{guild_id}",
     tag = "clips",
-    params(("guild_id" = i64, Path, description = "Discord guild id")),
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("as_role" = i64, Query, description = "Impersonate a guild role (managers only)"),
+    ),
     responses(
         (status = 200, description = "Guild clips", body = [ClipInfo]),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 403, description = "Missing guild or channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Role does not exist in this guild", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
 #[get("/audio/clips/{guild_id}")]
 pub async fn get_clips(
-    _req: HttpRequest,
+    req: HttpRequest,
+    query: web::Query<AsRoleQuery>,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
     token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    let permitted = visible_channels_for_user(&pool, guild_id, token.user_id).await?;
+    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
+    let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<ClipInfo>::new()));
     }

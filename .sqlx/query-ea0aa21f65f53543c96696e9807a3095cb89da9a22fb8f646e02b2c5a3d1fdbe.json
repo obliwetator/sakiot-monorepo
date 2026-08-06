@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_sessions\n                (guild_id, user_id, starting_channel_id, current_channel_id, state,\n                 started_at, ended_at, end_reason, last_segment_index)\n             VALUES ($1, $2, $3, $3, 'finalized',\n                     to_timestamp(1), to_timestamp(3), 'test', 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ea0aa21f65f53543c96696e9807a3095cb89da9a22fb8f646e02b2c5a3d1fdbe"
+}

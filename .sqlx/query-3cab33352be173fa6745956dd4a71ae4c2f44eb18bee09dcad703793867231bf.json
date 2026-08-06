@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)\n         VALUES ($1, $2, 'granted guild', NULL, true, 8, ARRAY[]::text[])",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3cab33352be173fa6745956dd4a71ae4c2f44eb18bee09dcad703793867231bf"
+}

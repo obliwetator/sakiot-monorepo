@@ -26,9 +26,11 @@ import {
 } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
+import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
 import { canDeleteClip } from "../../shared/permissions";
 import { formatDuration } from "../../utils/formatTime";
+import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";
 
 function SimpleAccordion(props: {
@@ -197,8 +199,9 @@ export default function Clips() {
 	const { data: authData } = useGetAuthDetailsQuery(undefined, {
 		skip: !hasLoggedInCookie(),
 	});
+	const { asRoleArg } = useAsRole();
 	const { data, isError, isSuccess } = useGetClipsQuery(
-		guildSelected?.id || "",
+		{ guild_id: guildSelected?.id || "", ...asRoleArg },
 		{
 			skip: !guildSelected?.id,
 			refetchOnMountOrArgChange: true,
@@ -211,12 +214,15 @@ export default function Clips() {
 
 	if (isSuccess && data) {
 		return (
-			<ClipsLayout
-				data={data}
-				params={params}
-				currentUserId={authData?.user?.user_id ?? null}
-				guildSelected={guildSelected}
-			/>
+			<Box sx={{ p: { xs: 1.5, md: 3 } }}>
+				<ViewAsRoleBanner guildId={guildSelected?.id ?? ""} />
+				<ClipsLayout
+					data={data}
+					params={params}
+					currentUserId={authData?.user?.user_id ?? null}
+					guildSelected={guildSelected}
+				/>
+			</Box>
 		);
 	} else {
 		return <div>No clip data</div>;

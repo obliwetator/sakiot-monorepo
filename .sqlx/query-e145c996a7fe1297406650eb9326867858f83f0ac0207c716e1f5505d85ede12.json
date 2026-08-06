@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_nicknames (user_id, guild_id, nickname)\n         VALUES (40, $1, 'BobbyNick')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e145c996a7fe1297406650eb9326867858f83f0ac0207c716e1f5505d85ede12"
+}

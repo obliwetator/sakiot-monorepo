@@ -23,6 +23,11 @@ const GuildVoiceSettingsPage = React.lazy(() =>
 		default: m.GuildVoiceSettingsPage,
 	})),
 );
+const GuildMembers = React.lazy(() =>
+	import("../features/members").then((m) => ({
+		default: m.GuildMembers,
+	})),
+);
 
 const lazyRoute = (node: React.ReactNode) => (
 	<Suspense fallback={<Box p={2}>Loading Route</Box>}>{node}</Suspense>
@@ -69,6 +74,7 @@ export function AppRoutes() {
 								element={lazyRoute(<GuildVoiceSettingsPage />)}
 							/>
 						</Route>
+						<Route path="members" element={lazyRoute(<GuildMembers />)} />
 					</Route>
 				</Route>
 			</Route>

@@ -20,21 +20,42 @@ pub async fn guild_ban_removal(
 }
 
 pub async fn guild_create(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
-    _guild: serenity::model::guild::Guild,
+    guild: serenity::model::guild::Guild,
     _is_new: Option<bool>,
 ) {
-    // info!("guild data : {:?}", is_new);
-    // database::guilds::sync_guilds(guild, is_new).await;
+    if let Err(err) = crate::database::guild_cache::sync_new_guild(&handler.database, &guild).await
+    {
+        error!(
+            error = %err,
+            guild_id = guild.id.get(),
+            "failed to sync guild cache on guild_create"
+        );
+    }
 }
 
 pub async fn guild_delete(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
-    _incomplete: serenity::model::guild::UnavailableGuild,
-    _full: Option<serenity::model::guild::Guild>,
+    incomplete: serenity::model::guild::UnavailableGuild,
+    full: Option<serenity::model::guild::Guild>,
 ) {
+    // full = Some means the guild is temporarily unavailable and will come
+    // back as a guild_create; only an actual removal (None) drops it from
+    // guilds_present.
+    if full.is_some() {
+        return;
+    }
+    if let Err(err) =
+        crate::database::guild_cache::remove_guild_present(&handler.database, incomplete.id).await
+    {
+        error!(
+            error = %err,
+            guild_id = incomplete.id.get(),
+            "failed to remove departed guild from guilds_present"
+        );
+    }
 }
 
 pub async fn guild_member_removal(

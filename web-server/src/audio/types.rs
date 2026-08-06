@@ -25,6 +25,11 @@ pub struct File {
     pub channel_journey: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    /// Role-preview annotation only: "can-listen" | "visible-only" | "hidden".
+    /// Absent in normal listings, which are filtered to what the viewer can
+    /// actually play.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
     #[serde(skip)]
     #[schema(ignore)]
     pub start_ts_ms: Option<i64>,

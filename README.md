@@ -29,11 +29,15 @@ scripts/dev.sh
 On first run it generates a root `.env` with local values (random JWT and dev
 login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
 that points the frontend at the local API. It then starts Postgres via
-`compose.dev.yml`, runs migrations, seeds a dev account and guild, asks how many
-staging recordings, clips and stamps to copy (`0` skips each), and starts
-`web-server` under `cargo watch` with the `dev-login` feature, so saving a Rust
-file rebuilds and restarts the server. Discord OAuth is not needed:
-the frontend's dev login button calls `/api/dev_login` using
+`compose.dev.yml`, runs migrations, seeds a dev account and guild, and mirrors
+**all** of staging automatically — every finalized recording, clip and stamp,
+so the local machine is an exact copy on every run (needs `SAKIOT_DEV_SSH` or
+a live SSH prompt; a failed mirror logs a warning and the server still comes
+up). `scripts/dev.sh up ask` (or `SAKIOT_DEV_FETCH=ask`) swaps the mirror for
+the interactive prompt, which pulls a random sample from other guilds instead.
+It then starts `web-server` under `cargo watch` with the `dev-login` feature,
+so saving a Rust file rebuilds and restarts the server. Discord OAuth is not
+needed: the frontend's dev login button calls `/api/dev_login` using
 `VITE_DEV_LOGIN_SECRET`.
 
 Stopping the script with Ctrl+C also stops the local PostgreSQL container. Its
@@ -50,9 +54,10 @@ Other subcommands:
 
 ```sh
 scripts/dev.sh db              # only start Postgres + migrate + seed
+scripts/dev.sh up ask          # up, but prompt for a random sample instead of the full mirror
 scripts/dev.sh down            # stop Postgres
 scripts/dev.sh reset           # drop the local database volume and re-seed
-scripts/dev.sh fetch-fixtures  # copy recordings/clips/stamps from staging (see below)
+scripts/dev.sh fetch-fixtures  # mirror all recordings/clips/stamps from staging (see below)
 scripts/dev.sh fetch <what>    # copy one recording/session/clip/stamp (see below)
 scripts/dev.sh clean           # drop the db volume + delete fetched fixture files
 ```
@@ -65,7 +70,9 @@ to avoid entering the SSH target when the startup prompt requests recordings:
 
 ```sh
 SAKIOT_DEV_SSH=user@vps-host
-# Or invoke the standalone command directly:
+# Or invoke the standalone command directly (no flags = mirror all of staging):
+SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures
+# A random sample instead:
 SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5
 # optionally: --guild <id>
 ```
@@ -79,11 +86,21 @@ sample instead; the run says how large the pool was:
 [dev] sampling 5 of 412 clip(s) in staging at random
 ```
 
+`fetch-fixtures` with no flags mirrors **all** of staging — every finalized
+recording, clip and stamp — so the local environment tracks the deployment
+wholesale:
+
+```sh
+scripts/dev.sh fetch-fixtures                 # everything in staging
+scripts/dev.sh fetch-fixtures --guild 850192711649722368   # all of one guild
+```
+
 A positive `--count` replaces the previously managed fixture recordings and
 media; it does not touch unrelated local data. It is the only selection that
 re-answers "which recordings do I want?", so it is the only one that replaces
-anything: `--count 0` keeps the existing set even when the same run asks for
-clips or stamps, and `--clips`/`--stamps` only ever add. Tracking rows in
+anything (and the same applies to the `all` default): `--count 0` keeps the
+existing set even when the same run asks for clips or stamps, and
+`--clips`/`--stamps` only ever add. Tracking rows in
 `media_objects` for a replaced recording are dropped with it — the FK is
 `ON DELETE RESTRICT`, and the local server re-reconciles what it still has on
 its next pass. The remote export and media download complete before replacement

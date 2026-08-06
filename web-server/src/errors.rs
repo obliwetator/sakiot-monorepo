@@ -12,6 +12,8 @@ pub struct ApiError {
 pub enum AppError {
     #[error("Clip not found")]
     ClipNotFound,
+    #[error("Role not found in this guild")]
+    RoleNotFound,
     #[error("File not found on disk")]
     FileNotFound,
     #[error("File could not be deleted from disk")]
@@ -56,6 +58,7 @@ impl ResponseError for AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::ClipNotFound => StatusCode::NOT_FOUND,
+            AppError::RoleNotFound => StatusCode::NOT_FOUND,
             AppError::FileNotFound => StatusCode::NOT_FOUND,
             AppError::FileDeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Forbidden => StatusCode::FORBIDDEN,

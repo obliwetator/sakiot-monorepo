@@ -11,6 +11,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
+import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { AudioInterface } from "./AudioInterface";
 import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
 import CustomizedTreeView from "./TreeView";
@@ -41,107 +42,114 @@ export function YearSelection() {
 	const tree = <CustomizedTreeView guildSelected={guildSelected} />;
 
 	return (
-		<Box
-			sx={{
-				display: "flex",
-				flexDirection: { xs: "column", md: "row" },
-				width: "100%",
-				height: { md: "100%" },
-			}}
-		>
-			{isDesktop ? (
+		<Box sx={{ width: "100%", height: { md: "100%" }, overflow: "hidden" }}>
+			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0 }}>
+				<ViewAsRoleBanner guildId={guildSelected?.id ?? ""} />
+			</Box>
+			<Box
+				sx={{
+					display: "flex",
+					flexDirection: { xs: "column", md: "row" },
+					width: "100%",
+					height: { md: "100%" },
+				}}
+			>
+				{isDesktop ? (
+					<Box
+						sx={{
+							flex: "0 0 20%",
+							minWidth: 220,
+							maxWidth: 320,
+							height: "100%",
+							overflowY: "auto",
+							// Hide scrollbar (Firefox / IE / WebKit)
+							scrollbarWidth: "none",
+							msOverflowStyle: "none",
+							"&::-webkit-scrollbar": { display: "none" },
+						}}
+					>
+						{tree}
+					</Box>
+				) : (
+					<Box sx={{ p: 1 }}>
+						<Button
+							variant="outlined"
+							fullWidth
+							startIcon={<FolderOpenIcon />}
+							onClick={() => setTreeOpen(true)}
+						>
+							Browse files
+						</Button>
+						<Drawer
+							anchor="left"
+							open={treeOpen}
+							onClose={() => setTreeOpen(false)}
+						>
+							<Box sx={{ width: 280 }}>{tree}</Box>
+						</Drawer>
+					</Box>
+				)}
+
 				<Box
 					sx={{
-						flex: "0 0 20%",
-						minWidth: 220,
-						maxWidth: 320,
-						height: "100%",
-						overflowY: "auto",
+						flex: 1,
+						minWidth: 0,
+						px: { xs: 1, md: 2 },
+						height: { md: "100%" },
+						overflowY: { md: "auto" },
+						// Vertical scrolling must not implicitly turn this hidden-scrollbar
+						// container into a horizontally pannable one.
+						overflowX: "hidden",
 						// Hide scrollbar (Firefox / IE / WebKit)
 						scrollbarWidth: "none",
 						msOverflowStyle: "none",
 						"&::-webkit-scrollbar": { display: "none" },
 					}}
 				>
-					{tree}
-				</Box>
-			) : (
-				<Box sx={{ p: 1 }}>
-					<Button
-						variant="outlined"
-						fullWidth
-						startIcon={<FolderOpenIcon />}
-						onClick={() => setTreeOpen(true)}
-					>
-						Browse files
-					</Button>
-					<Drawer
-						anchor="left"
-						open={treeOpen}
-						onClose={() => setTreeOpen(false)}
-					>
-						<Box sx={{ width: 280 }}>{tree}</Box>
-					</Drawer>
-				</Box>
-			)}
-
-			<Box
-				sx={{
-					flex: 1,
-					minWidth: 0,
-					px: { xs: 1, md: 2 },
-					height: { md: "100%" },
-					overflowY: { md: "auto" },
-					// Vertical scrolling must not implicitly turn this hidden-scrollbar
-					// container into a horizontally pannable one.
-					overflowX: "hidden",
-					// Hide scrollbar (Firefox / IE / WebKit)
-					scrollbarWidth: "none",
-					msOverflowStyle: "none",
-					"&::-webkit-scrollbar": { display: "none" },
-				}}
-			>
-				{params.session_id ? (
-					<LogicalSessionPlayer
-						key={params.session_id}
-						sessionId={params.session_id}
-					/>
-				) : params.year ? (
-					<>
-						<Tabs
-							value={activeTab}
-							onChange={(_e, v) => setTab(v)}
-							sx={{ mb: 1, minHeight: 36 }}
-						>
-							<Tab label="Normal" value="normal" sx={{ minHeight: 36 }} />
-							{hasSilence && (
-								<Tab
-									label="Silence-free"
-									value="silence"
-									sx={{ minHeight: 36 }}
-								/>
-							)}
-						</Tabs>
-						<Box sx={{ display: activeTab === "normal" ? "block" : "none" }}>
-							<AudioInterface
-								key={`${location.pathname}-nosilence`}
-								isClip={false}
-								userGuilds={userGuilds}
-								isSilence={false}
-							/>
-						</Box>
-						{hasSilence && (
-							<Box sx={{ display: activeTab === "silence" ? "block" : "none" }}>
+					{params.session_id ? (
+						<LogicalSessionPlayer
+							key={params.session_id}
+							sessionId={params.session_id}
+						/>
+					) : params.year ? (
+						<>
+							<Tabs
+								value={activeTab}
+								onChange={(_e, v) => setTab(v)}
+								sx={{ mb: 1, minHeight: 36 }}
+							>
+								<Tab label="Normal" value="normal" sx={{ minHeight: 36 }} />
+								{hasSilence && (
+									<Tab
+										label="Silence-free"
+										value="silence"
+										sx={{ minHeight: 36 }}
+									/>
+								)}
+							</Tabs>
+							<Box sx={{ display: activeTab === "normal" ? "block" : "none" }}>
 								<AudioInterface
-									key={`${location.pathname}-silence`}
+									key={`${location.pathname}-nosilence`}
 									isClip={false}
 									userGuilds={userGuilds}
-									isSilence={true}
+									isSilence={false}
 								/>
 							</Box>
-						)}
-					</>
-				) : null}
+							{hasSilence && (
+								<Box
+									sx={{ display: activeTab === "silence" ? "block" : "none" }}
+								>
+									<AudioInterface
+										key={`${location.pathname}-silence`}
+										isClip={false}
+										userGuilds={userGuilds}
+										isSilence={true}
+									/>
+								</Box>
+							)}
+						</>
+					) : null}
+				</Box>
 			</Box>
 		</Box>
 	);

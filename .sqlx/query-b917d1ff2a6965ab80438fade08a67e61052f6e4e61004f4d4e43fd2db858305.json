@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)\n         VALUES ($1, $2, 'role', 0, $3), ($4, $5, 'role', 0, $6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b917d1ff2a6965ab80438fade08a67e61052f6e4e61004f4d4e43fd2db858305"
+}
