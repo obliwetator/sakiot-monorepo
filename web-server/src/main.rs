@@ -34,7 +34,6 @@ use web_server::auth::{
 };
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip, rename_clip};
 use web_server::config::Config;
-use web_server::dashboard;
 use web_server::fbi_agent_registry::{
     AgentGrpcRegistry, get_agent_grpc_endpoints, register_agent_grpc_endpoints,
 };
@@ -180,7 +179,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_current_month_permission)
             .service(remove_silence)
             .service(delete)
-            .service(dashboard::dashboard_stream)
             .service(get_clips)
             // Before get_clip: its {clip_id:.*} is greedy and would otherwise
             // match /audio/clips/waveform/... too.

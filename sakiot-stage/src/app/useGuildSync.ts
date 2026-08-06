@@ -7,14 +7,12 @@ import { useAppSelector } from "./hooks";
 
 function useGuildIdFromRoute(): string | undefined {
 	const dashboard = useMatch("/dashboard/:guild_id/*");
-	const metrics = useMatch("/metrics/:guild_id");
 	const stamps = useMatch("/stamps/:guild_id");
 	const root = useMatch("/:guild_id");
-	const RESERVED = new Set(["dashboard", "metrics", "stamps"]);
+	const RESERVED = new Set(["dashboard", "stamps"]);
 	const rootId = root?.params.guild_id;
 	return (
 		dashboard?.params.guild_id ??
-		metrics?.params.guild_id ??
 		stamps?.params.guild_id ??
 		(rootId && !RESERVED.has(rootId) ? rootId : undefined)
 	);

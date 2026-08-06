@@ -20,7 +20,6 @@ pub async fn message(_self: &Handler, ctx: Context, msg: Message) {
                 metrics
                     .messages_received
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let _ = metrics.update_tx.send(());
             }
         }
         MessageType::ChannelFollowAdd => {}

@@ -43,7 +43,7 @@ Sakiot application:
 - Handles Discord OAuth, JWT cookies, refresh, logout, and protected API access.
 - Serves recorded audio, live HLS playback, waveform data, no-silence output,
   and downloadable recordings.
-- Manages clips, stamps, cooldown admin settings, and dashboard streams.
+- Manages clips, stamps, and cooldown admin settings.
 - Registers and queries FBI Agent gRPC endpoints.
 - Publishes OpenAPI documentation at `/api-doc/openapi.json` and Scalar at
   `/scalar`.

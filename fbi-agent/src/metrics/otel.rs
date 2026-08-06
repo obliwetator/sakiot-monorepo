@@ -195,11 +195,6 @@ fn register_process_gauges(instruments: &Instruments) {
         u64::from(m.tokio_active_tasks.load(Relaxed))
     });
     instruments.gauge(
-        "grpc_active_streams",
-        "Current active gRPC dashboard streams",
-        |m| u64::from(m.grpc_active_streams.load(Relaxed)),
-    );
-    instruments.gauge(
         "active_voice_connections",
         "Current active voice connections",
         |m| u64::from(m.active_voice_connections.load(Relaxed)),

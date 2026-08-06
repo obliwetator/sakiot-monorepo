@@ -19,18 +19,41 @@ pub async fn playable_clip(
     pool: &Pool<Postgres>,
     guild_id: i64,
     clip_id: &str,
+    visible_channel_ids: &[i64],
 ) -> DbResult<Option<PlayableClip>> {
     let row = sqlx::query(
-        "SELECT clip_id, saved_file_name, name
+        "SELECT clips.clip_id, clips.saved_file_name, clips.name
            FROM clips
-          WHERE guild_id = $1
-            AND (clip_id = $2 OR name = $2)
-            AND deleted_at IS NULL
-          ORDER BY (clip_id = $2) DESC, created_at, clip_id
+          CROSS JOIN LATERAL (
+              SELECT CASE
+                  WHEN clips.recording_session_id IS NOT NULL THEN COALESCE(
+                      (
+                          SELECT array_agg(DISTINCT audio_files.channel_id ORDER BY audio_files.channel_id)
+                            FROM audio_files
+                           WHERE audio_files.recording_session_id = clips.recording_session_id
+                      ),
+                      (
+                          SELECT ARRAY[recording_sessions.starting_channel_id]::bigint[]
+                            FROM recording_sessions
+                           WHERE recording_sessions.id = clips.recording_session_id
+                      ),
+                      ARRAY[]::bigint[]
+                  )
+                  WHEN clips.channel_id IS NOT NULL THEN ARRAY[clips.channel_id]::bigint[]
+                  ELSE ARRAY[]::bigint[]
+              END AS channel_ids
+          ) source
+          WHERE clips.guild_id = $1
+            AND (clips.clip_id = $2 OR clips.name = $2)
+            AND clips.deleted_at IS NULL
+            AND cardinality(source.channel_ids) > 0
+            AND source.channel_ids <@ $3::bigint[]
+          ORDER BY (clips.clip_id = $2) DESC, clips.created_at, clips.clip_id
           LIMIT 1",
     )
     .bind(guild_id)
     .bind(clip_id)
+    .bind(visible_channel_ids)
     .fetch_optional(pool)
     .await?;
 
@@ -96,29 +119,54 @@ pub async fn autocomplete_clip_choices(
     pool: &Pool<Postgres>,
     guild_id: i64,
     query: &str,
+    visible_channel_ids: &[i64],
 ) -> DbResult<Vec<ClipChoice>> {
     let query_wildcard = format!("%{}%", query);
 
-    let rows = sqlx::query!(
-        "SELECT name, clip_id
+    let rows = sqlx::query(
+        "SELECT clips.name, clips.clip_id
            FROM clips
-          WHERE guild_id = $1
-            AND name ILIKE $2
-            AND deleted_at IS NULL
+          CROSS JOIN LATERAL (
+              SELECT CASE
+                  WHEN clips.recording_session_id IS NOT NULL THEN COALESCE(
+                      (
+                          SELECT array_agg(DISTINCT audio_files.channel_id ORDER BY audio_files.channel_id)
+                            FROM audio_files
+                           WHERE audio_files.recording_session_id = clips.recording_session_id
+                      ),
+                      (
+                          SELECT ARRAY[recording_sessions.starting_channel_id]::bigint[]
+                            FROM recording_sessions
+                           WHERE recording_sessions.id = clips.recording_session_id
+                      ),
+                      ARRAY[]::bigint[]
+                  )
+                  WHEN clips.channel_id IS NOT NULL THEN ARRAY[clips.channel_id]::bigint[]
+                  ELSE ARRAY[]::bigint[]
+              END AS channel_ids
+          ) source
+          WHERE clips.guild_id = $1
+            AND clips.name ILIKE $2
+            AND clips.deleted_at IS NULL
+            AND cardinality(source.channel_ids) > 0
+            AND source.channel_ids <@ $3::bigint[]
+          ORDER BY clips.name, clips.clip_id
           LIMIT 25",
-        guild_id,
-        query_wildcard
     )
+    .bind(guild_id)
+    .bind(query_wildcard)
+    .bind(visible_channel_ids)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| {
-            row.name.map(|name| ClipChoice {
+    let mut choices = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let Some(name) = row.try_get::<Option<String>, _>("name")? {
+            choices.push(ClipChoice {
                 name,
-                clip_id: row.clip_id,
-            })
-        })
-        .collect())
+                clip_id: row.try_get("clip_id")?,
+            });
+        }
+    }
+    Ok(choices)
 }

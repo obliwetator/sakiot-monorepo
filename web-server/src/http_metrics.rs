@@ -21,10 +21,6 @@ fn latency_histogram() -> &'static Histogram<f64> {
     })
 }
 
-fn is_websocket_path(path: &str) -> bool {
-    path == "/ws/" || path == "/api/dashboard/stream"
-}
-
 pub struct HttpMetrics;
 
 impl<S, B> Transform<S, ServiceRequest> for HttpMetrics
@@ -61,11 +57,6 @@ where
     actix_web::dev::forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        if is_websocket_path(req.path()) {
-            let fut = self.service.call(req);
-            return Box::pin(fut);
-        }
-
         let method = req.method().as_str().to_owned();
         let start = Instant::now();
         let fut = self.service.call(req);

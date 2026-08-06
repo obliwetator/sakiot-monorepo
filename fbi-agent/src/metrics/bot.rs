@@ -13,9 +13,6 @@ pub struct BotMetrics {
     pub start_time: Instant,
     pub commands_executed: AtomicU32,
     pub active_voice_connections: AtomicU32,
-    pub update_tx: tokio::sync::watch::Sender<()>,
-    pub voice_update_tx: tokio::sync::watch::Sender<()>,
-    pub user_start_times: dashmap::DashMap<u64, i64>,
     // Voice recording pipeline — global aggregates
     pub active_recordings: AtomicU32,
     pub recordings_started: AtomicU64,
@@ -42,8 +39,6 @@ pub struct BotMetrics {
     // Database health
     pub db_query_errors: AtomicU32,
     pub db_insert_failures: AtomicU32,
-    // gRPC server health
-    pub grpc_active_streams: AtomicU32,
     // Bot activity
     pub messages_received: AtomicU32,
     // Process health (sampled every 15s)
@@ -56,7 +51,6 @@ impl BotMetrics {
     pub fn record_gateway_resume(&self) {
         self.gateway_reconnects
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let _ = self.update_tx.send(());
     }
 
     pub fn record_voice_state_update(&self) {
@@ -67,7 +61,6 @@ impl BotMetrics {
     pub fn record_command_executed(&self) {
         self.commands_executed
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let _ = self.update_tx.send(());
     }
 
     /// Returns the metrics entry for `guild_id`, creating it on first access.
@@ -102,38 +95,16 @@ impl BotMetrics {
 
     pub fn clear_voice_presence(&self) {
         self.voice_users.clear();
-        self.user_start_times.clear();
-        let _ = self.voice_update_tx.send(());
     }
 
     /// Reconciles event-driven presence metrics against Serenity's current
     /// cache snapshot. This repairs handler events skipped during draining or
     /// transient routing gaps without an O(users²) scan after every event.
     pub fn prune_stale_voice_metrics(&self, current_voice_users: &HashSet<VoiceUserKey>) {
-        let current_user_ids: HashSet<u64> =
-            current_voice_users.iter().map(|key| key.user_id).collect();
-        let previous_lengths = (
-            self.voice_users.len(),
-            self.active_recording_users.len(),
-            self.user_start_times.len(),
-        );
-
         self.voice_users
             .retain(|key, _| current_voice_users.contains(key));
         self.active_recording_users
             .retain(|key, _| current_voice_users.contains(key));
-        self.user_start_times
-            .retain(|user_id, _| current_user_ids.contains(user_id));
-
-        if previous_lengths
-            != (
-                self.voice_users.len(),
-                self.active_recording_users.len(),
-                self.user_start_times.len(),
-            )
-        {
-            let _ = self.voice_update_tx.send(());
-        }
     }
 
     pub fn track_recording_started(
@@ -266,15 +237,10 @@ impl BotMetrics {
 
 impl Default for BotMetrics {
     fn default() -> Self {
-        let (tx, _) = tokio::sync::watch::channel(());
-        let (voice_tx, _) = tokio::sync::watch::channel(());
         Self {
             start_time: Instant::now(),
             commands_executed: AtomicU32::new(0),
             active_voice_connections: AtomicU32::new(0),
-            update_tx: tx,
-            voice_update_tx: voice_tx,
-            user_start_times: dashmap::DashMap::new(),
             active_recordings: AtomicU32::new(0),
             recordings_started: AtomicU64::new(0),
             recordings_finished: AtomicU64::new(0),
@@ -295,7 +261,6 @@ impl Default for BotMetrics {
             voice_state_updates_received: AtomicU64::new(0),
             db_query_errors: AtomicU32::new(0),
             db_insert_failures: AtomicU32::new(0),
-            grpc_active_streams: AtomicU32::new(0),
             messages_received: AtomicU32::new(0),
             process_rss_bytes: AtomicU64::new(0),
             process_open_fds: AtomicU32::new(0),
@@ -316,8 +281,6 @@ mod tests {
     #[test]
     fn prune_reconciles_presence_metrics_with_cache_snapshot() {
         let metrics = BotMetrics::default();
-        metrics.user_start_times.insert(1, 100);
-        metrics.user_start_times.insert(2, 200);
         metrics.track_voice_presence(
             10,
             1,
@@ -363,8 +326,6 @@ mod tests {
         }]);
         metrics.prune_stale_voice_metrics(&current);
 
-        assert!(metrics.user_start_times.contains_key(&1));
-        assert!(!metrics.user_start_times.contains_key(&2));
         assert_eq!(metrics.voice_users.len(), 1);
         assert!(metrics.active_recording_users.is_empty());
     }

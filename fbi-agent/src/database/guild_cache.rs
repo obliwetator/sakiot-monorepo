@@ -286,6 +286,38 @@ async fn update_guilds(guild_cached: &[Guild], handler: &Handler) -> DbResult<()
     Ok(())
 }
 
+pub(crate) async fn sync_guild_owner(
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    owner_id: UserId,
+) -> DbResult<()> {
+    let guild_id = guild_id.to_i64();
+    let owner_id = owner_id.to_i64();
+    let mut transaction = pool.begin().await?;
+
+    sqlx::query(
+        "INSERT INTO guilds (id, owner_id)
+         VALUES ($1, $2)
+         ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id",
+    )
+    .bind(guild_id)
+    .bind(owner_id)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "UPDATE user_guilds
+            SET owner = (user_id = $2)
+          WHERE id = $1",
+    )
+    .bind(guild_id)
+    .bind(owner_id)
+    .execute(&mut *transaction)
+    .await?;
+
+    transaction.commit().await?;
+    Ok(())
+}
+
 async fn update_channels(guild_cached: &[Guild], handler: &Handler) -> DbResult<()> {
     for guild in guild_cached {
         let channels: Vec<_> = guild.channels.values().collect();

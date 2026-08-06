@@ -118,7 +118,7 @@ pub async fn voice_state_update(
             })
             .unwrap_or(false);
 
-    track_active_voice_state_metrics(handler, &ctx, old_state.as_ref(), &new_state, is_bot).await;
+    track_active_voice_state_metrics(handler, &ctx, &new_state, is_bot).await;
 
     if !should_process_voice_transition(is_own_bot, is_bot) {
         return;
@@ -692,7 +692,6 @@ async fn coordinator_registry(
 async fn track_active_voice_state_metrics(
     handler: &Handler,
     ctx: &Context,
-    old_state: Option<&serenity::model::prelude::VoiceState>,
     new_state: &serenity::model::prelude::VoiceState,
     is_bot: bool,
 ) {
@@ -706,7 +705,6 @@ async fn track_active_voice_state_metrics(
     };
 
     metrics.record_voice_state_update();
-    let _ = metrics.voice_update_tx.send(());
 
     let user_id = new_state.user_id.get();
     if let Some(guild_id) = new_state.guild_id {
@@ -727,25 +725,6 @@ async fn track_active_voice_state_metrics(
                     video: new_state.self_video,
                 }),
         );
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs().to_i64())
-        .unwrap_or_else(|err| {
-            error!("System clock before UNIX_EPOCH: {}", err);
-            0
-        });
-
-    if let Some(new_ch) = new_state.channel_id {
-        if let Some(old) = old_state {
-            if old.channel_id != Some(new_ch) {
-                metrics.user_start_times.insert(user_id, now);
-            }
-        } else {
-            metrics.user_start_times.insert(user_id, now);
-        }
-    } else {
-        metrics.user_start_times.remove(&user_id);
     }
 }
 

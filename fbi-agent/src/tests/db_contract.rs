@@ -1204,6 +1204,58 @@ async fn live_permission_cache_replaces_and_removes_revoked_state(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn guild_owner_update_refreshes_live_and_oauth_caches(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = GuildId::new(unique_id() as u64);
+    let old_owner_id = UserId::new(guild_id.get() + 1);
+    let new_owner_id = UserId::new(guild_id.get() + 2);
+
+    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2)")
+        .bind(guild_id.get() as i64)
+        .bind(old_owner_id.get() as i64)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
+         VALUES
+            ($1, $2, 'owner-sync', true, 0, ARRAY[]::text[]),
+            ($1, $3, 'owner-sync', false, 0, ARRAY[]::text[])",
+    )
+    .bind(guild_id.get() as i64)
+    .bind(old_owner_id.get() as i64)
+    .bind(new_owner_id.get() as i64)
+    .execute(&pool)
+    .await?;
+
+    crate::database::guild_cache::sync_guild_owner(&pool, guild_id, new_owner_id).await?;
+
+    let owner_id = sqlx::query_scalar::<_, i64>("SELECT owner_id FROM guilds WHERE id = $1")
+        .bind(guild_id.get() as i64)
+        .fetch_one(&pool)
+        .await?;
+    let ownership: Vec<(i64, bool)> = sqlx::query_as(
+        "SELECT user_id, owner
+           FROM user_guilds
+          WHERE id = $1
+          ORDER BY user_id",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_all(&pool)
+    .await?;
+
+    assert_eq!(owner_id, new_owner_id.get() as i64);
+    assert_eq!(
+        ownership,
+        vec![
+            (old_owner_id.get() as i64, false),
+            (new_owner_id.get() as i64, true),
+        ]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn local_disconnect_releases_only_current_owner_lease(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

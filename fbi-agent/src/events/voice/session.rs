@@ -929,7 +929,6 @@ pub async fn refresh_active_voice_connection_gauge(
         metrics
             .active_voice_connections
             .store(count, std::sync::atomic::Ordering::Relaxed);
-        let _ = metrics.update_tx.send(());
     }
 }
 

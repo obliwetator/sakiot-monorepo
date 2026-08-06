@@ -6,16 +6,6 @@ if (!configuredApiUrl) {
 }
 export const BASE_API_URL = configuredApiUrl;
 
-// WebSocket endpoints share the API origin; only the scheme differs.
-export function apiWebSocketUrl(pathWithQuery: string): string {
-	const url = new URL(
-		pathWithQuery,
-		new URL(BASE_API_URL, window.location.origin),
-	);
-	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	return url.toString();
-}
-
 const CSRF_STORAGE_KEY = "sakiot.csrf";
 let csrfOverride: string | null = null;
 

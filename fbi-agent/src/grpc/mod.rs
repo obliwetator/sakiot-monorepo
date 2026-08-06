@@ -9,9 +9,7 @@ pub mod proto {
 }
 
 mod admin;
-mod dashboard;
 mod jammer;
-mod snapshot;
 
 #[derive(Clone)]
 pub struct FbiAgentGrpc {
@@ -46,8 +44,7 @@ pub(crate) fn spawn_server(
 
         Server::builder()
             .add_service(proto::jammer_server::JammerServer::new(jammer.clone()))
-            .add_service(proto::admin_server::AdminServer::new(jammer.clone()))
-            .add_service(proto::dashboard_server::DashboardServer::new(jammer))
+            .add_service(proto::admin_server::AdminServer::new(jammer))
             .serve_with_shutdown(addr, async move {
                 let mut rx = shutdown_rx;
                 while !*rx.borrow() {

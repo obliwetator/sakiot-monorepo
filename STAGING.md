@@ -59,10 +59,9 @@ serves both targets, driven by the env file plus `SAKIOT_WEB_UNIT` /
 - **Frontend API origin** is baked at build time from `VITE_API_URL` in
   `staging.env` (`https://debug.patrykstyla.com/api/`). Vite reads `VITE_*` from
   the (exported) env. There is **no fallback origin**: the build fails without
-  `VITE_API_URL` (`vite.config.ts`), and websocket URLs (metrics dashboard)
-  derive from it too (`apiWebSocketUrl` in `src/app/authedFetch.ts`). Make sure
-  `production.env` also sets `VITE_API_URL`, or the production deploy's
-  frontend build aborts (safely, before cutover).
+  `VITE_API_URL` (`vite.config.ts`). Make sure `production.env` also sets
+  `VITE_API_URL`, or the production deploy's frontend build aborts (safely,
+  before cutover).
 - **Auth cookies are host-only** `__Host-sakiot-*` cookies. Never add a
   `Domain` attribute: parent-domain cookies collide across production,
   staging, and debug hosts.

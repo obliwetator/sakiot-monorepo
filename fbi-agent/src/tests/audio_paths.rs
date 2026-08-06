@@ -37,6 +37,103 @@ async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn clip_lookups_require_every_source_channel(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let guild_id = 42_i64;
+    let allowed_channel_id = 100_i64;
+    let denied_channel_id = 200_i64;
+    let user_id = 300_i64;
+
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $4, 'finalized', now(), now(), 'test', 1)
+         RETURNING id",
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .bind(allowed_channel_id)
+    .bind(denied_channel_id)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             recording_session_id, segment_index)
+         VALUES
+            ('clip-source-allowed', $1, $2, $4, 2026, 8, $5, 0),
+            ('clip-source-denied', $1, $3, $4, 2026, 8, $5, 1)",
+    )
+    .bind(guild_id)
+    .bind(allowed_channel_id)
+    .bind(denied_channel_id)
+    .bind(user_id)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, recording_session_id, user_id,
+             saved_file_name, start_time, name)
+         VALUES
+            ('allowed-clip', $1, $2, NULL, $4, 'allowed.ogg', 0, 'Allowed'),
+            ('denied-clip', $1, $3, NULL, $4, 'denied.ogg', 0, 'Denied'),
+            ('mixed-clip', $1, $2, $5, $4, 'mixed.ogg', 0, 'Mixed')",
+    )
+    .bind(guild_id)
+    .bind(allowed_channel_id)
+    .bind(denied_channel_id)
+    .bind(user_id)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let visible = crate::database::clips::autocomplete_clip_choices(
+        &pool,
+        guild_id,
+        "",
+        &[allowed_channel_id],
+    )
+    .await?;
+    assert_eq!(
+        visible
+            .into_iter()
+            .map(|choice| choice.clip_id)
+            .collect::<Vec<_>>(),
+        vec!["allowed-clip"]
+    );
+    assert!(
+        crate::database::clips::playable_clip(
+            &pool,
+            guild_id,
+            "denied-clip",
+            &[allowed_channel_id]
+        )
+        .await?
+        .is_none()
+    );
+    assert!(
+        crate::database::clips::playable_clip(&pool, guild_id, "mixed-clip", &[allowed_channel_id])
+            .await?
+            .is_none()
+    );
+    assert!(
+        crate::database::clips::playable_clip(
+            &pool,
+            guild_id,
+            "mixed-clip",
+            &[allowed_channel_id, denied_channel_id]
+        )
+        .await?
+        .is_some()
+    );
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn test_jam_cooldown_system(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
     // Generate unique pseudo-random IDs to prevent test collision
     let now_millis = SystemTime::now()

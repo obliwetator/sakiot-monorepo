@@ -20,7 +20,7 @@ use web_server::audio::{
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
-use web_server::permissions::visible_channels_for_user;
+use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -432,6 +432,32 @@ async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
     let visible = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
     assert!(visible.contains(&ALLOWED_CHANNEL_ID));
     assert!(!visible.contains(&hidden_channel_id));
+
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn live_guild_owner_replaces_stale_oauth_owner_snapshot(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    sqlx::query("UPDATE user_guilds SET owner = true WHERE id = $1 AND user_id = $2")
+        .bind(ALLOWED_GUILD_ID)
+        .bind(USER_ID)
+        .execute(&pool)
+        .await?;
+
+    let pool = web::Data::new(pool);
+    let former_owner = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert!(!former_owner.contains(Permissions::ADMINISTRATOR));
+
+    sqlx::query("UPDATE guilds SET owner_id = $1 WHERE id = $2")
+        .bind(USER_ID)
+        .bind(ALLOWED_GUILD_ID)
+        .execute(pool.get_ref())
+        .await?;
+    let current_owner = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert_eq!(current_owner, Permissions::all());
 
     Ok(())
 }

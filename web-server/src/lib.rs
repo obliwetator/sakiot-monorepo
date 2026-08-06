@@ -3,7 +3,6 @@ pub mod audio;
 pub mod auth;
 pub mod clips;
 pub mod config;
-pub mod dashboard;
 pub mod errors;
 pub mod fbi_agent_registry;
 pub mod grpc_client;

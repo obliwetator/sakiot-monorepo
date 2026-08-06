@@ -66,6 +66,7 @@ impl Jammer for FbiAgentGrpc {
             &self.data_cache.pool,
             &self.data_cache.media_archive,
             &manager,
+            &self.data_cache.cache,
             guild_id,
             &data.clip_name,
             data.user_id,

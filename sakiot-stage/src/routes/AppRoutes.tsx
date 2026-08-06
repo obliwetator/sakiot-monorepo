@@ -10,9 +10,6 @@ const YearSelection = React.lazy(() =>
 		default: m.YearSelection,
 	})),
 );
-const Metrics = React.lazy(() =>
-	import("../features/metrics").then((m) => ({ default: m.Metrics })),
-);
 const Stamps = React.lazy(() =>
 	import("../features/stamps").then((m) => ({ default: m.Stamps })),
 );
@@ -41,8 +38,6 @@ export function AppRoutes() {
 					element={<Box p={2}>select from top navbar</Box>}
 				/>
 
-				<Route path="/metrics" element={lazyRoute(<Metrics />)} />
-				<Route path="/metrics/:guild_id" element={lazyRoute(<Metrics />)} />
 				<Route path="/stamps" element={lazyRoute(<Stamps />)} />
 				<Route path="/stamps/:guild_id" element={lazyRoute(<Stamps />)} />
 

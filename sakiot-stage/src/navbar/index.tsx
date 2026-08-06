@@ -29,7 +29,7 @@ function ResponsiveAppBar(props: {
 	const [drawerOpen, setDrawerOpen] = React.useState(false);
 
 	const navigateTo = (name: PageName) => {
-		if (!props.guildSelected && name !== "Metrics" && name !== "Stamps") {
+		if (!props.guildSelected && name !== "Stamps") {
 			navigate(`${PATH_PREFIX_FOR_LOGGED_USERS}`);
 			return;
 		}
@@ -52,13 +52,6 @@ function ResponsiveAppBar(props: {
 			case "Clips":
 				navigate(
 					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/clips`,
-				);
-				break;
-			case "Metrics":
-				navigate(
-					props.guildSelected?.id
-						? `/metrics/${props.guildSelected.id}`
-						: `/metrics`,
 				);
 				break;
 			case "Stamps":

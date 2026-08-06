@@ -48,7 +48,6 @@ sakiot-proto = { path = "../sakiot-proto" }
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 console-subscriber = "0.5.0"
 rustls = { version = "0.23", features = ["ring"] }
-tokio-stream = { version = "0.1.18", features = ["sync"] }
 dashmap = "6.1.0"
 dotenvy = "0.15"
 sysinfo = "0.38.4"

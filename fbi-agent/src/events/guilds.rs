@@ -143,9 +143,23 @@ pub async fn guild_members_chunk(
 }
 
 pub async fn guild_update(
-    _self: &Handler,
+    handler: &Handler,
     _ctx: Context,
     _old_data_if_available: Option<serenity::model::guild::Guild>,
-    _new_but_incomplete: serenity::model::guild::PartialGuild,
+    new_guild: serenity::model::guild::PartialGuild,
 ) {
+    if let Err(err) = crate::database::guild_cache::sync_guild_owner(
+        &handler.database,
+        new_guild.id,
+        new_guild.owner_id,
+    )
+    .await
+    {
+        error!(
+            guild_id = new_guild.id.get(),
+            owner_id = new_guild.owner_id.get(),
+            "failed to update guild owner: {}",
+            err
+        );
+    }
 }

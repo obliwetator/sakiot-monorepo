@@ -218,11 +218,14 @@ pub async fn get_combined_perm_for_user(
     user_id: i64,
 ) -> Result<Permissions, AppError> {
     let owner = sqlx::query_scalar::<_, bool>(
-        "SELECT owner FROM user_guilds
-         WHERE user_id = $1 AND id = $2",
+        "SELECT EXISTS (
+             SELECT 1
+               FROM guilds
+              WHERE id = $1 AND owner_id = $2
+         )",
     )
-    .bind(user_id)
     .bind(guild_id)
+    .bind(user_id)
     .fetch_one(pool.get_ref())
     .await?;
     if owner {

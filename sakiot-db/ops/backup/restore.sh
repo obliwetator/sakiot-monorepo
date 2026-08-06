@@ -20,12 +20,13 @@ FORCE="${3:-}"
 
 [[ -f "$FILE" ]] || { echo "no such file: $FILE" >&2; exit 1; }
 
-if [[ "$TARGET" == "sakiot_rouvas" && "$FORCE" != "--force" ]]; then
+TARGET_DB="$(psql -X -v ON_ERROR_STOP=1 -d "$TARGET" -Atc 'SELECT current_database()')"
+if [[ "$TARGET_DB" == "sakiot_rouvas" && "$FORCE" != "--force" ]]; then
   echo "refusing to restore over LIVE db 'sakiot_rouvas' without --force" >&2
   exit 1
 fi
 
-echo "restoring $FILE -> $TARGET"
+echo "restoring $FILE -> $TARGET_DB"
 age -d -i "$AGE_KEY_FILE" "$FILE" \
   | pg_restore --clean --if-exists --no-owner -d "$TARGET"
 echo "done"

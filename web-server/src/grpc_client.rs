@@ -4,7 +4,6 @@ use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use tonic::transport::Channel;
 
-use crate::proto::jammer::dashboard_client::DashboardClient;
 use crate::proto::jammer::jammer_client::JammerClient;
 
 static FAILURE_COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
@@ -20,13 +19,6 @@ fn failure_counter() -> &'static Counter<u64> {
 
 pub fn record_failure(operation: &'static str) {
     failure_counter().add(1, &[KeyValue::new("operation", operation)]);
-}
-
-pub async fn connect_dashboard(
-    address: String,
-) -> Result<(String, DashboardClient<Channel>), tonic::transport::Error> {
-    let client = DashboardClient::connect(address.clone()).await?;
-    Ok((address, client))
 }
 
 pub async fn connect_jammer(

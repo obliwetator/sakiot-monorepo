@@ -69,6 +69,13 @@ EOF
 cat >"$temporary/bin/psql" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
+  *current_database\(\)*)
+    if [[ "$*" == *sakiot_rouvas* ]]; then
+      printf 'sakiot_rouvas\n'
+    else
+      printf 'safe_restore\n'
+    fi
+    ;;
   *information_schema.tables*) printf '12\n' ;;
   *) printf '1\n' ;;
 esac
@@ -136,5 +143,25 @@ grep -q 'rclone .* lsf .*b2:test-backups' "$CALL_LOG"
 grep -q 'rclone .* copyto .*b2:test-backups/' "$CALL_LOG"
 grep -q '^pg_restore ' "$CALL_LOG"
 grep -q 'curl .*health.example/restore' "$CALL_LOG"
+
+: >"$CALL_LOG"
+if "$repo_root/sakiot-db/ops/backup/restore.sh" \
+  "$REMOTE_FIXTURE" 'postgres://test:test@localhost/sakiot_rouvas' >/dev/null 2>&1; then
+  echo 'live restore URL unexpectedly bypassed --force guard' >&2
+  exit 1
+fi
+if grep -q '^pg_restore ' "$CALL_LOG"; then
+  echo 'refused live restore unexpectedly invoked pg_restore' >&2
+  exit 1
+fi
+
+"$repo_root/sakiot-db/ops/backup/restore.sh" \
+  "$REMOTE_FIXTURE" 'postgres://test:test@localhost/safe_restore' >/dev/null
+grep -q '^pg_restore .*safe_restore' "$CALL_LOG"
+
+: >"$CALL_LOG"
+"$repo_root/sakiot-db/ops/backup/restore.sh" \
+  "$REMOTE_FIXTURE" 'postgres://test:test@localhost/sakiot_rouvas' --force >/dev/null
+grep -q '^pg_restore .*sakiot_rouvas' "$CALL_LOG"
 
 echo 'db backup tests: OK'

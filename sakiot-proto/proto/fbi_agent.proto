@@ -7,26 +7,12 @@ service Jammer {
 	rpc JamIt (JamData) returns (JamResponse);
 }
 
-service Dashboard {
-	rpc DashboardStream (stream ClientMessage) returns (stream DashboardEvent);
-}
-
 service Admin {
 	rpc StartDrain (DrainRequest) returns (DrainStatus);
 	rpc CancelDrain (DrainRequest) returns (DrainStatus);
 	rpc GetDrainStatus (Empty) returns (DrainStatus);
 	rpc ShutdownWhenEmpty (DrainRequest) returns (DrainStatus);
 	rpc ForceShutdown (DrainRequest) returns (DrainStatus);
-}
-
-message ClientMessage {
-	string action = 1; // "subscribe" or "unsubscribe"
-	string topic = 2; // e.g., "global", "guild:123"
-}
-
-message DashboardEvent {
-	string event_type = 1; // e.g., "METRICS_UPDATE", "USER_JOINED"
-	string json_payload = 2;
 }
 
 message Empty {}

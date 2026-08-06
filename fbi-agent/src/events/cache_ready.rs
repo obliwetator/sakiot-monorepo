@@ -1,4 +1,3 @@
-use crate::cast::ToI64;
 use serenity::client::Context;
 use serenity::model::guild::Guild;
 use serenity::model::id::GuildId;
@@ -54,11 +53,6 @@ async fn seed_voice_presence_metrics(handler: &Handler, ctx: &Context, guilds: &
 
     metrics.clear_voice_presence();
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs().to_i64())
-        .unwrap_or(0);
-
     for guild in guilds {
         for (user_id, voice_state) in &guild.voice_states {
             let Some(channel_id) = voice_state.channel_id else {
@@ -85,9 +79,6 @@ async fn seed_voice_presence_metrics(handler: &Handler, ctx: &Context, guilds: &
                     video: voice_state.self_video,
                 }),
             );
-            metrics.user_start_times.insert(user_id.get(), now);
         }
     }
-
-    let _ = metrics.voice_update_tx.send(());
 }

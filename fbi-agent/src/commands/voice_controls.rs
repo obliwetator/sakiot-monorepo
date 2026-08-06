@@ -1,8 +1,8 @@
 use crate::cast::ToI64;
 use serenity::builder::{CreateCommand, CreateCommandOption};
-use serenity::client::Context;
+use serenity::client::{Cache, Context};
 use serenity::model::id::{ChannelId, UserId};
-use serenity::model::prelude::CommandOptionType;
+use serenity::model::prelude::{ChannelType, CommandOptionType, Permissions};
 
 use crate::database::DbError;
 use serenity::model::prelude::GuildId;
@@ -38,14 +38,25 @@ pub async fn play_clip(
     pool: &Pool<Postgres>,
     media_archive: &crate::media_archive::MediaArchive,
     manager: &std::sync::Arc<Songbird>,
+    cache: &Cache,
     guild_id: GuildId,
     clip_id: &str,
     user_id: i64,
 ) -> Result<String, PlayClipError> {
-    let clip = crate::database::clips::playable_clip(pool, guild_id.to_i64(), clip_id)
-        .await
-        .map_err(PlayClipError::Db)?
-        .ok_or_else(|| PlayClipError::User(format!("Clip with ID '{}' not found.", clip_id)))?;
+    let user_id = u64::try_from(user_id)
+        .ok()
+        .filter(|user_id| *user_id != 0)
+        .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
+    let visible_channel_ids = visible_voice_channel_ids(cache, guild_id, UserId::new(user_id));
+    let clip = crate::database::clips::playable_clip(
+        pool,
+        guild_id.to_i64(),
+        clip_id,
+        &visible_channel_ids,
+    )
+    .await
+    .map_err(PlayClipError::Db)?
+    .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
 
     let handler = match manager.get(guild_id) {
         Some(h) => h,
@@ -58,14 +69,44 @@ pub async fn play_clip(
     let result = songbird::input::File::new(clip_path);
     let input = songbird::input::Input::from(result);
 
-    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.to_i64(), &clip.clip_id)
-        .await
-        .map_err(PlayClipError::Db)?;
+    crate::database::clips::record_jam_invocation(
+        pool,
+        user_id.to_i64(),
+        guild_id.to_i64(),
+        &clip.clip_id,
+    )
+    .await
+    .map_err(PlayClipError::Db)?;
 
     let handler_lock = handler.lock().await.enqueue(input.into()).await;
     let _ = handler_lock.set_volume(0.5);
 
     Ok(format!("Now jamming: {}", clip.display_name))
+}
+
+pub(crate) fn visible_voice_channel_ids(
+    cache: &Cache,
+    guild_id: GuildId,
+    user_id: UserId,
+) -> Vec<i64> {
+    let Some(guild) = cache.guild(guild_id) else {
+        return Vec::new();
+    };
+    let Some(member) = guild.members.get(&user_id) else {
+        return Vec::new();
+    };
+
+    guild
+        .channels
+        .values()
+        .filter(|channel| matches!(channel.kind, ChannelType::Voice | ChannelType::Stage))
+        .filter(|channel| {
+            guild
+                .user_permissions_in(channel, member)
+                .contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT)
+        })
+        .map(|channel| channel.id.to_i64())
+        .collect()
 }
 
 pub fn register_jam() -> CreateCommand {

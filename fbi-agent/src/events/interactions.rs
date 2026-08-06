@@ -126,9 +126,19 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                     .map(|a| a.value)
                     .unwrap_or("");
 
-                let guild_id = autocomplete.guild_id.map(|id| id.to_i64()).unwrap_or(0);
-
-                let choices = get_clip_choices(focused_value, &_self.database, guild_id).await;
+                let choices = match autocomplete.guild_id {
+                    Some(guild_id) => {
+                        get_clip_choices(
+                            focused_value,
+                            &ctx,
+                            &_self.database,
+                            guild_id,
+                            autocomplete.user.id,
+                        )
+                        .await
+                    }
+                    None => Vec::new(),
+                };
 
                 if let Err(why) = autocomplete
                     .create_response(
@@ -196,16 +206,30 @@ async fn should_skip_interaction(handler: &Handler, interaction: &Interaction) -
 /// Read the database and return up to 25 choices matching `query`.
 async fn get_clip_choices(
     query: &str,
+    ctx: &Context,
     pool: &sqlx::Pool<sqlx::Postgres>,
-    guild_id: i64,
+    guild_id: serenity::model::prelude::GuildId,
+    user_id: serenity::model::prelude::UserId,
 ) -> Vec<AutocompleteChoice> {
-    match crate::database::clips::autocomplete_clip_choices(pool, guild_id, query).await {
+    let visible_channel_ids =
+        crate::commands::voice_controls::visible_voice_channel_ids(&ctx.cache, guild_id, user_id);
+    match crate::database::clips::autocomplete_clip_choices(
+        pool,
+        guild_id.to_i64(),
+        query,
+        &visible_channel_ids,
+    )
+    .await
+    {
         Ok(rows) => rows
             .into_iter()
             .map(|row| AutocompleteChoice::new(row.name, row.clip_id))
             .collect(),
         Err(err) => {
-            warn!(guild_id, query, "clip autocomplete lookup failed: {}", err);
+            warn!(
+                guild_id = guild_id.get(),
+                query, "clip autocomplete lookup failed: {}", err
+            );
             vec![AutocompleteChoice::new(
                 "Search temporarily unavailable",
                 "__db_unavailable__",
@@ -286,6 +310,7 @@ async fn handle_jam(
         pool,
         &media_archive,
         &manager,
+        &ctx.cache,
         guild_id,
         &clip_name,
         user_id,
@@ -342,6 +367,7 @@ async fn replay_clip(
         pool,
         &media_archive,
         &manager,
+        &ctx.cache,
         guild_id,
         clip_id,
         user_id,
