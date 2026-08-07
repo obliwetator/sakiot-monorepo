@@ -15,6 +15,11 @@ resolver = "3"
 [workspace.package]
 version = "1.0.15"
 
+# CI runs tests through cargo-nextest; keeping only line tables (instead of
+# full debug info) noticeably cuts test compile time and binary size.
+[profile.test]
+debug = "line-tables-only"
+
 # Restriction lints for production code, inherited by every crate via
 # `lints.workspace = true`. Tests are exempted in clippy.toml
 # (allow-unwrap-in-tests etc.); intentional prints in the deploy CLI carry

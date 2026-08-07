@@ -69,6 +69,12 @@ assert_scope \
 assert_scope \
   "unknown path fails closed" \
   true true true true \
-  ".github/workflows/ci.yml"
+  "compose.dev.yml"
+
+assert_scope \
+  "CI config only" \
+  false false false false \
+  ".github/workflows/ci.yml" \
+  ".github/workflows/cache-cleanup.yml"
 
 echo "ci-scope tests passed"

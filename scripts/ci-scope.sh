@@ -45,6 +45,8 @@ while IFS= read -r path; do
     sakiot-stage/*)
       frontend=true
       ;;
+    .github/*)
+      ;;
     *)
       unknown=true
       ;;
