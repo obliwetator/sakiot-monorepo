@@ -214,10 +214,12 @@ pub async fn get_everyone_permission_for_guild(
 			WHERE guild_id =$1 AND role_id =$1",
         guild_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_optional(pool.get_ref())
     .await?;
 
-    Ok(permissions_from_bits(res.permission))
+    Ok(res
+        .map(|r| permissions_from_bits(r.permission))
+        .unwrap_or_else(Permissions::empty))
 }
 
 pub async fn get_combined_perm_for_user(
@@ -423,6 +425,13 @@ pub async fn listing_channels_for(
 /// Per-channel access map for the role-preview lens, keyed by channel id and
 /// validating that the role belongs to the guild. The recording tree uses it
 /// to keep every session visible and annotate what the role could do with it.
+///
+/// SECURITY / INTENTIONAL LEAK: this map retains *every* session (including
+/// `hidden` — not even viewable) and annotates `can-listen / visible-only /
+/// hidden` per channel. It is intentionally manager-only (see
+/// `require_role_preview` -> `require_guild_manager`) — callers already have
+/// `ADMINISTRATOR | MANAGE_GUILD` and can `VIEW_CHANNEL` all voice channels
+/// anyway. Do not expose this endpoint to non-managers.
 pub async fn role_access_for_preview(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
@@ -649,18 +658,38 @@ async fn require_guild_permission(
     // owner and roles, so the checks below would otherwise 403 the dev account
     // on every fixture guild. Mirror the frontend's `isGuildAdmin` trust in the
     // snapshot row; real Discord logins (AuthKind::Discord) never take this path.
+    //
+    // SECURITY: this bypass is `#[cfg(feature = "dev-login")]`-gated by
+    // `is_public_api_path` / `AuthKind::Dev` — it is only reachable when the
+    // `dev-login` feature is compiled in (local dev). In production builds
+    // `AuthKind::Dev` can never be issued, so this branch is dead code.
+    // The snapshot row is only trusted for `owner = true` guilds seeded
+    // locally; a stale `permissions & 40` bit would otherwise grant permanent
+    // manager after a role revoke, so we check live permissions first and
+    // only fall back to the snapshot when the guild has no live role data
+    // (fixture import without a cached @everyone).
     if is_dev {
-        let trusted = sqlx::query_scalar::<_, bool>(
-            "SELECT owner OR (permissions & 40) <> 0
-               FROM user_guilds
-              WHERE id = $1 AND user_id = $2",
+        // Fast path: live permissions already grant manager — no need to trust snapshot.
+        // This avoids stale `user_guilds.permissions` granting permanent access.
+        if let Ok(live) = get_combined_perm_for_user(pool, guild_id, user_id).await
+            && live.intersects(required_mask)
+        {
+            return Ok(user_id);
+        }
+        let trusted_owner = sqlx::query_scalar::<_, bool>(
+            "SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2",
         )
         .bind(guild_id)
         .bind(user_id)
         .fetch_optional(pool.get_ref())
         .await?
         .unwrap_or(false);
-        if trusted {
+        if trusted_owner {
+            tracing::debug!(
+                guild_id,
+                user_id,
+                "dev-login manager bypass via user_guilds.owner"
+            );
             return Ok(user_id);
         }
     }

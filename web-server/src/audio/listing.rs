@@ -386,7 +386,9 @@ async fn get_session_tree(
         };
         // Role previews keep every session in the tree and annotate what the
         // role could do with it; normal listings hide whatever the viewer
-        // cannot fully hear.
+        // cannot fully hear. The `hidden` annotation intentionally leaks
+        // session existence, but `role_access_for_preview` is manager-only
+        // (callers already see all channels).
         let access = match channel_access {
             Some(map) => Some(session_access_level(&audible, map).to_string()),
             None => {
