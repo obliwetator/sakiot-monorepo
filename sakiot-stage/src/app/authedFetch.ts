@@ -41,6 +41,20 @@ export function captureCsrfToken(response: Response): void {
 }
 
 export function isLoggedIn(): boolean {
+	// Staging deploys the bundle on staging.patrykstyla.com while
+	// VITE_API_URL points at debug.patrykstyla.com/api/, so the host-only
+	// auth cookies are scoped to the API origin and never appear in this
+	// page's document.cookie. In that topology login state can only be
+	// decided by probing the API; report "unknown" as logged in so the
+	// skip-gated queries actually run (they fall back to the login screen
+	// on 401).
+	if (
+		typeof window !== "undefined" &&
+		new URL(BASE_API_URL, window.location.origin).origin !==
+			window.location.origin
+	) {
+		return true;
+	}
 	return /(?:^|;\s*)(?:__Host-sakiot-logged_in|logged_in)=1(?:;|$)/.test(
 		document.cookie,
 	);

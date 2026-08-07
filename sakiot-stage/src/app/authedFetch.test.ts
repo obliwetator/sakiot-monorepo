@@ -9,6 +9,7 @@ import {
 
 const originalDocument = globalThis.document;
 const originalFetch = globalThis.fetch;
+const originalWindow = globalThis.window;
 
 function setCookie(cookie: string) {
 	Object.defineProperty(globalThis, "document", {
@@ -17,10 +18,21 @@ function setCookie(cookie: string) {
 	});
 }
 
+function setPageOrigin(origin: string) {
+	Object.defineProperty(globalThis, "window", {
+		configurable: true,
+		value: { location: { origin } },
+	});
+}
+
 afterEach(() => {
 	Object.defineProperty(globalThis, "document", {
 		configurable: true,
 		value: originalDocument,
+	});
+	Object.defineProperty(globalThis, "window", {
+		configurable: true,
+		value: originalWindow,
 	});
 	globalThis.fetch = originalFetch;
 	setCsrfToken(null);
@@ -40,6 +52,28 @@ describe("auth cookie helpers", () => {
 
 		expect(getCsrfToken()).toBeNull();
 		expect(isLoggedIn()).toBe(false);
+	});
+
+	it("assumes logged in when the API is cross-origin and cookies are invisible", () => {
+		setCookie("theme=dark");
+		const apiOrigin = new URL(BASE_API_URL).origin;
+		setPageOrigin(
+			apiOrigin === "http://localhost:8081"
+				? "http://localhost:8082"
+				: "http://localhost:8081",
+		);
+
+		expect(isLoggedIn()).toBe(true);
+	});
+
+	it("consults cookies when the API is same-origin", () => {
+		setPageOrigin(new URL(BASE_API_URL).origin);
+		setCookie("theme=dark");
+
+		expect(isLoggedIn()).toBe(false);
+
+		setCookie("theme=dark; logged_in=1");
+		expect(isLoggedIn()).toBe(true);
 	});
 
 	it("uses an explicitly received csrf token when the API cookie is not readable", () => {
