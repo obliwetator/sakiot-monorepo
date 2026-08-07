@@ -8,6 +8,7 @@ import {
 	useGetWaveformQuery,
 } from "../../app/apiSlice";
 import type { AudioParams } from "../../Constants";
+import { decodeWaveformPeaks } from "./waveformPeaks";
 
 function WaveFormButton(props: {
 	params: Readonly<Params<AudioParams>>;
@@ -105,26 +106,17 @@ function WaveFormButton(props: {
 				for (let i = 0; i < len; i++) {
 					bytes[i] = binaryString.charCodeAt(i);
 				}
-				const buffer = bytes.buffer;
+				const view = new DataView(bytes.buffer);
 
-				const view = new DataView(buffer);
-				const flags = view.getUint32(4, true);
 				const sampleRate = view.getUint32(8, true);
 				const samplesPerPixel = view.getUint32(12, true);
 				const length = view.getUint32(16, true);
 
-				const is16Bit = flags === 1;
-				const peaks = [];
-				let offset = 20;
-
-				for (let i = 0; i < length; i++) {
-					if (is16Bit) {
-						peaks.push(view.getInt16(offset, true));
-						offset += 2;
-					} else {
-						peaks.push(view.getInt8(offset));
-						offset += 1;
-					}
+				const { min, max } = decodeWaveformPeaks(base64Data);
+				if (min.length === 0) return;
+				const peaks: number[] = [];
+				for (let i = 0; i < min.length; i++) {
+					peaks.push(min[i], max[i]);
 				}
 
 				const duration = (length * samplesPerPixel) / sampleRate;
