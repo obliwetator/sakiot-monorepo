@@ -9,7 +9,7 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import { useSelector } from "react-redux";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
 import type { RootState } from "../../store";
@@ -23,8 +23,10 @@ function formatTimestamp(ms: number): string {
 
 export function Stamps() {
 	const navigate = useNavigate();
+	const params = useParams();
 	const guild = useSelector((s: RootState) => s.app.guildSelected);
-	const guildId = guild?.id ?? "";
+	const guildId = params.guild_id ?? "";
+	const guildName = guild?.id === guildId ? guild.name : undefined;
 	const { asRoleArg } = useAsRole();
 
 	const { data, isLoading, isError, error } = useGetStampsQuery(
@@ -68,7 +70,7 @@ export function Stamps() {
 		<Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1400 }}>
 			<ViewAsRoleBanner guildId={guildId} />
 			<Typography variant="h4" fontWeight={700} gutterBottom>
-				Stamps {guild ? `— ${guild.name}` : ""}
+				Stamps {guildName ? `— ${guildName}` : ""}
 			</Typography>
 			<Typography color="text.secondary" sx={{ mb: 2 }}>
 				{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max

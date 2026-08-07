@@ -199,11 +199,14 @@ export default function Clips() {
 	const { data: authData } = useGetAuthDetailsQuery(undefined, {
 		skip: !hasLoggedInCookie(),
 	});
+	const guildId = params.guild_id ?? "";
+	const guild =
+		authData?.guilds?.find((g) => g.id === guildId) ?? guildSelected;
 	const { asRoleArg } = useAsRole();
 	const { data, isError, isSuccess } = useGetClipsQuery(
-		{ guild_id: guildSelected?.id || "", ...asRoleArg },
+		{ guild_id: guildId, ...asRoleArg },
 		{
-			skip: !guildSelected?.id,
+			skip: !guildId,
 			refetchOnMountOrArgChange: true,
 		},
 	);
@@ -215,12 +218,12 @@ export default function Clips() {
 	if (isSuccess && data) {
 		return (
 			<Box sx={{ p: { xs: 1.5, md: 3 } }}>
-				<ViewAsRoleBanner guildId={guildSelected?.id ?? ""} />
+				<ViewAsRoleBanner guildId={guildId} />
 				<ClipsLayout
 					data={data}
 					params={params}
 					currentUserId={authData?.user?.user_id ?? null}
-					guildSelected={guildSelected}
+					guildSelected={guild}
 				/>
 			</Box>
 		);

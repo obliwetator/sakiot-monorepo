@@ -47,11 +47,25 @@ export function useRangeSliderState(args: {
 	useEffect(() => {
 		if (args.liveStartedAt) return;
 		if (args.trueDuration && Number.isFinite(args.trueDuration)) {
-			setActualDuration(args.trueDuration);
+			const nextDuration = args.trueDuration as number;
+			setActualDuration(nextDuration);
+			if (nextDuration < MinDistance) {
+				if (!rightPinned) {
+					setStartEnd(() => [0, nextDuration]);
+				} else {
+					setStartEnd((prev) => [0, Math.min(prev[1], nextDuration)]);
+				}
+				return;
+			}
 			if (!rightPinned) {
 				setStartEnd((prev) => [
-					prev[0],
-					Math.max(prev[1], args.trueDuration as number),
+					Math.min(prev[0], Math.max(0, nextDuration - MinDistance)),
+					nextDuration,
+				]);
+			} else {
+				setStartEnd((prev) => [
+					Math.min(prev[0], Math.max(0, nextDuration - MinDistance)),
+					Math.min(prev[1], nextDuration),
 				]);
 			}
 		}
@@ -75,13 +89,30 @@ export function useRangeSliderState(args: {
 		return () => window.clearInterval(id);
 	}, [args.liveStartedAt, rightPinned]);
 
+	const stopPlayback = useCallback(() => {
+		clearInterval(args.intervalRef.current);
+		args.intervalRef.current = undefined;
+		args.audioRef.pause();
+	}, [args.audioRef, args.intervalRef]);
+
+	const advancePlayhead = useCallback(
+		(time: number, end: number) => {
+			if (time >= end) {
+				stopPlayback();
+				return Math.max(0, end - MinDistance);
+			}
+			return Math.min(time, actualDuration, end);
+		},
+		[actualDuration, stopPlayback],
+	);
+
 	useEffect(() => {
 		const audio = args.audioRef;
 		const onPlay = () => setPlaying(true);
 		const onPause = () => setPlaying(false);
 		const onTime = () => {
 			setStartEnd((prev) => [
-				Math.min(audio.currentTime, actualDuration),
+				advancePlayhead(audio.currentTime, prev[1]),
 				prev[1],
 			]);
 		};
@@ -93,7 +124,7 @@ export function useRangeSliderState(args: {
 			audio.removeEventListener("pause", onPause);
 			audio.removeEventListener("timeupdate", onTime);
 		};
-	}, [actualDuration, args.audioRef]);
+	}, [args.audioRef, advancePlayhead]);
 
 	useEffect(() => {
 		const handleArrowKeys = (event: KeyboardEvent) => {
@@ -132,11 +163,11 @@ export function useRangeSliderState(args: {
 		clearInterval(args.intervalRef.current);
 		args.intervalRef.current = window.setInterval(() => {
 			setStartEnd((prev) => [
-				Math.min(args.audioRef.currentTime, actualDuration),
+				advancePlayhead(args.audioRef.currentTime, prev[1]),
 				prev[1],
 			]);
 		}, 1000);
-	}, [actualDuration, args.audioRef, args.intervalRef]);
+	}, [args.audioRef, args.intervalRef, advancePlayhead]);
 
 	const togglePlay = useCallback(() => {
 		setPlaying((prev) => {

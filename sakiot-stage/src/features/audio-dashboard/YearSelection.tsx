@@ -20,7 +20,6 @@ export function YearSelection() {
 	const params = useParams();
 	const location = useLocation();
 
-	const guildSelected = useAppSelector((state) => state.app.guildSelected);
 	const hasSilence = useAppSelector((state) => state.hasSilence.value);
 	const [tab, setTab] = React.useState<"normal" | "silence">("normal");
 	// Silence tab only exists when a silence-free version is present; fall
@@ -39,12 +38,12 @@ export function YearSelection() {
 		if (!isDesktop) setTreeOpen(false);
 	}, [isDesktop]);
 
-	const tree = <CustomizedTreeView guildSelected={guildSelected} />;
+	const tree = <CustomizedTreeView />;
 
 	return (
 		<Box sx={{ width: "100%", height: { md: "100%" }, overflow: "hidden" }}>
 			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0 }}>
-				<ViewAsRoleBanner guildId={guildSelected?.id ?? ""} />
+				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
 			</Box>
 			<Box
 				sx={{

@@ -8,14 +8,12 @@ import {
 	useGetLiveStemsQuery,
 } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
-import type { Dirs, UserGuilds } from "../../../Constants";
+import type { Dirs } from "../../../Constants";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
 import { audioTreeRouteState, recordingTreeRoutes } from "./treeNavigation";
 
-export default function CustomizedTreeView(_props: {
-	guildSelected: UserGuilds | null;
-}) {
+export default function CustomizedTreeView() {
 	const [data, setData] = useState<Dirs[] | null>(null);
 	const [expandedItems, setExpandedItems] = useState<string[]>([]);
 	const params = useParams();

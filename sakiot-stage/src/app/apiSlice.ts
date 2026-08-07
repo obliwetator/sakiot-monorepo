@@ -130,7 +130,7 @@ export const apiSlice = createApi({
 				file_name,
 				idempotency_key,
 			}) => ({
-				url: `remove_silence/${guild_id}/${channel_id}/${year}/${month}/${file_name}`,
+				url: `remove_silence/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}`,
 				method: "POST",
 				headers: {
 					Accept: "application/json",
@@ -267,7 +267,7 @@ export const apiSlice = createApi({
 				end,
 				name,
 			}) => ({
-				url: `audio/clips/create/${guild_id}/${channel_id}/${year}/${month}/${file_name}`,
+				url: `audio/clips/create/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}`,
 				method: "POST",
 				headers: {
 					Accept: "application/json",
@@ -275,6 +275,7 @@ export const apiSlice = createApi({
 				},
 				body: { start, end, name },
 			}),
+			invalidatesTags: ["Clips"],
 		}),
 		checkSilenceFile: builder.query<
 			void,
