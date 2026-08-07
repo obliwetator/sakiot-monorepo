@@ -41,9 +41,15 @@ export function SessionWaveform(props: {
 	const pollRebuild = useCallback(async () => {
 		const result = await refetch();
 		if (result.data) setRebuildProgress(result.data.progress);
-		if (result.error || result.data?.building === false) {
+		if (result.data?.building === false) {
 			setRebuilding(false);
+			return false;
 		}
+		if (result.error) {
+			// Transient fetch error — keep polling instead of abandoning the rebuild.
+			return true;
+		}
+		return true;
 	}, [refetch]);
 
 	useEffect(() => {
@@ -55,9 +61,20 @@ export function SessionWaveform(props: {
 
 	useEffect(() => {
 		if (!rebuilding) return;
-		void pollRebuild();
-		const interval = window.setInterval(() => void pollRebuild(), 1_000);
-		return () => window.clearInterval(interval);
+		let cancelled = false;
+		const tick = async () => {
+			const shouldContinue = await pollRebuild();
+			if (cancelled || !shouldContinue) {
+				window.clearInterval(interval);
+				return;
+			}
+		};
+		const interval = window.setInterval(() => void tick(), 1_000);
+		void tick();
+		return () => {
+			cancelled = true;
+			window.clearInterval(interval);
+		};
 	}, [pollRebuild, rebuilding]);
 
 	const startRebuild = async () => {

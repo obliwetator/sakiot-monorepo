@@ -99,11 +99,18 @@ function absoluteMediaUrl(path: string): string {
 
 function saveBlob(blob: Blob, fileName: string) {
 	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = fileName;
-	anchor.click();
-	URL.revokeObjectURL(url);
+	try {
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = fileName;
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+	} catch {
+		window.open(url, "_blank");
+	} finally {
+		window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+	}
 }
 
 function isSameMediaSegment(
