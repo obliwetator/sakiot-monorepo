@@ -70,7 +70,12 @@ export function formatTimeSince(
 	timestampMs: number | undefined,
 	currentUnixSecs: number,
 ): string {
-	if (!timestampMs) return "Never";
+	if (
+		timestampMs === undefined ||
+		timestampMs === null ||
+		!Number.isFinite(timestampMs)
+	)
+		return "Never";
 	const seconds = Math.max(0, currentUnixSecs - Math.floor(timestampMs / 1000));
 	return `${formatUptime(seconds)} ago`;
 }
