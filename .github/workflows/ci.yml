@@ -70,70 +70,6 @@ jobs:
           git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" \
             | scripts/ci-scope.sh >>"${GITHUB_OUTPUT}"
 
-  rust-checks:
-    needs: scope
-    if: needs.scope.outputs.rust == 'true'
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_DB: sakiot_rouvas
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-        ports:
-          - 54320:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d sakiot_rouvas"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 20
-    env:
-      SQLX_OFFLINE: "true"
-      DATABASE_URL: postgres://postgres:password@localhost:54320/sakiot_rouvas
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
-      RUSTFLAGS: -C link-arg=-fuse-ld=lld
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rustflags: ""
-          cache-targets: false
-          cache-save-if: ${{ github.event_name != 'pull_request' }}
-
-      - name: Set up compiler cache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Install protoc and fast linker
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler lld
-
-      - name: Read pinned sqlx-cli version
-        run: echo "SQLX_CLI_VERSION=$(tr -d '[:space:]' <scripts/sqlx-cli-version)" >>"${GITHUB_ENV}"
-
-      - name: Cache SQLx CLI
-        id: cache-sqlx
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/bin/sqlx
-            ~/.cargo/bin/cargo-sqlx
-          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}-postgres-native-tls-${{ runner.os }}
-
-      - name: Install SQLx CLI
-        if: steps.cache-sqlx.outputs.cache-hit != 'true'
-        run: cargo install sqlx-cli --version "${SQLX_CLI_VERSION}" --locked --no-default-features --features postgres,native-tls
-
-      - name: Apply database migrations
-        run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations
-
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Check SQLx metadata
-        run: SQLX_OFFLINE=false cargo sqlx prepare --check --workspace -- --all-targets
-
   rust-clippy:
     needs: scope
     if: needs.scope.outputs.rust == 'true'
@@ -219,6 +155,12 @@ jobs:
       - name: Apply database migrations
         run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations
 
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Check SQLx metadata
+        run: SQLX_OFFLINE=false cargo sqlx prepare --check --workspace -- --all-targets
+
       - name: Install cargo-nextest
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
@@ -294,7 +236,6 @@ jobs:
     if: always()
     needs:
       - scope
-      - rust-checks
       - rust-clippy
       - rust-test
       - api-contract
@@ -305,7 +246,6 @@ jobs:
       - name: Require every selected suite
         env:
           SCOPE: ${{ needs.scope.result }}
-          RUST_CHECKS: ${{ needs.rust-checks.result }}
           RUST_CLIPPY: ${{ needs.rust-clippy.result }}
           RUST_TEST: ${{ needs.rust-test.result }}
           API_CONTRACT: ${{ needs.api-contract.result }}
@@ -313,6 +253,6 @@ jobs:
           FRONTEND: ${{ needs.frontend.result }}
         run: |
           set -euo pipefail
-          for result in "${SCOPE}" "${RUST_CHECKS}" "${RUST_CLIPPY}" "${RUST_TEST}" "${API_CONTRACT}" "${OPS}" "${FRONTEND}"; do
+          for result in "${SCOPE}" "${RUST_CLIPPY}" "${RUST_TEST}" "${API_CONTRACT}" "${OPS}" "${FRONTEND}"; do
             [[ "${result}" == "success" || "${result}" == "skipped" ]]
           done
