@@ -41,10 +41,6 @@ export function captureCsrfToken(response: Response): void {
 }
 
 export function isLoggedIn(): boolean {
-	if (typeof window !== "undefined") {
-		const apiOrigin = new URL(BASE_API_URL, window.location.origin).origin;
-		if (apiOrigin !== window.location.origin) return true;
-	}
 	return /(?:^|;\s*)(?:__Host-sakiot-logged_in|logged_in)=1(?:;|$)/.test(
 		document.cookie,
 	);
