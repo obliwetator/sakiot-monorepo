@@ -100,6 +100,11 @@ interface DragSession {
 	moved: boolean;
 }
 
+interface DragGhostSelection {
+	selection: SessionSelection;
+	valid: boolean;
+}
+
 interface DragFeedback {
 	kind: DragFeedbackKind;
 	multiplier: number;
@@ -184,6 +189,7 @@ export function ClipRangeEditor(props: {
 	const plotRef = useRef<HTMLDivElement | null>(null);
 	const dragRef = useRef<DragSession | null>(null);
 	const draggedSelectionRef = useRef<SessionSelection | null>(null);
+	const dragGhostRef = useRef<DragGhostSelection | null>(null);
 	const viewDragRef = useRef<ViewDragSession | null>(null);
 	const edgeDriveFrameRef = useRef<number | null>(null);
 	const edgeDriveLastTimeRef = useRef<number | null>(null);
@@ -191,6 +197,7 @@ export function ClipRangeEditor(props: {
 	const [plotWidth, setPlotWidth] = useState(0);
 	const [windowMs, setWindowMs] = useState(defaultWindowMs);
 	const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
+	const [dragGhost, setDragGhost] = useState<DragGhostSelection | null>(null);
 	const [viewDragging, setViewDragging] = useState<ViewDragKind | null>(null);
 	const [view, setView] = useState<TimeWindow>(() =>
 		// Stamp focus wins over selection state because the draft is installed in
@@ -333,7 +340,9 @@ export function ClipRangeEditor(props: {
 
 	const endDrag = useCallback(() => {
 		dragRef.current = null;
+		dragGhostRef.current = null;
 		setDragFeedback(null);
+		setDragGhost(null);
 	}, []);
 
 	const endViewDrag = useCallback(() => {
@@ -384,14 +393,27 @@ export function ClipRangeEditor(props: {
 		props.sessionId,
 		props.silenceFree ?? false,
 	);
-	const selectionMs = selection[1] - selection[0];
-	const valid = isValidClipSelection(selection);
-	const suggestedEdge = nearestSelectionEdge(selection, props.positionMs);
-	const canSetStart = canSetSelectionEdge(selection, "start", props.positionMs);
-	const canSetEnd = canSetSelectionEdge(selection, "end", props.positionMs);
-	const startFraction = windowFraction(selection[0], view);
-	const endFraction = windowFraction(selection[1], view);
-	const selectionGeometry = selectionWindowGeometry(selection, view);
+	const displaySelection = dragGhost?.selection ?? selection;
+	const selectionMs = displaySelection[1] - displaySelection[0];
+	const valid = isValidClipSelection(displaySelection);
+	const dragInvalid = dragGhost ? !dragGhost.valid : false;
+	const suggestedEdge = nearestSelectionEdge(
+		displaySelection,
+		props.positionMs,
+	);
+	const canSetStart = canSetSelectionEdge(
+		displaySelection,
+		"start",
+		props.positionMs,
+	);
+	const canSetEnd = canSetSelectionEdge(
+		displaySelection,
+		"end",
+		props.positionMs,
+	);
+	const startFraction = windowFraction(displaySelection[0], view);
+	const endFraction = windowFraction(displaySelection[1], view);
+	const selectionGeometry = selectionWindowGeometry(displaySelection, view);
 	const playheadFraction = windowFraction(props.positionMs, view);
 	const stampFraction =
 		props.initialFocusMs === undefined
@@ -448,11 +470,11 @@ export function ClipRangeEditor(props: {
 				)
 			: 0;
 	const fineSelectionGeometry = fineWindow
-		? selectionWindowGeometry(selection, fineWindow)
+		? selectionWindowGeometry(displaySelection, fineWindow)
 		: null;
 	const otherEdgeMs =
 		dragFeedback?.kind.type === "edge"
-			? selection[dragFeedback.kind.edge === "start" ? 1 : 0]
+			? displaySelection[dragFeedback.kind.edge === "start" ? 1 : 0]
 			: null;
 	const otherEdgeFraction =
 		fineWindow && otherEdgeMs !== null
@@ -523,6 +545,8 @@ export function ClipRangeEditor(props: {
 			plotLeftPx: plotBounds?.left ?? 0,
 			plotWidthPx: plotBounds?.width ?? plotWidth,
 		});
+		dragGhostRef.current = { selection, valid: true };
+		setDragGhost({ selection, valid: true });
 	};
 
 	const continueDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -582,8 +606,11 @@ export function ClipRangeEditor(props: {
 			plotLeftPx: drag.plotLeftPx,
 			plotWidthPx: drag.plotWidthPx,
 		});
-		draggedSelectionRef.current = nextSelection;
-		onSelectionChange(nextSelection);
+		const plotRect = plotRef.current?.getBoundingClientRect();
+		const valid = plotRect ? event.clientY <= plotRect.bottom + 32 : true;
+		const ghost = { selection: nextSelection, valid };
+		dragGhostRef.current = ghost;
+		setDragGhost(ghost);
 	};
 
 	const finishDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -614,6 +641,14 @@ export function ClipRangeEditor(props: {
 				setNearestSelectionEdge(drag.origin, positionMs, durationMs),
 			);
 			return;
+		}
+		const ghost = dragGhostRef.current;
+		if (
+			ghost?.valid &&
+			(ghost.selection[0] !== drag.origin[0] ||
+				ghost.selection[1] !== drag.origin[1])
+		) {
+			onSelectionChange(ghost.selection);
 		}
 		endDrag();
 	};
@@ -1136,12 +1171,15 @@ export function ClipRangeEditor(props: {
 										selectionGeometry.startFraction) *
 									100
 								}%)`,
-								bgcolor: valid
-									? "rgba(56, 189, 248, 0.22)"
-									: "rgba(248, 113, 113, 0.22)",
-								borderTop: "2px solid",
-								borderBottom: "2px solid",
-								borderColor: valid ? "info.light" : "error.light",
+								bgcolor:
+									valid && !dragInvalid
+										? "rgba(56, 189, 248, 0.22)"
+										: "rgba(248, 113, 113, 0.22)",
+								borderTop: dragGhost ? "2px dashed" : "2px solid",
+								borderBottom: dragGhost ? "2px dashed" : "2px solid",
+								borderColor:
+									valid && !dragInvalid ? "info.light" : "error.light",
+								opacity: dragGhost ? 0.7 : 1,
 								cursor: "grab",
 								touchAction: "none",
 								"&:active": { cursor: "grabbing" },
@@ -1151,7 +1189,8 @@ export function ClipRangeEditor(props: {
 
 					{(["start", "end"] as const).map((edge) => {
 						const fraction = edge === "start" ? startFraction : endFraction;
-						const valueMs = edge === "start" ? selection[0] : selection[1];
+						const valueMs =
+							edge === "start" ? displaySelection[0] : displaySelection[1];
 						const handleVisible =
 							edge === "start"
 								? selectionGeometry.startHandleVisible
@@ -1179,7 +1218,7 @@ export function ClipRangeEditor(props: {
 									width: HANDLE_WIDTH_PX,
 									ml: `${-HANDLE_WIDTH_PX / 2}px`,
 									borderRadius: 1,
-									bgcolor: valid ? "info.light" : "error.light",
+									bgcolor: valid && !dragInvalid ? "info.light" : "error.light",
 									boxShadow: "0 1px 4px rgba(2,6,23,0.7)",
 									cursor: "ew-resize",
 									zIndex: 11,
