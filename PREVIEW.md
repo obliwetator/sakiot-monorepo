@@ -1,10 +1,16 @@
 # Preview instances (branch deploys)
 
-`<slot>.preview.patrykstyla.com` is a third (and fourth, fifth...) set of
-instances on the same VPS as production and main staging. Each **slot** is a
-fully separate instance — own DB, ports, units, Discord bot — that any branch
-can be deployed to, so several branches can be tested side by side without
-touching the staging instance that always tracks `main`.
+`<slot>.preview.patrykstyla.com` hosts web server + frontend instances on the
+same VPS as production and main staging. Each **slot** is a fully separate
+instance — own DB, ports, units, subdomain — that any branch can be deployed
+to, so several branches can be tested side by side without touching the
+staging instance that always tracks `main`.
+
+**Previews run no Discord bot** (only `web_server` + the frontend). Bot
+behavior is exercised on staging; the bot's per-token gateway limit is what
+made per-slot bots painful, and dropping them makes slots cheap. Web login
+still works: OAuth reuses the staging application's client id/secret with a
+per-slot redirect URI — no new Discord application anywhere.
 
 Deploys are manual: **Actions → Deploy preview → Run workflow**, pick the
 `branch` and the `slot` to deploy it into. The workflow runs the standard CI,
@@ -26,12 +32,11 @@ ops/update-deploy-engine.sh
 #    CLOUDFLARE_API_TOKEN; certbot email in CERTBOT_EMAIL for HTTPS.
 CLOUDFLARE_API_TOKEN=... CERTBOT_EMAIL=you@example.com ops/preview-slot.sh clip-editor
 
-# 3. The slot's Discord bot cannot be automated: edit
-#    /etc/sakiot/preview-clip-editor.env and set a NEW bot's
-#    DISCORD_TOKEN_RELEASE / APPLICATION_ID_RELEASE / DISCORD_CLIENT_ID /
-#    DISCORD_CLIENT_SECRET (one gateway per token — staging's DEBUG bot is
-#    taken). Add https://clip-editor.preview.patrykstyla.com/api/discord_login
-#    to that application's OAuth redirect URIs.
+# 3. No Discord bot needed. Just set the shared OAuth credentials in
+#    /etc/sakiot/preview-clip-editor.env: copy DISCORD_CLIENT_ID and
+#    DISCORD_CLIENT_SECRET from the staging application, and add
+#    https://clip-editor.preview.patrykstyla.com/api/discord_login to that
+#    application's OAuth redirect URIs (Dev Portal -> OAuth2 -> Redirects).
 
 # 4. Deploy: Actions -> Deploy preview -> slot=clip-editor, branch=<branch>.
 
@@ -47,10 +52,11 @@ CLOUDFLARE_API_TOKEN=... ops/preview-slot.sh clip-editor --remove
   Cloudflare API; `--no-dns` skips this when a wildcard record is in place.
 - Renders `/etc/sakiot/preview-<slot>.env` from `ops/preview.env.example`
   (paths, ports, DB name, domain, units all namespaced to the slot) and the
-  systemd units from the staging templates.
+  web systemd unit from the staging template (no bot unit — previews run no
+  FBI Agent).
 - Installs the nginx vhost from `ops/nginx/preview-slot.conf.example` and
   runs `certbot --nginx` when `CERTBOT_EMAIL` is set.
-- `--remove` reverses everything: DNS record, cert, vhost, units, DB, env file.
+- `--remove` reverses everything: DNS record, cert, vhost, unit, DB, env file.
 
 ## DNS and TLS — no wildcard needed
 
@@ -73,9 +79,8 @@ Two equivalent setups, pick one:
 |------------------|----------------------------------|----------------------------------|
 | web port         | 8901                             | **8903+ (auto-assigned)**        |
 | database         | `sakiot_staging`                 | `sakiot_preview_<slot>`          |
-| Discord bot      | DEBUG bot                        | **its own bot per slot**         |
+| Discord bot      | DEBUG bot                        | **none (web + frontend only)**   |
 | web unit         | `sakiot-staging-web.service`     | `sakiot-preview-<slot>-web.service` |
-| bot unit         | `sakiot-staging-fbi-agent@<id>`  | `sakiot-preview-<slot>-fbi-agent@<id>` |
 | data dir         | `/var/lib/sakiot-staging`        | `/var/lib/sakiot-preview-<slot>` |
 | releases         | `/srv/sakiot-staging`            | `/srv/sakiot-preview-<slot>`     |
 | cache            | `/var/cache/sakiot-staging`      | `/var/cache/sakiot-preview-<slot>` |

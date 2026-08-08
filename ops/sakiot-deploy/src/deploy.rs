@@ -262,6 +262,17 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         changed_paths = Some(paths);
         components
     };
+    // Preview slots deploy the web server and frontend only. Bot behavior is
+    // exercised on the staging instance, so preview branches need no Discord
+    // bot (one gateway per token) and skip the blue/green bot handoff.
+    let components: Vec<Component> = if target == Target::Preview {
+        components
+            .into_iter()
+            .filter(|component| *component != Component::Bot)
+            .collect()
+    } else {
+        components
+    };
     if components.is_empty() {
         log("documentation-only release; no application components selected");
     }
