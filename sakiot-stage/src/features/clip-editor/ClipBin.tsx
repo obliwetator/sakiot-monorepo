@@ -98,7 +98,13 @@ function ClipBinItem(props: {
 		<ListItemButton
 			draggable
 			onDragStart={(event) => {
-				event.dataTransfer.setData("text/plain", props.clip.clip_id);
+				event.dataTransfer.setData(
+					"application/json",
+					JSON.stringify({
+						clip_id: props.clip.clip_id,
+						length: props.clip.length ?? 0,
+					}),
+				);
 				event.dataTransfer.effectAllowed = "copy";
 			}}
 			onDoubleClick={() => props.onAdd(props.clip)}
