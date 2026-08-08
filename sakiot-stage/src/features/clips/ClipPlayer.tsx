@@ -34,6 +34,7 @@ import {
 } from "../audio-dashboard/playbackShortcuts";
 import { JamIt } from "../audio-dashboard/RangeSlider/JamIt";
 import { ClipWaveform } from "./ClipWaveform";
+import { isComposedClip } from "./composedClip";
 
 const ARROW_SEEK_SECONDS = 5;
 const CTRL_ARROW_SEEK_SECONDS = 30;
@@ -414,6 +415,8 @@ export function ClipPlayer(props: {
 									Session {props.clip.recording_session_id} · open at{" "}
 									{formatDuration(props.clip.start_time)}
 								</Link>
+							) : isComposedClip(props.clip) ? (
+								"Composition"
 							) : (
 								props.clip.original_file_name || "Unknown"
 							)

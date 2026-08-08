@@ -27,7 +27,9 @@ import {
 	setSegmentRange,
 	snapToNeighbors,
 } from "./model";
+import { SegmentWaveform } from "./SegmentWaveform";
 import type { UseClipEditorReturn } from "./useClipEditor";
+import { useClipWaveform } from "./useClipWaveform";
 
 const TRACK_HEIGHT_PX = 72;
 const HANDLE_WIDTH_PX = 7;
@@ -197,6 +199,7 @@ function dragGhostGeometry(drag: SegmentDragState) {
 }
 
 export function Timeline(props: {
+	guildId: string;
 	editor: UseClipEditorReturn;
 	clipName: (segment: TimelineSegment) => string;
 	onDropClip: (
@@ -407,6 +410,7 @@ export function Timeline(props: {
 							<TrackRow
 								key={track}
 								track={track}
+								guildId={props.guildId}
 								editor={editor}
 								clipName={props.clipName}
 								fraction={fraction}
@@ -780,6 +784,7 @@ function TimelineRuler(props: {
 
 function TrackRow(props: {
 	track: number;
+	guildId: string;
 	editor: UseClipEditorReturn;
 	clipName: (segment: TimelineSegment) => string;
 	fraction: (sec: number) => number;
@@ -824,6 +829,7 @@ function TrackRow(props: {
 						<TrackSegment
 							key={segment.id}
 							segment={segment}
+							guildId={props.guildId}
 							name={props.clipName(segment)}
 							selected={editor.selectedSegmentId === segment.id}
 							dragging={props.draggingSegmentId === segment.id}
@@ -864,6 +870,7 @@ function TrackRow(props: {
 
 function TrackSegment(props: {
 	segment: TimelineSegment;
+	guildId: string;
 	name: string;
 	selected: boolean;
 	dragging: boolean;
@@ -875,6 +882,8 @@ function TrackSegment(props: {
 	onBeginDrag: (drag: SegmentDragState) => void;
 }) {
 	const { segment } = props;
+	const peaks = useClipWaveform(props.guildId, segment.sourceId);
+	const durationSec = props.maxSource > 0 ? props.maxSource : segment.sourceOut;
 
 	const beginGesture = (
 		event: ReactPointerEvent<HTMLElement>,
@@ -935,6 +944,13 @@ function TrackSegment(props: {
 				zIndex: props.selected ? 4 : 2,
 			}}
 		>
+			<SegmentWaveform
+				peaks={peaks}
+				sourceIn={segment.sourceIn}
+				sourceOut={segment.sourceOut}
+				durationSec={durationSec}
+				selected={props.selected}
+			/>
 			<Box
 				onPointerDown={(event) => beginGesture(event, "left")}
 				sx={{
@@ -966,6 +982,9 @@ function TrackSegment(props: {
 					textOverflow: "ellipsis",
 					display: "block",
 					lineHeight: 1.6,
+					position: "relative",
+					zIndex: 1,
+					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
 				}}
 			>
 				{props.name}

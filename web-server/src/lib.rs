@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod audio;
 pub mod auth;
+pub mod clip_editor;
 pub mod clips;
 pub mod config;
 pub mod errors;

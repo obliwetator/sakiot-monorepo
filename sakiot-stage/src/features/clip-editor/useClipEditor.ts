@@ -293,6 +293,38 @@ export function useClipEditor() {
 		return buffersRef.current.get(sourceId)?.duration ?? null;
 	}, []);
 
+	const preloadSources = useCallback(
+		async (guildId: string, sourceIds: string[]) => {
+			const missing = sourceIds.filter(
+				(sourceId) => !buffersRef.current.has(sourceId),
+			);
+			if (missing.length === 0) return;
+			setLoadingClips((previous) => {
+				const next = new Map(previous);
+				for (const sourceId of missing) next.set(sourceId, true);
+				return next;
+			});
+			await Promise.all(
+				missing.map((sourceId) =>
+					loadClipBuffer(guildId, sourceId)
+						.then((buffer) => registerBuffer(sourceId, buffer))
+						.catch(() => {
+							// Segments referencing an unreadable source stay silent;
+							// the edit itself remains intact for re-export.
+						})
+						.finally(() => {
+							setLoadingClips((previous) => {
+								const next = new Map(previous);
+								next.delete(sourceId);
+								return next;
+							});
+						}),
+				),
+			);
+		},
+		[registerBuffer],
+	);
+
 	return {
 		edit,
 		preview,
@@ -316,6 +348,7 @@ export function useClipEditor() {
 		loadClip,
 		registerBuffer,
 		sourceDuration,
+		preloadSources,
 		loadingClips,
 		viewStartSec,
 		viewWidthSec,

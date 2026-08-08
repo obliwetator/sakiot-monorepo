@@ -39,7 +39,7 @@ fn is_valid_recording_file_name(file_name: &str) -> bool {
         && !file_name.chars().any(char::is_control)
 }
 
-fn normalized_clip_name(name: &str) -> Option<&str> {
+pub(crate) fn normalized_clip_name(name: &str) -> Option<&str> {
     let name = name.trim();
     (!name.is_empty() && name.chars().count() <= 255).then_some(name)
 }
@@ -64,6 +64,9 @@ pub struct ClipInfo {
     start_time: f32,
     recording_session_id: Option<String>,
     silence_free: bool,
+    /// Serialized clip editor edit for composed clips; re-importable into the
+    /// editor. Null for clips cut from a single recording.
+    composition: Option<serde_json::Value>,
 }
 
 #[route(
@@ -182,7 +185,8 @@ pub async fn get_clips(
         channel_id,
         start_time,
         recording_session_id,
-        silence_free
+        silence_free,
+        composition
         FROM clips
         WHERE guild_id = $1
           AND deleted_at IS NULL
@@ -249,6 +253,7 @@ pub async fn get_clips(
                     .try_get::<Option<i64>, _>("recording_session_id")?
                     .map(|session_id| session_id.to_string()),
                 silence_free: row.try_get("silence_free")?,
+                composition: row.try_get("composition")?,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -457,6 +462,7 @@ pub async fn create_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     media: web::Data<MediaArchive>,
+    progress: web::Data<crate::audio::types::WaveformProgressContainer>,
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
@@ -573,6 +579,12 @@ pub async fn create_clip(
         error!("Database error inserting clip: {:?}", e);
         AppError::InternalError
     })?;
+
+    crate::audio::spawn_clip_waveform(
+        clip_id.clone(),
+        std::path::PathBuf::from(&full_save_path),
+        progress,
+    );
 
     Ok(HttpResponse::Ok().json(CreateClipResponse {
         status: "success",

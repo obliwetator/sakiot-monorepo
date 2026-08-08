@@ -10,19 +10,31 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
+import LinearProgress from "@mui/material/LinearProgress";
 import Slider from "@mui/material/Slider";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { type ClipData, useGetClipsQuery } from "../../app/apiSlice";
+import {
+	apiSlice,
+	type ClipData,
+	useComposeClipMutation,
+	useGetClipsQuery,
+	useGetComposeClipStatusQuery,
+} from "../../app/apiSlice";
+import { useAppDispatch } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
+import { BaseDialog } from "../../shared/BaseDialog";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
 } from "../audio-dashboard/playbackShortcuts";
+import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
+import { deserializeEdit, serializeEdit } from "./composePayload";
 import { Inspector } from "./Inspector";
 import { type ClipEdit, makeSegment, segmentDuration } from "./model";
 import { Timeline } from "./Timeline";
@@ -31,6 +43,7 @@ import { useClipEditor } from "./useClipEditor";
 
 export function ClipEditor(props: { guildId: string }) {
 	const { asRoleArg } = useAsRole();
+	const dispatch = useAppDispatch();
 	const { data: clips } = useGetClipsQuery(
 		{ guild_id: props.guildId, ...asRoleArg },
 		{ skip: !props.guildId },
@@ -39,6 +52,55 @@ export function ClipEditor(props: { guildId: string }) {
 	const [searchParams] = useSearchParams();
 	const sourceClipId = searchParams.get("source");
 	const seededRef = useRef(false);
+
+	const [composeOpen, setComposeOpen] = useState(false);
+	const [composeName, setComposeName] = useState("");
+	const [composeError, setComposeError] = useState<string | null>(null);
+	const [composeDone, setComposeDone] = useState(false);
+	const [composeId, setComposeId] = useState<string | null>(null);
+	const [composeClip, { isLoading: composeStarting }] =
+		useComposeClipMutation();
+	const { data: composeStatus } = useGetComposeClipStatusQuery(
+		{ guild_id: props.guildId, clip_id: composeId ?? "" },
+		{ skip: composeId === null, pollingInterval: 1000 },
+	);
+
+	useEffect(() => {
+		if (!composeId || !composeStatus) return;
+		if (composeStatus.status === "ready") {
+			dispatch(apiSlice.util.invalidateTags(["Clips"]));
+			setComposeDone(true);
+			setComposeId(null);
+		} else if (composeStatus.status === "failed") {
+			setComposeError(
+				"The render failed. Check the source clips and try again.",
+			);
+			setComposeId(null);
+		}
+	}, [composeId, composeStatus, dispatch]);
+
+	const handleCompose = useCallback(async () => {
+		if (editor.edit.segments.length === 0) return;
+		editor.flush();
+		setComposeError(null);
+		setComposeDone(false);
+		try {
+			const result = await composeClip({
+				guild_id: props.guildId,
+				body: serializeEdit(editor.edit, composeName.trim() || undefined),
+			}).unwrap();
+			setComposeId(result.id);
+		} catch {
+			setComposeError("Could not start the render. Please try again.");
+		}
+	}, [composeClip, composeName, editor, props.guildId]);
+
+	const closeCompose = useCallback(() => {
+		if (composeStarting || composeId !== null) return;
+		setComposeOpen(false);
+		setComposeError(null);
+		setComposeDone(false);
+	}, [composeId, composeStarting]);
 
 	const clipName = useCallback(
 		(sourceId: string) => {
@@ -67,19 +129,34 @@ export function ClipEditor(props: { guildId: string }) {
 	);
 
 	useEffect(() => {
-		if (seededRef.current || !sourceClipId || !sourceBuffer) return;
+		if (seededRef.current || !sourceClipId) return;
+		const source = clips?.find((c) => c.clip_id === sourceClipId);
+		const edit = source?.composition
+			? deserializeEdit(source.composition)
+			: null;
+		if (edit && edit.segments.length > 0) {
+			// Composed clip: restore the whole edit, then load every source
+			// buffer so the timeline plays as it did when it was exported.
+			seededRef.current = true;
+			editor.apply(() => edit);
+			editor.select(edit.segments[0]?.id ?? null);
+			void editor.preloadSources(
+				props.guildId,
+				edit.segments.map((segment) => segment.sourceId),
+			);
+			return;
+		}
+		if (!sourceBuffer) return;
 		seededRef.current = true;
 		editor.registerBuffer(sourceClipId, sourceBuffer);
-		const lengthSec =
-			clips?.find((c) => c.clip_id === sourceClipId)?.length ??
-			sourceBuffer.duration;
+		const lengthSec = source?.length ?? sourceBuffer.duration;
 		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
 		editor.apply((edit) => ({
 			...edit,
 			segments: [...edit.segments, segment],
 		}));
 		editor.select(segment.id);
-	}, [clips, editor, sourceBuffer, sourceClipId]);
+	}, [clips, editor, props.guildId, sourceBuffer, sourceClipId]);
 
 	const handleDropClip = useCallback(
 		(clipId: string, lengthSec: number, track: number, startSec: number) => {
@@ -97,6 +174,8 @@ export function ClipEditor(props: { guildId: string }) {
 
 	useKeyboardShortcuts(editor);
 
+	const pureClips = (clips ?? []).filter((clip) => !isComposedClip(clip));
+
 	const duration = editor.edit.segments.reduce(
 		(max, segment) =>
 			Math.max(max, segment.timelineStart + segmentDuration(segment)),
@@ -112,7 +191,11 @@ export function ClipEditor(props: { guildId: string }) {
 				flexDirection: "column",
 			}}
 		>
-			<ToolbarRow editor={editor} />
+			<ToolbarRow
+				editor={editor}
+				onExport={() => setComposeOpen(true)}
+				canExport={editor.edit.segments.length > 0}
+			/>
 			<Box
 				sx={{
 					flex: 1,
@@ -122,7 +205,7 @@ export function ClipEditor(props: { guildId: string }) {
 				}}
 			>
 				<ClipBin
-					clips={clips ?? []}
+					clips={pureClips}
 					loadingClips={editor.loadingClips}
 					onAdd={handleAddFromBin}
 				/>
@@ -141,6 +224,7 @@ export function ClipEditor(props: { guildId: string }) {
 					/>
 					<Box sx={{ flex: 1, minHeight: 0 }}>
 						<Timeline
+							guildId={props.guildId}
 							editor={editor}
 							clipName={(segment) => clipName(segment.sourceId)}
 							onDropClip={handleDropClip}
@@ -149,11 +233,28 @@ export function ClipEditor(props: { guildId: string }) {
 				</Box>
 				<Inspector editor={editor} clipName={clipName} />
 			</Box>
+			<ClipExportDialog
+				open={composeOpen}
+				name={composeName}
+				setName={setComposeName}
+				error={composeError}
+				isStarting={composeStarting}
+				isRendering={composeId !== null}
+				progress={composeStatus?.progress ?? 0}
+				done={composeDone}
+				segmentCount={editor.edit.segments.length}
+				onStart={() => void handleCompose()}
+				onClose={closeCompose}
+			/>
 		</Box>
 	);
 }
 
-function ToolbarRow(props: { editor: ReturnType<typeof useClipEditor> }) {
+function ToolbarRow(props: {
+	editor: ReturnType<typeof useClipEditor>;
+	onExport: () => void;
+	canExport: boolean;
+}) {
 	const { editor } = props;
 	return (
 		<Box
@@ -208,19 +309,96 @@ function ToolbarRow(props: { editor: ReturnType<typeof useClipEditor> }) {
 					<FitScreenIcon fontSize="small" />
 				</IconButton>
 			</Tooltip>
-			<Tooltip title="Export (coming soon)">
+			<Tooltip title="Export the composition as a new clip">
 				<span>
 					<Button
 						size="small"
 						variant="contained"
 						startIcon={<ContentCopyIcon />}
-						disabled
+						disabled={!props.canExport}
+						onClick={props.onExport}
 					>
 						Export
 					</Button>
 				</span>
 			</Tooltip>
 		</Box>
+	);
+}
+
+function ClipExportDialog(props: {
+	open: boolean;
+	name: string;
+	setName: (name: string) => void;
+	error: string | null;
+	isStarting: boolean;
+	isRendering: boolean;
+	progress: number;
+	done: boolean;
+	segmentCount: number;
+	onStart: () => void;
+	onClose: () => void;
+}) {
+	const busy = props.isStarting || props.isRendering;
+	return (
+		<BaseDialog
+			open={props.open}
+			onClose={props.onClose}
+			title="Export composition"
+			error={props.error ?? undefined}
+			busy={busy}
+			actions={
+				<>
+					<Button onClick={props.onClose} disabled={busy}>
+						{props.done ? "Done" : "Cancel"}
+					</Button>
+					{!props.done && (
+						<Button
+							variant="contained"
+							disabled={busy || props.segmentCount === 0}
+							onClick={props.onStart}
+						>
+							Render
+						</Button>
+					)}
+				</>
+			}
+		>
+			<TextField
+				size="small"
+				fullWidth
+				label="Clip name"
+				value={props.name}
+				disabled={busy}
+				onChange={(event) => props.setName(event.currentTarget.value)}
+				sx={{ mb: 2 }}
+			/>
+			{props.done ? (
+				<Typography variant="body2">
+					Exported — the new clip is now in the bin.
+				</Typography>
+			) : props.isRendering ? (
+				<Box>
+					<Typography variant="body2" sx={{ mb: 1 }}>
+						Rendering {props.segmentCount} segment
+						{props.segmentCount === 1 ? "" : "s"} on the server…
+					</Typography>
+					<LinearProgress variant="determinate" value={props.progress} />
+					<Typography
+						variant="caption"
+						color="text.secondary"
+						sx={{ fontVariantNumeric: "tabular-nums" }}
+					>
+						{props.progress}%
+					</Typography>
+				</Box>
+			) : (
+				<Typography variant="body2" color="text.secondary">
+					Renders {props.segmentCount} segment
+					{props.segmentCount === 1 ? "" : "s"} into a single new clip.
+				</Typography>
+			)}
+		</BaseDialog>
 	);
 }
 
