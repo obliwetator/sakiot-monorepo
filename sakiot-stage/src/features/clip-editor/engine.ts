@@ -85,7 +85,8 @@ export class ClipEditorEngine {
 			treble.connect(this.bass ?? ctx.destination);
 			node.start(
 				now + Math.max(0, overlapStart - fromSec),
-				segment.sourceIn + Math.max(0, fromSec - segment.timelineStart),
+				segment.sourceIn +
+					Math.max(0, fromSec - segment.timelineStart) * segment.effects.rate,
 				overlapEnd - overlapStart,
 			);
 			this.active.set(segment.id, { node, gain, bass, treble });

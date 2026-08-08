@@ -7,7 +7,12 @@ import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { formatDuration } from "../../utils/formatTime";
-import type { SegmentEffects, TimelineSegment } from "./model";
+import {
+	type SegmentEffects,
+	segmentDuration,
+	setSegmentSpeed,
+	type TimelineSegment,
+} from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
 const SLIDER_PROPS = {
@@ -85,7 +90,8 @@ function SegmentInspectorContent(props: {
 	const finishSlider = () => editor.flush();
 
 	const trimEdge = (edge: "in" | "out") => {
-		const at = editor.positionSec - segment.timelineStart;
+		const at =
+			(editor.positionSec - segment.timelineStart) * segment.effects.rate;
 		editor.apply((edit) => ({
 			...edit,
 			segments: edit.segments.map((s) => {
@@ -98,7 +104,7 @@ function SegmentInspectorContent(props: {
 		}));
 	};
 
-	const duration = segment.sourceOut - segment.sourceIn;
+	const duration = segmentDuration(segment);
 
 	return (
 		<>
@@ -166,7 +172,9 @@ function SegmentInspectorContent(props: {
 				max={2}
 				step={0.05}
 				format={(value) => `${value.toFixed(2)}×`}
-				onChange={(value) => patchEffects({ rate: value })}
+				onChange={(value) =>
+					editor.preview((edit) => setSegmentSpeed(edit, segment.id, value))
+				}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider

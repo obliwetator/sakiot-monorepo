@@ -55,6 +55,7 @@ interface SegmentDragState {
 	originIn: number;
 	originOut: number;
 	originTrack: number;
+	originRate: number;
 	maxSource: number;
 	maxTrack: number;
 	startX: number;
@@ -110,7 +111,7 @@ function computeGhost(
 		const ghostTrack = Math.max(0, Math.min(drag.maxTrack + 1, rawTrack));
 		const ghostStart = snapToNeighbors(
 			snapTo(rawStart, positionSec),
-			drag.originOut - drag.originIn,
+			(drag.originOut - drag.originIn) / drag.originRate,
 			segments,
 			drag.segmentId,
 			ghostTrack,
@@ -128,39 +129,44 @@ function computeGhost(
 	if (drag.mode === "left") {
 		const rawGhostIn = Math.max(
 			0,
-			Math.min(drag.originOut - MIN_SEGMENT_SECONDS, drag.originIn + dt),
+			Math.min(
+				drag.originOut - MIN_SEGMENT_SECONDS,
+				drag.originIn + dt * drag.originRate,
+			),
 		);
 		const snappedStart = snapTo(
-			drag.originStart + (rawGhostIn - drag.originIn),
+			drag.originStart + (rawGhostIn - drag.originIn) / drag.originRate,
 			positionSec,
 		);
 		const ghostIn = Math.max(
 			0,
 			Math.min(
 				drag.originOut - MIN_SEGMENT_SECONDS,
-				drag.originIn + (snappedStart - drag.originStart),
+				drag.originIn + (snappedStart - drag.originStart) * drag.originRate,
 			),
 		);
 		return {
 			...drag,
 			ghostIn,
-			ghostStart: drag.originStart + (ghostIn - drag.originIn),
+			ghostStart:
+				drag.originStart + (ghostIn - drag.originIn) / drag.originRate,
 			pointerX: event.clientX,
 			pointerY: event.clientY,
 		};
 	}
 	const rawGhostOut = Math.max(
 		drag.originIn + MIN_SEGMENT_SECONDS,
-		Math.min(drag.maxSource, drag.originOut + dt),
+		Math.min(drag.maxSource, drag.originOut + dt * drag.originRate),
 	);
-	const endSec = drag.originStart + (drag.originOut - drag.originIn);
+	const endSec =
+		drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
 	const snappedEnd = snapTo(
-		endSec + (rawGhostOut - drag.originOut),
+		endSec + (rawGhostOut - drag.originOut) / drag.originRate,
 		positionSec,
 	);
 	const ghostOut = Math.min(
 		drag.maxSource,
-		drag.originOut + (snappedEnd - endSec),
+		drag.originOut + (snappedEnd - endSec) * drag.originRate,
 	);
 	return {
 		...drag,
@@ -171,21 +177,22 @@ function computeGhost(
 }
 
 function dragGhostGeometry(drag: SegmentDragState) {
+	const duration = (drag.originOut - drag.originIn) / drag.originRate;
 	if (drag.mode === "move") {
 		return {
 			startSec: drag.ghostStart,
-			endSec: drag.ghostStart + (drag.originOut - drag.originIn),
+			endSec: drag.ghostStart + duration,
 		};
 	}
 	if (drag.mode === "left") {
 		return {
 			startSec: drag.ghostStart,
-			endSec: drag.originStart + (drag.originOut - drag.originIn),
+			endSec: drag.originStart + duration,
 		};
 	}
 	return {
 		startSec: drag.originStart,
-		endSec: drag.originStart + (drag.ghostOut - drag.ghostIn),
+		endSec: drag.originStart + (drag.ghostOut - drag.ghostIn) / drag.originRate,
 	};
 }
 
@@ -884,6 +891,7 @@ function TrackSegment(props: {
 			originIn: segment.sourceIn,
 			originOut: segment.sourceOut,
 			originTrack: segment.track,
+			originRate: segment.effects.rate,
 			maxSource: props.maxSource,
 			maxTrack: props.maxTrack,
 			startX: event.clientX,

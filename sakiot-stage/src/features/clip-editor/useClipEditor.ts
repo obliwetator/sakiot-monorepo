@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipEditorEngine } from "./engine";
 import type { ClipEdit } from "./model";
-import { emptyEdit, makeSegment } from "./model";
+import { emptyEdit, makeSegment, segmentDuration } from "./model";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
@@ -244,10 +244,7 @@ export function useClipEditor() {
 	const fitView = useCallback(() => {
 		const duration = editRef.current.segments.reduce(
 			(max, segment) =>
-				Math.max(
-					max,
-					segment.timelineStart + (segment.sourceOut - segment.sourceIn),
-				),
+				Math.max(max, segment.timelineStart + segmentDuration(segment)),
 			0,
 		);
 		setViewStartSec(0);
@@ -272,7 +269,7 @@ export function useClipEditor() {
 			if (!segment) return current;
 			const at = positionRef.current;
 			const start = segment.timelineStart;
-			const end = start + (segment.sourceOut - segment.sourceIn);
+			const end = start + segmentDuration(segment);
 			if (at - start < 0.05 || end - at < 0.05) return current;
 			return {
 				...current,
@@ -281,7 +278,7 @@ export function useClipEditor() {
 					{
 						...segment,
 						id: `seg-split-${Date.now()}`,
-						sourceIn: segment.sourceIn + (at - start),
+						sourceIn: segment.sourceIn + (at - start) * segment.effects.rate,
 						timelineStart: at,
 					},
 				],
@@ -335,10 +332,7 @@ function endOfTrack(edit: ClipEdit, track: number): number {
 	return edit.segments.reduce(
 		(max, segment) =>
 			segment.track === track
-				? Math.max(
-						max,
-						segment.timelineStart + (segment.sourceOut - segment.sourceIn),
-					)
+				? Math.max(max, segment.timelineStart + segmentDuration(segment))
 				: max,
 		0,
 	);

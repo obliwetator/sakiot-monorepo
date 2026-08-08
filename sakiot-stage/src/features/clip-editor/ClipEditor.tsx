@@ -24,7 +24,7 @@ import {
 } from "../audio-dashboard/playbackShortcuts";
 import { ClipBin } from "./ClipBin";
 import { Inspector } from "./Inspector";
-import { type ClipEdit, makeSegment } from "./model";
+import { type ClipEdit, makeSegment, segmentDuration } from "./model";
 import { Timeline } from "./Timeline";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
@@ -99,10 +99,7 @@ export function ClipEditor(props: { guildId: string }) {
 
 	const duration = editor.edit.segments.reduce(
 		(max, segment) =>
-			Math.max(
-				max,
-				segment.timelineStart + (segment.sourceOut - segment.sourceIn),
-			),
+			Math.max(max, segment.timelineStart + segmentDuration(segment)),
 		0,
 	);
 
@@ -389,9 +386,10 @@ function trimSegment(
 		...edit,
 		segments: edit.segments.map((s) => {
 			if (s.id !== id) return s;
-			const sourceIn = edge === "in" ? Math.max(0, atSec) : s.sourceIn;
+			const atContent = atSec * s.effects.rate;
+			const sourceIn = edge === "in" ? Math.max(0, atContent) : s.sourceIn;
 			const sourceOut =
-				edge === "out" ? Math.max(sourceIn + 0.05, atSec) : s.sourceOut;
+				edge === "out" ? Math.max(sourceIn + 0.05, atContent) : s.sourceOut;
 			return { ...s, sourceIn, sourceOut };
 		}),
 	}));

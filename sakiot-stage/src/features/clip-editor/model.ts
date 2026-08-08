@@ -66,8 +66,15 @@ export function makeSegment(
 	};
 }
 
+/**
+ * Real-time duration of the segment on the timeline: the trimmed source
+ * content played back at the segment's speed.
+ */
 export function segmentDuration(segment: TimelineSegment): number {
-	return Math.max(0, segment.sourceOut - segment.sourceIn);
+	return (
+		Math.max(0, segment.sourceOut - segment.sourceIn) /
+		Math.max(0.01, segment.effects.rate)
+	);
 }
 
 export function segmentEnd(segment: TimelineSegment): number {
@@ -144,7 +151,7 @@ export function splitSegment(
 	const second: TimelineSegment = {
 		...segment,
 		id: newSegmentId(),
-		sourceIn: segment.sourceIn + (atSec - start),
+		sourceIn: segment.sourceIn + (atSec - start) * segment.effects.rate,
 		timelineStart: atSec,
 	};
 	return { ...edit, segments: [...edit.segments, second] };
@@ -152,6 +159,57 @@ export function splitSegment(
 
 export function addTrack(edit: ClipEdit): ClipEdit {
 	return { ...edit, tracks: edit.tracks + 1 };
+}
+
+/**
+ * Sets a segment's playback speed and resizes its timeline extent to match:
+ * the box becomes `content / rate` wide, so faster clips shrink and slower
+ * clips grow. An extension pushes every follower it reaches on the same track
+ * right (staying snapped to the chain); a contraction never pulls followers.
+ */
+export function setSegmentSpeed(
+	edit: ClipEdit,
+	id: string,
+	rate: number,
+): ClipEdit {
+	if (!Number.isFinite(rate) || rate <= 0) return edit;
+	const segment = edit.segments.find((s) => s.id === id);
+	if (!segment || segment.effects.rate === rate) return edit;
+	const updated = updateSegment(edit, id, {
+		effects: { ...segment.effects, rate },
+	});
+	const content = segment.sourceOut - segment.sourceIn;
+	const newDuration = content / rate;
+	if (newDuration <= content / segment.effects.rate) return updated;
+	const oldEnd = segment.timelineStart + content / segment.effects.rate;
+	const newEnd = segment.timelineStart + newDuration;
+	const followers = updated.segments
+		.filter(
+			(follower) =>
+				follower.track === segment.track &&
+				follower.id !== id &&
+				follower.timelineStart >= oldEnd,
+		)
+		.sort((a, b) => a.timelineStart - b.timelineStart);
+	const shifts = new Map<string, number>();
+	let boundary = newEnd;
+	for (const follower of followers) {
+		if (follower.timelineStart >= boundary) break;
+		shifts.set(follower.id, boundary);
+		boundary += segmentEnd(follower) - follower.timelineStart;
+	}
+	if (shifts.size === 0) return updated;
+	return {
+		...updated,
+		segments: updated.segments.map((follower) =>
+			shifts.has(follower.id)
+				? {
+						...follower,
+						timelineStart: shifts.get(follower.id) ?? follower.timelineStart,
+					}
+				: follower,
+		),
+	};
 }
 
 /**
