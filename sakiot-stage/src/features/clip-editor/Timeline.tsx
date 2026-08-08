@@ -215,10 +215,18 @@ export function Timeline(props: {
 	useEffect(() => {
 		const plot = plotRef.current;
 		if (!plot) return;
-		setPlotWidth(plot.clientWidth);
-		const observer = new ResizeObserver((entries) => {
-			setPlotWidth(entries[0]?.contentRect.width ?? 1);
-		});
+		const measure = () => {
+			for (const element of rowElementsRef.current.values()) {
+				const rect = element.getBoundingClientRect();
+				if (rect.width > 0) {
+					setPlotWidth(rect.width);
+					return;
+				}
+			}
+			setPlotWidth(plot.clientWidth);
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
 		observer.observe(plot);
 		return () => observer.disconnect();
 	}, []);
@@ -241,20 +249,24 @@ export function Timeline(props: {
 		return best.track;
 	};
 
+	// Ghosts and segments render inside the plot area (after the label gutter),
+	// so cursor-to-time mapping must use a track row's rect, not the container.
+	const currentPlotBounds = () => {
+		for (const element of rowElementsRef.current.values()) {
+			const rect = element.getBoundingClientRect();
+			if (rect.width > 0) return rect;
+		}
+		return tracksRef.current?.getBoundingClientRect() ?? { left: 0, width: 1 };
+	};
+
 	const computeDrop = (clientX: number, clientY: number) => {
-		const containerRect = tracksRef.current?.getBoundingClientRect() ?? {
-			left: 0,
-			width: 1,
-		};
+		const plotBounds = currentPlotBounds();
 		const found = findTrackAtY(clientY);
 		const track =
 			found === null ? editor.edit.tracks : Math.min(found, editor.edit.tracks);
 		const fractionOfWidth = Math.min(
 			1,
-			Math.max(
-				0,
-				(clientX - containerRect.left) / Math.max(1, containerRect.width),
-			),
+			Math.max(0, (clientX - plotBounds.left) / Math.max(1, plotBounds.width)),
 		);
 		let startSec = editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
 		if (Math.abs(startSec - editor.positionSec) < SNAP_SECONDS) {
