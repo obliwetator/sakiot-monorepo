@@ -164,7 +164,8 @@ if [[ "$ACTION" = create ]]; then
     fi
 
     log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${ENV_FILE} are set)"
-    log "deploy it: Actions -> Deploy preview -> slot=${SLOT}, branch=<branch>"
+    log "branches whose slug is '${SLOT}' now auto-deploy on push and tear down on delete"
+    log "or deploy it manually: Actions -> Deploy preview -> slot=${SLOT}, branch=<branch>"
 
 elif [[ "$ACTION" = remove ]]; then
     # ---- DNS ---------------------------------------------------------------
