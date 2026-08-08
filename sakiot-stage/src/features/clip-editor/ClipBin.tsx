@@ -85,6 +85,21 @@ export function ClipBin(props: {
 	);
 }
 
+export interface BinDragPayload {
+	clipId: string;
+	lengthSec: number;
+}
+
+/**
+ * The clip being dragged, captured at dragstart. dataTransfer.getData is
+ * unreliable during dragover in some browsers, so the timeline reads this
+ * instead; the dataTransfer copy stays for browsers that need payload data
+ * to allow the drop.
+ */
+export const pendingBinDrag: { payload: BinDragPayload | null } = {
+	payload: null,
+};
+
 function ClipBinItem(props: {
 	clip: ClipData;
 	loading: boolean;
@@ -94,14 +109,28 @@ function ClipBinItem(props: {
 		<ListItemButton
 			draggable
 			onDragStart={(event) => {
+				pendingBinDrag.payload = {
+					clipId: props.clip.clip_id,
+					lengthSec: props.clip.length ?? 0,
+				};
 				event.dataTransfer.setData(
 					"application/json",
-					JSON.stringify({
-						clip_id: props.clip.clip_id,
-						length: props.clip.length ?? 0,
-					}),
+					JSON.stringify(pendingBinDrag.payload),
 				);
 				event.dataTransfer.effectAllowed = "copy";
+				const chip = document.createElement("div");
+				chip.textContent = props.clip.name || "Clip";
+				chip.style.cssText =
+					"position:absolute;top:-1000px;left:-1000px;padding:4px 8px;" +
+					"border-radius:6px;border:1px dashed #38bdf8;" +
+					"background:rgba(15,23,42,0.9);color:#e2e8f0;" +
+					"font-size:12px;white-space:nowrap;";
+				document.body.appendChild(chip);
+				event.dataTransfer.setDragImage(chip, 8, 8);
+				requestAnimationFrame(() => chip.remove());
+			}}
+			onDragEnd={() => {
+				pendingBinDrag.payload = null;
 			}}
 			onDoubleClick={() => props.onAdd(props.clip)}
 			sx={{ px: 1.5 }}

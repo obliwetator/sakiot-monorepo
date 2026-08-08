@@ -17,6 +17,7 @@ import {
 	TimelinePlayhead,
 	TimelineRow,
 } from "../audio-dashboard/timelineLayout";
+import { pendingBinDrag } from "./ClipBin";
 import type { TimelineSegment } from "./model";
 import {
 	MIN_SEGMENT_SECONDS,
@@ -68,6 +69,8 @@ interface SegmentDragState {
 function parseDraggedClip(
 	dataTransfer: DataTransfer,
 ): DraggedClipPayload | null {
+	const pending = pendingBinDrag.payload;
+	if (pending) return pending;
 	const raw = dataTransfer.getData("application/json");
 	if (!raw) return null;
 	try {
