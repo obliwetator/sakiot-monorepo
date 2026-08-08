@@ -958,13 +958,16 @@ fn deploy_services(
         }
         // Slot-correct host variables for preview: the shared preview.env
         // carries the base host, so the web server gets its own subdomain via
-        // the release env (later EnvironmentFile wins in the unit).
+        // the release env (later EnvironmentFile wins in the unit). Same for
+        // DATABASE_URL: the shared file names the base database, and the
+        // per-slot database would otherwise not exist.
         if target == Target::Preview {
             for key in [
                 "COOKIE_DOMAIN",
                 "CORS_ALLOWED_ORIGIN",
                 "OAUTH_ALLOWED_OPENER_ORIGINS",
                 "DISCORD_REDIRECT_URI",
+                "DATABASE_URL",
             ] {
                 if let Ok(value) = std::env::var(key) {
                     service_env.push_str(&format!("\n{key}={value}"));
