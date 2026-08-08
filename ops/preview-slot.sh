@@ -152,11 +152,31 @@ if [[ "$ACTION" = create ]]; then
 
     # ---- database ----------------------------------------------------------
     db="sakiot_preview_${SLOT}"
+    db_created=0
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
         log "database ${db} already exists"
     else
         sudo -u postgres createdb -O sakiot "$db"
         log "created database ${db}"
+        db_created=1
+    fi
+
+    # ---- copy staging data into brand-new slots ----------------------------
+    # A fresh preview DB is empty and useless for testing real flows; seed it
+    # with a snapshot of the staging database and the staging data files so
+    # branch previews start from current state. Only on first creation;
+    # re-running preview-up never clobbers slot-local data.
+    if [[ "$db_created" -eq 1 ]]; then
+        if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='sakiot_staging'" | grep -q 1; then
+            sudo -u postgres bash -c \
+                "pg_dump -Fc sakiot_staging | pg_restore -d '${db}' --no-privileges"
+            log "copied sakiot_staging database into ${db}"
+        fi
+        if [[ -d /var/lib/sakiot-staging/data ]] \
+            && [[ -z "$(ls -A "/var/lib/sakiot-preview-${SLOT}/data" 2>/dev/null)" ]]; then
+            cp -a /var/lib/sakiot-staging/data/. "/var/lib/sakiot-preview-${SLOT}/data/"
+            log "copied staging data files into the preview slot"
+        fi
     fi
 
     # ---- dev-login account --------------------------------------------------
