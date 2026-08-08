@@ -89,6 +89,10 @@ ops/preview-slot.sh clip-editor --remove
   Cloudflare API; `--no-dns` skips this when a wildcard record is in place.
 - Creates `/etc/sakiot/preview.env` from `ops/preview.env.example` only if it
   does not exist yet (base values; the engine namespaces them per slot).
+- Creates the per-slot directories owned by `sakiot` (data/deploy/backups
+  under `/var/lib/sakiot-preview-<slot>`, releases/current under
+  `/srv/sakiot-preview-<slot>`, the per-slot cache, and the frontend web
+  root) — the deploy engine expects these to pre-exist.
 - Installs the web systemd unit from the staging template (no bot unit —
   previews run no FBI Agent) and the nginx vhost from
   `ops/nginx/preview-slot.conf.example`; runs `certbot --nginx` when

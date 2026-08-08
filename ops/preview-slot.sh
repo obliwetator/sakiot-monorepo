@@ -126,6 +126,18 @@ if [[ "$ACTION" = create ]]; then
         die "missing from ${ENV_FILE}: ${missing_keys[*]}"
     fi
 
+    # ---- per-slot directories (mirrors install-production.sh; the deploy
+    # engine, running as sakiot, expects these to exist and be writable) -----
+    install -d -o sakiot -g sakiot -m 0750 \
+        "/var/lib/sakiot-preview-${SLOT}/data" \
+        "/var/lib/sakiot-preview-${SLOT}/deploy" \
+        "/var/lib/sakiot-preview-${SLOT}/backups" \
+        "/srv/sakiot-preview-${SLOT}/releases" \
+        "/srv/sakiot-preview-${SLOT}/current" \
+        "/var/cache/sakiot-preview-${SLOT}"
+    install -d -o sakiot -g sakiot -m 0755 "/var/www/${SUBDOMAIN}"
+    log "created per-slot directories for ${SLOT}"
+
     # ---- database role (shared by every instance; created once) ------------
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
     if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot'" | grep -q 1; then
