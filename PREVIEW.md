@@ -99,11 +99,15 @@ ops/preview-slot.sh clip-editor --remove
   `CERTBOT_EMAIL` is set.
 - `--remove` reverses everything for that slot: DNS record, cert, vhost,
   unit, database, and the slot's local data files (recording/clip/waveform
-  copies — never staging's). With `--purge-b2`, it additionally deletes the
-  B2 objects the slot itself created (keys present in the slot DB but not in
-  staging's `media_objects`), using `B2_PURGE_KEY_ID`/`B2_PURGE_KEY_SECRET`
-  (a delete-capable bucket key; plain DeleteObject, versions stay
-  recoverable). The shared env file stays.
+  copies — never staging's). It also **purges the B2 objects the slot
+  itself created** whenever a delete-capable key is configured in the
+  root-only `/etc/sakiot/preview-b2-purge.env` (`B2_PURGE_KEY_ID` +
+  `B2_PURGE_KEY_SECRET`; env vars override). Only keys present in the slot
+  DB but not in staging's `media_objects` are deleted, so staging's
+  archived objects are never touched; `rclone deletefile` only hides the
+  current version, keeping retained versions recoverable. Without the key,
+  teardown completes and B2 purge is skipped with a warning. The shared env
+  file stays.
 
 ### Engine-side slot derivation
 
