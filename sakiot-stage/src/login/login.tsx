@@ -33,7 +33,8 @@ export default function Login(props: {
 		window.location.hostname === "127.0.0.1" ||
 		window.location.hostname.includes("staging") ||
 		window.location.hostname.includes("debug") ||
-		window.location.hostname.includes("dev");
+		window.location.hostname.includes("dev") ||
+		window.location.hostname.includes("preview");
 
 	const handleDevLogin = async () => {
 		const secret =

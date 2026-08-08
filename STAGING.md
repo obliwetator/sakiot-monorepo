@@ -4,6 +4,9 @@ Staging is live on the **same VPS** as production, as a fully separate instance
 under the shared `sakiot` user. Every push to `main` deploys it; production still
 ships only on strict `vX.Y.Z` tags.
 
+There is also a **preview** instance (`preview.patrykstyla.com`) for deploying
+feature branches without touching the main-tracking staging — see `PREVIEW.md`.
+
 ## Pipeline
 
 ```

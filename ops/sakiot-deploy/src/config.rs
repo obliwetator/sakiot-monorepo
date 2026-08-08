@@ -26,6 +26,7 @@ impl Mode {
 pub enum Target {
     Production,
     Staging,
+    Preview,
 }
 
 impl Target {
@@ -33,6 +34,7 @@ impl Target {
         match self {
             Target::Production => "production",
             Target::Staging => "staging",
+            Target::Preview => "preview",
         }
     }
 }
@@ -58,6 +60,10 @@ pub struct Request {
     /// A staging deploy for a version bump prepares this production tag's
     /// immutable bundle after the normal staging artifacts are built.
     pub prepare_production_tag: Option<String>,
+    /// Preview instance slot (`preview-ci <slot> <sha>`). Selects the
+    /// `/etc/sakiot/preview-<slot>.env` runtime profile so several branches
+    /// can be deployed side by side under `<slot>.preview.<domain>`.
+    pub slot: Option<String>,
 }
 
 impl Request {
@@ -102,6 +108,7 @@ impl Request {
                     ci_verified: matches!(mode, Some("release-ci" | "release-promoted")),
                     require_promotion: mode == Some("release-promoted"),
                     prepare_production_tag: None,
+                    slot: None,
                 })
             }
             Some("stage") | Some("stage-ci") => {
@@ -125,9 +132,30 @@ impl Request {
                     sha: args[1].clone(),
                     schema_option: None,
                     dry_run,
-                    ci_verified: mode == Some("stage-ci"),
+                    ci_verified: mode != Some("stage"),
                     require_promotion: false,
                     prepare_production_tag,
+                    slot: None,
+                })
+            }
+            Some("preview-ci") => {
+                let (slot, sha) = match args.as_slice() {
+                    [_, slot, sha] => (slot, sha),
+                    _ => {
+                        return Err(UsageError("usage: sakiot-deploy preview-ci <slot> <sha>"));
+                    }
+                };
+                Ok(Request {
+                    mode: Mode::Stage,
+                    target: Target::Preview,
+                    tag: "main".to_string(),
+                    sha: sha.clone(),
+                    schema_option: None,
+                    dry_run,
+                    ci_verified: true,
+                    require_promotion: false,
+                    prepare_production_tag: None,
+                    slot: Some(slot.clone()),
                 })
             }
             _ => Err(UsageError(
@@ -146,6 +174,11 @@ impl Request {
             && option != "--allow-schema-mismatch"
         {
             bail!("invalid rollback option");
+        }
+        if let Some(slot) = &self.slot
+            && (self.target != Target::Preview || !is_valid_slot(slot))
+        {
+            bail!("invalid preview slot name");
         }
         if let Some(tag) = &self.prepare_production_tag {
             if self.target != Target::Staging || !self.ci_verified {
@@ -203,10 +236,14 @@ impl Config {
         self.cache_dir.join("worktrees")
     }
 
-    pub fn default_env_file(target: Target) -> &'static str {
+    pub fn default_env_file(target: Target, slot: Option<&str>) -> String {
         match target {
-            Target::Production => "/etc/sakiot/production.env",
-            Target::Staging => "/etc/sakiot/staging.env",
+            Target::Production => "/etc/sakiot/production.env".to_string(),
+            Target::Staging => "/etc/sakiot/staging.env".to_string(),
+            Target::Preview => match slot {
+                Some(slot) => format!("/etc/sakiot/preview-{slot}.env"),
+                None => "/etc/sakiot/preview.env".to_string(),
+            },
         }
     }
 
@@ -214,9 +251,9 @@ impl Config {
     /// override semantics, matching `set -a; source ...; set +a`, then reads
     /// configuration. The strict-parse guard rejects shell-flavored lines
     /// dotenvy would silently misread.
-    pub fn load(target: Target) -> Result<Config> {
+    pub fn load(target: Target, slot: Option<&str>) -> Result<Config> {
         let env_file = std::env::var("SAKIOT_ENV_FILE")
-            .unwrap_or_else(|_| Config::default_env_file(target).to_string());
+            .unwrap_or_else(|_| Config::default_env_file(target, slot));
         let env_file = PathBuf::from(env_file);
         if env_file.is_file() {
             check_env_file_is_plain(&env_file)?;
@@ -269,7 +306,7 @@ impl Config {
                 .unwrap_or_else(|| "/var/cache/sakiot/promotions".into())
                 .into(),
             production_env_file: var("SAKIOT_PRODUCTION_ENV_FILE")
-                .unwrap_or_else(|| Config::default_env_file(Target::Production).into())
+                .unwrap_or_else(|| Config::default_env_file(Target::Production, None))
                 .into(),
             frontend_root: var("SAKIOT_FRONTEND_ROOT")
                 .unwrap_or_else(|| "/var/www/patrykstyla.com".into())
@@ -321,6 +358,19 @@ fn check_env_file_is_plain(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Preview slot names are DNS-safe subdomains: lowercase letters, digits and
+/// hyphens, not starting with a hyphen, max 32 characters.
+pub fn is_valid_slot(slot: &str) -> bool {
+    slot.len() <= 32
+        && slot
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && slot
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
 /// Parse a deployment env file without mutating this process's environment.
 /// Production bundle preparation uses this to select only public `VITE_*`
 /// values while the staging runtime environment remains active.
@@ -370,6 +420,12 @@ mod tests {
         assert!(stage_ci.ci_verified);
         assert_eq!(stage_ci.prepare_production_tag.as_deref(), Some("v1.2.3"));
 
+        let preview = parse(&["preview-ci", "clip-editor", &"a".repeat(40)]).unwrap();
+        assert_eq!(preview.target, Target::Preview);
+        assert!(preview.ci_verified);
+        assert_eq!(preview.slot.as_deref(), Some("clip-editor"));
+        assert!(preview.prepare_production_tag.is_none());
+
         let promoted = parse(&["release-promoted", "v1.2.3", &"a".repeat(40)]).unwrap();
         assert!(promoted.ci_verified);
         assert!(promoted.require_promotion);
@@ -383,6 +439,24 @@ mod tests {
         assert!(parse(&["release", "v1.2.3", "sha", "extra"]).is_err());
         assert!(parse(&["stage"]).is_err());
         assert!(parse(&["stage", "sha", "extra"]).is_err());
+        assert!(parse(&["preview-ci", "clip-editor"]).is_err());
+        assert!(parse(&["preview-ci", "clip-editor", &"a".repeat(40), "extra"]).is_err());
+    }
+
+    #[test]
+    fn preview_slot_validation_rejects_unsafe_names() {
+        assert!(is_valid_slot("clip-editor"));
+        assert!(is_valid_slot("a1"));
+        assert!(!is_valid_slot("-lead"));
+        assert!(!is_valid_slot("UPPER"));
+        assert!(!is_valid_slot("has.dot"));
+        assert!(!is_valid_slot(""));
+        assert!(!is_valid_slot(&"x".repeat(33)));
+
+        // A slot that looks like another verb's flag is still rejected by
+        // validate(), which is the only gate that matters on the wire.
+        let flag_like = parse(&["preview-ci", "--prepare-production", &"a".repeat(40)]).unwrap();
+        assert!(flag_like.validate().is_err());
     }
 
     #[test]
