@@ -7,7 +7,7 @@ import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { formatDuration } from "../../utils/formatTime";
-import type { SegmentEffects } from "./model";
+import type { SegmentEffects, TimelineSegment } from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
 const SLIDER_PROPS = {
@@ -21,7 +21,56 @@ export function Inspector(props: {
 }) {
 	const { editor } = props;
 	const segment = editor.selectedSegment;
-	if (!segment) return null;
+
+	return (
+		<Box
+			sx={{
+				width: 260,
+				flex: "0 0 auto",
+				minHeight: 0,
+				minWidth: 0,
+				overflowY: "auto",
+				overflowX: "hidden",
+				borderLeft: 1,
+				borderColor: "divider",
+				p: 2,
+			}}
+		>
+			{segment ? (
+				<SegmentInspectorContent
+					editor={editor}
+					segment={segment}
+					clipName={props.clipName}
+				/>
+			) : (
+				<>
+					<Typography variant="overline" color="text.secondary">
+						Inspector
+					</Typography>
+					<Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+						No segment selected.
+					</Typography>
+					<Typography
+						variant="caption"
+						color="text.secondary"
+						display="block"
+						sx={{ mt: 0.5 }}
+					>
+						Click a clip on the timeline to trim it and adjust its effects.
+					</Typography>
+				</>
+			)}
+		</Box>
+	);
+}
+
+function SegmentInspectorContent(props: {
+	editor: UseClipEditorReturn;
+	segment: TimelineSegment;
+	clipName: (sourceId: string) => string;
+}) {
+	const { editor } = props;
+	const segment = props.segment;
 
 	const patchEffects = (patch: Partial<SegmentEffects>) => {
 		editor.preview((edit) => ({
@@ -51,19 +100,7 @@ export function Inspector(props: {
 	const duration = segment.sourceOut - segment.sourceIn;
 
 	return (
-		<Box
-			sx={{
-				width: 260,
-				flex: "0 0 auto",
-				minHeight: 0,
-				minWidth: 0,
-				overflowY: "auto",
-				overflowX: "hidden",
-				borderLeft: 1,
-				borderColor: "divider",
-				p: 2,
-			}}
-		>
+		<>
 			<Typography variant="overline" color="text.secondary">
 				Selected segment
 			</Typography>
@@ -173,7 +210,7 @@ export function Inspector(props: {
 					Delete
 				</Button>
 			</Stack>
-		</Box>
+		</>
 	);
 }
 

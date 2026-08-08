@@ -139,6 +139,7 @@ export function ClipEditor(props: { guildId: string }) {
 					clips={clips ?? []}
 					loadingClips={editor.loadingClips}
 					onAdd={handleAddFromBin}
+					onDeselect={() => editor.select(null)}
 				/>
 				<Box
 					sx={{
@@ -171,6 +172,9 @@ function ToolbarRow(props: { editor: ReturnType<typeof useClipEditor> }) {
 	const { editor } = props;
 	return (
 		<Box
+			onPointerDown={(event) => {
+				if (event.button === 0) editor.select(null);
+			}}
 			sx={{
 				display: "flex",
 				alignItems: "center",
@@ -247,6 +251,9 @@ function Monitor(props: {
 
 	return (
 		<Box
+			onPointerDown={(event) => {
+				if (event.button === 0) editor.select(null);
+			}}
 			sx={{
 				display: "flex",
 				alignItems: "center",
