@@ -14,9 +14,11 @@ echo "Formatting frontend..."
 )
 
 # Re-stage only files that were already staged, so formatting fixes
-# land in this commit without sweeping up unstaged changes.
+# land in this commit without sweeping up unstaged changes. Deletions
+# are not re-staged (the file no longer exists).
 git diff --cached --name-only | while IFS= read -r f; do
-	[ -e "$f" ] && git add -- "$f"
+	[ -e "$f" ] || continue
+	git add -- "$f"
 done
 check_sqlx=false
 for path in $(git diff --cached --name-only --diff-filter=ACMR); do
