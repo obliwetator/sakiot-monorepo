@@ -440,7 +440,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         } else {
             log("building web server");
             let mut args = vec!["build", "--release", "--locked", "--package", "web_server"];
-            if target == Target::Staging {
+            if matches!(target, Target::Staging | Target::Preview) {
                 args.extend(["--features", "dev-login"]);
             }
             deps.runner.run(

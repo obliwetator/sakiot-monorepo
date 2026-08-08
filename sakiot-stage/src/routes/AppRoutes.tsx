@@ -5,6 +5,7 @@ import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
 
 const Clips = React.lazy(() => import("../features/clips"));
+const ClipEditor = React.lazy(() => import("../features/clip-editor"));
 const YearSelection = React.lazy(() =>
 	import("../features/audio-dashboard/YearSelection").then((m) => ({
 		default: m.YearSelection,
@@ -62,6 +63,7 @@ export function AppRoutes() {
 						</Route>
 						<Route path="clips">
 							<Route path="" element={lazyRoute(<Clips />)} />
+							<Route path="editor" element={lazyRoute(<ClipEditor />)} />
 							<Route path=":file_name" element={lazyRoute(<Clips />)} />
 						</Route>
 						<Route path="admin">

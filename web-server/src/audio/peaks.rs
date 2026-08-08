@@ -358,3 +358,47 @@ pub async fn get_clip_waveform_data(
 
     Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
 }
+
+/// Spawns background generation of a clip's waveform at clip creation time, so
+/// the first viewer request finds the .dat cache already on disk instead of
+/// building it then and there. The clip file is immutable, so on-disk
+/// existence is final. Claims the shared progress slot up front so a viewer
+/// hitting the lazy endpoint mid-build reports progress instead of spawning a
+/// duplicate generation.
+pub fn spawn_clip_waveform(
+    clip_id: String,
+    input_file: std::path::PathBuf,
+    progress: web::Data<WaveformProgressContainer>,
+) {
+    let cache_key = format!("clip-{clip_id}");
+    let output = format!("{}{}.dat", waveform_path(), cache_key);
+    tokio::spawn(async move {
+        if file_exists(&output).await {
+            return;
+        }
+        {
+            let mut map = progress.0.write().await;
+            if map.get(&cache_key).copied() == Some(-1) {
+                map.remove(&cache_key);
+            }
+            map.insert(cache_key.clone(), 0);
+        }
+        if let Err(error) = generate_peaks_background(
+            input_file.to_string_lossy().into_owned(),
+            output,
+            cache_key.clone(),
+            PeakDensity::DEFAULT,
+            progress.clone(),
+            None,
+            None,
+        )
+        .await
+        {
+            error!("Error generating clip peaks at creation: {:?}", error);
+            // generate_peaks_background leaves the slot on early spawn
+            // failures; mark it failed so the lazy endpoint surfaces a clean
+            // error instead of reporting "building" forever.
+            progress.0.write().await.insert(cache_key, -1);
+        }
+    });
+}

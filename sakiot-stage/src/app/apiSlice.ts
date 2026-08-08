@@ -215,6 +215,28 @@ export const apiSlice = createApi({
 				providesTags: ["Clips"],
 			},
 		),
+		composeClip: builder.mutation<
+			ApiSchema["ComposeClipAccepted"],
+			{ guild_id: string; body: ApiSchema["ComposeClipBody"] }
+		>({
+			query: ({ guild_id, body }) => ({
+				url: `audio/clips/${guild_id}/compose`,
+				method: "POST",
+				headers: {
+					Accept: "application/json",
+					"Content-Type": "application/json",
+				},
+				body,
+			}),
+		}),
+		getComposeClipStatus: builder.query<
+			ApiSchema["ComposeClipStatus"],
+			{ guild_id: string; clip_id: string }
+		>({
+			query: ({ guild_id, clip_id }) => ({
+				url: `audio/clips/${guild_id}/compose/${encodeURIComponent(clip_id)}`,
+			}),
+		}),
 		getStamps: builder.query<
 			StampData[],
 			{ guild_id: string; as_role?: string }
@@ -496,6 +518,8 @@ export const {
 	useRebuildSilenceFreeSessionWaveformMutation,
 	useCreateSessionClipMutation,
 	useGetClipsQuery,
+	useComposeClipMutation,
+	useGetComposeClipStatusQuery,
 	useDeleteClipMutation,
 	useRenameClipMutation,
 	useJamItMutation,

@@ -1,0 +1,80 @@
+name: Deploy preview
+
+# Manual branch deploys to a preview instance slot. Each slot is a fully
+# separate instance (env file, DB, ports, units, Discord bot) reachable at
+# <slot>.preview.<domain>. The VPS must already be bootstrapped for the slot
+# (see PREVIEW.md): update-deploy-engine.sh run as root, /etc/sakiot/preview-<slot>.env,
+# DB, units, and nginx vhost.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        default: main
+      slot:
+        description: Preview slot (DNS-safe name, e.g. clip-editor)
+        required: true
+        default: clip-editor
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-deployment-${{ inputs.slot }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: false
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Reuses the DEPLOY_* secrets from the staging environment; the forced
+    # command decides which instance a `preview-ci` verb touches.
+    environment: staging
+    steps:
+      - name: Validate slot name
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.slot }}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Resolve branch head
+        id: sha
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=${sha}" >>"${GITHUB_OUTPUT}"
+
+      - name: Deploy CI-verified branch commit through restricted SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          PREVIEW_SLOT: ${{ inputs.slot }}
+          PREVIEW_SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_SSH_KEY}" >"${HOME}/.ssh/deploy_key"
+          chmod 0600 "${HOME}/.ssh/deploy_key"
+          trap 'rm -f "${HOME}/.ssh/deploy_key"' EXIT
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+
+          ssh -i "${HOME}/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "preview-ci ${PREVIEW_SLOT} ${PREVIEW_SHA}"

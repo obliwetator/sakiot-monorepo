@@ -148,6 +148,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/clips/{guild_id}/compose": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["compose_clip"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/clips/{guild_id}/compose/{clip_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["compose_clip_status"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/clips/{guild_id}/{clip_id}": {
 		parameters: {
 			query?: never;
@@ -514,6 +546,11 @@ export interface components {
 			/** @example 146638124288704513 */
 			channel_id: string;
 			clip_id: string;
+			/**
+			 * @description Serialized clip editor edit for composed clips; re-importable into the
+			 *     editor. Null for clips cut from a single recording.
+			 */
+			composition?: unknown;
 			/** @example 146638124288704513 */
 			guild_id: string;
 			/** Format: float */
@@ -529,6 +566,36 @@ export interface components {
 			start_time: number;
 			/** @example 146638124288704513 */
 			user_id: string;
+		};
+		ComposeClipAccepted: {
+			id: string;
+			/** Format: int32 */
+			progress: number;
+			status: string;
+		};
+		ComposeClipBody: {
+			/** Format: float */
+			master_volume_db: number;
+			name?: string | null;
+			segments: components["schemas"]["ComposeSegment"][];
+		};
+		ComposeClipStatus: {
+			/** Format: int32 */
+			progress: number;
+			status: string;
+		};
+		ComposeSegment: {
+			effects: components["schemas"]["SegmentEffectsDto"];
+			source: string;
+			source_id: string;
+			/** Format: float */
+			source_in: number;
+			/** Format: float */
+			source_out: number;
+			/** Format: float */
+			timeline_start: number;
+			/** Format: int32 */
+			track: number;
 		};
 		CooldownBody: {
 			/** Format: int32 */
@@ -638,6 +705,18 @@ export interface components {
 			channels: components["schemas"]["RoleChannel"][];
 			/** @example 1024 */
 			permission: string;
+		};
+		SegmentEffectsDto: {
+			/** Format: float */
+			bass_db: number;
+			/** Format: float */
+			pitch_cents: number;
+			/** Format: float */
+			rate: number;
+			/** Format: float */
+			treble_db: number;
+			/** Format: float */
+			volume_db: number;
 		};
 		SessionDownloadQuery: {
 			/** Format: double */
@@ -1515,6 +1594,121 @@ export interface operations {
 			};
 			/** @description Role does not exist in this guild */
 			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	compose_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["ComposeClipBody"];
+			};
+		};
+		responses: {
+			/** @description Clip composition started */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ComposeClipAccepted"];
+				};
+			};
+			/** @description Invalid composition request */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Source clip not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	compose_clip_status: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Composition clip id */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Composition status */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ComposeClipStatus"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
 				headers: {
 					[name: string]: unknown;
 				};

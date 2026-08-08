@@ -529,7 +529,31 @@ import_tsv() { # import_tsv <table> <tsv-file> [fixup-sql run before the insert]
 emit_temp_copy() { # emit_temp_copy <temp-table> <like-table> <tsv-file>
     echo "CREATE TEMP TABLE $1 (LIKE $2 INCLUDING DEFAULTS) ON COMMIT DROP;"
     [ -s "$3" ] || return 0
-    echo "COPY $1 FROM STDIN;"
+    # Fixture TSVs are dumps of the source schema, which can lag behind the
+    # destination (migrations land on the destination first). COPY without a
+    # column list demands every column, so when the TSV carries fewer columns
+    # than the destination, copy into an explicit prefix and let trailing
+    # additions (e.g. clips.composition) fall back to their defaults.
+    local tsv_cols=0
+    local columns=()
+    tsv_cols=$(awk -F'\t' 'NR == 1 { print NF; exit }' "$3")
+    if [ "$tsv_cols" -gt 0 ]; then
+        IFS=',' read -r -a columns <<< "$(dest_tsv \
+            "SELECT string_agg(quote_ident(column_name), ',' ORDER BY ordinal_position)
+               FROM information_schema.columns
+              WHERE table_name = '$2'")"
+    fi
+    if [ "$tsv_cols" -gt 0 ] && [ "$tsv_cols" -lt "${#columns[@]}" ]; then
+        local list=""
+        local i
+        for ((i = 0; i < tsv_cols; i++)); do
+            [ "$i" -gt 0 ] && list+=','
+            list+="${columns[$i]}"
+        done
+        echo "COPY $1 ($list) FROM STDIN;"
+    else
+        echo "COPY $1 FROM STDIN;"
+    fi
     cat "$3"
     echo "\\."
 }

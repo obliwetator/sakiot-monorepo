@@ -1,0 +1,14 @@
+# Preview slot vhost; ops/preview-slot.sh renders SLOT/PORT and installs it
+# under /etc/nginx/sites-available/<slot>.preview.<domain>.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name SLOT.preview.patrykstyla.com;
+    root /var/www/SLOT.preview.patrykstyla.com;
+
+    location /api/ { proxy_pass http://127.0.0.1:PORT; }
+    location /     { try_files $uri /index.html; }
+    # don't cache HTML/version.json (assets are hash-named):
+    location = /index.html   { add_header Cache-Control "no-store"; }
+    location = /version.json { add_header Cache-Control "no-store"; }
+}

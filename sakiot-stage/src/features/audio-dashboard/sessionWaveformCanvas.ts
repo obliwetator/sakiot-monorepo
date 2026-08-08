@@ -18,6 +18,17 @@ export interface WaveformWindow {
 	endFraction: number;
 }
 
+/** Color overrides for the waveform bars and its backdrop fill. */
+export interface WaveformStyle {
+	/** Bar stroke color. */
+	strokeStyle?: string;
+	/**
+	 * Backdrop fill, or null to skip the fill entirely (e.g. when drawing on
+	 * top of an already tinted surface such as a timeline segment).
+	 */
+	fillStyle?: string | null;
+}
+
 const FULL_WINDOW: WaveformWindow = { startFraction: 0, endFraction: 1 };
 
 export function drawSessionWaveform(
@@ -26,15 +37,18 @@ export function drawSessionWaveform(
 	height: number,
 	peaks: WaveformEnvelope,
 	window: WaveformWindow = FULL_WINDOW,
+	style: WaveformStyle = {},
 ) {
 	context.clearRect(0, 0, width, height);
 	const pointCount = Math.min(peaks.min.length, peaks.max.length);
 	if (pointCount === 0 || width <= 0) return;
 
-	context.fillStyle = "rgba(168, 85, 247, 0.18)";
-	context.fillRect(0, 0, width, height);
+	if (style.fillStyle !== null) {
+		context.fillStyle = style.fillStyle ?? "rgba(168, 85, 247, 0.18)";
+		context.fillRect(0, 0, width, height);
+	}
 	const center = height / 2;
-	context.strokeStyle = "#d946ef";
+	context.strokeStyle = style.strokeStyle ?? "#d946ef";
 	context.lineWidth = 1;
 	context.beginPath();
 

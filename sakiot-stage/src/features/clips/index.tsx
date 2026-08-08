@@ -1,3 +1,4 @@
+import ContentCutIcon from "@mui/icons-material/ContentCut";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MovieIcon from "@mui/icons-material/Movie";
 import Accordion from "@mui/material/Accordion";
@@ -13,6 +14,8 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Drawer from "@mui/material/Drawer";
 import Stack from "@mui/material/Stack";
 import { useTheme } from "@mui/material/styles";
+import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import type React from "react";
@@ -32,6 +35,7 @@ import { canDeleteClip } from "../../shared/permissions";
 import { formatDuration } from "../../utils/formatTime";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";
+import { isComposedClip } from "./composedClip";
 
 function SimpleAccordion(props: {
 	data: ClipData[];
@@ -93,17 +97,25 @@ function SimpleAccordion(props: {
 				</AccordionSummary>
 				<AccordionDetails>
 					<Stack spacing={0.5}>
-						<Typography variant="body2">
-							Channel {el.channel_id} · source offset{" "}
-							{formatDuration(el.start_time)}
-						</Typography>
-						<Typography
-							variant="caption"
-							color="text.secondary"
-							sx={{ overflowWrap: "anywhere" }}
-						>
-							{el.original_file_name || "Unknown source recording"}
-						</Typography>
+						{isComposedClip(el) ? (
+							<Typography variant="caption" color="text.secondary">
+								Composed in the clip editor
+							</Typography>
+						) : (
+							<>
+								<Typography variant="body2">
+									Channel {el.channel_id} · source offset{" "}
+									{formatDuration(el.start_time)}
+								</Typography>
+								<Typography
+									variant="caption"
+									color="text.secondary"
+									sx={{ overflowWrap: "anywhere" }}
+								>
+									{el.original_file_name || "Unknown source recording"}
+								</Typography>
+							</>
+						)}
 						<AlertDialog
 							clip_id={el.clip_id}
 							canDelete={canDeleteClip(
@@ -234,24 +246,73 @@ export default function Clips() {
 
 function ClipsLayout(props: {
 	data: ClipData[];
-	params: { file_name?: string };
+	params: { guild_id?: string; file_name?: string };
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
 }) {
 	const theme = useTheme();
 	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const navigate = useNavigate();
+	const [clipTab, setClipTab] = useState<"clips" | "combined">(() => {
+		const selectedClipId = props.params.file_name
+			? decodeURIComponent(props.params.file_name)
+			: null;
+		const selected = selectedClipId
+			? props.data.find((c) => c.clip_id === selectedClipId)
+			: null;
+		return selected && isComposedClip(selected) ? "combined" : "clips";
+	});
 
 	useEffect(() => {
 		if (!isDesktop) setDrawerOpen(false);
 	}, [isDesktop]);
 
+	const composedClips = props.data.filter(isComposedClip);
+	const shownClips =
+		clipTab === "combined"
+			? composedClips
+			: props.data.filter((clip) => !isComposedClip(clip));
+
 	const list = (
-		<SimpleAccordion
-			data={props.data}
-			currentUserId={props.currentUserId}
-			guildSelected={props.guildSelected}
-		/>
+		<>
+			<Box sx={{ p: 1 }}>
+				<Button
+					variant="contained"
+					fullWidth
+					startIcon={<ContentCutIcon />}
+					onClick={() =>
+						navigate(
+							`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.params.guild_id}/clips/editor`,
+						)
+					}
+				>
+					Clip editor
+				</Button>
+			</Box>
+			<Tabs
+				value={clipTab}
+				onChange={(_event, value: "clips" | "combined") => setClipTab(value)}
+				variant="fullWidth"
+				sx={{ borderBottom: 1, borderColor: "divider" }}
+			>
+				<Tab label="Clips" value="clips" />
+				<Tab
+					label={`Combined${composedClips.length > 0 ? ` (${composedClips.length})` : ""}`}
+					value="combined"
+				/>
+			</Tabs>
+			{clipTab === "combined" && composedClips.length === 0 && (
+				<Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+					No combined clips yet. Export a composition from the clip editor.
+				</Typography>
+			)}
+			<SimpleAccordion
+				data={shownClips}
+				currentUserId={props.currentUserId}
+				guildSelected={props.guildSelected}
+			/>
+		</>
 	);
 
 	const selectedClipId = props.params.file_name

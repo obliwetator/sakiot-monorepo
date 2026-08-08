@@ -1,4 +1,4 @@
-//! `sakiot-deploy status {production|staging}` — read-only snapshot of the
+//! `sakiot-deploy status {production|staging|preview}` — read-only snapshot of the
 //! deployed state: state files, web health, the bot registry, and per-unit
 //! drain status. Local-only, like --dry-run; not reachable through the SSH
 //! forced command. Run as a user that can read the release tree (sakiot or
