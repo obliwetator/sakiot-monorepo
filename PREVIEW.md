@@ -6,11 +6,10 @@ instance — own DB, ports, units, subdomain — that any branch can be deployed
 to, so several branches can be tested side by side without touching the
 staging instance that always tracks `main`.
 
-**Previews run no Discord bot** (only `web_server` + the frontend). Bot
+**Previews run no Discord bot** (only `web_server` + the frontend) and use
+**dev login only** — no Discord OAuth application is involved anywhere. Bot
 behavior is exercised on staging; the bot's per-token gateway limit is what
-made per-slot bots painful, and dropping them makes slots cheap. Web login
-still works: OAuth reuses the staging application's client id/secret with a
-per-slot redirect URI — no new Discord application anywhere.
+made per-slot bots painful, and dropping them makes slots cheap.
 
 Deploys are manual: **Actions → Deploy preview → Run workflow**, pick the
 `branch` and the `slot` to deploy it into. The workflow runs the standard CI,
@@ -32,11 +31,12 @@ ops/update-deploy-engine.sh
 #    CLOUDFLARE_API_TOKEN; certbot email in CERTBOT_EMAIL for HTTPS.
 CLOUDFLARE_API_TOKEN=... CERTBOT_EMAIL=you@example.com ops/preview-slot.sh clip-editor
 
-# 3. No Discord bot needed. Just set the shared OAuth credentials in
-#    /etc/sakiot/preview-clip-editor.env: copy DISCORD_CLIENT_ID and
-#    DISCORD_CLIENT_SECRET from the staging application, and add
-#    https://clip-editor.preview.patrykstyla.com/api/discord_login to that
-#    application's OAuth redirect URIs (Dev Portal -> OAuth2 -> Redirects).
+# 3. No Discord anything. Set the real dev-login credentials in
+#    /etc/sakiot/preview-clip-editor.env: DEV_ACCOUNT_ID (the user id the
+#    dev login impersonates) and DEV_LOGIN_SECRET (a strong secret you'll
+#    type into the login prompt). DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET
+#    are startup placeholders — any non-empty value works since OAuth is
+#    never used on preview hosts.
 
 # 4. Deploy: Actions -> Deploy preview -> slot=clip-editor, branch=<branch>.
 
