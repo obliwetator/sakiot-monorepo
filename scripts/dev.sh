@@ -1323,6 +1323,15 @@ verify_staging_visibility() { # verify_staging_visibility <tmpdir> <dest data di
         log "    FAIL  no channel_permissions rows; every role sees the same channels"
     fi
 
+    count=$(dest_tsv "SELECT count(*) FROM user_roles ur
+                       JOIN roles r ON r.role_id = ur.role_id
+                      WHERE r.guild_id IN ($GUILD_IDS)")
+    if [ "${count:-0}" -gt 0 ]; then
+        log "    ok    $count member-role assignment(s) drive member lists"
+    else
+        log "    FAIL  no user_roles rows; every role shows zero members"
+    fi
+
     count=$(dest_tsv "SELECT count(*) FROM guilds_present WHERE guild_id IN ($GUILD_IDS)")
     if [ "${count:-0}" -gt 0 ]; then
         log "    ok    guild listed in guilds_present"
@@ -1357,9 +1366,17 @@ import_lookup_rows() { # import_lookup_rows <tmpdir>
     import_tsv user_name_event_types "$tmp/user_name_event_types.tsv"
     import_tsv channel_type "$tmp/channel_type.tsv"
     import_tsv guilds "$tmp/guilds.tsv"
-    import_tsv roles "$tmp/roles.tsv"
-    import_tsv channels "$tmp/channels.tsv"
-    import_tsv channel_permissions "$tmp/channel_permissions.tsv"
+    # The agent-maintained cache tables mirror the source, so stale rows are
+    # deleted for the imported guilds before the fresh copy lands: renames and
+    # permission changes must replace, not collide with, what a previous fetch
+    # wrote. Deleting roles/channels cascades user_roles and
+    # channel_permissions, which are re-imported right after.
+    import_tsv roles "$tmp/roles.tsv" "DELETE FROM roles WHERE guild_id IN ($GUILD_IDS);"
+    import_tsv channels "$tmp/channels.tsv" "DELETE FROM channels WHERE guild_id IN ($GUILD_IDS);"
+    import_tsv channel_permissions "$tmp/channel_permissions.tsv" \
+        "DELETE FROM channel_permissions cp USING channels c
+            WHERE cp.channel_id = c.channel_id AND c.guild_id IN ($GUILD_IDS);"
+    import_tsv user_roles "$tmp/user_roles.tsv"
     import_tsv user_names "$tmp/user_names.tsv"
     import_tsv user_nicknames "$tmp/user_nicknames.tsv"
     import_tsv user_name_history "$tmp/user_name_history.tsv"
@@ -1803,6 +1820,10 @@ cmd_fetch_fixtures() (
 
     fetch_tsv "SELECT * FROM guilds WHERE id IN ($GUILD_IDS)" > "$tmp/guilds.tsv"
     fetch_tsv "SELECT * FROM roles WHERE guild_id IN ($GUILD_IDS)" > "$tmp/roles.tsv"
+    fetch_tsv "SELECT ur.user_id, ur.role_id
+                 FROM user_roles ur
+                 JOIN roles r ON r.role_id = ur.role_id
+                WHERE r.guild_id IN ($GUILD_IDS)" > "$tmp/user_roles.tsv"
     # Every channel of the guild, not just the ones recordings landed in:
     # the role/member permission math and the view-as-role preview need the
     # full channel list and its overwrites to say anything useful.
