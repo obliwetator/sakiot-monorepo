@@ -153,3 +153,43 @@ export function splitSegment(
 export function addTrack(edit: ClipEdit): ClipEdit {
 	return { ...edit, tracks: edit.tracks + 1 };
 }
+
+/**
+ * Hard anti-overlap snap: a clip of `duration` starting at `ghostStart` on
+ * `track` may never overlap a neighbour. If it would, it is placed against
+ * that neighbour's edge - ending where the neighbour starts when the cursor
+ * is over the neighbour's left half, starting where the neighbour ends when
+ * it is over the right half. The neighbour under the cursor wins when the
+ * ghost overlaps several.
+ */
+export function snapToNeighbors(
+	ghostStart: number,
+	duration: number,
+	segments: readonly TimelineSegment[],
+	excludeId: string,
+	track: number,
+	rawStart: number,
+): number {
+	const ghostEnd = ghostStart + duration;
+	const overlapping = segments.filter(
+		(segment) =>
+			segment.track === track &&
+			segment.id !== excludeId &&
+			segment.timelineStart < ghostEnd &&
+			segmentEnd(segment) > ghostStart,
+	);
+	if (overlapping.length === 0) return ghostStart;
+	const cursorMid = rawStart + duration / 2;
+	const primary = overlapping.reduce((best, segment) => {
+		const bestMid = (best.timelineStart + segmentEnd(best)) / 2;
+		const mid = (segment.timelineStart + segmentEnd(segment)) / 2;
+		return Math.abs(cursorMid - mid) < Math.abs(cursorMid - bestMid)
+			? segment
+			: best;
+	});
+	const mid = (primary.timelineStart + segmentEnd(primary)) / 2;
+	if (cursorMid < mid) {
+		return Math.max(0, primary.timelineStart - duration);
+	}
+	return segmentEnd(primary);
+}

@@ -25,6 +25,7 @@ import {
 	moveSegment,
 	segmentEnd,
 	setSegmentRange,
+	snapToNeighbors,
 } from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
@@ -94,6 +95,7 @@ function computeGhost(
 	pxPerSec: number,
 	positionSec: number,
 	container: HTMLElement | null,
+	segments: readonly TimelineSegment[],
 ): SegmentDragState {
 	const dt = (event.clientX - drag.startX) / Math.max(0.0001, pxPerSec);
 	if (drag.mode === "move") {
@@ -101,11 +103,19 @@ function computeGhost(
 		const valid = rect
 			? event.clientY >= rect.top && event.clientY <= rect.bottom
 			: true;
-		const ghostStart = snapTo(Math.max(0, drag.originStart + dt), positionSec);
+		const rawStart = Math.max(0, drag.originStart + dt);
 		const rawTrack =
 			drag.originTrack +
 			Math.round((event.clientY - drag.startY) / TRACK_HEIGHT_PX);
 		const ghostTrack = Math.max(0, Math.min(drag.maxTrack + 1, rawTrack));
+		const ghostStart = snapToNeighbors(
+			snapTo(rawStart, positionSec),
+			drag.originOut - drag.originIn,
+			segments,
+			drag.segmentId,
+			ghostTrack,
+			rawStart,
+		);
 		return {
 			...drag,
 			ghostStart,
@@ -203,6 +213,7 @@ export function Timeline(props: {
 				pxPerSec,
 				editor.positionSec,
 				tracksRef.current,
+				editor.edit.segments,
 			),
 		onCommit: ({ ghost, origin }) => {
 			if (ghost !== origin && ghost.valid) {
@@ -259,7 +270,7 @@ export function Timeline(props: {
 		return tracksRef.current?.getBoundingClientRect() ?? { left: 0, width: 1 };
 	};
 
-	const computeDrop = (clientX: number, clientY: number) => {
+	const computeDrop = (clientX: number, clientY: number, lengthSec: number) => {
 		const plotBounds = currentPlotBounds();
 		const found = findTrackAtY(clientY);
 		const track =
@@ -268,10 +279,20 @@ export function Timeline(props: {
 			1,
 			Math.max(0, (clientX - plotBounds.left) / Math.max(1, plotBounds.width)),
 		);
-		let startSec = editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
+		const rawStart =
+			editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
+		let startSec = rawStart;
 		if (Math.abs(startSec - editor.positionSec) < SNAP_SECONDS) {
 			startSec = editor.positionSec;
 		}
+		startSec = snapToNeighbors(
+			startSec,
+			lengthSec,
+			editor.edit.segments,
+			"",
+			track,
+			rawStart,
+		);
 		return { track, startSec: Math.max(0, startSec) };
 	};
 
@@ -280,7 +301,11 @@ export function Timeline(props: {
 		event.dataTransfer.dropEffect = "copy";
 		const payload = parseDraggedClip(event.dataTransfer);
 		if (!payload) return;
-		const { track, startSec } = computeDrop(event.clientX, event.clientY);
+		const { track, startSec } = computeDrop(
+			event.clientX,
+			event.clientY,
+			payload.lengthSec,
+		);
 		setPreview((previous) =>
 			previous &&
 			previous.clipId === payload.clipId &&
@@ -301,7 +326,11 @@ export function Timeline(props: {
 		const payload = parseDraggedClip(event.dataTransfer);
 		setPreview(null);
 		if (!payload) return;
-		const { track, startSec } = computeDrop(event.clientX, event.clientY);
+		const { track, startSec } = computeDrop(
+			event.clientX,
+			event.clientY,
+			payload.lengthSec,
+		);
 		props.onDropClip(payload.clipId, payload.lengthSec, track, startSec);
 	};
 
