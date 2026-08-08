@@ -161,6 +161,12 @@ export function addTrack(edit: ClipEdit): ClipEdit {
  * is over the neighbour's left half, starting where the neighbour ends when
  * it is over the right half. The neighbour under the cursor wins when the
  * ghost overlaps several.
+ *
+ * A single snap can land on a second neighbour (clips sitting back to back),
+ * so the resolution cascades: each candidate side is checked for further
+ * overlaps and the recursion continues until a stable, overlap-free position
+ * is found. When neither side is free, the side with fewer overlaps wins and
+ * the cursor decides ties; the depth cap guarantees termination.
  */
 export function snapToNeighbors(
 	ghostStart: number,
@@ -170,15 +176,52 @@ export function snapToNeighbors(
 	track: number,
 	rawStart: number,
 ): number {
-	const ghostEnd = ghostStart + duration;
+	return resolveOverlap(
+		ghostStart,
+		duration,
+		segments,
+		excludeId,
+		track,
+		rawStart,
+		segments.length + 2,
+	);
+}
+
+function overlapsAny(
+	start: number,
+	duration: number,
+	segments: readonly TimelineSegment[],
+	excludeId: string,
+	track: number,
+): boolean {
+	const end = start + duration;
+	return segments.some(
+		(segment) =>
+			segment.track === track &&
+			segment.id !== excludeId &&
+			segment.timelineStart < end &&
+			segmentEnd(segment) > start,
+	);
+}
+
+function resolveOverlap(
+	start: number,
+	duration: number,
+	segments: readonly TimelineSegment[],
+	excludeId: string,
+	track: number,
+	rawStart: number,
+	depth: number,
+): number {
+	const end = start + duration;
 	const overlapping = segments.filter(
 		(segment) =>
 			segment.track === track &&
 			segment.id !== excludeId &&
-			segment.timelineStart < ghostEnd &&
-			segmentEnd(segment) > ghostStart,
+			segment.timelineStart < end &&
+			segmentEnd(segment) > start,
 	);
-	if (overlapping.length === 0) return ghostStart;
+	if (overlapping.length === 0) return start;
 	const cursorMid = rawStart + duration / 2;
 	const primary = overlapping.reduce((best, segment) => {
 		const bestMid = (best.timelineStart + segmentEnd(best)) / 2;
@@ -188,8 +231,36 @@ export function snapToNeighbors(
 			: best;
 	});
 	const mid = (primary.timelineStart + segmentEnd(primary)) / 2;
-	if (cursorMid < mid) {
-		return Math.max(0, primary.timelineStart - duration);
+	const leftCand = Math.max(0, primary.timelineStart - duration);
+	const rightCand = segmentEnd(primary);
+	if (leftCand === start && rightCand === start) return start;
+	const leftFree = !overlapsAny(leftCand, duration, segments, excludeId, track);
+	const rightFree = !overlapsAny(
+		rightCand,
+		duration,
+		segments,
+		excludeId,
+		track,
+	);
+	const candidate =
+		leftFree !== rightFree
+			? leftFree
+				? leftCand
+				: rightCand
+			: cursorMid < mid
+				? leftCand
+				: rightCand;
+	if (candidate === start || depth <= 0) return candidate;
+	if (!overlapsAny(candidate, duration, segments, excludeId, track)) {
+		return candidate;
 	}
-	return segmentEnd(primary);
+	return resolveOverlap(
+		candidate,
+		duration,
+		segments,
+		excludeId,
+		track,
+		rawStart,
+		depth - 1,
+	);
 }

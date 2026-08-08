@@ -48,17 +48,30 @@ describe("snapToNeighbors", () => {
 		expect(snapToNeighbors(10, 4, [other], "d", 0, 10)).toBe(10);
 	});
 
-	test("snapping left clamps at zero", () => {
+	test("prefers a non-overlapping candidate over a clamped overlap", () => {
 		const early = seg("e", 0, 2, 2);
-		expect(snapToNeighbors(0, 5, [early], "d", 0, 0)).toBe(0);
+		expect(snapToNeighbors(0, 5, [early], "d", 0, 0)).toBe(4);
 	});
 
 	test("the neighbour under the cursor wins when several overlap", () => {
 		const left = seg("l", 0, 2, 4);
 		const right = seg("r", 0, 12, 4);
 		const segments = [left, right];
-		expect(snapToNeighbors(4, 10, segments, "d", 0, 4)).toBe(6);
+		expect(snapToNeighbors(4, 10, segments, "d", 0, 4)).toBe(16);
 		expect(snapToNeighbors(9, 10, segments, "d", 0, 9)).toBe(16);
+	});
+
+	test("adjacent clips cannot trap a third clip between them", () => {
+		const a = seg("a", 0, 2, 4);
+		const b = seg("b", 0, 6, 4);
+		expect(snapToNeighbors(4, 3, [a, b], "d", 0, 4)).toBe(10);
+		expect(snapToNeighbors(7, 3, [a, b], "d", 0, 7)).toBe(10);
+	});
+
+	test("a clip too long for the gap resolves to the free side", () => {
+		const a = seg("a", 0, 2, 4);
+		const b = seg("b", 0, 8, 4);
+		expect(snapToNeighbors(5, 4, [a, b], "d", 0, 5)).toBe(12);
 	});
 
 	test("exact fit between two neighbours is preserved", () => {
