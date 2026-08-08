@@ -59,6 +59,7 @@ export function useClipEditor() {
 
 	const tick = useCallback(() => {
 		if (!engine.isPlaying) {
+			rafRef.current = null;
 			setPlaying(false);
 			positionRef.current = 0;
 			setPositionSec(0);
@@ -87,6 +88,10 @@ export function useClipEditor() {
 	const togglePlay = useCallback(() => {
 		if (playingRef.current) {
 			engine.stop();
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
 			setPlaying(false);
 			positionRef.current = 0;
 			setPositionSec(0);
