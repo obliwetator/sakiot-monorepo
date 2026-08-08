@@ -20,8 +20,11 @@ running whatever they had.
 
 ## Slot lifecycle (one time per slot, as root)
 
-`ops/preview-slot.sh` automates the whole slot: Cloudflare DNS record, env
-file, database, systemd units, nginx vhost, and (optionally) the HTTPS cert.
+`ops/preview-slot.sh` automates the slot: Cloudflare DNS record, database,
+systemd unit, nginx vhost, and (optionally) the HTTPS cert. The env file is
+**shared** — `/etc/sakiot/preview.env` is created once and reused by every
+slot; the deploy engine derives each slot's port, database, dirs, units, and
+subdomain from the slot name.
 
 ```sh
 # 1. Refresh the deploy framework so the preview-ci verb exists:
@@ -30,33 +33,49 @@ ops/update-deploy-engine.sh
 # 2. Create a slot. Needs a Cloudflare API token (Zone:DNS edit) in
 #    CLOUDFLARE_API_TOKEN; certbot email in CERTBOT_EMAIL for HTTPS.
 CLOUDFLARE_API_TOKEN=... CERTBOT_EMAIL=you@example.com ops/preview-slot.sh clip-editor
+#    (repeat for more slots: ops/preview-slot.sh other-branch)
 
-# 3. No Discord anything. Set the real dev-login credentials in
-#    /etc/sakiot/preview-clip-editor.env: DEV_ACCOUNT_ID (the user id the
-#    dev login impersonates) and DEV_LOGIN_SECRET (a strong secret you'll
-#    type into the login prompt). DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET
-#    are startup placeholders — any non-empty value works since OAuth is
-#    never used on preview hosts.
+# 3. Set the shared dev-login credentials once in /etc/sakiot/preview.env:
+#    DEV_ACCOUNT_ID (the user id dev login impersonates) and DEV_LOGIN_SECRET
+#    (a strong secret you'll type into the login prompt). DISCORD_CLIENT_ID /
+#    DISCORD_CLIENT_SECRET are startup placeholders — any non-empty value
+#    works since OAuth is never used on preview hosts.
 
-# 4. Deploy: Actions -> Deploy preview -> slot=clip-editor, branch=<branch>.
+# 4. Deploy: Actions -> Deploy preview -> slot=<slot>, branch=<branch>.
 
-# Teardown when the branch is done:
+# Teardown when the branch is done (env file and other slots are untouched):
 CLOUDFLARE_API_TOKEN=... ops/preview-slot.sh clip-editor --remove
 ```
 
 `ops/preview-slot.sh` details:
 
-- Picks the next free web port (8903, 8904, ...) from existing
-  `/etc/sakiot/preview-*.env` files, or takes `--port N`.
+- The web port is **deterministic**: `8903 + hash(slot)` (same function as the
+  engine's `slot_port`), so the vhost, unit, and deployed service agree.
 - Creates/updates the `A` record `<slot>.preview.patrykstyla.com` via the
   Cloudflare API; `--no-dns` skips this when a wildcard record is in place.
-- Renders `/etc/sakiot/preview-<slot>.env` from `ops/preview.env.example`
-  (paths, ports, DB name, domain, units all namespaced to the slot) and the
-  web systemd unit from the staging template (no bot unit — previews run no
-  FBI Agent).
-- Installs the nginx vhost from `ops/nginx/preview-slot.conf.example` and
-  runs `certbot --nginx` when `CERTBOT_EMAIL` is set.
-- `--remove` reverses everything: DNS record, cert, vhost, unit, DB, env file.
+- Creates `/etc/sakiot/preview.env` from `ops/preview.env.example` only if it
+  does not exist yet (base values; the engine namespaces them per slot).
+- Installs the web systemd unit from the staging template (no bot unit —
+  previews run no FBI Agent) and the nginx vhost from
+  `ops/nginx/preview-slot.conf.example`; runs `certbot --nginx` when
+  `CERTBOT_EMAIL` is set.
+- `--remove` reverses everything for that slot: DNS record, cert, vhost,
+  unit, database — the shared env file stays.
+
+### Engine-side slot derivation
+
+A `preview-ci <slot> <sha>` deploy loads the shared `preview.env` and rewrites
+these tokens per slot (mirroring the old per-slot files):
+
+| token in preview.env        | per-slot value                  |
+|-----------------------------|---------------------------------|
+| `PORT` (8903 base)          | `8903 + hash(slot)`             |
+| `sakiot_preview`            | `sakiot_preview_<slot>`         |
+| `sakiot-preview` (paths/units) | `sakiot-preview-<slot>`      |
+| `preview.patrykstyla.com`   | `<slot>.preview.patrykstyla.com` |
+
+The per-slot port is also written into each release's `web/service.env`, so
+every slot's web server binds its own port while reading the shared env file.
 
 ## DNS and TLS — no wildcard needed
 
@@ -84,7 +103,7 @@ Two equivalent setups, pick one:
 | data dir         | `/var/lib/sakiot-staging`        | `/var/lib/sakiot-preview-<slot>` |
 | releases         | `/srv/sakiot-staging`            | `/srv/sakiot-preview-<slot>`     |
 | cache            | `/var/cache/sakiot-staging`      | `/var/cache/sakiot-preview-<slot>` |
-| env file         | `/etc/sakiot/staging.env`        | `/etc/sakiot/preview-<slot>.env` |
+| env file         | `/etc/sakiot/staging.env`        | **`/etc/sakiot/preview.env` (shared)** |
 | frontend domain  | staging.patrykstyla.com          | **<slot>.preview.patrykstyla.com** |
 
 Cargo target dir, promotions, and the SQLx test master are shared with the

@@ -2,15 +2,18 @@
 set -euo pipefail
 
 # Bootstraps or tears down one preview slot on the VPS: Cloudflare DNS record,
-# env file, database, systemd units, nginx vhost, and HTTPS cert. Run as root
-# from a monorepo checkout. Adding a slot is the only manual part of hosting a
-# branch preview; the deploy itself (`Deploy preview` workflow) never touches
-# this script.
+# shared env file, database, systemd unit, nginx vhost, and HTTPS cert. Run as
+# root from a monorepo checkout. Adding a slot is the only manual part of
+# hosting a branch preview; the deploy itself (`Deploy preview` workflow)
+# never touches this script.
+#
+# All slots share /etc/sakiot/preview.env; the deploy engine derives each
+# slot's port, database, dirs, and domain from the slot name. The web port is
+# deterministic (8903 + hash(slot)), matching ops/sakiot-deploy's slot_port().
 #
 #   ops/preview-slot.sh <slot>              # create slot
 #   ops/preview-slot.sh <slot> --remove     # tear the slot down
 #   ops/preview-slot.sh <slot> --no-dns     # skip Cloudflare (wildcard DNS in place)
-#   ops/preview-slot.sh <slot> --port 8904  # pick the web port explicitly
 #
 # Environment:
 #   CLOUDFLARE_API_TOKEN   Zone:DNS edit token (needed unless --no-dns)
@@ -22,14 +25,12 @@ OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${OPS_DIR}/.." && pwd)"
 SLOT="${1:-}"
 ACTION=create
-PORT=""
 NO_DNS=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --remove) ACTION=remove ;;
         --no-dns) NO_DNS=1 ;;
-        --port) PORT="$2"; shift ;;
         *) SLOT="$1" ;;
     esac
     shift
@@ -38,13 +39,23 @@ done
 die() { printf '\033[1;31m[preview-slot]\033[0m %s\n' "$*" >&2; exit 1; }
 log() { printf '\033[1;34m[preview-slot]\033[0m %s\n' "$*"; }
 
-[[ -n "$SLOT" ]] || die "usage: ops/preview-slot.sh <slot> [--remove|--no-dns|--port N]"
+[[ -n "$SLOT" ]] || die "usage: ops/preview-slot.sh <slot> [--remove|--no-dns]"
 [[ "$SLOT" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "invalid slot name '$SLOT'"
 
 DOMAIN="${PREVIEW_DOMAIN:-preview.patrykstyla.com}"
 SUBDOMAIN="${SLOT}.${DOMAIN}"
-[[ -n "${PORT:-}" && ! "$PORT" =~ ^[0-9]+$ ]] && die "invalid --port '$PORT'"
 [[ "$(id -u)" -eq 0 ]] || die "run as root"
+
+# Deterministic web port; must stay in sync with slot_port() in
+# ops/sakiot-deploy/src/config.rs.
+slot_port() {
+    local slot="$1" h=0 i c
+    for ((i = 0; i < ${#slot}; i++)); do
+        printf -v c '%d' "'${slot:i:1}"
+        h=$(( (h * 31 + c) % 4294967296 ))
+    done
+    printf '%d' $(( 8903 + h % 25 ))
+}
 
 if [[ "$ACTION" = create ]]; then
     # ---- DNS record --------------------------------------------------------
@@ -75,34 +86,23 @@ if [[ "$ACTION" = create ]]; then
         log "skipping DNS (--no-dns); ${SUBDOMAIN} must already resolve"
     fi
 
-    # ---- web port ----------------------------------------------------------
-    if [[ -z "$PORT" ]]; then
-        PORT=$(grep -h '^PORT=' /etc/sakiot/preview-*.env 2>/dev/null | cut -d= -f2 \
-            | sort -n | tail -n1 | awk '{print $1 + 1}' )
-        [[ -n "$PORT" ]] || PORT=8903
-        [[ "$PORT" -ge 8903 && "$PORT" -le 8929 ]] || die "slot port ${PORT} out of range"
-    fi
-    log "web port: ${PORT}"
+    # ---- web port (deterministic, matches the engine's slot_port) ----------
+    PORT=$(slot_port "$SLOT")
+    log "web port: ${PORT} (deterministic for slot '${SLOT}')"
 
-    # ---- env file ----------------------------------------------------------
-    env_file="/etc/sakiot/preview-${SLOT}.env"
-    [[ -f "$env_file" ]] && die "${env_file} already exists; remove the slot first"
-    repo_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/OWNER/REPOSITORY.git")
-    repo_url=${repo_url/git@github.com:/https:\/\/github.com\/}
-    repo_url=${repo_url%.git}
-    sed \
-        -e "s|sakiot-preview-|sakiot-preview-${SLOT}-|g" \
-        -e "s|sakiot_preview|sakiot_preview_${SLOT}|g" \
-        -e "s|preview.patrykstyla.com|${SUBDOMAIN}|g" \
-        -e "s|/var/lib/sakiot-preview|/var/lib/sakiot-preview-${SLOT}|g" \
-        -e "s|/srv/sakiot-preview|/srv/sakiot-preview-${SLOT}|g" \
-        -e "s|/var/cache/sakiot-preview|/var/cache/sakiot-preview-${SLOT}|g" \
-        -e "s|/etc/sakiot/preview.env|${env_file}|g" \
-        -e "s|8902|${PORT}|g" \
-        -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
-        "$OPS_DIR/preview.env.example" > "$env_file"
-    chmod 0640 "$env_file"
-    log "wrote ${env_file} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
+    # ---- shared env file (created once, reused by every slot) ---------------
+    env_file="/etc/sakiot/preview.env"
+    if [[ -f "$env_file" ]]; then
+        log "${env_file} already exists; keeping it"
+    else
+        repo_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/OWNER/REPOSITORY.git")
+        repo_url=${repo_url/git@github.com:/https:\/\/github.com\/}
+        repo_url=${repo_url%.git}
+        sed -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
+            "$OPS_DIR/preview.env.example" > "$env_file"
+        chmod 0640 "$env_file"
+        log "wrote ${env_file} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
+    fi
 
     # ---- database ----------------------------------------------------------
     db="sakiot_preview_${SLOT}"
@@ -187,10 +187,9 @@ elif [[ "$ACTION" = remove ]]; then
         log "dropped database sakiot_preview_${SLOT}"
     fi
 
-    # ---- env file ----------------------------------------------------------
-    env_file="/etc/sakiot/preview-${SLOT}.env"
-    rm -f "$env_file" "/var/lib/sakiot-preview-${SLOT}/deploy/current" 2>/dev/null || true
-    log "removed ${env_file}"
+    # ---- env file (shared: never removed with a slot) ----------------------
+    rm -f "/var/lib/sakiot-preview-${SLOT}/deploy/current" 2>/dev/null || true
+    log "shared ${env_file} kept (used by every slot)"
     log "slot ${SLOT} removed"
 else
     die "unknown action '${ACTION}'"

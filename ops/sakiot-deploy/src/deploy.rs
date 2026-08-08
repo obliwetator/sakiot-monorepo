@@ -943,13 +943,18 @@ fn deploy_services(
         } else {
             active_bot_grpc
         };
-        fsx::write_line(
-            &artifact_dir.join("web/service.env"),
-            &format!(
-                "RELEASE_ID={release_id}\nSAKIOT_DATA_DIR={}\nGRPC_ADDRESS=http://{grpc_address}",
-                config.data_dir.display(),
-            ),
-        )?;
+        // Preview slots share preview.env, whose PORT is the base value; the
+        // per-slot port (derived from the slot name at config load) lands in
+        // the release service.env so each slot's web server binds its own.
+        let port_override = std::env::var("PORT").ok().filter(|value| !value.is_empty());
+        let mut service_env = format!(
+            "RELEASE_ID={release_id}\nSAKIOT_DATA_DIR={}\nGRPC_ADDRESS=http://{grpc_address}",
+            config.data_dir.display(),
+        );
+        if let Some(port) = port_override {
+            service_env.push_str(&format!("\nPORT={port}"));
+        }
+        fsx::write_line(&artifact_dir.join("web/service.env"), &service_env)?;
         std::fs::set_permissions(
             artifact_dir.join("web/service.env"),
             std::fs::Permissions::from_mode(0o640),
