@@ -159,6 +159,20 @@ if [[ "$ACTION" = create ]]; then
         log "created database ${db}"
     fi
 
+    # ---- dev-login account --------------------------------------------------
+    # Preview databases start empty, but GET /api/users/current 500s on a
+    # missing row for DEV_ACCOUNT_ID (RowNotFound), so dev login breaks until
+    # the account is inserted. Seed it on every run (idempotent).
+    dev_account="$(sed -n 's/^DEV_ACCOUNT_ID=//p' "$ENV_FILE" | head -n1)"
+    if [[ "$dev_account" =~ ^[0-9]+$ && "$dev_account" != "0" ]]; then
+        sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
+            "INSERT INTO discord_auth_user (id, username, discriminator, avatar, flags, public_flags) \
+             VALUES ($dev_account, 'dev', '0', '', 0, 0) ON CONFLICT (id) DO NOTHING" >/dev/null
+        log "seeded dev-login account ${dev_account} in ${db}"
+    else
+        log "warning: DEV_ACCOUNT_ID missing or invalid in ${ENV_FILE}; dev login will fail"
+    fi
+
     # ---- systemd unit (web only; preview slots run no FBI Agent) ------------
     sed \
         -e "s|sakiot-staging|sakiot-preview-${SLOT}|g" \
