@@ -98,7 +98,12 @@ ops/preview-slot.sh clip-editor --remove
   `ops/nginx/preview-slot.conf.example`; runs `certbot --nginx` when
   `CERTBOT_EMAIL` is set.
 - `--remove` reverses everything for that slot: DNS record, cert, vhost,
-  unit, database — the shared env file stays.
+  unit, database, and the slot's local data files (recording/clip/waveform
+  copies — never staging's). With `--purge-b2`, it additionally deletes the
+  B2 objects the slot itself created (keys present in the slot DB but not in
+  staging's `media_objects`), using `B2_PURGE_KEY_ID`/`B2_PURGE_KEY_SECRET`
+  (a delete-capable bucket key; plain DeleteObject, versions stay
+  recoverable). The shared env file stays.
 
 ### Engine-side slot derivation
 

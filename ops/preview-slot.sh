@@ -13,6 +13,8 @@ set -euo pipefail
 #
 #   ops/preview-slot.sh <slot>              # create slot
 #   ops/preview-slot.sh <slot> --remove     # tear the slot down
+#   ops/preview-slot.sh <slot> --remove --purge-b2  # also delete B2 objects
+#                                                   # the slot created
 #   ops/preview-slot.sh <slot> --no-dns     # skip Cloudflare (wildcard DNS in place)
 #
 # Environment:
@@ -27,11 +29,14 @@ ROOT="$(cd "${OPS_DIR}/.." && pwd)"
 SLOT="${1:-}"
 ACTION=create
 NO_DNS=0
+PURGE_B2=0
+PURGE_LIST="${TMPDIR:-/tmp}/sakiot-preview-purge.$$"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --remove) ACTION=remove ;;
         --no-dns) NO_DNS=1 ;;
+        --purge-b2) PURGE_B2=1 ;;
         *) SLOT="$1" ;;
     esac
     shift
@@ -40,7 +45,7 @@ done
 die() { printf '\033[1;31m[preview-slot]\033[0m %s\n' "$*" >&2; exit 1; }
 log() { printf '\033[1;34m[preview-slot]\033[0m %s\n' "$*"; }
 
-[[ -n "$SLOT" ]] || die "usage: ops/preview-slot.sh <slot> [--remove|--no-dns]"
+[[ -n "$SLOT" ]] || die "usage: ops/preview-slot.sh <slot> [--remove|--no-dns|--purge-b2]"
 [[ "$SLOT" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "invalid slot name '$SLOT'"
 
 DOMAIN="${PREVIEW_DOMAIN:-preview.patrykstyla.com}"
@@ -271,6 +276,53 @@ elif [[ "$ACTION" = remove ]]; then
         "/etc/systemd/system/sakiot-preview-${SLOT}-fbi-agent@.service"
     systemctl daemon-reload
     log "removed systemd units"
+
+    # ---- local data files --------------------------------------------------
+    # The slot's recording/clip/waveform files are its own copies; removing
+    # them never touches staging or production data.
+    if [[ -d "/var/lib/sakiot-preview-${SLOT}/data" ]]; then
+        rm -rf "/var/lib/sakiot-preview-${SLOT}/data"
+        log "removed preview data files"
+    fi
+
+    # ---- B2 objects uploaded by the slot (--purge-b2 only) -----------------
+    # The preview DB is a copy of staging, so most media_objects keys are
+    # staging's archived objects and must NOT be deleted. Only keys that exist
+    # in the preview DB but not in staging's media_objects were created by the
+    # slot. Deletion uses a delete-capable bucket key (the runtime media key
+    # lacks deleteFiles by design) and issues plain DeleteObject calls, which
+    # only hide the current version; retained versions stay recoverable.
+    if [[ "$PURGE_B2" -eq 1 ]]; then
+        : "${B2_PURGE_KEY_ID:?set B2_PURGE_KEY_ID and B2_PURGE_KEY_SECRET (delete-capable media-bucket key) for --purge-b2}"
+        command -v aws >/dev/null 2>&1 || die "--purge-b2 needs the aws CLI"
+        b2_endpoint="$(sed -n 's/^SAKIOT_MEDIA_S3_ENDPOINT=//p' "$ENV_FILE" | head -n1)"
+        b2_bucket="$(sed -n 's/^SAKIOT_MEDIA_S3_BUCKET=//p' "$ENV_FILE" | head -n1)"
+        [[ -n "$b2_endpoint" && -n "$b2_bucket" ]] \
+            || die "--purge-b2 needs SAKIOT_MEDIA_S3_ENDPOINT and SAKIOT_MEDIA_S3_BUCKET in ${ENV_FILE}"
+        preview_db="sakiot_preview_${SLOT}"
+        if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${preview_db}'" | grep -q 1; then
+            sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='sakiot_staging'" | grep -q 1 \
+                || die "--purge-b2 needs sakiot_staging to diff preview-created keys against"
+            comm -23 \
+                <(sudo -u postgres psql -tAc \
+                    "SELECT object_key FROM ${preview_db}.media_objects WHERE object_key IS NOT NULL" | sort -u) \
+                <(sudo -u postgres psql -tAc \
+                    "SELECT object_key FROM sakiot_staging.media_objects WHERE object_key IS NOT NULL" | sort -u) \
+                > "$PURGE_LIST"
+            count=0
+            while IFS= read -r key; do
+                [[ -n "$key" ]] || continue
+                AWS_ACCESS_KEY_ID="$B2_PURGE_KEY_ID" \
+                AWS_SECRET_ACCESS_KEY="$B2_PURGE_KEY_SECRET" \
+                    aws --endpoint-url "$b2_endpoint" s3api delete-object \
+                        --bucket "$b2_bucket" --key "$key" >/dev/null 2>&1 \
+                    || log "warning: failed to delete b2 object ${key}"
+                count=$((count + 1))
+            done < "$PURGE_LIST"
+            rm -f "$PURGE_LIST"
+            log "purged ${count} slot-created B2 objects from ${b2_bucket}"
+        fi
+    fi
 
     # ---- database ----------------------------------------------------------
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='sakiot_preview_${SLOT}'" | grep -q 1; then
