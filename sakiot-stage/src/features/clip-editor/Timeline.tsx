@@ -4,7 +4,10 @@ import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+	DragEvent as ReactDragEvent,
+	PointerEvent as ReactPointerEvent,
+} from "react";
 import { useEffect, useRef, useState } from "react";
 import { formatDuration } from "../../utils/formatTime";
 import {
@@ -22,19 +25,50 @@ const TRACK_HEIGHT_PX = 72;
 const HANDLE_WIDTH_PX = 7;
 const SNAP_SECONDS = 0.25;
 
+interface DraggedClipPayload {
+	clipId: string;
+	lengthSec: number;
+}
+
+interface DragPreviewState {
+	clipId: string;
+	lengthSec: number;
+	/** Existing row index, or `edit.tracks` when the drop would add a track. */
+	track: number;
+	startSec: number;
+}
+
+function parseDraggedClip(
+	dataTransfer: DataTransfer,
+): DraggedClipPayload | null {
+	const raw = dataTransfer.getData("application/json");
+	if (!raw) return null;
+	try {
+		const parsed = JSON.parse(raw) as { clip_id?: unknown; length?: unknown };
+		if (typeof parsed.clip_id !== "string") return null;
+		const lengthSec = typeof parsed.length === "number" ? parsed.length : 0;
+		return { clipId: parsed.clip_id, lengthSec };
+	} catch {
+		return null;
+	}
+}
+
 export function Timeline(props: {
 	editor: UseClipEditorReturn;
 	clipName: (segment: TimelineSegment) => string;
 	onDropClip: (
+		clipId: string,
+		lengthSec: number,
 		track: number,
-		clientX: number,
-		element: HTMLElement,
-		dataTransfer: DataTransfer,
+		startSec: number,
 	) => void;
 }) {
 	const { editor } = props;
 	const plotRef = useRef<HTMLDivElement | null>(null);
+	const tracksRef = useRef<HTMLDivElement | null>(null);
+	const rowElementsRef = useRef(new Map<number, HTMLElement>());
 	const [plotWidth, setPlotWidth] = useState(1);
+	const [preview, setPreview] = useState<DragPreviewState | null>(null);
 
 	useEffect(() => {
 		const plot = plotRef.current;
@@ -52,6 +86,76 @@ export function Timeline(props: {
 
 	const pxPerSec = plotWidth / Math.max(1, editor.viewWidthSec);
 	const rows = Array.from({ length: editor.edit.tracks }, (_, track) => track);
+
+	const findTrackAtY = (clientY: number): number | null => {
+		let best: { track: number; dist: number } | null = null;
+		for (const [track, element] of rowElementsRef.current) {
+			const rect = element.getBoundingClientRect();
+			const mid = (rect.top + rect.bottom) / 2;
+			const dist = Math.abs(clientY - mid);
+			if (!best || dist < best.dist) best = { track, dist };
+		}
+		if (!best || best.dist > TRACK_HEIGHT_PX) return null;
+		return best.track;
+	};
+
+	const computeDrop = (clientX: number, clientY: number) => {
+		const containerRect = tracksRef.current?.getBoundingClientRect() ?? {
+			left: 0,
+			width: 1,
+		};
+		const found = findTrackAtY(clientY);
+		const track =
+			found === null ? editor.edit.tracks : Math.min(found, editor.edit.tracks);
+		const fractionOfWidth = Math.min(
+			1,
+			Math.max(
+				0,
+				(clientX - containerRect.left) / Math.max(1, containerRect.width),
+			),
+		);
+		let startSec = editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
+		if (Math.abs(startSec - editor.positionSec) < SNAP_SECONDS) {
+			startSec = editor.positionSec;
+		}
+		return { track, startSec: Math.max(0, startSec) };
+	};
+
+	const handleDragOver = (event: ReactDragEvent<HTMLElement>) => {
+		event.preventDefault();
+		event.dataTransfer.dropEffect = "copy";
+		const payload = parseDraggedClip(event.dataTransfer);
+		if (!payload) return;
+		const { track, startSec } = computeDrop(event.clientX, event.clientY);
+		setPreview((previous) =>
+			previous &&
+			previous.clipId === payload.clipId &&
+			previous.track === track &&
+			previous.startSec === startSec
+				? previous
+				: {
+						clipId: payload.clipId,
+						lengthSec: payload.lengthSec,
+						track,
+						startSec,
+					},
+		);
+	};
+
+	const handleDrop = (event: ReactDragEvent<HTMLElement>) => {
+		event.preventDefault();
+		const payload = parseDraggedClip(event.dataTransfer);
+		setPreview(null);
+		if (!payload) return;
+		const { track, startSec } = computeDrop(event.clientX, event.clientY);
+		props.onDropClip(payload.clipId, payload.lengthSec, track, startSec);
+	};
+
+	const handleDragLeave = (event: ReactDragEvent<HTMLElement>) => {
+		if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+			setPreview(null);
+		}
+	};
 
 	return (
 		<Box
@@ -88,6 +192,10 @@ export function Timeline(props: {
 					viewWidthSec={editor.viewWidthSec}
 				/>
 				<Box
+					ref={tracksRef}
+					onDragOver={handleDragOver}
+					onDrop={handleDrop}
+					onDragLeave={handleDragLeave}
 					sx={{
 						flex: 1,
 						minHeight: 0,
@@ -104,9 +212,20 @@ export function Timeline(props: {
 							clipName={props.clipName}
 							fraction={fraction}
 							pxPerSec={pxPerSec}
-							onDropClip={props.onDropClip}
+							preview={preview}
+							onRowRef={(element) => {
+								if (element) rowElementsRef.current.set(track, element);
+								else rowElementsRef.current.delete(track);
+							}}
 						/>
 					))}
+					{preview && preview.track === editor.edit.tracks && (
+						<PhantomTrackRow
+							label={`Track ${editor.edit.tracks + 1}`}
+							fraction={fraction}
+							preview={preview}
+						/>
+					)}
 				</Box>
 			</Box>
 			<Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
@@ -137,6 +256,83 @@ export function Timeline(props: {
 				</Typography>
 			</Box>
 		</Box>
+	);
+}
+
+function DragGhost(props: {
+	leftFraction: number;
+	widthFraction: number;
+	label?: string;
+}) {
+	return (
+		<Box
+			aria-hidden="true"
+			sx={{
+				position: "absolute",
+				top: 8,
+				bottom: 8,
+				left: `${props.leftFraction}%`,
+				width: `max(2px, ${props.widthFraction}%)`,
+				borderRadius: 1,
+				border: "2px dashed",
+				borderColor: "primary.light",
+				bgcolor: "rgba(56, 189, 248, 0.16)",
+				pointerEvents: "none",
+				zIndex: 5,
+			}}
+		>
+			{props.label && (
+				<Typography
+					variant="caption"
+					sx={{
+						px: 0.5,
+						whiteSpace: "nowrap",
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						display: "block",
+						lineHeight: 1.6,
+					}}
+				>
+					{props.label}
+				</Typography>
+			)}
+		</Box>
+	);
+}
+
+function PhantomTrackRow(props: {
+	label: string;
+	fraction: (sec: number) => number;
+	preview: DragPreviewState;
+}) {
+	const start = props.fraction(props.preview.startSec);
+	const width = Math.max(
+		0,
+		props.fraction(props.preview.startSec + props.preview.lengthSec) - start,
+	);
+	return (
+		<TimelineRow label={props.label}>
+			<Box
+				sx={{
+					position: "relative",
+					height: TRACK_HEIGHT_PX,
+					mb: 0.5,
+					borderRadius: 1,
+					border: "2px dashed",
+					borderColor: "primary.dark",
+					overflow: "hidden",
+				}}
+			>
+				<DragGhost leftFraction={start} widthFraction={width} />
+				<Typography
+					variant="caption"
+					color="text.secondary"
+					sx={{ position: "absolute", top: 2, left: 4 }}
+				>
+					New track
+				</Typography>
+			</Box>
+		</TimelineRow>
 	);
 }
 
@@ -263,35 +459,20 @@ function TrackRow(props: {
 	clipName: (segment: TimelineSegment) => string;
 	fraction: (sec: number) => number;
 	pxPerSec: number;
-	onDropClip: (
-		track: number,
-		clientX: number,
-		element: HTMLElement,
-		dataTransfer: DataTransfer,
-	) => void;
+	preview: DragPreviewState | null;
+	onRowRef: (element: HTMLElement | null) => void;
 }) {
 	const { editor, track } = props;
 	const segments = editor.edit.segments.filter((s) => s.track === track);
+	const showPreview = props.preview?.track === track;
 
 	return (
 		<TimelineRow label={`Track ${track + 1}`}>
 			<Box
+				ref={(element: HTMLDivElement | null) => props.onRowRef(element)}
 				onPointerDown={(event) => {
 					if (event.button !== 0) return;
 					props.editor.select(null);
-				}}
-				onDragOver={(event) => {
-					event.preventDefault();
-					event.dataTransfer.dropEffect = "copy";
-				}}
-				onDrop={(event) => {
-					event.preventDefault();
-					props.onDropClip(
-						track,
-						event.clientX,
-						event.currentTarget,
-						event.dataTransfer,
-					);
 				}}
 				sx={{
 					position: "relative",
@@ -331,6 +512,16 @@ function TrackRow(props: {
 						/>
 					);
 				})}
+				{showPreview && props.preview && (
+					<DragGhost
+						leftFraction={props.fraction(props.preview.startSec)}
+						widthFraction={Math.max(
+							0,
+							props.fraction(props.preview.startSec + props.preview.lengthSec) -
+								props.fraction(props.preview.startSec),
+						)}
+					/>
+				)}
 				<TimelinePlayhead percent={props.fraction(editor.positionSec)} />
 			</Box>
 		</TimelineRow>

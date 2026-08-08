@@ -359,5 +359,9 @@ function addSegmentAt(
 		timelineStart,
 		track,
 	);
-	return { ...edit, segments: [...edit.segments, segment] };
+	return {
+		...edit,
+		segments: [...edit.segments, segment],
+		tracks: Math.max(edit.tracks, track + 1),
+	};
 }

@@ -69,34 +69,10 @@ export function ClipEditor(props: { guildId: string }) {
 	}, [clips, editor, sourceBuffer, sourceClipId]);
 
 	const handleDropClip = useCallback(
-		(
-			track: number,
-			clientX: number,
-			element: HTMLElement,
-			dataTransfer: DataTransfer,
-		) => {
-			const clipId = dataTransfer.getData("text/plain");
-			if (!clipId) return;
-			const clip = clips?.find((c) => c.clip_id === clipId);
-			if (!clip) return;
-			const bounds = element.getBoundingClientRect();
-			const fraction = Math.min(
-				1,
-				Math.max(0, (clientX - bounds.left) / Math.max(1, bounds.width)),
-			);
-			let startSec = editor.viewStartSec + fraction * editor.viewWidthSec;
-			if (Math.abs(startSec - editor.positionSec) < 0.25) {
-				startSec = editor.positionSec;
-			}
-			editor.loadClip(
-				props.guildId,
-				clip.clip_id,
-				clip.length ?? 1,
-				track,
-				Math.max(0, startSec),
-			);
+		(clipId: string, lengthSec: number, track: number, startSec: number) => {
+			editor.loadClip(props.guildId, clipId, lengthSec, track, startSec);
 		},
-		[clips, editor, props.guildId],
+		[editor, props.guildId],
 	);
 
 	const handleAddFromBin = useCallback(
