@@ -19,7 +19,7 @@ set -euo pipefail
 #   CLOUDFLARE_API_TOKEN   Zone:DNS edit token (needed unless --no-dns)
 #   PREVIEW_DOMAIN         default: preview.patrykstyla.com
 #   VPS_IP                 default: detected via api.ipify.org
-#   CERTBOT_EMAIL          set to also request an HTTPS cert for the slot
+#   CERTBOT_EMAIL          override; default comes from the shared preview.env
 
 OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${OPS_DIR}/.." && pwd)"
@@ -133,12 +133,15 @@ if [[ "$ACTION" = create ]]; then
     log "installed nginx vhost ${SUBDOMAIN}"
 
     # ---- HTTPS -------------------------------------------------------------
-    if [[ -n "${CERTBOT_EMAIL:-}" ]] && command -v certbot >/dev/null 2>&1; then
-        if certbot --nginx -d "$SUBDOMAIN" --non-interactive --agree-tos -m "$CERTBOT_EMAIL" >/dev/null 2>&1; then
+    certbot_email="${CERTBOT_EMAIL:-$(sed -n 's/^CERTBOT_EMAIL=//p' "$env_file" 2>/dev/null | head -n1)}"
+    if [[ -n "$certbot_email" ]] && command -v certbot >/dev/null 2>&1; then
+        if certbot --nginx -d "$SUBDOMAIN" --non-interactive --agree-tos -m "$certbot_email" >/dev/null 2>&1; then
             log "issued HTTPS certificate for ${SUBDOMAIN}"
         else
             log "certbot failed for ${SUBDOMAIN}; slot stays on HTTP"
         fi
+    elif [[ -z "$certbot_email" ]]; then
+        log "no CERTBOT_EMAIL (shared ${env_file} or env); skipping HTTPS"
     fi
 
     log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${env_file} are set)"

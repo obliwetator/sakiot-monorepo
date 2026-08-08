@@ -589,6 +589,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         config,
         deps,
         &systemctl,
+        target,
         &components,
         &artifact_dir,
         worktree.path(),
@@ -802,6 +803,7 @@ fn deploy_services(
     config: &Config,
     deps: &Deps,
     systemctl: &Systemctl,
+    target: Target,
     components: &[Component],
     artifact_dir: &Path,
     worktree_path: &Path,
@@ -953,6 +955,21 @@ fn deploy_services(
         );
         if let Some(port) = port_override {
             service_env.push_str(&format!("\nPORT={port}"));
+        }
+        // Slot-correct host variables for preview: the shared preview.env
+        // carries the base host, so the web server gets its own subdomain via
+        // the release env (later EnvironmentFile wins in the unit).
+        if target == Target::Preview {
+            for key in [
+                "COOKIE_DOMAIN",
+                "CORS_ALLOWED_ORIGIN",
+                "OAUTH_ALLOWED_OPENER_ORIGINS",
+                "DISCORD_REDIRECT_URI",
+            ] {
+                if let Ok(value) = std::env::var(key) {
+                    service_env.push_str(&format!("\n{key}={value}"));
+                }
+            }
         }
         fsx::write_line(&artifact_dir.join("web/service.env"), &service_env)?;
         std::fs::set_permissions(

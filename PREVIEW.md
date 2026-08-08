@@ -30,16 +30,18 @@ subdomain from the slot name.
 # 1. Refresh the deploy framework so the preview-ci verb exists:
 ops/update-deploy-engine.sh
 
-# 2. Create a slot. Needs a Cloudflare API token (Zone:DNS edit) in
-#    CLOUDFLARE_API_TOKEN; certbot email in CERTBOT_EMAIL for HTTPS.
-CLOUDFLARE_API_TOKEN=... CERTBOT_EMAIL=you@example.com ops/preview-slot.sh clip-editor
+# 2. Create a slot. Needs only a Cloudflare API token (Zone:DNS edit); the
+#    certbot email is read from the shared env file.
+CLOUDFLARE_API_TOKEN=... ops/preview-slot.sh clip-editor
 #    (repeat for more slots: ops/preview-slot.sh other-branch)
 
-# 3. Set the shared dev-login credentials once in /etc/sakiot/preview.env:
-#    DEV_ACCOUNT_ID (the user id dev login impersonates) and DEV_LOGIN_SECRET
-#    (a strong secret you'll type into the login prompt). DISCORD_CLIENT_ID /
-#    DISCORD_CLIENT_SECRET are startup placeholders — any non-empty value
-#    works since OAuth is never used on preview hosts.
+# 3. Set the shared credentials once in /etc/sakiot/preview.env:
+#    DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login),
+#    CERTBOT_EMAIL (for slot HTTPS certs), JWT/registry/DB secrets.
+#    DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are startup placeholders —
+#    any non-empty value works since OAuth is never used on preview hosts.
+#    API host variables (VITE_API_URL, COOKIE_DOMAIN, CORS/opener origins)
+#    are derived per slot automatically — nothing to edit for those.
 
 # 4. Deploy: Actions -> Deploy preview -> slot=<slot>, branch=<branch>.
 
@@ -76,6 +78,10 @@ these tokens per slot (mirroring the old per-slot files):
 
 The per-slot port is also written into each release's `web/service.env`, so
 every slot's web server binds its own port while reading the shared env file.
+The same file carries the slot's `COOKIE_DOMAIN`, `CORS_ALLOWED_ORIGIN`,
+`OAUTH_ALLOWED_OPENER_ORIGINS`, and `DISCORD_REDIRECT_URI` (later
+`EnvironmentFile` wins in the systemd unit), and the frontend build's
+`VITE_API_URL` is rewritten before `bun build` runs.
 
 ## DNS and TLS — no wildcard needed
 
