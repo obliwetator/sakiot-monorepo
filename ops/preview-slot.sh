@@ -180,8 +180,7 @@ if [[ "$ACTION" = create ]]; then
                  GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO sakiot;"
             log "copied sakiot_staging database into ${db}"
         fi
-        if [[ -d /var/lib/sakiot-staging/data ]] \
-            && [[ -z "$(ls -A "/var/lib/sakiot-preview-${SLOT}/data" 2>/dev/null)" ]]; then
+        if [[ -d /var/lib/sakiot-staging/data ]]; then
             cp -a /var/lib/sakiot-staging/data/. "/var/lib/sakiot-preview-${SLOT}/data/"
             log "copied staging data files into the preview slot"
         fi
