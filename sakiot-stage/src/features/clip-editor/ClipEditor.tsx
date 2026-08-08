@@ -36,7 +36,12 @@ import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { deserializeEdit, serializeEdit } from "./composePayload";
 import { Inspector } from "./Inspector";
-import { type ClipEdit, makeSegment, segmentDuration } from "./model";
+import {
+	addSegment,
+	type ClipEdit,
+	makeSegment,
+	segmentDuration,
+} from "./model";
 import { Timeline } from "./Timeline";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
@@ -44,14 +49,14 @@ import { useClipEditor } from "./useClipEditor";
 export function ClipEditor(props: { guildId: string }) {
 	const { asRoleArg } = useAsRole();
 	const dispatch = useAppDispatch();
-	const { data: clips } = useGetClipsQuery(
+	const { data: clips, isError: clipsError } = useGetClipsQuery(
 		{ guild_id: props.guildId, ...asRoleArg },
 		{ skip: !props.guildId },
 	);
 	const editor = useClipEditor();
 	const [searchParams] = useSearchParams();
 	const sourceClipId = searchParams.get("source");
-	const seededRef = useRef(false);
+	const seededForRef = useRef<string | null>(null);
 
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [composeName, setComposeName] = useState("");
@@ -123,13 +128,14 @@ export function ClipEditor(props: { guildId: string }) {
 		return () => window.removeEventListener("pointerdown", onGlobalPointerDown);
 	}, [editor.select]);
 
-	const { buffer: sourceBuffer, status: sourceStatus } = useClipBuffer(
-		props.guildId,
-		sourceClipId,
-	);
+	const {
+		buffer: sourceBuffer,
+		status: sourceStatus,
+		error: sourceError,
+	} = useClipBuffer(props.guildId, sourceClipId);
 
 	useEffect(() => {
-		if (seededRef.current || !sourceClipId) return;
+		if (seededForRef.current === sourceClipId || !sourceClipId) return;
 		const source = clips?.find((c) => c.clip_id === sourceClipId);
 		const edit = source?.composition
 			? deserializeEdit(source.composition)
@@ -137,8 +143,9 @@ export function ClipEditor(props: { guildId: string }) {
 		if (edit && edit.segments.length > 0) {
 			// Composed clip: restore the whole edit, then load every source
 			// buffer so the timeline plays as it did when it was exported.
-			seededRef.current = true;
-			editor.apply(() => edit);
+			// Reset (not apply) makes the restored edit the undo baseline.
+			seededForRef.current = sourceClipId;
+			editor.reset(edit);
 			editor.select(edit.segments[0]?.id ?? null);
 			void editor.preloadSources(
 				props.guildId,
@@ -147,16 +154,17 @@ export function ClipEditor(props: { guildId: string }) {
 			return;
 		}
 		if (!sourceBuffer) return;
-		seededRef.current = true;
+		// The composition marker only exists in the clips list; without it a
+		// composed source would be seeded as a single plain segment, so wait
+		// for the list before assuming the source is a plain clip.
+		if (clips === undefined && !clipsError) return;
+		seededForRef.current = sourceClipId;
 		editor.registerBuffer(sourceClipId, sourceBuffer);
 		const lengthSec = source?.length ?? sourceBuffer.duration;
 		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
-		editor.apply((edit) => ({
-			...edit,
-			segments: [...edit.segments, segment],
-		}));
+		editor.reset(addSegment(editor.edit, segment));
 		editor.select(segment.id);
-	}, [clips, editor, props.guildId, sourceBuffer, sourceClipId]);
+	}, [clips, clipsError, editor, props.guildId, sourceBuffer, sourceClipId]);
 
 	const handleDropClip = useCallback(
 		(clipId: string, lengthSec: number, track: number, startSec: number) => {
@@ -221,6 +229,7 @@ export function ClipEditor(props: { guildId: string }) {
 						editor={editor}
 						duration={duration}
 						sourceStatus={sourceStatus}
+						sourceError={sourceError}
 					/>
 					<Box sx={{ flex: 1, minHeight: 0 }}>
 						<Timeline
@@ -406,6 +415,7 @@ function Monitor(props: {
 	editor: ReturnType<typeof useClipEditor>;
 	duration: number;
 	sourceStatus: "idle" | "loading" | "ready" | "error";
+	sourceError: string | null;
 }) {
 	const { editor } = props;
 
@@ -471,7 +481,7 @@ function Monitor(props: {
 			)}
 			{props.sourceStatus === "error" && (
 				<Alert severity="error" sx={{ py: 0 }}>
-					Source clip could not be loaded.
+					{props.sourceError ?? "Source clip could not be loaded."}
 				</Alert>
 			)}
 		</Box>
@@ -516,17 +526,6 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 				return;
 			}
 			if (segment) {
-				const at = current.positionSec - segment.timelineStart;
-				if (event.key === "i" || event.key === "I") {
-					event.preventDefault();
-					trimSegment(current, segment.id, "in", at);
-					return;
-				}
-				if (event.key === "o" || event.key === "O") {
-					event.preventDefault();
-					trimSegment(current, segment.id, "out", at);
-					return;
-				}
 				if (event.key === "s" || event.key === "S") {
 					event.preventDefault();
 					current.splitSelectedAtPlayhead();
@@ -552,25 +551,6 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 		window.addEventListener("keydown", handleShortcut);
 		return () => window.removeEventListener("keydown", handleShortcut);
 	}, []);
-}
-
-function trimSegment(
-	editor: ReturnType<typeof useClipEditor>,
-	id: string,
-	edge: "in" | "out",
-	atSec: number,
-) {
-	editor.apply((edit) => ({
-		...edit,
-		segments: edit.segments.map((s) => {
-			if (s.id !== id) return s;
-			const atContent = atSec * s.effects.rate;
-			const sourceIn = edge === "in" ? Math.max(0, atContent) : s.sourceIn;
-			const sourceOut =
-				edge === "out" ? Math.max(sourceIn + 0.05, atContent) : s.sourceOut;
-			return { ...s, sourceIn, sourceOut };
-		}),
-	}));
 }
 
 function moveSegmentBy(edit: ClipEdit, id: string, delta: number): ClipEdit {

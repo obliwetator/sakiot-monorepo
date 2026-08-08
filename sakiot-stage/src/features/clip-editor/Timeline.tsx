@@ -21,8 +21,11 @@ import {
 import { pendingBinDrag } from "./ClipBin";
 import type { TimelineSegment } from "./model";
 import {
+	effectiveRate,
+	leftEdgeFloor,
 	MIN_SEGMENT_SECONDS,
 	moveSegment,
+	rightEdgeCeiling,
 	segmentEnd,
 	setSegmentRange,
 	snapToNeighbors,
@@ -67,6 +70,8 @@ interface SegmentDragState {
 	ghostOut: number;
 	ghostTrack: number;
 	valid: boolean;
+	/** An edge extension is being held back by a neighbouring clip. */
+	clamped: boolean;
 	pointerX: number;
 	pointerY: number;
 }
@@ -124,6 +129,7 @@ function computeGhost(
 			ghostStart,
 			ghostTrack,
 			valid,
+			clamped: false,
 			pointerX: event.clientX,
 			pointerY: event.clientY,
 		};
@@ -147,11 +153,24 @@ function computeGhost(
 				drag.originIn + (snappedStart - drag.originStart) * drag.originRate,
 			),
 		);
+		const ghostStart =
+			drag.originStart + (ghostIn - drag.originIn) / drag.originRate;
+		// The box end stays fixed during a left-edge drag, so extending the
+		// start left is bounded by the nearest neighbour's end.
+		const originEnd =
+			drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
+		const clampedStart = Math.max(
+			ghostStart,
+			leftEdgeFloor(segments, drag.originTrack, drag.segmentId, originEnd),
+		);
 		return {
 			...drag,
-			ghostIn,
-			ghostStart:
-				drag.originStart + (ghostIn - drag.originIn) / drag.originRate,
+			ghostIn:
+				clampedStart === ghostStart
+					? ghostIn
+					: drag.originIn + (clampedStart - drag.originStart) * drag.originRate,
+			ghostStart: clampedStart,
+			clamped: clampedStart !== ghostStart,
 			pointerX: event.clientX,
 			pointerY: event.clientY,
 		};
@@ -170,9 +189,23 @@ function computeGhost(
 		drag.maxSource,
 		drag.originOut + (snappedEnd - endSec) * drag.originRate,
 	);
+	// The box start stays fixed during a right-edge drag, so extending the
+	// end right is bounded by the nearest neighbour's start.
+	const ceiling = rightEdgeCeiling(
+		segments,
+		drag.originTrack,
+		drag.segmentId,
+		drag.originStart,
+	);
+	const maxGhostOut =
+		ceiling === null
+			? drag.maxSource
+			: drag.originIn + (ceiling - drag.originStart) * drag.originRate;
+	const clampedGhostOut = Math.min(ghostOut, maxGhostOut);
 	return {
 		...drag,
-		ghostOut,
+		ghostOut: clampedGhostOut,
+		clamped: clampedGhostOut < ghostOut,
 		pointerX: event.clientX,
 		pointerY: event.clientY,
 	};
@@ -477,6 +510,12 @@ export function Timeline(props: {
 					y={segmentDragGhost.pointerY}
 				/>
 			)}
+			{segmentDragGhost?.clamped && (
+				<ClampedEdgeWarning
+					x={segmentDragGhost.pointerX}
+					y={segmentDragGhost.pointerY}
+				/>
+			)}
 			<Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
 				<Tooltip title="Zoom out">
 					<IconButton size="small" onClick={() => editor.zoom(2)}>
@@ -662,6 +701,34 @@ function FloatingDragChip(props: { name: string; x: number; y: number }) {
 		>
 			<Typography variant="caption" noWrap>
 				{props.name || "Clip"} · release to cancel
+			</Typography>
+		</Box>
+	);
+}
+
+function ClampedEdgeWarning(props: { x: number; y: number }) {
+	return (
+		<Box
+			aria-hidden="true"
+			sx={{
+				position: "fixed",
+				left: props.x,
+				top: props.y,
+				transform: "translate(-50%, 14px)",
+				pointerEvents: "none",
+				zIndex: 1400,
+				maxWidth: 260,
+				px: 1,
+				py: 0.5,
+				borderRadius: 1,
+				border: "1px solid",
+				borderColor: "warning.main",
+				bgcolor: "rgba(245, 158, 11, 0.14)",
+				backdropFilter: "blur(4px)",
+			}}
+		>
+			<Typography variant="caption" noWrap>
+				Edge meets the next clip
 			</Typography>
 		</Box>
 	);
@@ -900,7 +967,7 @@ function TrackSegment(props: {
 			originIn: segment.sourceIn,
 			originOut: segment.sourceOut,
 			originTrack: segment.track,
-			originRate: segment.effects.rate,
+			originRate: effectiveRate(segment.effects),
 			maxSource: props.maxSource,
 			maxTrack: props.maxTrack,
 			startX: event.clientX,
@@ -910,6 +977,7 @@ function TrackSegment(props: {
 			ghostOut: segment.sourceOut,
 			ghostTrack: segment.track,
 			valid: true,
+			clamped: false,
 			pointerX: event.clientX,
 			pointerY: event.clientY,
 		});

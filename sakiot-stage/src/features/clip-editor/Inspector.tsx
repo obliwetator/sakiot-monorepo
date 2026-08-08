@@ -10,6 +10,7 @@ import { formatDuration } from "../../utils/formatTime";
 import {
 	type SegmentEffects,
 	segmentDuration,
+	setSegmentPitch,
 	setSegmentSpeed,
 	type TimelineSegment,
 } from "./model";
@@ -89,21 +90,6 @@ function SegmentInspectorContent(props: {
 
 	const finishSlider = () => editor.flush();
 
-	const trimEdge = (edge: "in" | "out") => {
-		const at =
-			(editor.positionSec - segment.timelineStart) * segment.effects.rate;
-		editor.apply((edit) => ({
-			...edit,
-			segments: edit.segments.map((s) => {
-				if (s.id !== segment.id) return s;
-				const sourceIn = edge === "in" ? Math.max(0, at) : s.sourceIn;
-				const sourceOut =
-					edge === "out" ? Math.max(sourceIn + 0.05, at) : s.sourceOut;
-				return { ...s, sourceIn, sourceOut };
-			}),
-		}));
-	};
-
 	const duration = segmentDuration(segment);
 
 	return (
@@ -117,25 +103,6 @@ function SegmentInspectorContent(props: {
 			<Typography variant="caption" color="text.secondary">
 				{formatDuration(duration)} · at {formatDuration(segment.timelineStart)}
 			</Typography>
-
-			<Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
-				<Button
-					size="small"
-					variant="outlined"
-					onClick={() => trimEdge("in")}
-					title="Set source in-point to the playhead (I)"
-				>
-					In (I)
-				</Button>
-				<Button
-					size="small"
-					variant="outlined"
-					onClick={() => trimEdge("out")}
-					title="Set source out-point to the playhead (O)"
-				>
-					Out (O)
-				</Button>
-			</Stack>
 
 			<Divider sx={{ my: 2 }} />
 
@@ -162,7 +129,9 @@ function SegmentInspectorContent(props: {
 				format={(value) =>
 					value === 0 ? "0" : `${value > 0 ? "+" : ""}${value} ct`
 				}
-				onChange={(value) => patchEffects({ pitchCents: value })}
+				onChange={(value) =>
+					editor.preview((edit) => setSegmentPitch(edit, segment.id, value))
+				}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider

@@ -461,10 +461,21 @@ fn expected_duration_ms(segments: &[SegmentRender]) -> i64 {
         .iter()
         .map(|segment| {
             f64::from(segment.timeline_start)
-                + f64::from(segment.source_out - segment.source_in) / f64::from(segment.rate)
+                + f64::from(segment.source_out - segment.source_in) / effective_rate(segment)
         })
         .fold(0.0, f64::max);
     (max_end * 1_000.0).round() as i64
+}
+
+/// Combined playback factor of a segment: speed times the pitch shift, so a
+/// pitch raise plays the content faster and a pitch drop slower, mirroring
+/// the Web Audio computed playback rate (playbackRate * 2^(detune/1200)).
+fn effective_rate(segment: &SegmentRender) -> f64 {
+    f64::from(segment.rate) * pitch_factor(segment.pitch_cents)
+}
+
+fn pitch_factor(pitch_cents: f32) -> f64 {
+    2f64.powf(f64::from(pitch_cents) / 1200.0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -596,13 +607,11 @@ fn db_to_linear(db: f32) -> f64 {
 fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f32) -> String {
     let mut graph = String::new();
     for (index, segment) in segments.iter().enumerate() {
-        let pitch_factor = 2f64.powf(f64::from(segment.pitch_cents) / 1200.0);
-        let combined_rate = f64::from(segment.rate) * pitch_factor;
-        let tempo = 1.0 / pitch_factor;
+        let combined_rate = effective_rate(segment);
         let volume = db_to_linear(segment.volume_db);
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
         graph.push_str(&format!(
-            "[{index}:a]atrim=start={:.6}:end={:.6},asetrate={:.4},aresample={SAMPLE_RATE:.4},atempo={tempo:.6},volume={volume:.6},bass=g={:.3}:f=250,treble=g={:.3}:f=3000,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
+            "[{index}:a]atrim=start={:.6}:end={:.6},asetrate={:.4},aresample={SAMPLE_RATE:.4},volume={volume:.6},bass=g={:.3}:f=250,treble=g={:.3}:f=3000,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
             segment.source_in,
             segment.source_out,
             SAMPLE_RATE * combined_rate,
@@ -741,8 +750,9 @@ mod tests {
         assert!(graph.contains("atrim=start=1.000000:end=5.000000"));
         // pitch factor 2, rate 2 -> combined 4 -> 192 kHz
         assert!(graph.contains("asetrate=192000"));
-        // tempo undoes the pitch factor so the duration stays content / rate
-        assert!(graph.contains("atempo=0.500000"));
+        // the audible duration follows the combined rate (content / 4), so no
+        // atempo compensation is applied; the box shows the same extent
+        assert!(!graph.contains("atempo"));
         // 10^(6/20) = 1.995262
         assert!(graph.contains("volume=1.995262"));
         assert!(graph.contains("bass=g=-3.000:f=250"));
@@ -761,7 +771,6 @@ mod tests {
         render.volume_db = 0.0;
         let graph = build_filter_graph(&[render], 0.0);
         assert!(graph.contains("asetrate=48000"));
-        assert!(graph.contains("atempo=1.000000"));
         assert!(graph.contains("volume=1.000000"));
     }
 
@@ -786,7 +795,20 @@ mod tests {
 
     #[test]
     fn computes_expected_duration_from_the_longest_segment() {
-        assert_eq!(expected_duration_ms(&[segment_render()]), 4_500);
+        // content 1.0..5.0 = 4s at combined rate 2 * 2 (pitch one octave up)
+        // = 4 -> 1s, so the timeline ends at 2.5 + 1 = 3.5s.
+        assert_eq!(expected_duration_ms(&[segment_render()]), 3_500);
+    }
+
+    #[test]
+    fn expected_duration_follows_pitch_and_speed() {
+        let mut render = segment_render();
+        render.pitch_cents = -1200.0; // half-speed playback
+        render.source_in = 0.0;
+        render.source_out = 10.0;
+        render.timeline_start = 0.0;
+        // 10s at rate 2 * pitch 0.5 = 1 -> 10s.
+        assert_eq!(expected_duration_ms(&[render]), 10_000);
     }
 
     #[test]

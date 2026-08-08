@@ -67,13 +67,30 @@ export function makeSegment(
 }
 
 /**
+ * Pitch shift as a rate multiplier: 1200 cents is one octave, matching the
+ * Web Audio detune semantics that fold into the computed playback rate.
+ */
+export function pitchFactor(effects: SegmentEffects): number {
+	return 2 ** (effects.pitchCents / 1200);
+}
+
+/**
+ * Effective playback rate of a segment: the Web Audio engine consumes the
+ * source buffer at `playbackRate * 2^(detune/1200)` per real second, so both
+ * speed and pitch resize the audible extent of a segment on the timeline.
+ */
+export function effectiveRate(effects: SegmentEffects): number {
+	return effects.rate * pitchFactor(effects);
+}
+
+/**
  * Real-time duration of the segment on the timeline: the trimmed source
- * content played back at the segment's speed.
+ * content played back at the segment's effective speed and pitch.
  */
 export function segmentDuration(segment: TimelineSegment): number {
 	return (
 		Math.max(0, segment.sourceOut - segment.sourceIn) /
-		Math.max(0.01, segment.effects.rate)
+		Math.max(0.01, effectiveRate(segment.effects))
 	);
 }
 
@@ -148,13 +165,22 @@ export function splitSegment(
 	) {
 		return edit;
 	}
+	const splitSource =
+		segment.sourceIn + (atSec - start) * effectiveRate(segment.effects);
+	const first: TimelineSegment = {
+		...segment,
+		sourceOut: splitSource,
+	};
 	const second: TimelineSegment = {
 		...segment,
 		id: newSegmentId(),
-		sourceIn: segment.sourceIn + (atSec - start) * segment.effects.rate,
+		sourceIn: splitSource,
 		timelineStart: atSec,
 	};
-	return { ...edit, segments: [...edit.segments, second] };
+	return {
+		...edit,
+		segments: [...edit.segments.map((s) => (s.id === id ? first : s)), second],
+	};
 }
 
 export function addTrack(edit: ClipEdit): ClipEdit {
@@ -163,9 +189,10 @@ export function addTrack(edit: ClipEdit): ClipEdit {
 
 /**
  * Sets a segment's playback speed and resizes its timeline extent to match:
- * the box becomes `content / rate` wide, so faster clips shrink and slower
- * clips grow. An extension pushes every follower it reaches on the same track
- * right (staying snapped to the chain); a contraction never pulls followers.
+ * the box becomes `content / effectiveRate` wide, so faster clips shrink and
+ * slower clips grow. An extension pushes every follower it reaches on the
+ * same track right (staying snapped to the chain); a contraction never pulls
+ * followers.
  */
 export function setSegmentSpeed(
 	edit: ClipEdit,
@@ -175,15 +202,41 @@ export function setSegmentSpeed(
 	if (!Number.isFinite(rate) || rate <= 0) return edit;
 	const segment = edit.segments.find((s) => s.id === id);
 	if (!segment || segment.effects.rate === rate) return edit;
+	const oldEnd = segmentEnd(segment);
 	const updated = updateSegment(edit, id, {
 		effects: { ...segment.effects, rate },
 	});
+	return resizeSegmentTo(updated, id, oldEnd);
+}
+
+/**
+ * Sets a segment's pitch and resizes its timeline extent to match, exactly
+ * like the speed control: the pitch shift changes how fast the source buffer
+ * is consumed, so the box follows the audible duration.
+ */
+export function setSegmentPitch(
+	edit: ClipEdit,
+	id: string,
+	pitchCents: number,
+): ClipEdit {
+	if (!Number.isFinite(pitchCents)) return edit;
+	const segment = edit.segments.find((s) => s.id === id);
+	if (!segment || segment.effects.pitchCents === pitchCents) return edit;
+	const oldEnd = segmentEnd(segment);
+	const updated = updateSegment(edit, id, {
+		effects: { ...segment.effects, pitchCents },
+	});
+	return resizeSegmentTo(updated, id, oldEnd);
+}
+
+function resizeSegmentTo(edit: ClipEdit, id: string, oldEnd: number): ClipEdit {
+	const segment = edit.segments.find((s) => s.id === id);
+	if (!segment) return edit;
 	const content = segment.sourceOut - segment.sourceIn;
-	const newDuration = content / rate;
-	if (newDuration <= content / segment.effects.rate) return updated;
-	const oldEnd = segment.timelineStart + content / segment.effects.rate;
-	const newEnd = segment.timelineStart + newDuration;
-	const followers = updated.segments
+	const newEnd =
+		segment.timelineStart + content / effectiveRate(segment.effects);
+	if (newEnd <= oldEnd) return edit;
+	const followers = edit.segments
 		.filter(
 			(follower) =>
 				follower.track === segment.track &&
@@ -198,10 +251,10 @@ export function setSegmentSpeed(
 		shifts.set(follower.id, boundary);
 		boundary += segmentEnd(follower) - follower.timelineStart;
 	}
-	if (shifts.size === 0) return updated;
+	if (shifts.size === 0) return edit;
 	return {
-		...updated,
-		segments: updated.segments.map((follower) =>
+		...edit,
+		segments: edit.segments.map((follower) =>
 			shifts.has(follower.id)
 				? {
 						...follower,
@@ -282,4 +335,50 @@ function overlapsAny(
 			segment.timelineStart < end &&
 			segmentEnd(segment) > start,
 	);
+}
+
+/**
+ * Nearest same-track neighbour end that bounds a left-edge trim extension:
+ * the box start may not move left of it, so a clip snapped against the
+ * shrunken edge is never overlapped when the edge grows back. The box end is
+ * fixed during a left-edge drag, so only neighbours ending at or before it
+ * constrain the start.
+ */
+export function leftEdgeFloor(
+	segments: readonly TimelineSegment[],
+	track: number,
+	excludeId: string,
+	boxEnd: number,
+): number {
+	let floor = 0;
+	for (const neighbor of segments) {
+		if (neighbor.track !== track || neighbor.id === excludeId) continue;
+		const end = segmentEnd(neighbor);
+		if (end <= boxEnd && end > floor) floor = end;
+	}
+	return floor;
+}
+
+/**
+ * Nearest same-track neighbour start that bounds a right-edge trim
+ * extension: the box end may not move right of it. Null when no neighbour
+ * constrains the extension.
+ */
+export function rightEdgeCeiling(
+	segments: readonly TimelineSegment[],
+	track: number,
+	excludeId: string,
+	boxStart: number,
+): number | null {
+	let ceiling: number | null = null;
+	for (const neighbor of segments) {
+		if (neighbor.track !== track || neighbor.id === excludeId) continue;
+		if (neighbor.timelineStart >= boxStart) {
+			ceiling =
+				ceiling === null
+					? neighbor.timelineStart
+					: Math.min(ceiling, neighbor.timelineStart);
+		}
+	}
+	return ceiling;
 }

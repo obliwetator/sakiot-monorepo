@@ -24,7 +24,11 @@ import {
 	type ClipData,
 	useRenameClipMutation,
 } from "../../app/apiSlice";
-import { authedFetch } from "../../app/authedFetch";
+import {
+	authedFetch,
+	refreshForMediaRetry,
+	SESSION_EXPIRED_MESSAGE,
+} from "../../app/authedFetch";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
 import { formatDuration } from "../../utils/formatTime";
@@ -193,13 +197,21 @@ export function ClipPlayer(props: {
 		const audio = new Audio();
 		playAttemptRef.current += 1;
 		let active = true;
+		// One refresh-retry per load: media elements can't report the HTTP
+		// status, so a stale access token looks like a plain load failure.
+		let refreshed = false;
 		audio.crossOrigin = "use-credentials";
 		audio.preload = "auto";
 		audio.volume = volumeRef.current;
 		audio.playbackRate = playbackRateRef.current;
-		audio.src = absoluteMediaUrl(
-			`audio/clips/${props.clip.guild_id}/${encodeURIComponent(props.clip.clip_id)}`,
-		);
+		const mediaPath = `audio/clips/${props.clip.guild_id}/${encodeURIComponent(props.clip.clip_id)}`;
+		const loadMedia = (cacheBust: boolean) => {
+			audio.src = absoluteMediaUrl(
+				cacheBust ? `${mediaPath}?t=${Date.now()}` : mediaPath,
+			);
+			if (cacheBust) audio.load();
+		};
+		loadMedia(false);
 		audioRef.current = audio;
 		positionRef.current = 0;
 		durationRef.current = props.clip.length ?? 0;
@@ -222,11 +234,25 @@ export function ClipPlayer(props: {
 		};
 		const onCanPlay = () => {
 			updateDuration();
+			refreshed = false;
 			setReady(true);
 		};
 		const onError = () => {
 			if (!active) return;
-			setError("Clip audio could not be loaded.");
+			if (refreshed) {
+				setError("Clip audio could not be loaded.");
+				return;
+			}
+			refreshed = true;
+			void refreshForMediaRetry().then((ok) => {
+				if (!active) return;
+				if (ok) {
+					setError(null);
+					loadMedia(true);
+				} else {
+					setError(SESSION_EXPIRED_MESSAGE);
+				}
+			});
 		};
 		const onPlay = () => setPlaying(true);
 		const onPause = () => setPlaying(false);

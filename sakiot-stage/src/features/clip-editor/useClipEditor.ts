@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipEditorEngine } from "./engine";
 import type { ClipEdit } from "./model";
-import { emptyEdit, makeSegment, segmentDuration } from "./model";
+import { emptyEdit, makeSegment, segmentDuration, splitSegment } from "./model";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
@@ -9,7 +9,8 @@ export type UseClipEditorReturn = ReturnType<typeof useClipEditor>;
 
 export function useClipEditor() {
 	const history = useEditHistory(emptyEdit());
-	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo } = history;
+	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo, reset } =
+		history;
 	const [positionSec, setPositionSec] = useState(0);
 	const [playing, setPlaying] = useState(false);
 	const [loop, setLoop] = useState(false);
@@ -264,26 +265,7 @@ export function useClipEditor() {
 	const splitSelectedAtPlayhead = useCallback(() => {
 		if (!selectedSegmentId) return;
 		const id = selectedSegmentId;
-		apply((current) => {
-			const segment = current.segments.find((s) => s.id === id);
-			if (!segment) return current;
-			const at = positionRef.current;
-			const start = segment.timelineStart;
-			const end = start + segmentDuration(segment);
-			if (at - start < 0.05 || end - at < 0.05) return current;
-			return {
-				...current,
-				segments: [
-					...current.segments,
-					{
-						...segment,
-						id: `seg-split-${Date.now()}`,
-						sourceIn: segment.sourceIn + (at - start) * segment.effects.rate,
-						timelineStart: at,
-					},
-				],
-			};
-		});
+		apply((current) => splitSegment(current, id, positionRef.current));
 	}, [apply, selectedSegmentId]);
 
 	const selectedSegment =
@@ -332,6 +314,7 @@ export function useClipEditor() {
 		apply,
 		undo,
 		redo,
+		reset,
 		canUndo,
 		canRedo,
 		positionSec,

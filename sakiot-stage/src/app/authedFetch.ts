@@ -62,6 +62,21 @@ export function isLoggedIn(): boolean {
 
 let refreshInFlight: Promise<boolean> | null = null;
 
+export const SESSION_EXPIRED_MESSAGE =
+	"Your session has expired. Please log in again.";
+
+/**
+ * Media elements cannot read the HTTP status of a failed load, so a stale
+ * access token surfaces as a plain playback error. Before surfacing one,
+ * refresh the session and report whether a retry is worth attempting: true
+ * when a new access token was issued (reload the media), false when the
+ * refresh token has expired too (the session is over — show
+ * SESSION_EXPIRED_MESSAGE instead of a misleading playback error).
+ */
+export async function refreshForMediaRetry(): Promise<boolean> {
+	return ensureRefreshed();
+}
+
 export function ensureRefreshed(): Promise<boolean> {
 	if (refreshInFlight) return refreshInFlight;
 	refreshInFlight = (async () => {
