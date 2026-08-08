@@ -107,9 +107,13 @@ if [[ "$ACTION" = create ]]; then
         repo_url=${repo_url%.git}
         sed -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
             "$OPS_DIR/preview.env.example" > "$ENV_FILE"
-        chmod 0640 "$ENV_FILE"
         log "wrote ${ENV_FILE} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
     fi
+    # The deploy engine reads this file as the sakiot user, so it must be
+    # group-readable by sakiot; enforced on every run (heals older installs
+    # that created it root:root and thus were unreadable for the engine).
+    chown root:sakiot "$ENV_FILE"
+    chmod 0640 "$ENV_FILE"
 
     # ---- database role (shared by every instance; created once) ------------
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
