@@ -61,6 +61,8 @@ interface SegmentDragState {
 	ghostOut: number;
 	ghostTrack: number;
 	valid: boolean;
+	pointerX: number;
+	pointerY: number;
 }
 
 function parseDraggedClip(
@@ -96,15 +98,18 @@ function computeGhost(
 			? event.clientY >= rect.top && event.clientY <= rect.bottom
 			: true;
 		const ghostStart = snapTo(Math.max(0, drag.originStart + dt), positionSec);
-		const ghostTrack = Math.max(
-			0,
-			Math.min(
-				drag.maxTrack,
-				drag.originTrack +
-					Math.round((event.clientY - drag.startY) / TRACK_HEIGHT_PX),
-			),
-		);
-		return { ...drag, ghostStart, ghostTrack, valid };
+		const rawTrack =
+			drag.originTrack +
+			Math.round((event.clientY - drag.startY) / TRACK_HEIGHT_PX);
+		const ghostTrack = Math.max(0, Math.min(drag.maxTrack + 1, rawTrack));
+		return {
+			...drag,
+			ghostStart,
+			ghostTrack,
+			valid,
+			pointerX: event.clientX,
+			pointerY: event.clientY,
+		};
 	}
 	if (drag.mode === "left") {
 		const rawGhostIn = Math.max(
@@ -126,6 +131,8 @@ function computeGhost(
 			...drag,
 			ghostIn,
 			ghostStart: drag.originStart + (ghostIn - drag.originIn),
+			pointerX: event.clientX,
+			pointerY: event.clientY,
 		};
 	}
 	const rawGhostOut = Math.max(
@@ -141,7 +148,12 @@ function computeGhost(
 		drag.maxSource,
 		drag.originOut + (snappedEnd - endSec),
 	);
-	return { ...drag, ghostOut };
+	return {
+		...drag,
+		ghostOut,
+		pointerX: event.clientX,
+		pointerY: event.clientY,
+	};
 }
 
 function dragGhostGeometry(drag: SegmentDragState) {
@@ -387,7 +399,7 @@ export function Timeline(props: {
 				>
 					{rows.map((track) => {
 						const dragGhost =
-							segmentDrag && segmentDrag.ghostTrack === track
+							segmentDrag?.valid && segmentDrag.ghostTrack === track
 								? dragGhostGeometry(segmentDrag)
 								: null;
 						const draggedSegment = segmentDrag
@@ -414,7 +426,7 @@ export function Timeline(props: {
 												name: draggedSegment
 													? props.clipName(draggedSegment)
 													: "",
-												invalid: !segmentDrag?.valid,
+												invalid: false,
 											}
 										: null
 								}
@@ -427,15 +439,39 @@ export function Timeline(props: {
 							/>
 						);
 					})}
-					{preview && preview.track === editor.edit.tracks && (
-						<PhantomTrackRow
-							label={`Track ${editor.edit.tracks + 1}`}
-							fraction={fraction}
-							preview={preview}
-						/>
-					)}
+					{(() => {
+						const segmentDrop =
+							segmentDrag?.valid && segmentDrag.ghostTrack >= editor.edit.tracks
+								? segmentDrag
+								: null;
+						const binDrop =
+							preview && preview.track === editor.edit.tracks ? preview : null;
+						if (!segmentDrop && !binDrop) return null;
+						const startSec = segmentDrop?.ghostStart ?? binDrop?.startSec ?? 0;
+						const durationSec = segmentDrop
+							? segmentDrop.originOut - segmentDrop.originIn
+							: (binDrop?.lengthSec ?? 0);
+						const left = fraction(startSec);
+						return (
+							<PhantomTrackRow
+								label={`Track ${editor.edit.tracks + 1}`}
+								leftFraction={left}
+								widthFraction={Math.max(
+									0,
+									fraction(startSec + durationSec) - left,
+								)}
+							/>
+						);
+					})()}
 				</Box>
 			</Box>
+			{segmentDrag && !segmentDrag.valid && (
+				<FloatingDragChip
+					name={clipNameOfDragged(segmentDrag, editor, props.clipName)}
+					x={segmentDrag.pointerX}
+					y={segmentDrag.pointerY}
+				/>
+			)}
 			<Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
 				<Tooltip title="Zoom out">
 					<IconButton size="small" onClick={() => editor.zoom(2)}>
@@ -474,12 +510,15 @@ function commitSegmentDrag(
 	if (drag.mode === "move") {
 		apply((edit) => {
 			if (!edit.segments.some((s) => s.id === drag.segmentId)) return edit;
-			return moveSegment(
+			const moved = moveSegment(
 				edit,
 				drag.segmentId,
 				drag.ghostStart,
 				drag.ghostTrack,
 			);
+			return drag.ghostTrack >= edit.tracks
+				? { ...moved, tracks: drag.ghostTrack + 1 }
+				: moved;
 		});
 		return;
 	}
@@ -553,14 +592,9 @@ function DragGhost(props: {
 
 function PhantomTrackRow(props: {
 	label: string;
-	fraction: (sec: number) => number;
-	preview: DragPreviewState;
+	leftFraction: number;
+	widthFraction: number;
 }) {
-	const start = props.fraction(props.preview.startSec);
-	const width = Math.max(
-		0,
-		props.fraction(props.preview.startSec + props.preview.lengthSec) - start,
-	);
 	return (
 		<TimelineRow label={props.label}>
 			<Box
@@ -574,7 +608,10 @@ function PhantomTrackRow(props: {
 					overflow: "hidden",
 				}}
 			>
-				<DragGhost leftFraction={start} widthFraction={width} />
+				<DragGhost
+					leftFraction={props.leftFraction}
+					widthFraction={props.widthFraction}
+				/>
 				<Typography
 					variant="caption"
 					color="text.secondary"
@@ -584,6 +621,44 @@ function PhantomTrackRow(props: {
 				</Typography>
 			</Box>
 		</TimelineRow>
+	);
+}
+
+function clipNameOfDragged(
+	drag: SegmentDragState,
+	editor: UseClipEditorReturn,
+	clipName: (segment: TimelineSegment) => string,
+): string {
+	const segment = editor.edit.segments.find((s) => s.id === drag.segmentId);
+	return segment ? clipName(segment) : "";
+}
+
+function FloatingDragChip(props: { name: string; x: number; y: number }) {
+	return (
+		<Box
+			aria-hidden="true"
+			sx={{
+				position: "fixed",
+				left: props.x,
+				top: props.y,
+				transform: "translate(-50%, -110%)",
+				pointerEvents: "none",
+				zIndex: 1400,
+				maxWidth: 240,
+				px: 1,
+				py: 0.5,
+				borderRadius: 1,
+				border: "1px dashed",
+				borderColor: "error.main",
+				bgcolor: "rgba(248, 113, 113, 0.14)",
+				backdropFilter: "blur(4px)",
+				overflow: "hidden",
+			}}
+		>
+			<Typography variant="caption" noWrap>
+				{props.name || "Clip"} · release to cancel
+			</Typography>
+		</Box>
 	);
 }
 
@@ -830,6 +905,8 @@ function TrackSegment(props: {
 			ghostOut: segment.sourceOut,
 			ghostTrack: segment.track,
 			valid: true,
+			pointerX: event.clientX,
+			pointerY: event.clientY,
 		});
 	};
 
