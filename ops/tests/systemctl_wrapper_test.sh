@@ -20,6 +20,11 @@ for arguments in \
   "enable-web sakiot-web.service extra" \
   "restart sakiot-web.service extra.service" \
   "restart evil-sakiot-staging-web.service" \
+  "restart sakiot-preview-Web.service" \
+  "restart sakiot-preview-clip_editor-web.service" \
+  "restart sakiot-preview--web.service" \
+  "enable-web sakiot-preview-clip-editor-web.service.evil" \
+  "stop sakiot-preview-fbi-agent@good.service" \
   "stop sakiot-staging-fbi-agent@.service" \
   "is-active --quiet sakiot-staging-web.service" \
   "start sakiot-staging-fbi-agent@good.service extra.service" \

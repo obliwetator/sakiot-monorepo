@@ -2,7 +2,7 @@
 set -euo pipefail
 
 bot_unit_pattern='^sakiot(-staging)?-fbi-agent@[A-Za-z0-9._-]+\.service$'
-web_unit_pattern='^sakiot(-staging)?-web\.service$'
+web_unit_pattern='^sakiot(-staging)?(-preview-[a-z0-9][a-z0-9-]*)?-web\.service$'
 legacy_bot_unit_pattern='^fbi-agent@[A-Za-z0-9._-]+\.service$'
 legacy_machine='tulipan@.host'
 
