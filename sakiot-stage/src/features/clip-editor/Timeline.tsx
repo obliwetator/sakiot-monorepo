@@ -273,6 +273,10 @@ function TrackRow(props: {
 	return (
 		<TimelineRow label={`Track ${track + 1}`}>
 			<Box
+				onPointerDown={(event) => {
+					if (event.button !== 0) return;
+					props.editor.select(null);
+				}}
 				onDragOver={(event) => {
 					event.preventDefault();
 					event.dataTransfer.dropEffect = "copy";
@@ -449,14 +453,19 @@ function TrackSegment(props: {
 				minWidth: HANDLE_WIDTH_PX * 2,
 				borderRadius: 1,
 				bgcolor: props.selected
-					? "rgba(168, 85, 247, 0.55)"
+					? "rgba(168, 85, 247, 0.65)"
 					: "rgba(56, 189, 248, 0.35)",
-				border: "1px solid",
-				borderColor: props.selected ? "secondary.main" : "primary.dark",
+				border: props.selected ? "2px solid" : "1px solid",
+				borderColor: props.selected
+					? "secondary.main"
+					: "rgba(56, 189, 248, 0.55)",
+				boxShadow: props.selected
+					? "0 0 0 3px rgba(217, 70, 239, 0.35), 0 2px 10px rgba(2, 6, 23, 0.6)"
+					: "0 1px 3px rgba(2, 6, 23, 0.4)",
 				cursor: "grab",
 				userSelect: "none",
 				overflow: "hidden",
-				zIndex: 2,
+				zIndex: props.selected ? 4 : 2,
 			}}
 		>
 			<Box

@@ -351,29 +351,39 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 				}
 				return;
 			}
-			if (!segment) return;
-			const at = current.positionSec - segment.timelineStart;
-			if (event.key === "i" || event.key === "I") {
-				event.preventDefault();
-				trimSegment(current, segment.id, "in", at);
-				return;
-			}
-			if (event.key === "o" || event.key === "O") {
-				event.preventDefault();
-				trimSegment(current, segment.id, "out", at);
-				return;
-			}
-			if (event.key === "s" || event.key === "S") {
-				event.preventDefault();
-				current.splitSelectedAtPlayhead();
-				return;
+			if (segment) {
+				const at = current.positionSec - segment.timelineStart;
+				if (event.key === "i" || event.key === "I") {
+					event.preventDefault();
+					trimSegment(current, segment.id, "in", at);
+					return;
+				}
+				if (event.key === "o" || event.key === "O") {
+					event.preventDefault();
+					trimSegment(current, segment.id, "out", at);
+					return;
+				}
+				if (event.key === "s" || event.key === "S") {
+					event.preventDefault();
+					current.splitSelectedAtPlayhead();
+					return;
+				}
 			}
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			if (playbackShortcutTargetOwnsArrows(event.target)) return;
-			const delta =
-				(event.shiftKey ? 1 : 0.1) * (event.key === "ArrowRight" ? 1 : -1);
+			const direction = event.key === "ArrowRight" ? 1 : -1;
+			const distance = event.shiftKey ? 1 : 0.1;
 			event.preventDefault();
-			current.apply((edit) => moveSegmentBy(edit, segment.id, delta));
+			if (segment) {
+				current.apply((edit) =>
+					moveSegmentBy(edit, segment.id, distance * direction),
+				);
+			} else {
+				current.setPosition(
+					Math.max(0, current.positionSec + distance * direction),
+				);
+			}
+			return;
 		};
 		window.addEventListener("keydown", handleShortcut);
 		return () => window.removeEventListener("keydown", handleShortcut);
