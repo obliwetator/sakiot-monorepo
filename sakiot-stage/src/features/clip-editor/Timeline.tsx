@@ -594,7 +594,7 @@ function FloatingDragChip(props: { name: string; x: number; y: number }) {
 				position: "fixed",
 				left: props.x,
 				top: props.y,
-				transform: "translate(-50%, -110%)",
+				transform: "translate(-50%, 14px)",
 				pointerEvents: "none",
 				zIndex: 1400,
 				maxWidth: 240,

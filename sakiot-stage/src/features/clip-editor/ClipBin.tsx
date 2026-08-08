@@ -126,7 +126,11 @@ function ClipBinItem(props: {
 					"background:rgba(15,23,42,0.9);color:#e2e8f0;" +
 					"font-size:12px;white-space:nowrap;";
 				document.body.appendChild(chip);
-				event.dataTransfer.setDragImage(chip, 8, 8);
+				event.dataTransfer.setDragImage(
+					chip,
+					chip.offsetWidth / 2,
+					chip.offsetHeight + 6,
+				);
 				requestAnimationFrame(() => chip.remove());
 			}}
 			onDragEnd={() => {
