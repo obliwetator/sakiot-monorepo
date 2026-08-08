@@ -156,17 +156,16 @@ export function addTrack(edit: ClipEdit): ClipEdit {
 
 /**
  * Hard anti-overlap snap: a clip of `duration` starting at `ghostStart` on
- * `track` may never overlap a neighbour. If it would, it is placed against
- * that neighbour's edge - ending where the neighbour starts when the cursor
- * is over the neighbour's left half, starting where the neighbour ends when
- * it is over the right half. The neighbour under the cursor wins when the
- * ghost overlaps several.
+ * `track` may never overlap a neighbour. If it would, it is moved to the
+ * nearest valid start position - a start from which the clip overlaps no
+ * neighbour on the track - choosing the position closest to the cursor.
  *
- * A single snap can land on a second neighbour (clips sitting back to back),
- * so the resolution cascades: each candidate side is checked for further
- * overlaps and the recursion continues until a stable, overlap-free position
- * is found. When neither side is free, the side with fewer overlaps wins and
- * the cursor decides ties; the depth cap guarantees termination.
+ * Valid starts are the complement of the forbidden start intervals, one per
+ * neighbour: a start `s` overlaps a neighbour [a, b] exactly when
+ * `s > a - duration` and `s < b`, so the forbidden interval is
+ * (a - duration, b). Merging those intervals and scanning their edges finds
+ * every adjacent valid position; the one nearest the cursor wins, so the
+ * cursor side still decides which neighbour edge to snap against.
  */
 export function snapToNeighbors(
 	ghostStart: number,
@@ -176,15 +175,38 @@ export function snapToNeighbors(
 	track: number,
 	rawStart: number,
 ): number {
-	return resolveOverlap(
-		ghostStart,
-		duration,
-		segments,
-		excludeId,
-		track,
-		rawStart,
-		segments.length + 2,
-	);
+	if (!overlapsAny(ghostStart, duration, segments, excludeId, track)) {
+		return ghostStart;
+	}
+	const forbidden = segments
+		.filter((segment) => segment.track === track && segment.id !== excludeId)
+		.map((segment) => ({
+			start: segment.timelineStart - duration,
+			end: segmentEnd(segment),
+		}))
+		.sort((a, b) => a.start - b.start);
+	const merged: Array<{ start: number; end: number }> = [];
+	for (const interval of forbidden) {
+		const last = merged[merged.length - 1];
+		if (last && interval.start < last.end) {
+			last.end = Math.max(last.end, interval.end);
+		} else {
+			merged.push({ ...interval });
+		}
+	}
+	const candidates: number[] = [];
+	if (merged[0] && merged[0].start > 0) candidates.push(0);
+	for (const interval of merged) {
+		if (interval.start > 0) candidates.push(interval.start);
+		candidates.push(interval.end);
+	}
+	let best = candidates[0] ?? 0;
+	for (const candidate of candidates) {
+		if (Math.abs(candidate - rawStart) < Math.abs(best - rawStart)) {
+			best = candidate;
+		}
+	}
+	return Math.max(0, best);
 }
 
 function overlapsAny(
@@ -201,66 +223,5 @@ function overlapsAny(
 			segment.id !== excludeId &&
 			segment.timelineStart < end &&
 			segmentEnd(segment) > start,
-	);
-}
-
-function resolveOverlap(
-	start: number,
-	duration: number,
-	segments: readonly TimelineSegment[],
-	excludeId: string,
-	track: number,
-	rawStart: number,
-	depth: number,
-): number {
-	const end = start + duration;
-	const overlapping = segments.filter(
-		(segment) =>
-			segment.track === track &&
-			segment.id !== excludeId &&
-			segment.timelineStart < end &&
-			segmentEnd(segment) > start,
-	);
-	if (overlapping.length === 0) return start;
-	const cursorMid = rawStart + duration / 2;
-	const primary = overlapping.reduce((best, segment) => {
-		const bestMid = (best.timelineStart + segmentEnd(best)) / 2;
-		const mid = (segment.timelineStart + segmentEnd(segment)) / 2;
-		return Math.abs(cursorMid - mid) < Math.abs(cursorMid - bestMid)
-			? segment
-			: best;
-	});
-	const mid = (primary.timelineStart + segmentEnd(primary)) / 2;
-	const leftCand = Math.max(0, primary.timelineStart - duration);
-	const rightCand = segmentEnd(primary);
-	if (leftCand === start && rightCand === start) return start;
-	const leftFree = !overlapsAny(leftCand, duration, segments, excludeId, track);
-	const rightFree = !overlapsAny(
-		rightCand,
-		duration,
-		segments,
-		excludeId,
-		track,
-	);
-	const candidate =
-		leftFree !== rightFree
-			? leftFree
-				? leftCand
-				: rightCand
-			: cursorMid < mid
-				? leftCand
-				: rightCand;
-	if (candidate === start || depth <= 0) return candidate;
-	if (!overlapsAny(candidate, duration, segments, excludeId, track)) {
-		return candidate;
-	}
-	return resolveOverlap(
-		candidate,
-		duration,
-		segments,
-		excludeId,
-		track,
-		rawStart,
-		depth - 1,
 	);
 }
