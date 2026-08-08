@@ -30,23 +30,24 @@ subdomain from the slot name.
 # 1. Refresh the deploy framework so the preview-ci verb exists:
 ops/update-deploy-engine.sh
 
-# 2. Create a slot. Needs only a Cloudflare API token (Zone:DNS edit); the
-#    certbot email is read from the shared env file.
-CLOUDFLARE_API_TOKEN=... ops/preview-slot.sh clip-editor
+# 2. Create a slot. The Cloudflare token and certbot email come from the
+#    shared env file, so nothing needs to be passed:
+ops/preview-slot.sh clip-editor
 #    (repeat for more slots: ops/preview-slot.sh other-branch)
 
 # 3. Set the shared credentials once in /etc/sakiot/preview.env:
-#    DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login),
-#    CERTBOT_EMAIL (for slot HTTPS certs), JWT/registry/DB secrets.
-#    DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are startup placeholders —
-#    any non-empty value works since OAuth is never used on preview hosts.
-#    API host variables (VITE_API_URL, COOKIE_DOMAIN, CORS/opener origins)
-#    are derived per slot automatically — nothing to edit for those.
+#    CLOUDFLARE_API_TOKEN (DNS records), DEV_ACCOUNT_ID + DEV_LOGIN_SECRET
+#    (the only login is dev login), CERTBOT_EMAIL (slot HTTPS certs), and
+#    JWT/registry/DB secrets. DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are
+#    startup placeholders — any non-empty value works since OAuth is never
+#    used on preview hosts. API host variables (VITE_API_URL, COOKIE_DOMAIN,
+#    CORS/opener origins) are derived per slot automatically — nothing to
+#    edit for those.
 
 # 4. Deploy: Actions -> Deploy preview -> slot=<slot>, branch=<branch>.
 
 # Teardown when the branch is done (env file and other slots are untouched):
-CLOUDFLARE_API_TOKEN=... ops/preview-slot.sh clip-editor --remove
+ops/preview-slot.sh clip-editor --remove
 ```
 
 `ops/preview-slot.sh` details:

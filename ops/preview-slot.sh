@@ -16,7 +16,8 @@ set -euo pipefail
 #   ops/preview-slot.sh <slot> --no-dns     # skip Cloudflare (wildcard DNS in place)
 #
 # Environment:
-#   CLOUDFLARE_API_TOKEN   Zone:DNS edit token (needed unless --no-dns)
+#   CLOUDFLARE_API_TOKEN   Zone:DNS edit token (needed unless --no-dns);
+#                          defaults to the value in the shared preview.env
 #   PREVIEW_DOMAIN         default: preview.patrykstyla.com
 #   VPS_IP                 default: detected via api.ipify.org
 #   CERTBOT_EMAIL          override; default comes from the shared preview.env
@@ -45,6 +46,13 @@ log() { printf '\033[1;34m[preview-slot]\033[0m %s\n' "$*"; }
 DOMAIN="${PREVIEW_DOMAIN:-preview.patrykstyla.com}"
 SUBDOMAIN="${SLOT}.${DOMAIN}"
 [[ "$(id -u)" -eq 0 ]] || die "run as root"
+
+# The shared env file holds CLOUDFLARE_API_TOKEN and CERTBOT_EMAIL; fall back
+# to it when the variables were not passed on the command line.
+ENV_FILE="/etc/sakiot/preview.env"
+if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && -f "$ENV_FILE" ]]; then
+    CLOUDFLARE_API_TOKEN="$(sed -n 's/^CLOUDFLARE_API_TOKEN=//p' "$ENV_FILE" | head -n1)"
+fi
 
 # Deterministic web port; must stay in sync with slot_port() in
 # ops/sakiot-deploy/src/config.rs.
@@ -91,17 +99,16 @@ if [[ "$ACTION" = create ]]; then
     log "web port: ${PORT} (deterministic for slot '${SLOT}')"
 
     # ---- shared env file (created once, reused by every slot) ---------------
-    env_file="/etc/sakiot/preview.env"
-    if [[ -f "$env_file" ]]; then
-        log "${env_file} already exists; keeping it"
+    if [[ -f "$ENV_FILE" ]]; then
+        log "${ENV_FILE} already exists; keeping it"
     else
         repo_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/OWNER/REPOSITORY.git")
         repo_url=${repo_url/git@github.com:/https:\/\/github.com\/}
         repo_url=${repo_url%.git}
         sed -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
-            "$OPS_DIR/preview.env.example" > "$env_file"
-        chmod 0640 "$env_file"
-        log "wrote ${env_file} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
+            "$OPS_DIR/preview.env.example" > "$ENV_FILE"
+        chmod 0640 "$ENV_FILE"
+        log "wrote ${ENV_FILE} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
     fi
 
     # ---- database ----------------------------------------------------------
@@ -116,7 +123,7 @@ if [[ "$ACTION" = create ]]; then
     # ---- systemd unit (web only; preview slots run no FBI Agent) ------------
     sed \
         -e "s|sakiot-staging|sakiot-preview-${SLOT}|g" \
-        -e "s|/etc/sakiot/staging.env|${env_file}|g" \
+        -e "s|/etc/sakiot/staging.env|${ENV_FILE}|g" \
         "$OPS_DIR/systemd/sakiot-staging-web.service" > "/etc/systemd/system/sakiot-preview-${SLOT}-web.service"
     log "installed unit sakiot-preview-${SLOT}-web.service"
     systemctl daemon-reload
@@ -133,7 +140,7 @@ if [[ "$ACTION" = create ]]; then
     log "installed nginx vhost ${SUBDOMAIN}"
 
     # ---- HTTPS -------------------------------------------------------------
-    certbot_email="${CERTBOT_EMAIL:-$(sed -n 's/^CERTBOT_EMAIL=//p' "$env_file" 2>/dev/null | head -n1)}"
+    certbot_email="${CERTBOT_EMAIL:-$(sed -n 's/^CERTBOT_EMAIL=//p' "$ENV_FILE" 2>/dev/null | head -n1)}"
     if [[ -n "$certbot_email" ]] && command -v certbot >/dev/null 2>&1; then
         if certbot --nginx -d "$SUBDOMAIN" --non-interactive --agree-tos -m "$certbot_email" >/dev/null 2>&1; then
             log "issued HTTPS certificate for ${SUBDOMAIN}"
@@ -141,10 +148,10 @@ if [[ "$ACTION" = create ]]; then
             log "certbot failed for ${SUBDOMAIN}; slot stays on HTTP"
         fi
     elif [[ -z "$certbot_email" ]]; then
-        log "no CERTBOT_EMAIL (shared ${env_file} or env); skipping HTTPS"
+        log "no CERTBOT_EMAIL (shared ${ENV_FILE} or env); skipping HTTPS"
     fi
 
-    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${env_file} are set)"
+    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${ENV_FILE} are set)"
     log "deploy it: Actions -> Deploy preview -> slot=${SLOT}, branch=<branch>"
 
 elif [[ "$ACTION" = remove ]]; then
@@ -192,7 +199,7 @@ elif [[ "$ACTION" = remove ]]; then
 
     # ---- env file (shared: never removed with a slot) ----------------------
     rm -f "/var/lib/sakiot-preview-${SLOT}/deploy/current" 2>/dev/null || true
-    log "shared ${env_file} kept (used by every slot)"
+    log "shared ${ENV_FILE} kept (used by every slot)"
     log "slot ${SLOT} removed"
 else
     die "unknown action '${ACTION}'"
