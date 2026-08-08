@@ -1,8 +1,32 @@
-import type { ClipEdit, SegmentEffects } from "./model";
-import { editDuration, segmentDuration } from "./model";
+import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
+import { editDuration, effectiveRate, segmentDuration } from "./model";
 
 function dbToLinear(db: number): number {
 	return 10 ** (db / 20);
+}
+
+/**
+ * Source-buffer window a segment must play to fill the given timeline range.
+ * AudioBufferSourceNode.start() measures its duration in buffer seconds and
+ * consumes the buffer at the computed rate (playbackRate times the detune
+ * pitch factor), so a timeline window has to be scaled by that effective
+ * rate: a 2x segment consumes twice the buffer content per timeline second,
+ * and a pitch shift likewise accelerates or slows the consumption. Without
+ * the scaling, fast clips go silent halfway through their box and slow clips
+ * keep playing past its end.
+ */
+export function segmentSourceWindow(
+	segment: TimelineSegment,
+	fromSec: number,
+	overlapStart: number,
+	overlapEnd: number,
+): { offset: number; duration: number } {
+	const rate = effectiveRate(segment.effects);
+	return {
+		offset:
+			segment.sourceIn + Math.max(0, fromSec - segment.timelineStart) * rate,
+		duration: (overlapEnd - overlapStart) * rate,
+	};
 }
 
 interface ActiveSource {
@@ -83,11 +107,16 @@ export class ClipEditorEngine {
 			gain.connect(bass);
 			bass.connect(treble);
 			treble.connect(this.bass ?? ctx.destination);
+			const sourceWindow = segmentSourceWindow(
+				segment,
+				fromSec,
+				overlapStart,
+				overlapEnd,
+			);
 			node.start(
 				now + Math.max(0, overlapStart - fromSec),
-				segment.sourceIn +
-					Math.max(0, fromSec - segment.timelineStart) * segment.effects.rate,
-				overlapEnd - overlapStart,
+				sourceWindow.offset,
+				sourceWindow.duration,
 			);
 			this.active.set(segment.id, { node, gain, bass, treble });
 			lastEndMs = Math.max(

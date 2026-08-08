@@ -4,6 +4,8 @@ import {
 	BASE_API_URL,
 	getCsrfToken,
 	isLoggedIn,
+	refreshForMediaRetry,
+	SESSION_EXPIRED_MESSAGE,
 	setCsrfToken,
 } from "./authedFetch";
 
@@ -130,5 +132,28 @@ describe("authedFetch", () => {
 		expect(new Headers(refreshInit?.headers).get("X-CSRF-Token")).toBe(
 			"csrf-123",
 		);
+	});
+});
+
+describe("refreshForMediaRetry", () => {
+	it("reports a live session when the refresh succeeds", async () => {
+		setCookie("xsrf_token=csrf-123; logged_in=1");
+		const fetchMock = mock(
+			async () => new Response("refreshed", { status: 200 }),
+		);
+		globalThis.fetch = fetchMock as typeof fetch;
+
+		await expect(refreshForMediaRetry()).resolves.toBe(true);
+	});
+
+	it("reports an expired session when the refresh is rejected", async () => {
+		setCookie("xsrf_token=csrf-123; logged_in=1");
+		const fetchMock = mock(
+			async () => new Response("expired", { status: 401 }),
+		);
+		globalThis.fetch = fetchMock as typeof fetch;
+
+		await expect(refreshForMediaRetry()).resolves.toBe(false);
+		expect(SESSION_EXPIRED_MESSAGE).toContain("session has expired");
 	});
 });

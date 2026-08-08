@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_EFFECTS,
+	effectiveRate,
+	leftEdgeFloor,
+	rightEdgeCeiling,
 	segmentDuration,
+	segmentEnd,
+	setSegmentPitch,
 	setSegmentSpeed,
 	snapToNeighbors,
+	splitSegment,
 	type TimelineSegment,
 } from "./model";
 
@@ -169,5 +175,179 @@ describe("setSegmentSpeed", () => {
 		const a = seg("a", 0, 0, 4);
 		const edit = editWith(a);
 		expect(setSegmentSpeed(edit, "a", 0)).toBe(edit);
+	});
+});
+
+describe("effectiveRate", () => {
+	test("pitch folds into the rate like the Web Audio detune", () => {
+		const a = seg("a", 0, 0, 4);
+		a.effects.rate = 2;
+		expect(effectiveRate(a.effects)).toBe(2);
+		a.effects.pitchCents = 1200;
+		expect(effectiveRate(a.effects)).toBe(4);
+		a.effects.pitchCents = -1200;
+		expect(effectiveRate(a.effects)).toBe(1);
+	});
+});
+
+describe("setSegmentPitch", () => {
+	test("pitch up shrinks the segment and leaves neighbours alone", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = setSegmentPitch(editWith(a, b), "a", 1200);
+		expect(next.segments[0]?.effects.pitchCents).toBe(1200);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(2);
+		expect(next.segments[1]?.timelineStart).toBe(4);
+	});
+
+	test("pitch down extends and pushes the snapped neighbour right", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = setSegmentPitch(editWith(a, b), "a", -1200);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(8);
+		expect(next.segments[1]?.timelineStart).toBe(8);
+	});
+
+	test("a chained suffix is pushed as a whole", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const c = seg("c", 0, 8, 4);
+		const next = setSegmentPitch(editWith(a, b, c), "a", -1200);
+		expect(next.segments[1]?.timelineStart).toBe(8);
+		expect(next.segments[2]?.timelineStart).toBe(12);
+	});
+
+	test("pitch changes resize the box from the existing speed extent", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const speed = setSegmentSpeed(editWith(a, b), "a", 2); // box 0..2
+		const pitched = setSegmentPitch(speed, "a", -1200); // box 0..4
+		expect(segmentDuration(pitched.segments[0] as TimelineSegment)).toBe(4);
+		expect(pitched.segments[1]?.timelineStart).toBe(4);
+	});
+
+	test("contraction never pulls a snapped neighbour", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = setSegmentPitch(editWith(a, b), "a", 1200);
+		expect(next.segments[1]?.timelineStart).toBe(4);
+	});
+
+	test("a bad pitch is rejected", () => {
+		const a = seg("a", 0, 0, 4);
+		const edit = editWith(a);
+		expect(setSegmentPitch(edit, "a", Number.NaN)).toBe(edit);
+	});
+});
+
+describe("rightEdgeCeiling", () => {
+	test("a clip snapped to a shrunken edge bounds the extension", () => {
+		const a = seg("a", 0, 0, 10);
+		a.sourceOut = 6; // right edge shrunk to 6
+		const b = seg("b", 0, 6, 4); // snapped onto the shrunken edge
+		expect(rightEdgeCeiling([a, b], 0, "a", 0)).toBe(6);
+	});
+
+	test("a neighbour with a gap does not bound the extension", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 10, 4);
+		expect(rightEdgeCeiling([a, b], 0, "a", 0)).toBe(10);
+	});
+
+	test("returns null when no neighbour starts at or after the box", () => {
+		const a = seg("a", 0, 0, 4);
+		expect(rightEdgeCeiling([a], 0, "a", 0)).toBeNull();
+	});
+
+	test("neighbours on other tracks never bound the extension", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 1, 2, 4);
+		expect(rightEdgeCeiling([a, b], 0, "a", 0)).toBeNull();
+	});
+
+	test("the ceiling follows the dragged segment's effective rate", () => {
+		const a = seg("a", 0, 0, 10);
+		a.sourceOut = 6;
+		a.effects.rate = 2; // box [0, 3] before the shrink, shrink keeps end at 3
+		const b = seg("b", 0, 3, 4); // snapped onto the shrunken edge
+		expect(rightEdgeCeiling([a, b], 0, "a", 0)).toBe(3);
+	});
+});
+
+describe("leftEdgeFloor", () => {
+	test("a clip snapped to a shrunken edge bounds the extension", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 10);
+		b.sourceIn = 4; // left edge shrunk to 4, box [4, 10]
+		expect(leftEdgeFloor([a, b], 0, "b", 10)).toBe(4);
+	});
+
+	test("returns zero when no neighbour ends at or before the box", () => {
+		const a = seg("a", 0, 0, 4);
+		expect(leftEdgeFloor([a], 0, "a", 4)).toBe(0);
+	});
+
+	test("neighbours on other tracks never bound the extension", () => {
+		const a = seg("a", 0, 0, 10);
+		const b = seg("b", 1, 0, 4); // would bound the box if track were ignored
+		expect(leftEdgeFloor([a, b], 0, "a", 4)).toBe(0);
+	});
+
+	test("the floor follows the dragged segment's effective rate", () => {
+		const a = seg("a", 0, 0, 2);
+		const b = seg("b", 0, 2, 10);
+		b.sourceIn = 2;
+		b.effects.rate = 2; // box [2, 6]
+		expect(leftEdgeFloor([a, b], 0, "b", 6)).toBe(2);
+	});
+});
+
+describe("splitSegment", () => {
+	test("splits into a left and a right clip around the playhead", () => {
+		const a = seg("a", 0, 0, 10);
+		const next = splitSegment(editWith(a), "a", 4);
+		expect(next.segments).toHaveLength(2);
+		const left = next.segments[0] as TimelineSegment;
+		const right = next.segments[1] as TimelineSegment;
+		expect(left.sourceIn).toBe(0);
+		expect(left.sourceOut).toBe(4);
+		expect(segmentDuration(left)).toBe(4);
+		expect(right.sourceIn).toBe(4);
+		expect(right.sourceOut).toBe(10);
+		expect(right.timelineStart).toBe(4);
+		expect(segmentDuration(right)).toBe(6);
+		expect(segmentEnd(left)).toBe(4);
+		expect(right.timelineStart).toBe(segmentEnd(left));
+	});
+
+	test("the split point follows the effective rate", () => {
+		const a = seg("a", 0, 0, 10);
+		a.effects.rate = 2; // box [0, 5]
+		const next = splitSegment(editWith(a), "a", 3);
+		const left = next.segments[0] as TimelineSegment;
+		const right = next.segments[1] as TimelineSegment;
+		expect(left.sourceOut).toBe(6);
+		expect(segmentDuration(left)).toBe(3);
+		expect(right.sourceIn).toBe(6);
+		expect(right.timelineStart).toBe(3);
+	});
+
+	test("a source-offset segment keeps its offset in both halves", () => {
+		const a = seg("a", 0, 0, 10);
+		a.sourceIn = 2;
+		a.sourceOut = 8; // box [0, 6]
+		const next = splitSegment(editWith(a), "a", 2);
+		const left = next.segments[0] as TimelineSegment;
+		const right = next.segments[1] as TimelineSegment;
+		expect(left.sourceIn).toBe(2);
+		expect(left.sourceOut).toBe(4);
+		expect(right.sourceIn).toBe(4);
+		expect(right.timelineStart).toBe(2);
+	});
+
+	test("a split too close to either edge is rejected", () => {
+		const a = seg("a", 0, 0, 10);
+		expect(splitSegment(editWith(a), "a", 0.01).segments).toHaveLength(1);
+		expect(splitSegment(editWith(a), "a", 9.99).segments).toHaveLength(1);
 	});
 });

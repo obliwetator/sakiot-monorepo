@@ -26,7 +26,11 @@ import {
 	useCreateSessionClipMutation,
 	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
-import { authedFetch } from "../../app/authedFetch";
+import {
+	authedFetch,
+	refreshForMediaRetry,
+	SESSION_EXPIRED_MESSAGE,
+} from "../../app/authedFetch";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
 import { ClipRangeEditor } from "./ClipRangeEditor";
@@ -210,6 +214,8 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [silencePlaybackError, setSilencePlaybackError] = useState<
 		string | null
 	>(null);
+	const [silenceRetryKey, setSilenceRetryKey] = useState(0);
+	const silenceMediaRetryRef = useRef(false);
 	const [selection, setSelection] = useState<[number, number]>([0, 0]);
 	const [volume, setVolume] = useState(1);
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -240,6 +246,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const hlsRef = useRef<Hls | null>(null);
 	const animationRef = useRef<number | null>(null);
 	const generationRef = useRef(0);
+	// One refresh-retry between successful loads: media elements can't report
+	// the HTTP status, so a stale access token looks like a plain load error.
+	// Reset whenever a segment starts playing; a retry that fails (or an
+	// error while a retry is in flight) surfaces the error without looping.
+	const mediaRetryRef = useRef(false);
 	const positionRef = useRef(0);
 	const playingRef = useRef(false);
 	const activeSegmentRef = useRef<PlaybackSegment | null>(null);
@@ -516,6 +527,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 		const begin = () => {
 			if (generationRef.current !== generation) return;
+			mediaRetryRef.current = false;
 			const localSeconds = Math.max(0, (position - segment.start_ms) / 1_000);
 			if (Number.isFinite(audio.duration)) {
 				audio.currentTime = Math.min(
@@ -533,6 +545,31 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				playingRef.current = false;
 				setPlaying(false);
 				clearPlaybackBound();
+			});
+		};
+		const failSegment = (message: string) => {
+			setActionError(message);
+			playingRef.current = false;
+			setPlaying(false);
+			clearPlaybackBound();
+		};
+		// One refresh-retry per successful load: a stale access token makes
+		// media loads fail without a readable status, so try refreshing and
+		// restarting the segment from the current position once. If the
+		// refresh fails, the session is gone — say so instead of showing a
+		// generic playback error.
+		const retryOrFail = () => {
+			if (generationRef.current !== generation) return;
+			if (mediaRetryRef.current) return;
+			mediaRetryRef.current = true;
+			void refreshForMediaRetry().then((ok) => {
+				if (generationRef.current !== generation) return;
+				if (ok) {
+					setActionError(null);
+					startAtRef.current(positionRef.current, true);
+				} else {
+					failSegment(SESSION_EXPIRED_MESSAGE);
+				}
 			});
 		};
 		audio.addEventListener("pause", () => {
@@ -560,14 +597,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			}
 		});
 		audio.addEventListener("error", () => {
-			if (generationRef.current === generation) {
-				setActionError(
-					`Could not load segment ${segment.segment_index ?? ""}.`,
-				);
-				playingRef.current = false;
-				setPlaying(false);
-				clearPlaybackBound();
+			if (generationRef.current !== generation) return;
+			if (mediaRetryRef.current) {
+				failSegment(`Could not load segment ${segment.segment_index ?? ""}.`);
+				return;
 			}
+			retryOrFail();
 		});
 
 		if (segment.kind === "active_hls" && segment.hls_playlist_url) {
@@ -592,6 +627,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					});
 					hlsRef.current = hls;
 					hls.on(HlsClass.Events.MANIFEST_PARSED, begin);
+					hls.on(HlsClass.Events.ERROR, (_event, data) => {
+						if (generationRef.current !== generation) return;
+						if (!data.fatal) return;
+						if (mediaRetryRef.current) {
+							failSegment(
+								`Could not load segment ${segment.segment_index ?? ""}.`,
+							);
+							return;
+						}
+						retryOrFail();
+					});
 					hls.loadSource(hlsUrl);
 					hls.attachMedia(audio);
 				});
@@ -1459,14 +1505,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			{silenceFreeUrl && (
 				// biome-ignore lint/a11y/useMediaCaption: user voice recordings do not have a caption track
 				<audio
-					key={silenceFreeUrl}
+					key={`${silenceFreeUrl}#${silenceRetryKey}`}
 					ref={silenceAudioRef}
 					crossOrigin="use-credentials"
 					preload="metadata"
 					src={silenceFreeUrl}
-					onLoadedMetadata={(event) =>
-						updateSilenceDuration(event.currentTarget)
-					}
+					onLoadedMetadata={(event) => {
+						silenceMediaRetryRef.current = false;
+						updateSilenceDuration(event.currentTarget);
+					}}
 					onDurationChange={(event) =>
 						updateSilenceDuration(event.currentTarget)
 					}
@@ -1493,7 +1540,21 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						silencePlayingRef.current = false;
 						setSilencePlaying(false);
 						clearSilencePlaybackBound();
-						setSilencePlaybackError("Silence-free audio could not be loaded.");
+						if (silenceMediaRetryRef.current) {
+							setSilencePlaybackError(
+								"Silence-free audio could not be loaded.",
+							);
+							return;
+						}
+						silenceMediaRetryRef.current = true;
+						void refreshForMediaRetry().then((ok) => {
+							if (ok) {
+								setSilencePlaybackError(null);
+								setSilenceRetryKey((key) => key + 1);
+							} else {
+								setSilencePlaybackError(SESSION_EXPIRED_MESSAGE);
+							}
+						});
 					}}
 					style={{ display: "none" }}
 				/>
