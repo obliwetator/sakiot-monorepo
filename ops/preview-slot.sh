@@ -115,6 +115,17 @@ if [[ "$ACTION" = create ]]; then
     chown root:sakiot "$ENV_FILE"
     chmod 0640 "$ENV_FILE"
 
+    # The engine and web server require every key the template defines (the
+    # values may be placeholders, but a missing key silently falls back to
+    # production defaults or fails the build). Fail loudly instead.
+    missing_keys=()
+    while IFS= read -r key; do
+        grep -q "^${key}=" "$ENV_FILE" || missing_keys+=("$key")
+    done < <(sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$OPS_DIR/preview.env.example")
+    if [[ "${#missing_keys[@]}" -gt 0 ]]; then
+        die "missing from ${ENV_FILE}: ${missing_keys[*]}"
+    fi
+
     # ---- database role (shared by every instance; created once) ------------
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
     if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot'" | grep -q 1; then
