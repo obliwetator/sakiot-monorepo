@@ -160,19 +160,18 @@ checks and state recording succeed.
 A third (or more) instance model for deploying feature branches without
 touching the main-tracking staging instance. Manual branch deploys run through
 the `Deploy preview` workflow, which SSHes `preview-ci <slot> <sha>` after CI.
-Each slot is a fully separate instance driven by the engine's `Target::Preview`
-with a per-slot env file (`/etc/sakiot/preview-<slot>.env`, selected by the
-slot argument): its own port (8903+), `sakiot_preview_<slot>` database,
-`/var/lib/sakiot-preview-<slot>` + `/srv/sakiot-preview-<slot>`, the
-`sakiot-preview-<slot>-web` unit, and `<slot>.preview.patrykstyla.com`.
-Preview slots deploy the **web server and frontend only** — the `Bot`
-component is filtered out, so no FBI Agent and no per-slot Discord bot;
-login is dev-login only (OAuth placeholders satisfy the web server's
-startup config). Slots are
-bootstrapped and torn down with `ops/preview-slot.sh` (Cloudflare DNS via
-API, or a single wildcard record). Full docs in `PREVIEW.md`; remember to
-re-run `ops/update-deploy-engine.sh` after changing `ops/` so the
-`preview-ci` forced command verb is installed.
+Each slot is a fully separate instance: its own port (`8903 + hash(slot)`),
+`sakiot_preview_<slot>` database, `/var/lib/sakiot-preview-<slot>` +
+`/srv/sakiot-preview-<slot>`, the `sakiot-preview-<slot>-web` unit, and
+`<slot>.preview.patrykstyla.com`. All slots share one `/etc/sakiot/preview.env`;
+the engine derives the per-slot values from the slot name at config load
+(`Target::Preview` + slot arg). Preview slots deploy the **web server and
+frontend only** — the `Bot` component is filtered out, so no FBI Agent and no
+per-slot Discord bot; login is dev-login only (OAuth placeholders satisfy the
+web server's startup config). Slots are bootstrapped and torn down with
+`ops/preview-slot.sh` (Cloudflare DNS via API, or a single wildcard record).
+Full docs in `PREVIEW.md`; remember to re-run `ops/update-deploy-engine.sh`
+after changing `ops/` so the `preview-ci` forced command verb is installed.
 
 ## Release
 

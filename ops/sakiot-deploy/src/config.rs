@@ -236,14 +236,13 @@ impl Config {
         self.cache_dir.join("worktrees")
     }
 
-    pub fn default_env_file(target: Target, slot: Option<&str>) -> String {
+    pub fn default_env_file(target: Target, _slot: Option<&str>) -> String {
         match target {
             Target::Production => "/etc/sakiot/production.env".to_string(),
             Target::Staging => "/etc/sakiot/staging.env".to_string(),
-            Target::Preview => match slot {
-                Some(slot) => format!("/etc/sakiot/preview-{slot}.env"),
-                None => "/etc/sakiot/preview.env".to_string(),
-            },
+            // All preview slots share one env file; per-slot values (ports,
+            // DB, dirs, domain) are derived from the slot name at load time.
+            Target::Preview => "/etc/sakiot/preview.env".to_string(),
         }
     }
 
@@ -259,6 +258,11 @@ impl Config {
             check_env_file_is_plain(&env_file)?;
             dotenvy::from_path_override(&env_file)
                 .with_context(|| format!("failed to load env file {}", env_file.display()))?;
+        }
+        if target == Target::Preview
+            && let Some(slot) = slot
+        {
+            apply_slot_env(slot);
         }
         Config::from_env(env_file)
     }
@@ -371,6 +375,62 @@ pub fn is_valid_slot(slot: &str) -> bool {
             .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
+/// Deterministic per-slot web port: 8903 + a stable hash of the slot name.
+/// Must stay in sync with the hash in ops/preview-slot.sh, which renders the
+/// nginx vhost with the same port.
+pub fn slot_port(slot: &str) -> u16 {
+    let mut hash: u32 = 0;
+    for byte in slot.bytes() {
+        hash = hash.wrapping_mul(31).wrapping_add(u32::from(byte));
+    }
+    8903 + (hash % 25) as u16
+}
+
+/// Rewrites one env value from the shared preview.env into the per-slot
+/// form. The env file holds base values (`sakiot-preview` paths,
+/// `sakiot_preview` database, `preview.patrykstyla.com` domain, base port);
+/// the slot namespacing mirrors the sed rules ops/preview-slot.sh used to
+/// apply per file.
+fn rewrite_slot_var(key: &str, value: &str, slot: &str, base_port: u16) -> String {
+    let port = slot_port(slot);
+    match key {
+        // The web server binds its own port; per-slot via the release
+        // service.env, so the shared file's PORT is replaced too.
+        "PORT" => port.to_string(),
+        "SAKIOT_WEB_HEALTH_URL" | "SAKIOT_WEB_REGISTRY_URL" => {
+            value.replace(&format!(":{base_port}/"), &format!(":{port}/"))
+        }
+        _ => value
+            .replace("sakiot-preview", &format!("sakiot-preview-{slot}"))
+            .replace("sakiot_preview", &format!("sakiot_preview_{slot}"))
+            .replace(
+                "preview.patrykstyla.com",
+                &format!("{slot}.preview.patrykstyla.com"),
+            ),
+    }
+}
+
+/// Applies the per-slot derivation to every process variable loaded from the
+/// shared preview.env, so Config fields and the frontend build's VITE_*
+/// variables all see the slot's values.
+fn apply_slot_env(slot: &str) {
+    let base_port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(8903);
+    let rewritten: Vec<(String, String)> = std::env::vars()
+        .map(|(key, value)| {
+            let value = rewrite_slot_var(&key, &value, slot, base_port);
+            (key, value)
+        })
+        .collect();
+    for (key, value) in rewritten {
+        // SAFETY: single-threaded process start; no other thread races this
+        // environment mutation before Config is fully resolved.
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
 /// Parse a deployment env file without mutating this process's environment.
 /// Production bundle preparation uses this to select only public `VITE_*`
 /// values while the staging runtime environment remains active.
@@ -457,6 +517,79 @@ mod tests {
         // validate(), which is the only gate that matters on the wire.
         let flag_like = parse(&["preview-ci", "--prepare-production", &"a".repeat(40)]).unwrap();
         assert!(flag_like.validate().is_err());
+    }
+
+    #[test]
+    fn slot_ports_are_stable_and_in_range() {
+        assert_eq!(slot_port("clip-editor"), slot_port("clip-editor"));
+        assert_eq!(slot_port("a"), slot_port("a"));
+        assert_ne!(slot_port("clip-editor"), slot_port("other"));
+        for slot in ["clip-editor", "a", "x".repeat(32).as_str()] {
+            let port = slot_port(slot);
+            assert!((8903..=8927).contains(&port), "{slot}: {port}");
+        }
+        // Must match ops/preview-slot.sh's slot_port() hash.
+        assert_eq!(slot_port("clip-editor"), 8915);
+        assert_eq!(slot_port("main"), 8904);
+    }
+
+    #[test]
+    fn shared_preview_env_rewrites_per_slot() {
+        let vars = [
+            (
+                "SAKIOT_DATA_DIR",
+                "/var/lib/sakiot-preview/data",
+                "/var/lib/sakiot-preview-clip-editor/data",
+            ),
+            (
+                "SAKIOT_WEB_UNIT",
+                "sakiot-preview-web.service",
+                "sakiot-preview-clip-editor-web.service",
+            ),
+            (
+                "DATABASE_URL",
+                "postgres://sakiot:pw@127.0.0.1/sakiot_preview",
+                "postgres://sakiot:pw@127.0.0.1/sakiot_preview_clip-editor",
+            ),
+            (
+                "SAKIOT_FRONTEND_ROOT",
+                "/var/www/preview.patrykstyla.com",
+                "/var/www/clip-editor.preview.patrykstyla.com",
+            ),
+            (
+                "VITE_API_URL",
+                "https://preview.patrykstyla.com/api/",
+                "https://clip-editor.preview.patrykstyla.com/api/",
+            ),
+            ("PORT", "8903", "8915"),
+            (
+                "SAKIOT_WEB_HEALTH_URL",
+                "http://127.0.0.1:8903/healthz",
+                "http://127.0.0.1:8915/healthz",
+            ),
+            (
+                "SAKIOT_WEB_REGISTRY_URL",
+                "http://127.0.0.1:8903/internal/grpc",
+                "http://127.0.0.1:8915/internal/grpc",
+            ),
+            (
+                "SAKIOT_ENV_FILE",
+                "/etc/sakiot/preview.env",
+                "/etc/sakiot/preview.env",
+            ),
+            (
+                "SAKIOT_PROMOTION_ROOT",
+                "/var/cache/sakiot/promotions",
+                "/var/cache/sakiot/promotions",
+            ),
+        ];
+        for (key, value, expected) in vars {
+            assert_eq!(
+                rewrite_slot_var(key, value, "clip-editor", 8903),
+                expected,
+                "{key}"
+            );
+        }
     }
 
     #[test]
