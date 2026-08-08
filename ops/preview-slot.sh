@@ -320,10 +320,10 @@ elif [[ "$ACTION" = remove ]]; then
                         || log "warning: failed to delete b2 object ${key}"
                     count=$((count + 1))
                 done < <(comm -23 \
-                    <(sudo -u postgres psql -tAc \
-                        "SELECT object_key FROM ${preview_db}.media_objects WHERE object_key IS NOT NULL" | sort -u) \
-                    <(sudo -u postgres psql -tAc \
-                        "SELECT object_key FROM sakiot_staging.media_objects WHERE object_key IS NOT NULL" | sort -u))
+                    <(sudo -u postgres psql -d "$preview_db" -tAc \
+                        "SELECT object_key FROM media_objects WHERE object_key IS NOT NULL" | sort -u) \
+                    <(sudo -u postgres psql -d sakiot_staging -tAc \
+                        "SELECT object_key FROM media_objects WHERE object_key IS NOT NULL" | sort -u))
                 log "purged ${count} slot-created B2 objects from ${b2_bucket}"
             fi
         fi
