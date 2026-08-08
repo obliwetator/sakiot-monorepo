@@ -102,7 +102,7 @@ if [[ "$ACTION" = create ]]; then
         -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
         "$OPS_DIR/preview.env.example" > "$env_file"
     chmod 0640 "$env_file"
-    log "wrote ${env_file} — set DISCORD_CLIENT_ID/SECRET (reuse the staging OAuth app) and add ${SUBDOMAIN}/api/discord_login to its redirect URIs"
+    log "wrote ${env_file} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
 
     # ---- database ----------------------------------------------------------
     db="sakiot_preview_${SLOT}"
@@ -141,7 +141,7 @@ if [[ "$ACTION" = create ]]; then
         fi
     fi
 
-    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after OAuth creds in ${env_file} are set)"
+    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${env_file} are set)"
     log "deploy it: Actions -> Deploy preview -> slot=${SLOT}, branch=<branch>"
 
 elif [[ "$ACTION" = remove ]]; then
