@@ -170,6 +170,14 @@ if [[ "$ACTION" = create ]]; then
         if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='sakiot_staging'" | grep -q 1; then
             sudo -u postgres bash -c \
                 "pg_dump -Fc sakiot_staging | pg_restore -d '${db}' --no-privileges"
+            # Staging connects to its database as the postgres superuser, so
+            # the restored tables are postgres-owned; the preview slot
+            # connects as sakiot, which gets nothing without explicit grants
+            # (future migrations run as sakiot and keep their own objects).
+            sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
+                "GRANT USAGE ON SCHEMA public TO sakiot; \
+                 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO sakiot; \
+                 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO sakiot;"
             log "copied sakiot_staging database into ${db}"
         fi
         if [[ -d /var/lib/sakiot-staging/data ]] \
