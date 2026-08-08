@@ -19,6 +19,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { usePointerDrag } from "../../shared/pointerDrag";
 import { formatDuration, formatDurationPrecise } from "../../utils/formatTime";
 import {
 	advanceFineDrag,
@@ -86,23 +87,91 @@ const FINE_AXIS_FRACTIONS = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
 type DragKind = { type: "edge"; edge: SelectionEdge } | { type: "band" };
 type DragFeedbackKind = DragKind | { type: "playhead" };
 
-interface DragSession {
+interface SelectionDragState {
 	kind: DragKind;
-	pointerId: number;
 	startX: number;
 	startY: number;
 	plotLeftPx: number;
 	plotWidthPx: number;
 	fine: FineDragState;
+	/** Selection the gesture started from; the commit compares against it. */
 	origin: SessionSelection;
 	/** Fixed boundary for a whole-band drag, captured when the pointer goes down. */
 	movementWindow: TimeWindow;
 	moved: boolean;
-}
-
-interface DragGhostSelection {
+	/** Ghost selection following the pointer during the drag. */
 	selection: SessionSelection;
 	valid: boolean;
+}
+
+function computeSelectionDrag(
+	drag: SelectionDragState,
+	event: PointerEvent,
+	msPerPx: number,
+	durationMs: number,
+	plotElement: HTMLElement | null,
+): SelectionDragState {
+	if (msPerPx <= 0) return drag;
+	if (
+		drag.kind.type === "band" &&
+		!drag.moved &&
+		Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <
+			VIEW_DRAG_THRESHOLD_PX
+	) {
+		return drag;
+	}
+	const advanced = advanceFineDrag(drag.fine, {
+		xPx: event.clientX,
+		dyPx: event.clientY - drag.startY,
+		msPerPx,
+	});
+	const constrained = constrainFineDragToLens(
+		advanced.state,
+		drag.movementWindow.endMs - drag.movementWindow.startMs,
+		durationMs,
+	);
+	const nextSelection =
+		drag.kind.type === "edge"
+			? applyEdgeWithinWindow(
+					drag.origin,
+					drag.kind.edge,
+					constrained.valueMs,
+					durationMs,
+					drag.movementWindow,
+				)
+			: moveSelectionWithinWindow(
+					drag.origin,
+					constrained.valueMs - drag.origin[0],
+					drag.movementWindow,
+				);
+	// Do not accumulate invisible pointer travel after the band reaches a
+	// boundary, so reversing direction moves it immediately.
+	const fine =
+		drag.kind.type === "band"
+			? { ...constrained, valueMs: nextSelection[0] }
+			: constrained;
+	const plotRect = plotElement?.getBoundingClientRect();
+	const valid = plotRect ? event.clientY <= plotRect.bottom + 32 : true;
+	return { ...drag, fine, selection: nextSelection, valid, moved: true };
+}
+
+function selectionDragFeedback(
+	drag: SelectionDragState,
+	event: { clientX: number; clientY: number },
+): DragFeedback {
+	return {
+		kind: drag.kind,
+		multiplier: drag.fine.multiplier,
+		valueMs: drag.fine.valueMs,
+		originMs: drag.fine.originMs,
+		lensAnchorMs: drag.fine.lensAnchorMs,
+		dyPx: event.clientY - drag.startY,
+		startYPx: drag.startY,
+		pointerXPx: event.clientX,
+		pointerYPx: event.clientY,
+		plotLeftPx: drag.plotLeftPx,
+		plotWidthPx: drag.plotWidthPx,
+	};
 }
 
 interface DragFeedback {
@@ -187,9 +256,7 @@ export function ClipRangeEditor(props: {
 	const { durationMs, onSelectionChange, selection } = props;
 	const defaultWindowMs = defaultDetailWindowMs(durationMs);
 	const plotRef = useRef<HTMLDivElement | null>(null);
-	const dragRef = useRef<DragSession | null>(null);
 	const draggedSelectionRef = useRef<SessionSelection | null>(null);
-	const dragGhostRef = useRef<DragGhostSelection | null>(null);
 	const viewDragRef = useRef<ViewDragSession | null>(null);
 	const edgeDriveFrameRef = useRef<number | null>(null);
 	const edgeDriveLastTimeRef = useRef<number | null>(null);
@@ -197,7 +264,6 @@ export function ClipRangeEditor(props: {
 	const [plotWidth, setPlotWidth] = useState(0);
 	const [windowMs, setWindowMs] = useState(defaultWindowMs);
 	const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
-	const [dragGhost, setDragGhost] = useState<DragGhostSelection | null>(null);
 	const [viewDragging, setViewDragging] = useState<ViewDragKind | null>(null);
 	const [view, setView] = useState<TimeWindow>(() =>
 		// Stamp focus wins over selection state because the draft is installed in
@@ -210,6 +276,50 @@ export function ClipRangeEditor(props: {
 					// where a clip will be, so start the view on the playhead instead.
 					windowAround(props.positionMs, defaultWindowMs, durationMs),
 	);
+	const msPerPx = windowMsPerPixel(view, plotWidth);
+	const selectionDrag = usePointerDrag<SelectionDragState>({
+		compute: (ghost, event) => {
+			const next = computeSelectionDrag(
+				ghost,
+				event,
+				msPerPx,
+				durationMs,
+				plotRef.current,
+			);
+			setDragFeedback(selectionDragFeedback(next, event));
+			return next;
+		},
+		onCommit: ({ ghost, pointerX }) => {
+			setDragFeedback(null);
+			commitSelectionDrag(ghost, pointerX);
+		},
+		onCancel: () => {
+			setDragFeedback(null);
+		},
+	});
+	const commitSelectionDrag = (drag: SelectionDragState, pointerX: number) => {
+		if (drag.kind.type === "band" && !drag.moved) {
+			const positionMs = timeAtPointer(
+				pointerX,
+				drag.plotLeftPx,
+				drag.plotWidthPx,
+				view,
+			);
+			props.onSeek(positionMs);
+			onSelectionChange(
+				setNearestSelectionEdge(drag.origin, positionMs, durationMs),
+			);
+			return;
+		}
+		if (
+			drag.moved &&
+			drag.valid &&
+			(drag.selection[0] !== drag.origin[0] ||
+				drag.selection[1] !== drag.origin[1])
+		) {
+			onSelectionChange(drag.selection);
+		}
+	};
 	const previousSelectionRef = useRef(selection);
 	const selectionRef = useRef(selection);
 	useEffect(() => {
@@ -338,13 +448,6 @@ export function ClipRangeEditor(props: {
 
 	useEffect(() => stopEdgeDrive, [stopEdgeDrive]);
 
-	const endDrag = useCallback(() => {
-		dragRef.current = null;
-		dragGhostRef.current = null;
-		setDragFeedback(null);
-		setDragGhost(null);
-	}, []);
-
 	const endViewDrag = useCallback(() => {
 		stopEdgeDrive();
 		if (viewDragRef.current?.kind === "detail") {
@@ -360,7 +463,7 @@ export function ClipRangeEditor(props: {
 	// over content that is no longer underneath its handle.
 	useEffect(() => {
 		const endDragOnScroll = () => {
-			if (dragRef.current) endDrag();
+			selectionDrag.cancel();
 			if (viewDragRef.current) endViewDrag();
 		};
 		globalThis.addEventListener("scroll", endDragOnScroll, {
@@ -371,32 +474,28 @@ export function ClipRangeEditor(props: {
 			globalThis.removeEventListener("scroll", endDragOnScroll, {
 				capture: true,
 			});
-	}, [endDrag, endViewDrag]);
+	}, [selectionDrag.cancel, endViewDrag]);
 
 	useEffect(() => {
 		const cancelOnEscape = (event: KeyboardEvent) => {
 			if (event.key !== "Escape") return;
-			const drag = dragRef.current;
-			if (drag) {
-				draggedSelectionRef.current = drag.origin;
-				onSelectionChange(drag.origin);
-				endDrag();
-			}
+			selectionDrag.cancel();
 			if (viewDragRef.current) endViewDrag();
 		};
 		globalThis.addEventListener("keydown", cancelOnEscape);
 		return () => globalThis.removeEventListener("keydown", cancelOnEscape);
-	}, [endDrag, endViewDrag, onSelectionChange]);
+	}, [selectionDrag.cancel, endViewDrag]);
 
-	const msPerPx = windowMsPerPixel(view, plotWidth);
 	const { peaks } = useSessionWaveformPeaks(
 		props.sessionId,
 		props.silenceFree ?? false,
 	);
-	const displaySelection = dragGhost?.selection ?? selection;
+	const displaySelection = selectionDrag.snapshot?.ghost.selection ?? selection;
 	const selectionMs = displaySelection[1] - displaySelection[0];
 	const valid = isValidClipSelection(displaySelection);
-	const dragInvalid = dragGhost ? !dragGhost.valid : false;
+	const dragInvalid = selectionDrag.snapshot
+		? !selectionDrag.snapshot.ghost.valid
+		: false;
 	const suggestedEdge = nearestSelectionEdge(
 		displaySelection,
 		props.positionMs,
@@ -514,15 +613,13 @@ export function ClipRangeEditor(props: {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		event.stopPropagation();
-		event.currentTarget.setPointerCapture(event.pointerId);
 		const plotBounds = plotRef.current?.getBoundingClientRect();
 		const anchorMs =
 			kind.type === "band"
 				? selection[0]
 				: selection[kind.edge === "start" ? 0 : 1];
-		dragRef.current = {
+		const drag: SelectionDragState = {
 			kind,
-			pointerId: event.pointerId,
 			startX: event.clientX,
 			startY: event.clientY,
 			plotLeftPx: plotBounds?.left ?? 0,
@@ -531,126 +628,11 @@ export function ClipRangeEditor(props: {
 			origin: selection,
 			movementWindow: view,
 			moved: false,
+			selection,
+			valid: true,
 		};
-		setDragFeedback({
-			kind,
-			multiplier: 1,
-			valueMs: anchorMs,
-			originMs: anchorMs,
-			lensAnchorMs: anchorMs,
-			dyPx: 0,
-			startYPx: event.clientY,
-			pointerXPx: event.clientX,
-			pointerYPx: event.clientY,
-			plotLeftPx: plotBounds?.left ?? 0,
-			plotWidthPx: plotBounds?.width ?? plotWidth,
-		});
-		dragGhostRef.current = { selection, valid: true };
-		setDragGhost({ selection, valid: true });
-	};
-
-	const continueDrag = (event: ReactPointerEvent<HTMLElement>) => {
-		const drag = dragRef.current;
-		if (!drag || drag.pointerId !== event.pointerId || msPerPx <= 0) return;
-		event.stopPropagation();
-		if (
-			drag.kind.type === "band" &&
-			!drag.moved &&
-			Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) <
-				VIEW_DRAG_THRESHOLD_PX
-		) {
-			return;
-		}
-		drag.moved = true;
-		const advanced = advanceFineDrag(drag.fine, {
-			xPx: event.clientX,
-			dyPx: event.clientY - drag.startY,
-			msPerPx,
-		});
-		const constrained = constrainFineDragToLens(
-			advanced.state,
-			drag.movementWindow.endMs - drag.movementWindow.startMs,
-			durationMs,
-		);
-		const nextSelection =
-			drag.kind.type === "edge"
-				? applyEdgeWithinWindow(
-						selection,
-						drag.kind.edge,
-						constrained.valueMs,
-						durationMs,
-						drag.movementWindow,
-					)
-				: moveSelectionWithinWindow(
-						drag.origin,
-						constrained.valueMs - drag.origin[0],
-						drag.movementWindow,
-					);
-		// Do not accumulate invisible pointer travel after the band reaches a
-		// boundary, so reversing direction moves it immediately.
-		const dragState =
-			drag.kind.type === "band"
-				? { ...constrained, valueMs: nextSelection[0] }
-				: constrained;
-		drag.fine = dragState;
-		setDragFeedback({
-			kind: drag.kind,
-			multiplier: dragState.multiplier,
-			valueMs: dragState.valueMs,
-			originMs: dragState.originMs,
-			lensAnchorMs: dragState.lensAnchorMs,
-			dyPx: event.clientY - drag.startY,
-			startYPx: drag.startY,
-			pointerXPx: event.clientX,
-			pointerYPx: event.clientY,
-			plotLeftPx: drag.plotLeftPx,
-			plotWidthPx: drag.plotWidthPx,
-		});
-		const plotRect = plotRef.current?.getBoundingClientRect();
-		const valid = plotRect ? event.clientY <= plotRect.bottom + 32 : true;
-		const ghost = { selection: nextSelection, valid };
-		dragGhostRef.current = ghost;
-		setDragGhost(ghost);
-	};
-
-	const finishDrag = (event: ReactPointerEvent<HTMLElement>) => {
-		const drag = dragRef.current;
-		if (!drag || drag.pointerId !== event.pointerId) return;
-		event.stopPropagation();
-		const movementPx = Math.hypot(
-			event.clientX - drag.startX,
-			event.clientY - drag.startY,
-		);
-		if (
-			drag.kind.type === "band" &&
-			!drag.moved &&
-			movementPx >= VIEW_DRAG_THRESHOLD_PX
-		) {
-			continueDrag(event);
-		}
-		if (drag.kind.type === "band" && !drag.moved) {
-			const positionMs = timeAtPointer(
-				event.clientX,
-				drag.plotLeftPx,
-				drag.plotWidthPx,
-				view,
-			);
-			endDrag();
-			props.onSeek(positionMs);
-			onSelectionChange(
-				setNearestSelectionEdge(drag.origin, positionMs, durationMs),
-			);
-			return;
-		}
-		const ghost = dragGhostRef.current;
-		if (
-			ghost?.valid &&
-			(ghost.selection[0] !== drag.origin[0] ||
-				ghost.selection[1] !== drag.origin[1])
-		) {
-			onSelectionChange(ghost.selection);
-		}
-		endDrag();
+		selectionDrag.begin(drag, event.clientX, event.clientY);
+		setDragFeedback(selectionDragFeedback(drag, event));
 	};
 
 	const onHandleKeyDown = (
@@ -674,10 +656,6 @@ export function ClipRangeEditor(props: {
 	const dragHandlers = (kind: DragKind) => ({
 		onPointerDown: (event: ReactPointerEvent<HTMLElement>) =>
 			beginDrag(event, kind),
-		onPointerMove: continueDrag,
-		onPointerUp: finishDrag,
-		onPointerCancel: endDrag,
-		onLostPointerCapture: endDrag,
 	});
 
 	const startEdgeDrive = () => {
@@ -1175,11 +1153,13 @@ export function ClipRangeEditor(props: {
 									valid && !dragInvalid
 										? "rgba(56, 189, 248, 0.22)"
 										: "rgba(248, 113, 113, 0.22)",
-								borderTop: dragGhost ? "2px dashed" : "2px solid",
-								borderBottom: dragGhost ? "2px dashed" : "2px solid",
+								borderTop: selectionDrag.snapshot ? "2px dashed" : "2px solid",
+								borderBottom: selectionDrag.snapshot
+									? "2px dashed"
+									: "2px solid",
 								borderColor:
 									valid && !dragInvalid ? "info.light" : "error.light",
-								opacity: dragGhost ? 0.7 : 1,
+								opacity: selectionDrag.snapshot ? 0.7 : 1,
 								cursor: "grab",
 								touchAction: "none",
 								"&:active": { cursor: "grabbing" },
