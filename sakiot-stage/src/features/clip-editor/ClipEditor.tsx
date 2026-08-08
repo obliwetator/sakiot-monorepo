@@ -131,6 +131,7 @@ export function ClipEditor(props: { guildId: string }) {
 				sx={{
 					flex: 1,
 					minHeight: 0,
+					minWidth: 0,
 					display: "flex",
 				}}
 			>

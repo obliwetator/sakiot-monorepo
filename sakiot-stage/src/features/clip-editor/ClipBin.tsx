@@ -57,7 +57,14 @@ export function ClipBin(props: {
 					Drag onto a track, or double-click to append
 				</Typography>
 			</Box>
-			<Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+			<Box
+				sx={{
+					flex: 1,
+					minHeight: 0,
+					overflowY: "auto",
+					overflowX: "hidden",
+				}}
+			>
 				<List dense disablePadding>
 					{filtered.map((clip) => (
 						<ClipBinItem

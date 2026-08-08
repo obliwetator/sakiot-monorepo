@@ -61,15 +61,23 @@ export function Timeline(props: {
 				display: "flex",
 				flexDirection: "column",
 				minHeight: 0,
+				minWidth: 0,
 				height: "100%",
 				borderTop: 1,
 				borderColor: "divider",
 				p: 1,
+				overflow: "hidden",
 			}}
 		>
 			<Box
 				ref={plotRef}
-				sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+				sx={{
+					display: "flex",
+					flexDirection: "column",
+					flex: 1,
+					minHeight: 0,
+					minWidth: 0,
+				}}
 			>
 				<TimelineRuler
 					fraction={fraction}
@@ -205,6 +213,7 @@ function TimelineRuler(props: {
 					touchAction: "none",
 					userSelect: "none",
 					cursor: "ew-resize",
+					overflow: "hidden",
 				}}
 			>
 				{TIMELINE_AXIS_FRACTIONS.map((fraction) => {
