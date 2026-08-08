@@ -13,6 +13,19 @@ printf '%s\n' "$*"
 EOF
 chmod +x "${temporary}/ops/ssh/forced-command" "${temporary}/ops/deploy"
 
+mkdir -p "${temporary}/bin"
+cat >"${temporary}/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+shift
+exec "$@"
+EOF
+chmod +x "${temporary}/bin/sudo"
+cat >"${temporary}/ops/preview-slot.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*"
+EOF
+chmod +x "${temporary}/ops/preview-slot.sh"
+
 sha="0123456789abcdef0123456789abcdef01234567"
 actual="$(
   SSH_ORIGINAL_COMMAND="release v1.2.3 ${sha}" \
@@ -50,6 +63,20 @@ release_promoted_actual="$(
 )"
 [[ "${release_promoted_actual}" == "release-promoted v1.2.3 ${sha}" ]]
 
+preview_up_actual="$(
+  PATH="${temporary}/bin:${PATH}" \
+  SSH_ORIGINAL_COMMAND="preview-up clip-editor" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${preview_up_actual}" == "clip-editor" ]]
+
+preview_remove_actual="$(
+  PATH="${temporary}/bin:${PATH}" \
+  SSH_ORIGINAL_COMMAND="preview-remove clip-editor" \
+    "${temporary}/ops/ssh/forced-command"
+)"
+[[ "${preview_remove_actual}" == "clip-editor --remove" ]]
+
 if SSH_ORIGINAL_COMMAND="staging ${sha}; id" \
   "${temporary}/ops/ssh/forced-command" >/dev/null 2>&1; then
   echo "forced command accepted shell metacharacters in staging verb" >&2
@@ -59,6 +86,18 @@ fi
 if SSH_ORIGINAL_COMMAND="staging main" \
   "${temporary}/ops/ssh/forced-command" >/dev/null 2>&1; then
   echo "forced command accepted non-sha staging ref" >&2
+  exit 1
+fi
+
+if SSH_ORIGINAL_COMMAND="preview-up Bad_Slot" \
+  "${temporary}/ops/ssh/forced-command" >/dev/null 2>&1; then
+  echo "forced command accepted invalid slot name in preview-up" >&2
+  exit 1
+fi
+
+if SSH_ORIGINAL_COMMAND="preview-remove 'x; rm -rf /'" \
+  "${temporary}/ops/ssh/forced-command" >/dev/null 2>&1; then
+  echo "forced command accepted shell metacharacters in preview-remove" >&2
   exit 1
 fi
 

@@ -1,3 +1,9 @@
 # Validate with visudo -cf before installing as /etc/sudoers.d/sakiot-deploy.
 # The root-owned wrapper validates every action and unit name.
 sakiot ALL=(root) NOPASSWD: /usr/local/lib/sakiot-deploy/systemctl-wrapper *
+# Slot lifecycle for auto-provisioned branch previews (preview-up /
+# preview-remove in ssh/forced-command). preview-slot.sh is root-owned,
+# read-only for sakiot, and validates its slot argument itself; it can only
+# add/remove DNS records, nginx vhosts, systemd units, certs, and databases
+# for a valid slot name.
+sakiot ALL=(root) NOPASSWD: /usr/local/lib/sakiot-deploy/preview-slot.sh *

@@ -11,14 +11,45 @@ staging instance that always tracks `main`.
 behavior is exercised on staging; the bot's per-token gateway limit is what
 made per-slot bots painful, and dropping them makes slots cheap.
 
-Deploys are manual: **Actions → Deploy preview → Run workflow**, pick the
-`branch` and the `slot` to deploy it into. The workflow runs the standard CI,
-then SSHes `preview-ci <slot> <sha>` through the restricted forced command.
-Re-deploying a new commit of the same branch, or a different branch into the
-same slot, overwrites that slot only; other slots and main staging keep
-running whatever they had.
+## Automatic per-branch lifecycle (recommended)
+
+Every push to a non-`main` branch (docs-only pushes skipped) is deployed
+automatically: the `Deploy preview` workflow derives a **slot from the branch
+name**, provisions it on the VPS if missing, deploys the pushed commit after
+CI passes, and **tears the slot down when the branch is deleted** (e.g. after
+merging a PR with auto-delete). Nothing per branch is needed:
+
+```sh
+# One-time setup, as root on the VPS:
+ops/update-deploy-engine.sh
+```
+
+The workflow SSHes through the restricted forced command:
+
+- `preview-up <slot>` — runs `ops/preview-slot.sh <slot>` as root (idempotent)
+- `preview-ci <slot> <sha>` — deploys the commit (existing verb)
+- `preview-remove <slot>` — runs `ops/preview-slot.sh <slot> --remove`
+
+Branch → slot mapping is deterministic and reversible: lowercase, every
+non-`[a-z0-9]` run becomes `-`, trimmed and truncated to 32 chars
+(`feature/Clip-Editor v2` → `feature-clip-editor-v2`). `main` is excluded —
+the staging instance already tracks it. Two branches can collide on one slot
+(e.g. `feature/foo` and `feature_foo`); the later push wins the slot.
+
+The restricted `sakiot` deploy key can now run `preview-slot.sh` as root via
+a narrow sudo rule (`ops/sudoers/sakiot-deploy`); the script is root-owned,
+read-only for `sakiot`, and validates its slot argument, so it can only
+create/remove DNS records, vhosts, units, certs, and databases for valid slot
+names.
+
+Manual deploys still work: **Actions → Deploy preview → Run workflow**, pick
+the `branch` and the `slot`. The slot is provisioned on demand too, so the
+manual bootstrap below is optional.
 
 ## Slot lifecycle (one time per slot, as root)
+
+Manual bootstrap — only needed when you want to skip the automatic flow (or
+for slots not tied to a branch):
 
 `ops/preview-slot.sh` automates the slot: Cloudflare DNS record, database,
 systemd unit, nginx vhost, and (optionally) the HTTPS cert. The env file is

@@ -111,6 +111,18 @@ if [[ "$ACTION" = create ]]; then
         log "wrote ${ENV_FILE} — set DEV_ACCOUNT_ID + DEV_LOGIN_SECRET (the only login is dev login; DISCORD_CLIENT_ID/SECRET are placeholders)"
     fi
 
+    # ---- database role (shared by every instance; created once) ------------
+    db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot'" | grep -q 1; then
+        [[ -n "$db_pass" ]] || die "could not read the database password from ${ENV_FILE} (DATABASE_URL)"
+        sudo -u postgres psql -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE sakiot LOGIN PASSWORD '${db_pass//\'/\'\'}'" >/dev/null
+        log "created role sakiot"
+    fi
+    if [[ "$db_pass" == "replace_me" ]]; then
+        log "warning: DATABASE_URL in ${ENV_FILE} still uses the 'replace_me' password; set a real one or deploys will fail"
+    fi
+
     # ---- database ----------------------------------------------------------
     db="sakiot_preview_${SLOT}"
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then

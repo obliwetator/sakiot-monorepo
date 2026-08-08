@@ -1,12 +1,22 @@
 name: Deploy preview
 
-# Manual branch deploys to a preview instance slot. Each slot is a fully
-# separate instance (env file, DB, ports, units, Discord bot) reachable at
-# <slot>.preview.<domain>. The VPS must already be bootstrapped for the slot
-# (see PREVIEW.md): update-deploy-engine.sh run as root, /etc/sakiot/preview-<slot>.env,
-# DB, units, and nginx vhost.
+# Automatic per-branch preview instances. Every push to a non-main branch
+# (docs-only pushes skipped) provisions a slot named after the branch and
+# deploys the pushed commit into it; deleting the branch tears the slot down
+# again (DNS record, cert, vhost, unit, and database). Manual deploys keep
+# the explicit branch + slot inputs. The VPS must be bootstrapped once:
+# ops/update-deploy-engine.sh as root (installs the preview-up /
+# preview-remove forced-command verbs and the sudo rule), plus the shared
+# /etc/sakiot/preview.env with real credentials (see PREVIEW.md).
 
 on:
+  push:
+    branches-ignore:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "LICENSE*"
+  delete:
   workflow_dispatch:
     inputs:
       branch:
@@ -21,38 +31,111 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: preview-deployment-${{ inputs.slot }}
-  cancel-in-progress: true
-
 jobs:
   test:
+    if: github.event_name != 'delete'
     uses: ./.github/workflows/ci.yml
     with:
       full: false
 
+  compute:
+    runs-on: ubuntu-latest
+    outputs:
+      slot: ${{ steps.derive.outputs.slot }}
+      branch: ${{ steps.derive.outputs.branch }}
+    steps:
+      - name: Derive preview slot
+        id: derive
+        run: |
+          set -euo pipefail
+
+          slug() {
+            printf '%s' "$1" \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+          }
+
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              branch="${GITHUB_REF_NAME}"
+              if [[ "${branch}" == "main" ]]; then
+                echo "::notice::main is excluded from preview slots (staging tracks it)"
+                exit 0
+              fi
+              slot="$(slug "${branch}")"
+              ;;
+            delete)
+              branch="${{ github.event.ref }}"
+              slot="$(slug "${branch}")"
+              ;;
+            workflow_dispatch)
+              branch="${{ inputs.branch }}"
+              slot="${{ inputs.slot }}"
+              ;;
+          esac
+
+          slot="${slot:0:32}"
+          slot="${slot%%-}"
+          if [[ -z "${slot}" ]]; then
+            echo "::notice::branch '${branch}' produces no preview slot; skipping"
+            exit 0
+          fi
+          if [[ ! "${slot}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; then
+            echo "branch '${branch}' produces invalid slot '${slot}'" >&2
+            exit 1
+          fi
+          echo "slot=${slot}" >>"${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >>"${GITHUB_OUTPUT}"
+
   deploy:
-    needs: test
+    if: github.event_name != 'delete' && needs.compute.outputs.slot != ''
+    needs: [test, compute]
     runs-on: ubuntu-latest
     # Reuses the DEPLOY_* secrets from the staging environment; the forced
     # command decides which instance a `preview-ci` verb touches.
     environment: staging
+    concurrency:
+      group: preview-${{ needs.compute.outputs.slot }}
+      cancel-in-progress: true
     steps:
-      - name: Validate slot name
+      - name: Provision slot (idempotent)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          PREVIEW_SLOT: ${{ needs.compute.outputs.slot }}
         run: |
           set -euo pipefail
-          [[ "${{ inputs.slot }}" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_SSH_KEY}" >"${HOME}/.ssh/deploy_key"
+          chmod 0600 "${HOME}/.ssh/deploy_key"
+          trap 'rm -f "${HOME}/.ssh/deploy_key"' EXIT
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
 
-      - uses: actions/checkout@v7
+          ssh -i "${HOME}/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "preview-up ${PREVIEW_SLOT}"
+
+      - name: Checkout branch (manual deploys)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ needs.compute.outputs.branch }}
           fetch-depth: 0
 
-      - name: Resolve branch head
+      - name: Resolve deploy commit
         id: sha
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD)"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            sha="${GITHUB_SHA}"
+          else
+            sha="$(git rev-parse HEAD)"
+          fi
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
           echo "sha=${sha}" >>"${GITHUB_OUTPUT}"
 
@@ -62,7 +145,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          PREVIEW_SLOT: ${{ inputs.slot }}
+          PREVIEW_SLOT: ${{ needs.compute.outputs.slot }}
           PREVIEW_SHA: ${{ steps.sha.outputs.sha }}
         run: |
           set -euo pipefail
@@ -78,3 +161,34 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "preview-ci ${PREVIEW_SLOT} ${PREVIEW_SHA}"
+
+  teardown:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch' && needs.compute.outputs.slot != ''
+    needs: compute
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency:
+      group: preview-${{ needs.compute.outputs.slot }}
+      cancel-in-progress: true
+    steps:
+      - name: Tear down slot
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          PREVIEW_SLOT: ${{ needs.compute.outputs.slot }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_SSH_KEY}" >"${HOME}/.ssh/deploy_key"
+          chmod 0600 "${HOME}/.ssh/deploy_key"
+          trap 'rm -f "${HOME}/.ssh/deploy_key"' EXIT
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
+
+          ssh -i "${HOME}/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "preview-remove ${PREVIEW_SLOT}"

@@ -42,5 +42,16 @@ if [[ "${original}" =~ ^preview-ci\ ([a-z0-9][a-z0-9-]*)\ ([0-9a-f]{40})$ ]]; th
   exec "${script_dir}/deploy" preview-ci "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
+# Slot lifecycle (auto-provisioned branches). Runs ops/preview-slot.sh as root
+# through the sudo rule in ops/sudoers/sakiot-deploy; the script validates the
+# slot name and is root-owned, so these verbs cannot reach outside it.
+if [[ "${original}" =~ ^preview-up\ ([a-z0-9][a-z0-9-]{0,31})$ ]]; then
+  exec sudo -n "${script_dir}/preview-slot.sh" "${BASH_REMATCH[1]}"
+fi
+
+if [[ "${original}" =~ ^preview-remove\ ([a-z0-9][a-z0-9-]{0,31})$ ]]; then
+  exec sudo -n "${script_dir}/preview-slot.sh" "${BASH_REMATCH[1]}" --remove
+fi
+
 echo "rejected deployment command" >&2
 exit 126
