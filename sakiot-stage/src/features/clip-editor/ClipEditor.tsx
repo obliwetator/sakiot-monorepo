@@ -48,6 +48,19 @@ export function ClipEditor(props: { guildId: string }) {
 		[clips],
 	);
 
+	// Single selection rule: any pointerdown that is not on a segment (their
+	// own handlers stop propagation) and not inside the inspector (which edits
+	// the selection) clears the selection.
+	useEffect(() => {
+		const onGlobalPointerDown = (event: PointerEvent) => {
+			const target = event.target as HTMLElement | null;
+			if (target?.closest("[data-clip-editor-inspector]")) return;
+			editor.select(null);
+		};
+		window.addEventListener("pointerdown", onGlobalPointerDown);
+		return () => window.removeEventListener("pointerdown", onGlobalPointerDown);
+	}, [editor.select]);
+
 	const { buffer: sourceBuffer, status: sourceStatus } = useClipBuffer(
 		props.guildId,
 		sourceClipId,
@@ -115,7 +128,6 @@ export function ClipEditor(props: { guildId: string }) {
 					clips={clips ?? []}
 					loadingClips={editor.loadingClips}
 					onAdd={handleAddFromBin}
-					onDeselect={() => editor.select(null)}
 				/>
 				<Box
 					sx={{
@@ -148,9 +160,6 @@ function ToolbarRow(props: { editor: ReturnType<typeof useClipEditor> }) {
 	const { editor } = props;
 	return (
 		<Box
-			onPointerDown={(event) => {
-				if (event.button === 0) editor.select(null);
-			}}
 			sx={{
 				display: "flex",
 				alignItems: "center",
@@ -227,9 +236,6 @@ function Monitor(props: {
 
 	return (
 		<Box
-			onPointerDown={(event) => {
-				if (event.button === 0) editor.select(null);
-			}}
 			sx={{
 				display: "flex",
 				alignItems: "center",

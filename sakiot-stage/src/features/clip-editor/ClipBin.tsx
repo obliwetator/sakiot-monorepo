@@ -15,7 +15,6 @@ export function ClipBin(props: {
 	clips: ClipData[];
 	loadingClips: ReadonlyMap<string, boolean>;
 	onAdd: (clip: ClipData) => void;
-	onDeselect: () => void;
 }) {
 	const [search, setSearch] = useState("");
 	const query = search.trim().toLowerCase();
@@ -27,9 +26,6 @@ export function ClipBin(props: {
 
 	return (
 		<Box
-			onPointerDown={(event) => {
-				if (event.button === 0) props.onDeselect();
-			}}
 			sx={{
 				width: 280,
 				flex: "0 0 auto",

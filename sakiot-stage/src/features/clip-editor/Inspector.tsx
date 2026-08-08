@@ -24,6 +24,7 @@ export function Inspector(props: {
 
 	return (
 		<Box
+			data-clip-editor-inspector
 			sx={{
 				width: 260,
 				flex: "0 0 auto",

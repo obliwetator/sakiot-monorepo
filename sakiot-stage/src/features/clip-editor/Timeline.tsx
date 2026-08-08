@@ -380,7 +380,6 @@ export function Timeline(props: {
 					fraction={fraction}
 					positionSec={editor.positionSec}
 					onScrub={editor.setPosition}
-					onDeselect={() => editor.select(null)}
 					viewStartSec={editor.viewStartSec}
 					viewWidthSec={editor.viewWidthSec}
 				/>
@@ -666,7 +665,6 @@ function TimelineRuler(props: {
 	fraction: (sec: number) => number;
 	positionSec: number;
 	onScrub: (sec: number) => void;
-	onDeselect: () => void;
 	viewStartSec: number;
 	viewWidthSec: number;
 }) {
@@ -701,7 +699,6 @@ function TimelineRuler(props: {
 				onPointerDown={(event) => {
 					if (event.button !== 0) return;
 					event.preventDefault();
-					props.onDeselect();
 					scrubRef.current = {
 						startX: event.clientX,
 						startSec: secAtClientX(event.currentTarget, event.clientX),
@@ -804,10 +801,6 @@ function TrackRow(props: {
 		<TimelineRow label={`Track ${track + 1}`}>
 			<Box
 				ref={(element: HTMLDivElement | null) => props.onRowRef(element)}
-				onPointerDown={(event) => {
-					if (event.button !== 0) return;
-					props.editor.select(null);
-				}}
 				sx={{
 					position: "relative",
 					height: TRACK_HEIGHT_PX,
