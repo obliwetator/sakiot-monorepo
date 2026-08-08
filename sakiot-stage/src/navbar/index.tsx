@@ -59,6 +59,11 @@ function ResponsiveAppBar(props: {
 					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/clips`,
 				);
 				break;
+			case "Clip Editor":
+				navigate(
+					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/clips/editor`,
+				);
+				break;
 			case "Stamps":
 				navigate(
 					props.guildSelected?.id

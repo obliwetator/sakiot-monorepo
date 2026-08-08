@@ -1,3 +1,4 @@
+import ContentCutIcon from "@mui/icons-material/ContentCut";
 import DownloadIcon from "@mui/icons-material/Download";
 import EditIcon from "@mui/icons-material/Edit";
 import PauseIcon from "@mui/icons-material/Pause";
@@ -17,7 +18,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link as RouterLink } from "react-router-dom";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
 import {
 	BASE_API_URL,
 	type ClipData,
@@ -171,6 +172,7 @@ export function ClipPlayer(props: {
 	absoluteStartMs: number | null;
 	canRename: boolean;
 }) {
+	const navigate = useNavigate();
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const positionRef = useRef(0);
 	const durationRef = useRef(props.clip.length ?? 0);
@@ -525,6 +527,17 @@ export function ClipPlayer(props: {
 						onClick={() => void download()}
 					>
 						Download clip
+					</Button>
+					<Button
+						variant="outlined"
+						startIcon={<ContentCutIcon />}
+						onClick={() =>
+							navigate(
+								`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/clips/editor?source=${encodeURIComponent(props.clip.clip_id)}`,
+							)
+						}
+					>
+						Edit clip
 					</Button>
 					<Button variant="outlined" disabled>
 						Create clip

@@ -1,3 +1,4 @@
+import ContentCutIcon from "@mui/icons-material/ContentCut";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MovieIcon from "@mui/icons-material/Movie";
 import Accordion from "@mui/material/Accordion";
@@ -234,24 +235,41 @@ export default function Clips() {
 
 function ClipsLayout(props: {
 	data: ClipData[];
-	params: { file_name?: string };
+	params: { guild_id?: string; file_name?: string };
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
 }) {
 	const theme = useTheme();
 	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	const navigate = useNavigate();
 
 	useEffect(() => {
 		if (!isDesktop) setDrawerOpen(false);
 	}, [isDesktop]);
 
 	const list = (
-		<SimpleAccordion
-			data={props.data}
-			currentUserId={props.currentUserId}
-			guildSelected={props.guildSelected}
-		/>
+		<>
+			<Box sx={{ p: 1 }}>
+				<Button
+					variant="contained"
+					fullWidth
+					startIcon={<ContentCutIcon />}
+					onClick={() =>
+						navigate(
+							`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.params.guild_id}/clips/editor`,
+						)
+					}
+				>
+					Clip editor
+				</Button>
+			</Box>
+			<SimpleAccordion
+				data={props.data}
+				currentUserId={props.currentUserId}
+				guildSelected={props.guildSelected}
+			/>
+		</>
 	);
 
 	const selectedClipId = props.params.file_name
