@@ -17,8 +17,13 @@ import {
 	TimelinePlayhead,
 	TimelineRow,
 } from "../audio-dashboard/timelineLayout";
-import type { ClipEdit, TimelineSegment } from "./model";
-import { moveSegment, segmentEnd, setSegmentRange } from "./model";
+import type { TimelineSegment } from "./model";
+import {
+	MIN_SEGMENT_SECONDS,
+	moveSegment,
+	segmentEnd,
+	setSegmentRange,
+} from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
 const TRACK_HEIGHT_PX = 72;
@@ -38,6 +43,26 @@ interface DragPreviewState {
 	startSec: number;
 }
 
+type SegmentDragMode = "move" | "left" | "right";
+
+interface SegmentDragState {
+	mode: SegmentDragMode;
+	segmentId: string;
+	originStart: number;
+	originIn: number;
+	originOut: number;
+	originTrack: number;
+	maxSource: number;
+	maxTrack: number;
+	startX: number;
+	startY: number;
+	ghostStart: number;
+	ghostIn: number;
+	ghostOut: number;
+	ghostTrack: number;
+	valid: boolean;
+}
+
 function parseDraggedClip(
 	dataTransfer: DataTransfer,
 ): DraggedClipPayload | null {
@@ -51,6 +76,91 @@ function parseDraggedClip(
 	} catch {
 		return null;
 	}
+}
+
+function snapTo(value: number, target: number): number {
+	return Math.abs(value - target) < SNAP_SECONDS ? target : value;
+}
+
+function computeGhost(
+	drag: SegmentDragState,
+	event: PointerEvent,
+	pxPerSec: number,
+	positionSec: number,
+	container: HTMLElement | null,
+): SegmentDragState {
+	const dt = (event.clientX - drag.startX) / Math.max(0.0001, pxPerSec);
+	if (drag.mode === "move") {
+		const rect = container?.getBoundingClientRect();
+		const valid = rect
+			? event.clientY >= rect.top && event.clientY <= rect.bottom
+			: true;
+		const ghostStart = snapTo(Math.max(0, drag.originStart + dt), positionSec);
+		const ghostTrack = Math.max(
+			0,
+			Math.min(
+				drag.maxTrack,
+				drag.originTrack +
+					Math.round((event.clientY - drag.startY) / TRACK_HEIGHT_PX),
+			),
+		);
+		return { ...drag, ghostStart, ghostTrack, valid };
+	}
+	if (drag.mode === "left") {
+		const rawGhostIn = Math.max(
+			0,
+			Math.min(drag.originOut - MIN_SEGMENT_SECONDS, drag.originIn + dt),
+		);
+		const snappedStart = snapTo(
+			drag.originStart + (rawGhostIn - drag.originIn),
+			positionSec,
+		);
+		const ghostIn = Math.max(
+			0,
+			Math.min(
+				drag.originOut - MIN_SEGMENT_SECONDS,
+				drag.originIn + (snappedStart - drag.originStart),
+			),
+		);
+		return {
+			...drag,
+			ghostIn,
+			ghostStart: drag.originStart + (ghostIn - drag.originIn),
+		};
+	}
+	const rawGhostOut = Math.max(
+		drag.originIn + MIN_SEGMENT_SECONDS,
+		Math.min(drag.maxSource, drag.originOut + dt),
+	);
+	const endSec = drag.originStart + (drag.originOut - drag.originIn);
+	const snappedEnd = snapTo(
+		endSec + (rawGhostOut - drag.originOut),
+		positionSec,
+	);
+	const ghostOut = Math.min(
+		drag.maxSource,
+		drag.originOut + (snappedEnd - endSec),
+	);
+	return { ...drag, ghostOut };
+}
+
+function dragGhostGeometry(drag: SegmentDragState) {
+	if (drag.mode === "move") {
+		return {
+			startSec: drag.ghostStart,
+			endSec: drag.ghostStart + (drag.originOut - drag.originIn),
+		};
+	}
+	if (drag.mode === "left") {
+		return {
+			startSec: drag.ghostStart,
+			endSec: drag.originStart + (drag.originOut - drag.originIn),
+		};
+	}
+	return {
+		startSec: drag.originStart,
+		endSec: drag.originStart + (drag.ghostOut - drag.ghostIn),
+	};
 }
 
 export function Timeline(props: {
@@ -69,6 +179,25 @@ export function Timeline(props: {
 	const rowElementsRef = useRef(new Map<number, HTMLElement>());
 	const [plotWidth, setPlotWidth] = useState(1);
 	const [preview, setPreview] = useState<DragPreviewState | null>(null);
+	const [segmentDrag, setSegmentDrag] = useState<SegmentDragState | null>(null);
+	const segmentDragRef = useRef<SegmentDragState | null>(null);
+	const pxPerSecRef = useRef(1);
+	const positionSecRef = useRef(0);
+	const dragListenersRef = useRef<{
+		move: (event: PointerEvent) => void;
+		up: () => void;
+		cancel: () => void;
+	} | null>(null);
+
+	useEffect(() => {
+		segmentDragRef.current = segmentDrag;
+	}, [segmentDrag]);
+	useEffect(() => {
+		pxPerSecRef.current = pxPerSec;
+	});
+	useEffect(() => {
+		positionSecRef.current = editor.positionSec;
+	});
 
 	useEffect(() => {
 		const plot = plotRef.current;
@@ -81,11 +210,63 @@ export function Timeline(props: {
 		return () => observer.disconnect();
 	}, []);
 
+	useEffect(
+		() => () => {
+			const listeners = dragListenersRef.current;
+			if (!listeners) return;
+			window.removeEventListener("pointermove", listeners.move);
+			window.removeEventListener("pointerup", listeners.up);
+			window.removeEventListener("pointercancel", listeners.cancel);
+			dragListenersRef.current = null;
+		},
+		[],
+	);
+
 	const fraction = (sec: number) =>
 		((sec - editor.viewStartSec) / Math.max(1, editor.viewWidthSec)) * 100;
 
 	const pxPerSec = plotWidth / Math.max(1, editor.viewWidthSec);
 	const rows = Array.from({ length: editor.edit.tracks }, (_, track) => track);
+
+	const endSegmentDrag = (commit: boolean) => {
+		const drag = segmentDragRef.current;
+		if (drag && commit && drag.valid) {
+			commitSegmentDrag(drag, editor.apply);
+		}
+		segmentDragRef.current = null;
+		setSegmentDrag(null);
+		const listeners = dragListenersRef.current;
+		if (listeners) {
+			window.removeEventListener("pointermove", listeners.move);
+			window.removeEventListener("pointerup", listeners.up);
+			window.removeEventListener("pointercancel", listeners.cancel);
+			dragListenersRef.current = null;
+		}
+	};
+
+	const beginSegmentDrag = (drag: SegmentDragState) => {
+		segmentDragRef.current = drag;
+		setSegmentDrag(drag);
+		const move = (event: PointerEvent) => {
+			setSegmentDrag((current) =>
+				current
+					? computeGhost(
+							current,
+							event,
+							pxPerSecRef.current,
+							positionSecRef.current,
+							tracksRef.current,
+						)
+					: current,
+			);
+		};
+		const up = () => endSegmentDrag(true);
+		const cancel = () => endSegmentDrag(false);
+		dragListenersRef.current = { move, up, cancel };
+		window.addEventListener("pointermove", move);
+		window.addEventListener("pointerup", up);
+		window.addEventListener("pointercancel", cancel);
+	};
 
 	const findTrackAtY = (clientY: number): number | null => {
 		let best: { track: number; dist: number } | null = null;
@@ -204,21 +385,48 @@ export function Timeline(props: {
 						flexDirection: "column",
 					}}
 				>
-					{rows.map((track) => (
-						<TrackRow
-							key={track}
-							track={track}
-							editor={editor}
-							clipName={props.clipName}
-							fraction={fraction}
-							pxPerSec={pxPerSec}
-							preview={preview}
-							onRowRef={(element) => {
-								if (element) rowElementsRef.current.set(track, element);
-								else rowElementsRef.current.delete(track);
-							}}
-						/>
-					))}
+					{rows.map((track) => {
+						const dragGhost =
+							segmentDrag && segmentDrag.ghostTrack === track
+								? dragGhostGeometry(segmentDrag)
+								: null;
+						const draggedSegment = segmentDrag
+							? editor.edit.segments.find((s) => s.id === segmentDrag.segmentId)
+							: null;
+						return (
+							<TrackRow
+								key={track}
+								track={track}
+								editor={editor}
+								clipName={props.clipName}
+								fraction={fraction}
+								pxPerSec={pxPerSec}
+								preview={preview}
+								dragGhost={
+									dragGhost
+										? {
+												leftFraction: fraction(dragGhost.startSec),
+												widthFraction: Math.max(
+													0,
+													fraction(dragGhost.endSec) -
+														fraction(dragGhost.startSec),
+												),
+												name: draggedSegment
+													? props.clipName(draggedSegment)
+													: "",
+												invalid: !segmentDrag?.valid,
+											}
+										: null
+								}
+								draggingSegmentId={segmentDrag?.segmentId ?? null}
+								onRowRef={(element) => {
+									if (element) rowElementsRef.current.set(track, element);
+									else rowElementsRef.current.delete(track);
+								}}
+								onBeginSegmentDrag={beginSegmentDrag}
+							/>
+						);
+					})}
 					{preview && preview.track === editor.edit.tracks && (
 						<PhantomTrackRow
 							label={`Track ${editor.edit.tracks + 1}`}
@@ -259,10 +467,51 @@ export function Timeline(props: {
 	);
 }
 
+function commitSegmentDrag(
+	drag: SegmentDragState,
+	apply: UseClipEditorReturn["apply"],
+) {
+	if (drag.mode === "move") {
+		apply((edit) => {
+			if (!edit.segments.some((s) => s.id === drag.segmentId)) return edit;
+			return moveSegment(
+				edit,
+				drag.segmentId,
+				drag.ghostStart,
+				drag.ghostTrack,
+			);
+		});
+		return;
+	}
+	if (drag.mode === "left") {
+		apply((edit) => {
+			if (!edit.segments.some((s) => s.id === drag.segmentId)) return edit;
+			const ranged = setSegmentRange(
+				edit,
+				drag.segmentId,
+				drag.ghostIn,
+				drag.ghostOut,
+			);
+			return moveSegment(
+				ranged,
+				drag.segmentId,
+				drag.ghostStart,
+				drag.ghostTrack,
+			);
+		});
+		return;
+	}
+	apply((edit) => {
+		if (!edit.segments.some((s) => s.id === drag.segmentId)) return edit;
+		return setSegmentRange(edit, drag.segmentId, drag.ghostIn, drag.ghostOut);
+	});
+}
+
 function DragGhost(props: {
 	leftFraction: number;
 	widthFraction: number;
 	label?: string;
+	invalid?: boolean;
 }) {
 	return (
 		<Box
@@ -275,8 +524,10 @@ function DragGhost(props: {
 				width: `max(2px, ${props.widthFraction}%)`,
 				borderRadius: 1,
 				border: "2px dashed",
-				borderColor: "primary.light",
-				bgcolor: "rgba(56, 189, 248, 0.16)",
+				borderColor: props.invalid ? "error.main" : "primary.light",
+				bgcolor: props.invalid
+					? "rgba(248, 113, 113, 0.12)"
+					: "rgba(56, 189, 248, 0.16)",
 				pointerEvents: "none",
 				zIndex: 5,
 			}}
@@ -460,7 +711,15 @@ function TrackRow(props: {
 	fraction: (sec: number) => number;
 	pxPerSec: number;
 	preview: DragPreviewState | null;
+	dragGhost: {
+		leftFraction: number;
+		widthFraction: number;
+		name: string;
+		invalid: boolean;
+	} | null;
+	draggingSegmentId: string | null;
 	onRowRef: (element: HTMLElement | null) => void;
+	onBeginSegmentDrag: (drag: SegmentDragState) => void;
 }) {
 	const { editor, track } = props;
 	const segments = editor.edit.segments.filter((s) => s.track === track);
@@ -497,18 +756,15 @@ function TrackRow(props: {
 							segment={segment}
 							name={props.clipName(segment)}
 							selected={editor.selectedSegmentId === segment.id}
+							dragging={props.draggingSegmentId === segment.id}
 							leftFraction={start}
 							widthFraction={width}
-							pxPerSec={props.pxPerSec}
-							positionSec={editor.positionSec}
 							maxSource={
 								editor.sourceDuration(segment.sourceId) ?? segment.sourceOut
 							}
 							maxTrack={editor.edit.tracks - 1}
 							onSelect={() => editor.select(segment.id)}
-							onGestureStart={editor.beginGesture}
-							onGestureEnd={editor.endGesture}
-							onPreview={editor.preview}
+							onBeginDrag={props.onBeginSegmentDrag}
 						/>
 					);
 				})}
@@ -522,6 +778,14 @@ function TrackRow(props: {
 						)}
 					/>
 				)}
+				{props.dragGhost && (
+					<DragGhost
+						leftFraction={props.dragGhost.leftFraction}
+						widthFraction={props.dragGhost.widthFraction}
+						label={props.dragGhost.name}
+						invalid={props.dragGhost.invalid}
+					/>
+				)}
 				<TimelinePlayhead percent={props.fraction(editor.positionSec)} />
 			</Box>
 		</TimelineRow>
@@ -532,106 +796,41 @@ function TrackSegment(props: {
 	segment: TimelineSegment;
 	name: string;
 	selected: boolean;
+	dragging: boolean;
 	leftFraction: number;
 	widthFraction: number;
-	pxPerSec: number;
-	positionSec: number;
 	maxSource: number;
 	maxTrack: number;
 	onSelect: () => void;
-	onGestureStart: () => void;
-	onGestureEnd: () => void;
-	onPreview: (updater: (edit: ClipEdit) => ClipEdit) => void;
+	onBeginDrag: (drag: SegmentDragState) => void;
 }) {
 	const { segment } = props;
-	const duration = segment.sourceOut - segment.sourceIn;
-	const endSec = segment.timelineStart + duration;
-
-	const snap = (value: number) =>
-		Math.abs(value - props.positionSec) < SNAP_SECONDS
-			? props.positionSec
-			: value;
-
-	const attachDrag = (
-		element: HTMLElement,
-		mode: "move" | "left" | "right",
-		pointerId: number,
-		startX: number,
-		startY: number,
-	) => {
-		const originStart = segment.timelineStart;
-		const originIn = segment.sourceIn;
-		const originOut = segment.sourceOut;
-		const originTrack = segment.track;
-
-		const onMove = (event: PointerEvent) => {
-			const dt = (event.clientX - startX) / props.pxPerSec;
-			if (mode === "move") {
-				const track = Math.max(
-					0,
-					Math.min(
-						props.maxTrack,
-						originTrack +
-							Math.round((event.clientY - startY) / TRACK_HEIGHT_PX),
-					),
-				);
-				props.onPreview((edit) =>
-					moveSegment(edit, segment.id, snap(originStart + dt), track),
-				);
-				return;
-			}
-			if (mode === "left") {
-				const nextIn = Math.max(0, Math.min(originOut - 0.05, originIn + dt));
-				const nextStart = snap(originStart + (nextIn - originIn));
-				props.onPreview((edit) => {
-					const ranged = setSegmentRange(edit, segment.id, nextIn, originOut);
-					return moveSegment(ranged, segment.id, nextStart, originTrack);
-				});
-				return;
-			}
-			const rawOut = Math.max(originIn + 0.05, originOut + dt);
-			const rawEnd = endSec + (rawOut - originOut);
-			const nextEnd = snap(rawEnd);
-			const nextOut = originOut + (nextEnd - endSec);
-			props.onPreview((edit) =>
-				setSegmentRange(
-					edit,
-					segment.id,
-					originIn,
-					Math.min(props.maxSource, nextOut),
-				),
-			);
-		};
-
-		const onUp = () => {
-			element.removeEventListener("pointermove", onMove);
-			element.removeEventListener("pointerup", onUp);
-			element.removeEventListener("pointercancel", onUp);
-			props.onGestureEnd();
-		};
-
-		element.setPointerCapture(pointerId);
-		element.addEventListener("pointermove", onMove);
-		element.addEventListener("pointerup", onUp);
-		element.addEventListener("pointercancel", onUp);
-		props.onGestureStart();
-	};
 
 	const beginGesture = (
 		event: ReactPointerEvent<HTMLElement>,
-		mode: "move" | "left" | "right",
+		mode: SegmentDragMode,
 	) => {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		event.stopPropagation();
 		props.onSelect();
-		attachDrag(
-			event.currentTarget,
+		props.onBeginDrag({
 			mode,
-			event.pointerId,
-			event.clientX,
-			event.clientY,
-		);
+			segmentId: segment.id,
+			originStart: segment.timelineStart,
+			originIn: segment.sourceIn,
+			originOut: segment.sourceOut,
+			originTrack: segment.track,
+			maxSource: props.maxSource,
+			maxTrack: props.maxTrack,
+			startX: event.clientX,
+			startY: event.clientY,
+			ghostStart: segment.timelineStart,
+			ghostIn: segment.sourceIn,
+			ghostOut: segment.sourceOut,
+			ghostTrack: segment.track,
+			valid: true,
+		});
 	};
 
 	return (
@@ -646,6 +845,7 @@ function TrackSegment(props: {
 				width: `max(2px, ${props.widthFraction}%)`,
 				minWidth: HANDLE_WIDTH_PX * 2,
 				borderRadius: 1,
+				opacity: props.dragging ? 0.45 : 1,
 				bgcolor: props.selected
 					? "rgba(168, 85, 247, 0.65)"
 					: "rgba(56, 189, 248, 0.35)",
