@@ -102,7 +102,7 @@ if [[ "$ACTION" = create ]]; then
         -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
         "$OPS_DIR/preview.env.example" > "$env_file"
     chmod 0640 "$env_file"
-    log "wrote ${env_file} — edit it to set the Discord bot token before deploying"
+    log "wrote ${env_file} — set DISCORD_CLIENT_ID/SECRET (reuse the staging OAuth app) and add ${SUBDOMAIN}/api/discord_login to its redirect URIs"
 
     # ---- database ----------------------------------------------------------
     db="sakiot_preview_${SLOT}"
@@ -113,24 +113,12 @@ if [[ "$ACTION" = create ]]; then
         log "created database ${db}"
     fi
 
-    # ---- systemd units -----------------------------------------------------
-    for unit in web "fbi-agent@"; do
-        case "$unit" in
-            web)
-                src="$OPS_DIR/systemd/sakiot-staging-web.service"
-                name="sakiot-preview-${SLOT}-web.service"
-                ;;
-            "fbi-agent@")
-                src="$OPS_DIR/systemd/sakiot-staging-fbi-agent@.service"
-                name="sakiot-preview-${SLOT}-fbi-agent@.service"
-                ;;
-        esac
-        sed \
-            -e "s|sakiot-staging|sakiot-preview-${SLOT}|g" \
-            -e "s|/etc/sakiot/staging.env|${env_file}|g" \
-            "$src" > "/etc/systemd/system/${name}"
-        log "installed unit ${name}"
-    done
+    # ---- systemd unit (web only; preview slots run no FBI Agent) ------------
+    sed \
+        -e "s|sakiot-staging|sakiot-preview-${SLOT}|g" \
+        -e "s|/etc/sakiot/staging.env|${env_file}|g" \
+        "$OPS_DIR/systemd/sakiot-staging-web.service" > "/etc/systemd/system/sakiot-preview-${SLOT}-web.service"
+    log "installed unit sakiot-preview-${SLOT}-web.service"
     systemctl daemon-reload
     systemctl enable "sakiot-preview-${SLOT}-web.service" >/dev/null 2>&1 || true
 
@@ -153,7 +141,7 @@ if [[ "$ACTION" = create ]]; then
         fi
     fi
 
-    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after you set the Discord bot token in ${env_file})"
+    log "slot ${SLOT} ready: https://${SUBDOMAIN} (after OAuth creds in ${env_file} are set)"
     log "deploy it: Actions -> Deploy preview -> slot=${SLOT}, branch=<branch>"
 
 elif [[ "$ACTION" = remove ]]; then
