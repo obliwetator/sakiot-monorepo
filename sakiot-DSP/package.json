@@ -1,0 +1,15 @@
+{
+	"name": "sakiot-dsp-browser-prototype",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"wasm:build": "cargo build --locked --target wasm32-unknown-unknown --features wasm --release && wasm-bindgen target/wasm32-unknown-unknown/release/sakiot_dsp.wasm --out-dir pkg --target web",
+		"browser:build-worklet": "rolldown web/sakiot-dsp-worklet.js --file pkg/sakiot-dsp-worklet.bundle.js --format es",
+		"browser:measure": "npm run wasm:build && npm run browser:build-worklet && node browser/run.mjs"
+	},
+	"devDependencies": {
+		"playwright": "1.62.0",
+		"rolldown": "1.0.0-rc.11",
+		"tone": "15.1.22"
+	}
+}

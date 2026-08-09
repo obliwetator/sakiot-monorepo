@@ -1,32 +1,22 @@
 /**
- * Effects admitted here must have the same filter shape and parameter units in
- * the live Tone graph and the FFmpeg composition graph. A similarly named
- * Tone/FFmpeg effect is not enough: algorithmically different implementations
- * (for example Tone PitchShift and FFmpeg rubberband) do not belong here.
- *
- * Keep the FFmpeg side in web-server/src/clip_editor.rs in sync. Its tests
- * assert the concrete filter parameters documented below.
+ * Parameters shared by the canonical DSP and the emergency native Web Audio
+ * fallback. Normal preview and server rendering both use sakiot-DSP; this
+ * graph is only used if WASM initialization fails.
  */
 export const PARITY_APPROVED_EQ = {
 	bass: {
 		frequencyHz: 250,
-		toneType: "lowshelf",
-		ffmpegFilter: "bass",
-		ffmpegWidthType: "slope",
+		webAudioType: "lowshelf",
 		width: 1,
 	},
 	mid: {
 		frequencyHz: 1_000,
-		toneType: "peaking",
-		ffmpegFilter: "equalizer",
-		ffmpegWidthType: "q",
+		webAudioType: "peaking",
 		width: 1,
 	},
 	treble: {
 		frequencyHz: 3_000,
-		toneType: "highshelf",
-		ffmpegFilter: "treble",
-		ffmpegWidthType: "slope",
+		webAudioType: "highshelf",
 		width: 1,
 	},
 } as const;

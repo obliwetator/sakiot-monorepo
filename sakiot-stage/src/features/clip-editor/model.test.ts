@@ -273,6 +273,27 @@ describe("effectiveRate", () => {
 	});
 });
 
+describe("effect tails", () => {
+	test("adds a fixed post-content extent that speed does not scale", () => {
+		const a = seg("a", 0, 0, 4);
+		a.effects.rate = 2;
+		a.effects.tailSeconds = 2;
+		expect(segmentDuration(a)).toBe(4);
+	});
+
+	test("resizing a tail carries a snapped selected follower", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = resizeSelectedSegments(
+			editWith(a, b),
+			["a", "b"],
+			(_id, effects) => ({ ...effects, tailSeconds: 2 }),
+		);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(6);
+		expect(next.segments[1]?.timelineStart).toBe(6);
+	});
+});
+
 describe("setSegmentPitch", () => {
 	test("pitch up preserves the segment and neighbour positions", () => {
 		const a = seg("a", 0, 0, 4);
@@ -436,6 +457,18 @@ describe("splitSegment", () => {
 		expect(right.timelineStart).toBe(4);
 		expect(segmentDuration(right)).toBe(6);
 	});
+
+	test("keeps one configured tail on the final timeline piece", () => {
+		const a = seg("a", 0, 0, 10);
+		a.effects.tailSeconds = 2;
+		const next = splitSegment(editWith(a), "a", 4);
+		const left = next.segments[0] as TimelineSegment;
+		const right = next.segments[1] as TimelineSegment;
+		expect(left.effects.tailSeconds).toBe(0);
+		expect(segmentDuration(left)).toBe(4);
+		expect(right.effects.tailSeconds).toBe(2);
+		expect(segmentEnd(right)).toBe(12);
+	});
 });
 
 describe("sourcePositionAt", () => {
@@ -455,6 +488,16 @@ describe("sourcePositionAt", () => {
 		const a = seg("a", 0, 2, 10);
 		a.sourceIn = 4;
 		expect(sourcePositionAt(a, -5)).toBe(4);
+	});
+
+	test("clamps to the source boundary throughout the effect tail", () => {
+		const forward = seg("forward", 0, 0, 4);
+		forward.effects.tailSeconds = 2;
+		expect(sourcePositionAt(forward, 5)).toBe(4);
+		const reverse = seg("reverse", 0, 0, 4);
+		reverse.effects.reverse = true;
+		reverse.effects.tailSeconds = 2;
+		expect(sourcePositionAt(reverse, 5)).toBe(0);
 	});
 });
 

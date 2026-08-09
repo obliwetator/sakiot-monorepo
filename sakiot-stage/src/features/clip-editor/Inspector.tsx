@@ -1,15 +1,23 @@
 import CallSplitIcon from "@mui/icons-material/CallSplit";
 import ContentCutIcon from "@mui/icons-material/ContentCut";
 import DeleteIcon from "@mui/icons-material/Delete";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MergeIcon from "@mui/icons-material/Merge";
 import ReplayIcon from "@mui/icons-material/Replay";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
 import MuiButton, { type ButtonProps } from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import type { ReactNode } from "react";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	type InspectorFeatureId,
@@ -102,16 +110,31 @@ function SegmentInspectorContent(props: {
 			),
 		}));
 	};
+	const commitEffects = (
+		feature: InspectorFeatureId,
+		patch: Partial<SegmentEffects>,
+	) => {
+		if (isInspectorFeatureDisabled(feature, segments.length)) return;
+		editor.apply((edit) => ({
+			...edit,
+			segments: edit.segments.map((s) =>
+				ids.includes(s.id) ? { ...s, effects: { ...s.effects, ...patch } } : s,
+			),
+		}));
+	};
 
 	// Speed resizes the boxes; the resize runs over the selected group so
 	// snapped members move together while others behave normally. Pitch is a
 	// duration-preserving effect and goes through patchEffects instead.
-	const patchResizingEffect = (feature: InspectorFeatureId, value: number) => {
+	const patchResizingEffect = (
+		feature: InspectorFeatureId,
+		patch: Partial<SegmentEffects>,
+	) => {
 		if (isInspectorFeatureDisabled(feature, segments.length)) return;
 		editor.preview((edit) =>
 			resizeSelectedSegments(edit, ids, (_id, effects) => ({
 				...effects,
-				rate: value,
+				...patch,
 			})),
 		);
 	};
@@ -198,7 +221,7 @@ function SegmentInspectorContent(props: {
 				max={2}
 				step={0.05}
 				format={(value) => `${value.toFixed(2)}×`}
-				onChange={(value) => patchResizingEffect("speed", value)}
+				onChange={(value) => patchResizingEffect("speed", { rate: value })}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider
@@ -237,6 +260,381 @@ function SegmentInspectorContent(props: {
 				onChange={(value) => patchEffects("treble", { trebleDb: value })}
 				onCommitted={finishSlider}
 			/>
+
+			<EffectGroup
+				title="Distortion"
+				active={segment.effects.distortionWet > 0}
+			>
+				<EffectSwitch
+					feature="distortion"
+					selectionCount={segments.length}
+					checked={segment.effects.distortionWet > 0}
+					label="Enabled"
+					onChange={(enabled) =>
+						commitEffects("distortion", {
+							distortionWet: enabled
+								? Math.max(0.5, segment.effects.distortionWet)
+								: 0,
+						})
+					}
+				/>
+				<EffectSlider
+					feature="distortion"
+					selectionCount={segments.length}
+					label="Amount"
+					value={segment.effects.distortionAmount}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) =>
+						patchEffects("distortion", { distortionAmount: value })
+					}
+					onCommitted={finishSlider}
+					disabled={segment.effects.distortionWet === 0}
+				/>
+				<EffectSlider
+					feature="distortion"
+					selectionCount={segments.length}
+					label="Wet"
+					value={segment.effects.distortionWet}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) =>
+						patchEffects("distortion", { distortionWet: value })
+					}
+					onCommitted={finishSlider}
+					disabled={segment.effects.distortionWet === 0}
+				/>
+			</EffectGroup>
+
+			<EffectGroup title="Feedback delay" active={segment.effects.delayWet > 0}>
+				<EffectSwitch
+					feature="delay"
+					selectionCount={segments.length}
+					checked={segment.effects.delayWet > 0}
+					label="Enabled"
+					onChange={(enabled) =>
+						commitEffects("delay", {
+							delayWet: enabled ? Math.max(0.5, segment.effects.delayWet) : 0,
+						})
+					}
+				/>
+				<EffectSlider
+					feature="delay"
+					selectionCount={segments.length}
+					label="Time"
+					value={segment.effects.delaySeconds}
+					min={0}
+					max={5}
+					step={0.01}
+					format={formatSeconds}
+					onChange={(value) => patchEffects("delay", { delaySeconds: value })}
+					onCommitted={finishSlider}
+					disabled={segment.effects.delayWet === 0}
+				/>
+				<EffectSlider
+					feature="delay"
+					selectionCount={segments.length}
+					label="Feedback"
+					value={segment.effects.delayFeedback}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) => patchEffects("delay", { delayFeedback: value })}
+					onCommitted={finishSlider}
+					disabled={segment.effects.delayWet === 0}
+				/>
+				<EffectSlider
+					feature="delay"
+					selectionCount={segments.length}
+					label="Wet"
+					value={segment.effects.delayWet}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) => patchEffects("delay", { delayWet: value })}
+					onCommitted={finishSlider}
+					disabled={segment.effects.delayWet === 0}
+				/>
+			</EffectGroup>
+
+			<EffectGroup
+				title="Compressor"
+				active={segment.effects.compressorEnabled}
+			>
+				<EffectSwitch
+					feature="compressor"
+					selectionCount={segments.length}
+					checked={segment.effects.compressorEnabled}
+					label="Enabled"
+					onChange={(compressorEnabled) =>
+						commitEffects("compressor", { compressorEnabled })
+					}
+				/>
+				<EffectSlider
+					feature="compressor"
+					selectionCount={segments.length}
+					label="Threshold"
+					value={segment.effects.compressorThresholdDb}
+					min={-100}
+					max={0}
+					step={1}
+					format={formatDb}
+					onChange={(value) =>
+						patchEffects("compressor", { compressorThresholdDb: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.compressorEnabled}
+				/>
+				<EffectSlider
+					feature="compressor"
+					selectionCount={segments.length}
+					label="Knee"
+					value={segment.effects.compressorKneeDb}
+					min={0}
+					max={40}
+					step={1}
+					format={formatDb}
+					onChange={(value) =>
+						patchEffects("compressor", { compressorKneeDb: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.compressorEnabled}
+				/>
+				<EffectSlider
+					feature="compressor"
+					selectionCount={segments.length}
+					label="Ratio"
+					value={segment.effects.compressorRatio}
+					min={1}
+					max={20}
+					step={0.5}
+					format={(value) => `${value.toFixed(1)}:1`}
+					onChange={(value) =>
+						patchEffects("compressor", { compressorRatio: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.compressorEnabled}
+				/>
+				<EffectSlider
+					feature="compressor"
+					selectionCount={segments.length}
+					label="Attack"
+					value={segment.effects.compressorAttackSeconds}
+					min={0}
+					max={1}
+					step={0.001}
+					format={formatMilliseconds}
+					onChange={(value) =>
+						patchEffects("compressor", { compressorAttackSeconds: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.compressorEnabled}
+				/>
+				<EffectSlider
+					feature="compressor"
+					selectionCount={segments.length}
+					label="Release"
+					value={segment.effects.compressorReleaseSeconds}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatMilliseconds}
+					onChange={(value) =>
+						patchEffects("compressor", { compressorReleaseSeconds: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.compressorEnabled}
+				/>
+			</EffectGroup>
+
+			<EffectGroup title="Chorus" active={segment.effects.chorusEnabled}>
+				<EffectSwitch
+					feature="chorus"
+					selectionCount={segments.length}
+					checked={segment.effects.chorusEnabled}
+					label="Enabled"
+					onChange={(chorusEnabled) =>
+						commitEffects("chorus", { chorusEnabled })
+					}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Frequency"
+					value={segment.effects.chorusFrequencyHz}
+					min={0}
+					max={20}
+					step={0.1}
+					format={(value) => `${value.toFixed(1)} Hz`}
+					onChange={(value) =>
+						patchEffects("chorus", { chorusFrequencyHz: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Delay"
+					value={segment.effects.chorusDelayMs}
+					min={0}
+					max={100}
+					step={0.5}
+					format={(value) => `${value.toFixed(1)} ms`}
+					onChange={(value) => patchEffects("chorus", { chorusDelayMs: value })}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Depth"
+					value={segment.effects.chorusDepth}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) => patchEffects("chorus", { chorusDepth: value })}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Stereo spread"
+					value={segment.effects.chorusSpreadDegrees}
+					min={0}
+					max={360}
+					step={5}
+					format={(value) => `${value.toFixed(0)}°`}
+					onChange={(value) =>
+						patchEffects("chorus", { chorusSpreadDegrees: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Feedback"
+					value={segment.effects.chorusFeedback}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) =>
+						patchEffects("chorus", { chorusFeedback: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+				<EffectSlider
+					feature="chorus"
+					selectionCount={segments.length}
+					label="Wet"
+					value={segment.effects.chorusWet}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) => patchEffects("chorus", { chorusWet: value })}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.chorusEnabled}
+				/>
+			</EffectGroup>
+
+			<EffectGroup title="Reverb" active={segment.effects.reverbEnabled}>
+				<EffectSwitch
+					feature="reverb"
+					selectionCount={segments.length}
+					checked={segment.effects.reverbEnabled}
+					label="Enabled"
+					onChange={(reverbEnabled) =>
+						commitEffects("reverb", { reverbEnabled })
+					}
+				/>
+				<EffectSlider
+					feature="reverb"
+					selectionCount={segments.length}
+					label="Decay"
+					value={segment.effects.reverbDecaySeconds}
+					min={0.001}
+					max={30}
+					step={0.01}
+					format={formatSeconds}
+					onChange={(value) =>
+						patchEffects("reverb", { reverbDecaySeconds: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.reverbEnabled}
+				/>
+				<EffectSlider
+					feature="reverb"
+					selectionCount={segments.length}
+					label="Pre-delay"
+					value={segment.effects.reverbPreDelaySeconds}
+					min={0}
+					max={5}
+					step={0.01}
+					format={formatSeconds}
+					onChange={(value) =>
+						patchEffects("reverb", { reverbPreDelaySeconds: value })
+					}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.reverbEnabled}
+				/>
+				<EffectSlider
+					feature="reverb"
+					selectionCount={segments.length}
+					label="Wet"
+					value={segment.effects.reverbWet}
+					min={0}
+					max={1}
+					step={0.01}
+					format={formatPercent}
+					onChange={(value) => patchEffects("reverb", { reverbWet: value })}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.reverbEnabled}
+				/>
+				<EffectNumberField
+					feature="reverb"
+					selectionCount={segments.length}
+					label="IR seed"
+					value={segment.effects.reverbSeed}
+					min={0}
+					max={0xffff_ffff}
+					onChange={(value) => patchEffects("reverb", { reverbSeed: value })}
+					onCommitted={finishSlider}
+					disabled={!segment.effects.reverbEnabled}
+				/>
+			</EffectGroup>
+
+			<EffectGroup title="Effect tail" active={segment.effects.tailSeconds > 0}>
+				<Typography variant="caption" color="text.secondary" display="block">
+					Silence processed after the source ends so delay, reverb, and feedback
+					can ring out in playback and exports.
+				</Typography>
+				<EffectSlider
+					feature="tail"
+					selectionCount={segments.length}
+					label="Duration"
+					value={segment.effects.tailSeconds}
+					min={0}
+					max={30}
+					step={0.1}
+					format={formatSeconds}
+					onChange={(value) =>
+						patchResizingEffect("tail", { tailSeconds: value })
+					}
+					onCommitted={finishSlider}
+				/>
+			</EffectGroup>
 
 			<Divider sx={{ my: 2 }} />
 
@@ -340,6 +738,119 @@ function EffectSlider(props: {
 			</Box>
 		</Tooltip>
 	);
+}
+
+function EffectGroup(props: {
+	title: string;
+	active: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<Accordion
+			variant="outlined"
+			disableGutters
+			defaultExpanded={props.active}
+			sx={{ mt: 1, "&:before": { display: "none" } }}
+		>
+			<AccordionSummary expandIcon={<ExpandMoreIcon />}>
+				<Stack
+					direction="row"
+					alignItems="baseline"
+					justifyContent="space-between"
+					sx={{ width: "100%", pr: 1 }}
+				>
+					<Typography variant="body2">{props.title}</Typography>
+					<Typography
+						variant="caption"
+						color={props.active ? "secondary.main" : "text.disabled"}
+					>
+						{props.active ? "On" : "Off"}
+					</Typography>
+				</Stack>
+			</AccordionSummary>
+			<AccordionDetails sx={{ pt: 0 }}>{props.children}</AccordionDetails>
+		</Accordion>
+	);
+}
+
+function EffectSwitch(props: {
+	feature: InspectorFeatureId;
+	selectionCount: number;
+	checked: boolean;
+	label: string;
+	onChange: (checked: boolean) => void;
+}) {
+	const gated = isInspectorFeatureDisabled(props.feature, props.selectionCount);
+	return (
+		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
+			<FormControlLabel
+				control={
+					<Switch
+						size="small"
+						checked={props.checked}
+						disabled={gated}
+						onChange={(_event, checked) => props.onChange(checked)}
+					/>
+				}
+				label={<Typography variant="caption">{props.label}</Typography>}
+			/>
+		</Tooltip>
+	);
+}
+
+function EffectNumberField(props: {
+	feature: InspectorFeatureId;
+	selectionCount: number;
+	label: string;
+	value: number;
+	min: number;
+	max: number;
+	onChange: (value: number) => void;
+	onCommitted: () => void;
+	disabled?: boolean;
+}) {
+	const gated = isInspectorFeatureDisabled(props.feature, props.selectionCount);
+	const disabled = props.disabled || gated;
+	return (
+		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
+			<TextField
+				size="small"
+				fullWidth
+				type="number"
+				label={props.label}
+				value={props.value}
+				disabled={disabled}
+				onChange={(event) => {
+					const parsed = Number(event.target.value);
+					if (!Number.isFinite(parsed)) return;
+					props.onChange(
+						Math.min(props.max, Math.max(props.min, Math.round(parsed))),
+					);
+				}}
+				onBlur={props.onCommitted}
+				slotProps={{
+					htmlInput: { min: props.min, max: props.max, step: 1 },
+				}}
+				sx={{ mt: 1 }}
+			/>
+		</Tooltip>
+	);
+}
+
+function formatPercent(value: number): string {
+	return `${Math.round(value * 100)}%`;
+}
+
+function formatDb(value: number): string {
+	return `${value.toFixed(1)} dB`;
+}
+
+function formatSeconds(value: number): string {
+	return `${value.toFixed(value < 0.1 ? 3 : 2)} s`;
+}
+
+function formatMilliseconds(value: number): string {
+	return `${Math.round(value * 1_000)} ms`;
 }
 
 function InspectorActionButton(

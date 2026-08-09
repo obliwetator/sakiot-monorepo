@@ -1,7 +1,10 @@
+import { fileURLToPath } from "node:url";
 import babel from "@rolldown/plugin-babel";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig, loadEnv, type Plugin } from "vite";
+
+const monorepoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const bundleBuiltAt = new Date().toISOString();
 const releaseTag = process.env.SAKIOT_RELEASE_TAG ?? "development";
@@ -65,6 +68,10 @@ export default defineConfig(({ command, mode }) => {
 		],
 		server: {
 			port: 8081,
+			fs: {
+				// The generated shared-DSP package is a sibling of sakiot-stage.
+				allow: [monorepoRoot],
+			},
 			allowedHosts: [
 				"debug.patrykstyla.com",
 				"staging.patrykstyla.com",

@@ -1,28 +1,17 @@
-import {
-	connect as connectTone,
-	Filter,
-	PitchShift,
-	Context as ToneContext,
-	Volume,
-} from "tone";
 import { PARITY_APPROVED_EQ } from "./effectParity";
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
 import {
 	editDuration,
 	effectiveRate,
+	segmentContentDuration,
 	segmentDuration,
 	sourcePositionAt,
 } from "./model";
-
-/**
- * Tone shifts the stream after playbackRate has already repitched it. Remove
- * that rate-induced pitch first, then apply the user's pitch in semitones.
- */
-export function pitchShiftSemitones(effects: SegmentEffects): number {
-	return (
-		effects.pitchCents / 100 - 12 * Math.log2(Math.max(0.01, effects.rate))
-	);
-}
+import {
+	renderSharedSegment,
+	sharedDspSettled,
+	warmSharedDsp,
+} from "./sharedDsp";
 
 /**
  * Source-buffer window a segment must play to fill the given timeline range.
@@ -43,9 +32,11 @@ export function segmentSourceWindow(
 	overlapEnd: number,
 ): { offset: number; duration: number } {
 	const rate = effectiveRate(segment.effects);
+	const contentEnd = segment.timelineStart + segmentContentDuration(segment);
 	return {
 		offset: sourcePositionAt(segment, overlapStart),
-		duration: (overlapEnd - overlapStart) * rate,
+		duration:
+			Math.max(0, Math.min(overlapEnd, contentEnd) - overlapStart) * rate,
 	};
 }
 
@@ -56,101 +47,89 @@ interface SegmentAudioGraph {
 }
 
 interface EditorAudioGraph {
-	createSegment(effects: SegmentEffects): SegmentAudioGraph;
+	createSegment(
+		effects: SegmentEffects,
+		preprocessed?: boolean,
+	): SegmentAudioGraph;
 	setMasterVolume(db: number): void;
 	dispose(): void;
 }
 
 export type EditorAudioGraphFactory = (ctx: AudioContext) => EditorAudioGraph;
 
-class ToneEditorAudioGraph implements EditorAudioGraph {
-	private readonly context: ToneContext;
-	private readonly master: Volume;
+class NativeEditorAudioGraph implements EditorAudioGraph {
+	private readonly master: GainNode;
 
 	constructor(ctx: AudioContext) {
-		this.context = new ToneContext({ context: ctx, lookAhead: 0 });
-		this.master = new Volume({ context: this.context, volume: 0 });
+		this.master = ctx.createGain();
 		this.master.connect(ctx.destination);
 	}
 
-	createSegment(effects: SegmentEffects): SegmentAudioGraph {
-		const pitchSemitones = pitchShiftSemitones(effects);
-		const pitch =
-			Math.abs(pitchSemitones) > 0.000_001
-				? new PitchShift({
-						context: this.context,
-						pitch: pitchSemitones,
-						windowSize: 0.05,
-						wet: 1,
-					})
-				: null;
-		const volume = new Volume({
-			context: this.context,
-			volume: effects.volumeDb,
-		});
-		const bass = new Filter({
-			context: this.context,
-			frequency: PARITY_APPROVED_EQ.bass.frequencyHz,
-			gain: effects.bassDb,
-			rolloff: -12,
-			type: PARITY_APPROVED_EQ.bass.toneType,
-		});
-		const mid = new Filter({
-			context: this.context,
-			frequency: PARITY_APPROVED_EQ.mid.frequencyHz,
-			gain: effects.midDb,
-			Q: PARITY_APPROVED_EQ.mid.width,
-			rolloff: -12,
-			type: PARITY_APPROVED_EQ.mid.toneType,
-		});
-		const treble = new Filter({
-			context: this.context,
-			frequency: PARITY_APPROVED_EQ.treble.frequencyHz,
-			gain: effects.trebleDb,
-			rolloff: -12,
-			type: PARITY_APPROVED_EQ.treble.toneType,
-		});
-		volume.chain(bass, mid, treble, this.master);
+	createSegment(
+		effects: SegmentEffects,
+		preprocessed = false,
+	): SegmentAudioGraph {
+		if (preprocessed) {
+			return {
+				connectSource: (source) => source.connect(this.master),
+				setEffects: () => {},
+				dispose: () => {},
+			};
+		}
+		const context = this.master.context;
+		const volume = context.createGain();
+		const bass = context.createBiquadFilter();
+		const mid = context.createBiquadFilter();
+		const treble = context.createBiquadFilter();
+		bass.type = PARITY_APPROVED_EQ.bass.webAudioType;
+		bass.frequency.value = PARITY_APPROVED_EQ.bass.frequencyHz;
+		mid.type = PARITY_APPROVED_EQ.mid.webAudioType;
+		mid.frequency.value = PARITY_APPROVED_EQ.mid.frequencyHz;
+		mid.Q.value = PARITY_APPROVED_EQ.mid.width;
+		treble.type = PARITY_APPROVED_EQ.treble.webAudioType;
+		treble.frequency.value = PARITY_APPROVED_EQ.treble.frequencyHz;
+		volume.connect(bass);
+		bass.connect(mid);
+		mid.connect(treble);
+		treble.connect(this.master);
+
+		const update = (next: SegmentEffects) => {
+			volume.gain.value = dbToGain(next.volumeDb);
+			bass.gain.value = next.bassDb;
+			mid.gain.value = next.midDb;
+			treble.gain.value = next.trebleDb;
+		};
+		update(effects);
 
 		return {
-			connectSource(source) {
-				if (pitch) {
-					connectTone(source, pitch);
-					pitch.connect(volume);
-				} else {
-					connectTone(source, volume);
-				}
-			},
-			setEffects(next) {
-				if (pitch) pitch.pitch = pitchShiftSemitones(next);
-				volume.volume.value = next.volumeDb;
-				bass.gain.value = next.bassDb;
-				mid.gain.value = next.midDb;
-				treble.gain.value = next.trebleDb;
-			},
+			connectSource: (source) => source.connect(volume),
+			setEffects: update,
 			dispose() {
-				pitch?.dispose();
-				volume.dispose();
-				bass.dispose();
-				mid.dispose();
-				treble.dispose();
+				volume.disconnect();
+				bass.disconnect();
+				mid.disconnect();
+				treble.disconnect();
 			},
 		};
 	}
 
 	setMasterVolume(db: number) {
-		this.master.volume.value = db;
+		this.master.gain.value = dbToGain(db);
 	}
 
 	dispose() {
-		this.master.dispose();
-		this.context.dispose();
+		this.master.disconnect();
 	}
+}
+
+function dbToGain(db: number): number {
+	return 10 ** (db / 20);
 }
 
 interface ActiveSource {
 	node: AudioBufferSourceNode;
 	graph: SegmentAudioGraph;
+	preprocessed: boolean;
 }
 
 /**
@@ -163,6 +142,8 @@ export class ClipEditorEngine {
 	private audioGraph: EditorAudioGraph | null = null;
 	private active = new Map<string, ActiveSource>();
 	private endTimer: number | null = null;
+	private pendingPlayback = false;
+	private playbackGeneration = 0;
 	private startedAtMs = 0;
 	private playheadSec = 0;
 	private lastPlay: {
@@ -173,15 +154,20 @@ export class ClipEditorEngine {
 
 	constructor(
 		private readonly createAudioGraph: EditorAudioGraphFactory = (ctx) =>
-			new ToneEditorAudioGraph(ctx),
-	) {}
+			new NativeEditorAudioGraph(ctx),
+	) {
+		void warmSharedDsp();
+	}
 
 	get isPlaying(): boolean {
-		return this.active.size > 0 || this.endTimer !== null;
+		return (
+			this.pendingPlayback || this.active.size > 0 || this.endTimer !== null
+		);
 	}
 
 	get positionSec(): number {
 		if (!this.isPlaying) return this.playheadSec;
+		if (this.pendingPlayback) return this.playheadSec;
 		return this.playheadSec + (performance.now() - this.startedAtMs) / 1000;
 	}
 
@@ -194,12 +180,36 @@ export class ClipEditorEngine {
 		this.cancel();
 		this.lastPlay = { edit, buffers, loop };
 		this.playheadSec = fromSec;
-		this.startedAtMs = performance.now();
 		const ctx = this.ensureContext();
-		this.audioGraph?.setMasterVolume(edit.masterVolumeDb);
-		const now = ctx.currentTime;
+		if (!sharedDspSettled()) {
+			this.pendingPlayback = true;
+			const generation = this.playbackGeneration;
+			void warmSharedDsp().then(() => {
+				if (generation !== this.playbackGeneration || !this.pendingPlayback)
+					return;
+				this.pendingPlayback = false;
+				this.schedulePlayback(ctx, edit, fromSec, buffers, loop);
+			});
+			return;
+		}
+		this.schedulePlayback(ctx, edit, fromSec, buffers, loop);
+	}
+
+	private schedulePlayback(
+		ctx: AudioContext,
+		edit: ClipEdit,
+		fromSec: number,
+		buffers: ReadonlyMap<string, AudioBuffer>,
+		loop: boolean,
+	) {
 		const totalDuration = editDuration(edit);
-		let lastEndMs = 0;
+		const prepared: Array<{
+			segment: TimelineSegment;
+			buffer: AudioBuffer;
+			rendered: AudioBuffer | null;
+			overlapStart: number;
+			overlapEnd: number;
+		}> = [];
 		for (const segment of edit.segments) {
 			const buffer = buffers.get(segment.sourceId);
 			if (!buffer) continue;
@@ -209,13 +219,41 @@ export class ClipEditorEngine {
 			const overlapStart = Math.max(fromSec, segment.timelineStart);
 			const overlapEnd = Math.min(fromSec + totalDuration, segmentEndSec);
 			if (overlapEnd <= overlapStart) continue;
+			prepared.push({
+				segment,
+				buffer,
+				rendered: renderSharedSegment(ctx, buffer, segment),
+				overlapStart,
+				overlapEnd,
+			});
+		}
+
+		// Rendering can be expensive. Establish the transport time only after all
+		// buffers are ready so every segment is scheduled from the same origin.
+		this.startedAtMs = performance.now();
+		this.audioGraph?.setMasterVolume(edit.masterVolumeDb);
+		const now = ctx.currentTime;
+		let lastEndMs = 0;
+		for (const {
+			segment,
+			buffer,
+			rendered,
+			overlapStart,
+			overlapEnd,
+		} of prepared) {
+			const preprocessed = rendered !== null;
 			const node = ctx.createBufferSource();
-			node.buffer = buffer;
+			node.buffer = rendered ?? buffer;
 			node.detune.value = 0;
-			node.playbackRate.value = segment.effects.reverse
-				? -segment.effects.rate
-				: segment.effects.rate;
-			const graph = this.audioGraph?.createSegment(segment.effects);
+			node.playbackRate.value = preprocessed
+				? 1
+				: segment.effects.reverse
+					? -segment.effects.rate
+					: segment.effects.rate;
+			const graph = this.audioGraph?.createSegment(
+				segment.effects,
+				preprocessed,
+			);
 			if (!graph) continue;
 			graph.connectSource(node);
 			const sourceWindow = segmentSourceWindow(
@@ -226,10 +264,12 @@ export class ClipEditorEngine {
 			);
 			node.start(
 				now + Math.max(0, overlapStart - fromSec),
-				sourceWindow.offset,
-				sourceWindow.duration,
+				preprocessed
+					? overlapStart - segment.timelineStart
+					: sourceWindow.offset,
+				preprocessed ? overlapEnd - overlapStart : sourceWindow.duration,
 			);
-			this.active.set(segment.id, { node, graph });
+			this.active.set(segment.id, { node, graph, preprocessed });
 			lastEndMs = Math.max(
 				lastEndMs,
 				performance.now() + (overlapEnd - fromSec) * 1000,
@@ -264,6 +304,8 @@ export class ClipEditorEngine {
 	}
 
 	cancel() {
+		this.playbackGeneration += 1;
+		this.pendingPlayback = false;
 		if (this.endTimer !== null) {
 			clearTimeout(this.endTimer);
 			this.endTimer = null;
@@ -295,6 +337,7 @@ export class ClipEditorEngine {
 	applySegmentEffects(id: string, effects: SegmentEffects) {
 		const active = this.active.get(id);
 		if (!active) return;
+		if (active.preprocessed) return;
 		active.node.detune.value = 0;
 		active.node.playbackRate.value = effects.reverse
 			? -effects.rate
@@ -310,6 +353,7 @@ export class ClipEditorEngine {
 		this.cancel();
 		this.audioGraph?.dispose();
 		this.audioGraph = null;
+		if (this.ctx?.state !== "closed") void this.ctx?.close();
 		this.ctx = null;
 	}
 

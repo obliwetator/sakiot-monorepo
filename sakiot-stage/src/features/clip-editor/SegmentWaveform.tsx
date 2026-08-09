@@ -22,7 +22,9 @@ export function waveformWindowFractions(
  * the segment's [sourceIn, sourceOut] window. The box width already encodes
  * the rate effect, so the peaks stretch to fill it at any playback speed.
  * Reversed segments mirror the window so the drawing matches the backwards
- * playback. Renders nothing while peaks are unavailable.
+ * playback. Effect-processed peaks already cover the complete rendered segment
+ * and must not be cropped or reversed a second time. Renders nothing while
+ * peaks are unavailable.
  */
 export function SegmentWaveform(props: {
 	peaks: WaveformEnvelope;
@@ -31,17 +33,20 @@ export function SegmentWaveform(props: {
 	durationSec: number;
 	selected: boolean;
 	reverse: boolean;
+	processed: boolean;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const { peaks, selected } = props;
 	const fractions = useMemo(
 		() =>
-			waveformWindowFractions(
-				props.sourceIn,
-				props.sourceOut,
-				props.durationSec,
-			),
-		[props.durationSec, props.sourceIn, props.sourceOut],
+			props.processed
+				? { startFraction: 0, endFraction: 1 }
+				: waveformWindowFractions(
+						props.sourceIn,
+						props.sourceOut,
+						props.durationSec,
+					),
+		[props.durationSec, props.processed, props.sourceIn, props.sourceOut],
 	);
 
 	useEffect(() => {
@@ -62,14 +67,14 @@ export function SegmentWaveform(props: {
 				strokeStyle: selected
 					? "rgba(255, 255, 255, 0.9)"
 					: "rgba(255, 255, 255, 0.45)",
-				reverse: props.reverse,
+				reverse: props.processed ? false : props.reverse,
 			});
 		};
 		draw();
 		const observer = new ResizeObserver(draw);
 		observer.observe(canvas);
 		return () => observer.disconnect();
-	}, [fractions, peaks, props.reverse, selected]);
+	}, [fractions, peaks, props.processed, props.reverse, selected]);
 
 	if (!fractions) return null;
 	return (

@@ -4,9 +4,34 @@ export interface SegmentEffects {
 	volumeDb: number;
 	pitchCents: number;
 	rate: number;
+	tailSeconds: number;
 	bassDb: number;
 	midDb: number;
 	trebleDb: number;
+	distortionAmount: number;
+	distortionWet: number;
+	delaySeconds: number;
+	delayFeedback: number;
+	delayWet: number;
+	compressorEnabled: boolean;
+	compressorThresholdDb: number;
+	compressorKneeDb: number;
+	compressorRatio: number;
+	compressorAttackSeconds: number;
+	compressorReleaseSeconds: number;
+	chorusEnabled: boolean;
+	chorusFrequencyHz: number;
+	chorusDelayMs: number;
+	chorusDepth: number;
+	chorusSpreadDegrees: number;
+	chorusFeedback: number;
+	chorusWet: number;
+	reverbEnabled: boolean;
+	reverbDecaySeconds: number;
+	reverbPreDelaySeconds: number;
+	reverbWet: number;
+	/** Deterministically selects the generated stereo impulse response. */
+	reverbSeed: number;
 	/** Plays the trimmed content backwards; the timeline extent is unchanged. */
 	reverse: boolean;
 }
@@ -42,9 +67,33 @@ export const DEFAULT_EFFECTS: SegmentEffects = {
 	volumeDb: 0,
 	pitchCents: 0,
 	rate: 1,
+	tailSeconds: 0,
 	bassDb: 0,
 	midDb: 0,
 	trebleDb: 0,
+	distortionAmount: 0.4,
+	distortionWet: 0,
+	delaySeconds: 0.25,
+	delayFeedback: 0.125,
+	delayWet: 0,
+	compressorEnabled: false,
+	compressorThresholdDb: -24,
+	compressorKneeDb: 30,
+	compressorRatio: 12,
+	compressorAttackSeconds: 0.003,
+	compressorReleaseSeconds: 0.25,
+	chorusEnabled: false,
+	chorusFrequencyHz: 1.5,
+	chorusDelayMs: 3.5,
+	chorusDepth: 0.7,
+	chorusSpreadDegrees: 180,
+	chorusFeedback: 0,
+	chorusWet: 0.5,
+	reverbEnabled: false,
+	reverbDecaySeconds: 1.5,
+	reverbPreDelaySeconds: 0.01,
+	reverbWet: 1,
+	reverbSeed: 0x5341_4b49,
 	reverse: false,
 };
 
@@ -95,13 +144,19 @@ export function effectiveRate(effects: SegmentEffects): number {
 }
 
 /**
- * Real-time duration of the segment on the timeline: the trimmed source
- * content played back at the selected speed. Pitch is duration-preserving.
+ * Real-time duration of audible source content before an effect tail.
  */
-export function segmentDuration(segment: TimelineSegment): number {
+export function segmentContentDuration(segment: TimelineSegment): number {
 	return (
 		Math.max(0, segment.sourceOut - segment.sourceIn) /
 		Math.max(0.01, effectiveRate(segment.effects))
+	);
+}
+
+/** Complete timeline extent: rate-adjusted source content plus fixed tail. */
+export function segmentDuration(segment: TimelineSegment): number {
+	return (
+		segmentContentDuration(segment) + Math.max(0, segment.effects.tailSeconds)
 	);
 }
 
@@ -118,7 +173,10 @@ export function sourcePositionAt(
 	segment: TimelineSegment,
 	timelineSec: number,
 ): number {
-	const elapsed = Math.max(0, timelineSec - segment.timelineStart);
+	const elapsed = Math.min(
+		segmentContentDuration(segment),
+		Math.max(0, timelineSec - segment.timelineStart),
+	);
 	return segment.effects.reverse
 		? segment.sourceOut - elapsed * effectiveRate(segment.effects)
 		: segment.sourceIn + elapsed * effectiveRate(segment.effects);
@@ -184,7 +242,7 @@ export function splitSegment(
 	const segment = edit.segments.find((s) => s.id === id);
 	if (!segment) return edit;
 	const start = segment.timelineStart;
-	const end = segmentEnd(segment);
+	const end = segment.timelineStart + segmentContentDuration(segment);
 	if (
 		atSec - start < MIN_SEGMENT_SECONDS ||
 		end - atSec < MIN_SEGMENT_SECONDS
@@ -195,9 +253,12 @@ export function splitSegment(
 	// A reversed segment plays its window backwards, so the left half covers
 	// the source range after the split point and the right half the range
 	// before it; the direction flag carries into both halves unchanged.
+	// The tail belongs only to the final timeline piece. Duplicating it on both
+	// halves would extend the edit and create two independent ring-outs.
+	const firstEffects = { ...segment.effects, tailSeconds: 0 };
 	const first: TimelineSegment = segment.effects.reverse
-		? { ...segment, sourceIn: splitSource }
-		: { ...segment, sourceOut: splitSource };
+		? { ...segment, sourceIn: splitSource, effects: firstEffects }
+		: { ...segment, sourceOut: splitSource, effects: firstEffects };
 	const second: TimelineSegment = segment.effects.reverse
 		? {
 				...segment,
@@ -373,9 +434,7 @@ export function setSegmentPitch(
 function resizeSegmentTo(edit: ClipEdit, id: string, oldEnd: number): ClipEdit {
 	const segment = edit.segments.find((s) => s.id === id);
 	if (!segment) return edit;
-	const content = segment.sourceOut - segment.sourceIn;
-	const newEnd =
-		segment.timelineStart + content / effectiveRate(segment.effects);
+	const newEnd = segmentEnd(segment);
 	if (newEnd <= oldEnd) return edit;
 	const followers = edit.segments
 		.filter(
@@ -429,9 +488,6 @@ export function resizeSelectedSegments(
 	const oldEnds = new Map(
 		selected.map((segment) => [segment.id, segmentEnd(segment)]),
 	);
-	const content = (segment: TimelineSegment) =>
-		segment.sourceOut - segment.sourceIn;
-
 	let next = edit;
 	for (const segment of selected) {
 		next = updateSegment(next, segment.id, {
@@ -454,8 +510,7 @@ export function resizeSelectedSegments(
 			const previous = group[i - 1];
 			const originalStart = current.timelineStart;
 			const previousOldEnd = oldEnds.get(previous.id) ?? 0;
-			const previousNewEnd =
-				previousStart + content(previous) / effectiveRate(previous.effects);
+			const previousNewEnd = previousStart + segmentDuration(previous);
 			const start =
 				Math.abs(originalStart - previousOldEnd) < SNAP_EPSILON
 					? previousNewEnd
@@ -480,10 +535,7 @@ export function resizeSelectedSegments(
 			if (start !== segment.timelineStart) {
 				next = updateSegment(next, segment.id, { timelineStart: start });
 			}
-			cursor = Math.max(
-				cursor,
-				start + content(segment) / effectiveRate(segment.effects),
-			);
+			cursor = Math.max(cursor, start + segmentDuration(segment));
 		}
 	}
 

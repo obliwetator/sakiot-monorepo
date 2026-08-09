@@ -51,6 +51,7 @@ export function useClipEditor() {
 	const segmentsRef = useRef(edit.segments);
 	const draggingRef = useRef(false);
 	const rafRef = useRef<number | null>(null);
+	const playbackRefreshRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		editRef.current = edit;
@@ -70,6 +71,9 @@ export function useClipEditor() {
 	useEffect(
 		() => () => {
 			if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+			if (playbackRefreshRef.current !== null) {
+				clearTimeout(playbackRefreshRef.current);
+			}
 			engineRef.current?.dispose();
 		},
 		// Engine is created once per mount via the useMemo guard.
@@ -227,13 +231,29 @@ export function useClipEditor() {
 		const segmentsChanged = segmentsRef.current !== edit.segments;
 		segmentsRef.current = edit.segments;
 		if (segmentsChanged && !draggingRef.current && engine.isPlaying) {
-			engine.play(
-				editRef.current,
-				positionRef.current,
-				buffersRef.current,
-				loopRef.current,
-			);
+			if (playbackRefreshRef.current !== null) {
+				clearTimeout(playbackRefreshRef.current);
+			}
+			// WASM renders complete segments. Coalesce rapid slider events so a drag
+			// produces one new render after the pointer settles instead of blocking
+			// the main thread for every intermediate value.
+			playbackRefreshRef.current = window.setTimeout(() => {
+				playbackRefreshRef.current = null;
+				if (!engine.isPlaying) return;
+				engine.play(
+					editRef.current,
+					positionRef.current,
+					buffersRef.current,
+					loopRef.current,
+				);
+			}, 120);
 		}
+		return () => {
+			if (playbackRefreshRef.current !== null) {
+				clearTimeout(playbackRefreshRef.current);
+				playbackRefreshRef.current = null;
+			}
+		};
 	}, [edit, engine]);
 
 	const select = useCallback((id: string | null) => {

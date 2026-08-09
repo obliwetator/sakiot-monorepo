@@ -35,6 +35,7 @@ import {
 import { SegmentWaveform } from "./SegmentWaveform";
 import type { UseClipEditorReturn } from "./useClipEditor";
 import { useClipWaveform } from "./useClipWaveform";
+import { useProcessedSegmentWaveform } from "./useProcessedSegmentWaveform";
 
 const TRACK_HEIGHT_PX = 72;
 const HANDLE_WIDTH_PX = 7;
@@ -89,6 +90,8 @@ interface SegmentDragState {
 	originOut: number;
 	originTrack: number;
 	originRate: number;
+	/** Fixed post-content duration processed through the effect chain. */
+	originTail: number;
 	/** The window plays backwards: edge trims eat the opposite source end. */
 	reverse: boolean;
 	maxSource: number;
@@ -298,7 +301,8 @@ function computeGhost(
 		}
 		const targetStart = snapToNeighbors(
 			snapTo(rawStart, positionSec),
-			primary?.duration ?? (drag.originOut - drag.originIn) / drag.originRate,
+			primary?.duration ??
+				(drag.originOut - drag.originIn) / drag.originRate + drag.originTail,
 			others,
 			"",
 			ghostTrack,
@@ -353,7 +357,9 @@ function computeGhost(
 			const ghostStart =
 				drag.originStart + (drag.originOut - ghostOut) / drag.originRate;
 			const originEnd =
-				drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
+				drag.originStart +
+				(drag.originOut - drag.originIn) / drag.originRate +
+				drag.originTail;
 			const clampedStart = Math.max(
 				ghostStart,
 				leftEdgeFloor(segments, drag.originTrack, drag.segmentId, originEnd),
@@ -394,7 +400,9 @@ function computeGhost(
 		// The box end stays fixed during a left-edge drag, so extending the
 		// start left is bounded by the nearest neighbour's end.
 		const originEnd =
-			drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
+			drag.originStart +
+			(drag.originOut - drag.originIn) / drag.originRate +
+			drag.originTail;
 		const clampedStart = Math.max(
 			ghostStart,
 			leftEdgeFloor(segments, drag.originTrack, drag.segmentId, originEnd),
@@ -423,7 +431,9 @@ function computeGhost(
 			),
 		);
 		const endSec =
-			drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
+			drag.originStart +
+			(drag.originOut - drag.originIn) / drag.originRate +
+			drag.originTail;
 		const snappedEnd = snapTo(
 			endSec - (rawGhostIn - drag.originIn) / drag.originRate,
 			positionSec,
@@ -446,7 +456,9 @@ function computeGhost(
 		const minGhostIn =
 			ceiling === null
 				? 0
-				: drag.originOut - (ceiling - drag.originStart) * drag.originRate;
+				: drag.originOut -
+					Math.max(0, ceiling - drag.originStart - drag.originTail) *
+						drag.originRate;
 		const clampedGhostIn = Math.max(ghostIn, minGhostIn);
 		return {
 			...drag,
@@ -461,7 +473,9 @@ function computeGhost(
 		Math.min(drag.maxSource, drag.originOut + dt * drag.originRate),
 	);
 	const endSec =
-		drag.originStart + (drag.originOut - drag.originIn) / drag.originRate;
+		drag.originStart +
+		(drag.originOut - drag.originIn) / drag.originRate +
+		drag.originTail;
 	const snappedEnd = snapTo(
 		endSec + (rawGhostOut - drag.originOut) / drag.originRate,
 		positionSec,
@@ -481,7 +495,9 @@ function computeGhost(
 	const maxGhostOut =
 		ceiling === null
 			? drag.maxSource
-			: drag.originIn + (ceiling - drag.originStart) * drag.originRate;
+			: drag.originIn +
+				Math.max(0, ceiling - drag.originStart - drag.originTail) *
+					drag.originRate;
 	const clampedGhostOut = Math.min(ghostOut, maxGhostOut);
 	return {
 		...drag,
@@ -511,7 +527,10 @@ function dragGhostGeometry(
 	// Right-edge drag: the box start stays fixed while the end edge moves.
 	return {
 		startSec: drag.originStart,
-		endSec: drag.originStart + (drag.ghostOut - drag.ghostIn) / drag.originRate,
+		endSec:
+			drag.originStart +
+			(drag.ghostOut - drag.ghostIn) / drag.originRate +
+			drag.originTail,
 	};
 }
 
@@ -1552,7 +1571,12 @@ function TrackSegment(props: {
 	onBeginDrag: (drag: SegmentDragState) => void;
 }) {
 	const { segment, editor } = props;
-	const peaks = useClipWaveform(props.guildId, segment.sourceId);
+	const sourcePeaks = useClipWaveform(props.guildId, segment.sourceId);
+	const waveform = useProcessedSegmentWaveform(
+		props.guildId,
+		segment,
+		sourcePeaks,
+	);
 	const durationSec = props.maxSource > 0 ? props.maxSource : segment.sourceOut;
 
 	const beginGesture = (
@@ -1600,6 +1624,7 @@ function TrackSegment(props: {
 			originOut: segment.sourceOut,
 			originTrack: segment.track,
 			originRate: effectiveRate(segment.effects),
+			originTail: segment.effects.tailSeconds,
 			reverse: segment.effects.reverse,
 			maxSource: props.maxSource,
 			maxTrack: props.maxTrack,
@@ -1649,12 +1674,13 @@ function TrackSegment(props: {
 			}}
 		>
 			<SegmentWaveform
-				peaks={peaks}
+				peaks={waveform.peaks}
 				sourceIn={segment.sourceIn}
 				sourceOut={segment.sourceOut}
 				durationSec={durationSec}
 				selected={props.selected}
 				reverse={segment.effects.reverse}
+				processed={waveform.processed}
 			/>
 			{props.copied && (
 				<Box
@@ -1770,6 +1796,7 @@ function MergedUnitBox(props: {
 			originOut: first.sourceOut,
 			originTrack: first.track,
 			originRate: effectiveRate(first.effects),
+			originTail: first.effects.tailSeconds,
 			reverse: first.effects.reverse,
 			maxSource: first.sourceOut,
 			maxTrack: props.maxTrack,

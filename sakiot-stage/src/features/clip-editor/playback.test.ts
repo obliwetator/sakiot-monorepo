@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { ClipEditorEngine, type EditorAudioGraphFactory } from "./engine";
 import { type ClipEdit, DEFAULT_EFFECTS, type TimelineSegment } from "./model";
+import { warmSharedDsp } from "./sharedDsp";
+
+beforeAll(async () => {
+	await warmSharedDsp();
+});
 
 Object.defineProperty(globalThis, "window", {
 	value: globalThis,

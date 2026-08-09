@@ -533,6 +533,121 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
 	schemas: {
+		AdvancedSegmentEffectsDto: {
+			/**
+			 * Format: float
+			 * @default 3.5
+			 */
+			chorus_delay_ms: number;
+			/**
+			 * Format: float
+			 * @default 0.699999988079071
+			 */
+			chorus_depth: number;
+			/** @default false */
+			chorus_enabled: boolean;
+			/**
+			 * Format: float
+			 * @default 0
+			 */
+			chorus_feedback: number;
+			/**
+			 * Format: float
+			 * @default 1.5
+			 */
+			chorus_frequency_hz: number;
+			/**
+			 * Format: float
+			 * @default 180
+			 */
+			chorus_spread_degrees: number;
+			/**
+			 * Format: float
+			 * @default 0.5
+			 */
+			chorus_wet: number;
+			/**
+			 * Format: float
+			 * @default 0.003000000026077032
+			 */
+			compressor_attack_seconds: number;
+			/** @default false */
+			compressor_enabled: boolean;
+			/**
+			 * Format: float
+			 * @default 30
+			 */
+			compressor_knee_db: number;
+			/**
+			 * Format: float
+			 * @default 12
+			 */
+			compressor_ratio: number;
+			/**
+			 * Format: float
+			 * @default 0.25
+			 */
+			compressor_release_seconds: number;
+			/**
+			 * Format: float
+			 * @default -24
+			 */
+			compressor_threshold_db: number;
+			/**
+			 * Format: float
+			 * @default 0.125
+			 */
+			delay_feedback: number;
+			/**
+			 * Format: float
+			 * @default 0.25
+			 */
+			delay_seconds: number;
+			/**
+			 * Format: float
+			 * @default 0
+			 */
+			delay_wet: number;
+			/**
+			 * Format: float
+			 * @default 0.4000000059604645
+			 */
+			distortion_amount: number;
+			/**
+			 * Format: float
+			 * @default 0
+			 */
+			distortion_wet: number;
+			/**
+			 * Format: float
+			 * @default 1.5
+			 */
+			reverb_decay_seconds: number;
+			/** @default false */
+			reverb_enabled: boolean;
+			/**
+			 * Format: float
+			 * @default 0.009999999776482582
+			 */
+			reverb_pre_delay_seconds: number;
+			/**
+			 * Format: int32
+			 * @default 1396788041
+			 */
+			reverb_seed: number;
+			/**
+			 * Format: float
+			 * @default 1
+			 */
+			reverb_wet: number;
+			/**
+			 * Format: float
+			 * @description Fixed silence appended after reverse/pitch/rate and processed through
+			 *     the shared effect chain, making effect ring-out part of the timeline.
+			 * @default 0
+			 */
+			tail_seconds: number;
+		};
 		ApiError: {
 			/** Format: int32 */
 			code: number;
@@ -715,6 +830,12 @@ export interface components {
 			permission: string;
 		};
 		SegmentEffectsDto: {
+			/**
+			 * @description Stateful and modulation effects added by the shared DSP integration.
+			 *     The entire group defaults to bypass-compatible DSP defaults for older
+			 *     saved compositions.
+			 */
+			advanced?: components["schemas"]["AdvancedSegmentEffectsDto"];
 			/** Format: float */
 			bass_db: number;
 			/**

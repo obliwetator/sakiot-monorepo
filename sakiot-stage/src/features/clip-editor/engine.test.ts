@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pitchShiftSemitones, segmentSourceWindow } from "./engine";
+import { segmentSourceWindow } from "./engine";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 
 function seg(rate: number, sourceIn = 0, sourceOut = 10, timelineStart = 0) {
@@ -92,22 +92,17 @@ describe("segmentSourceWindow", () => {
 		expect(offset).toBe(8);
 		expect(duration).toBe(6);
 	});
-});
 
-describe("pitchShiftSemitones", () => {
-	test("uses cents directly at normal speed", () => {
-		const effects = { ...DEFAULT_EFFECTS, pitchCents: 700 };
-		expect(pitchShiftSemitones(effects)).toBe(7);
-	});
-
-	test("compensates for playback-rate pitch before applying user pitch", () => {
-		const faster = { ...DEFAULT_EFFECTS, rate: 2 };
-		expect(pitchShiftSemitones(faster)).toBe(-12);
-		const slowerAndRaised = {
-			...DEFAULT_EFFECTS,
-			rate: 0.5,
-			pitchCents: 1200,
-		};
-		expect(pitchShiftSemitones(slowerAndRaised)).toBe(24);
+	test("the emergency fallback never reads source audio during a tail", () => {
+		const tailed = seg(1, 0, 10, 0);
+		tailed.effects.tailSeconds = 2;
+		expect(segmentSourceWindow(tailed, 0, 8, 12)).toEqual({
+			offset: 8,
+			duration: 2,
+		});
+		expect(segmentSourceWindow(tailed, 0, 10, 12)).toEqual({
+			offset: 10,
+			duration: 0,
+		});
 	});
 });

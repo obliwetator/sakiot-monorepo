@@ -2,6 +2,7 @@
 set -euo pipefail
 
 rust=false
+dsp=false
 api_contract=false
 frontend=false
 ops=false
@@ -29,6 +30,11 @@ while IFS= read -r path; do
       rust=true
       api_contract=true
       ;;
+    sakiot-DSP/*)
+      rust=true
+      dsp=true
+      frontend=true
+      ;;
     ops/sakiot-deploy/*)
       rust=true
       ops=true
@@ -55,12 +61,14 @@ done
 
 if [[ "${unknown}" == true ]]; then
   rust=true
+  dsp=true
   api_contract=true
   frontend=true
   ops=true
 fi
 
 printf 'rust=%s\n' "${rust}"
+printf 'dsp=%s\n' "${dsp}"
 printf 'api_contract=%s\n' "${api_contract}"
 printf 'frontend=%s\n' "${frontend}"
 printf 'ops=%s\n' "${ops}"

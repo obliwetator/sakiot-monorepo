@@ -84,6 +84,7 @@ use utoipa::{
         crate::clip_editor::ComposeClipBody,
         crate::clip_editor::ComposeClipStatus,
         crate::clip_editor::ComposeSegment,
+        crate::clip_editor::AdvancedSegmentEffectsDto,
         crate::clip_editor::SegmentEffectsDto,
         crate::clips::ClipInfo,
         crate::clips::CreateClipResponse,

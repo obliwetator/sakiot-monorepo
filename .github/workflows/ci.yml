@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
+      dsp: ${{ steps.scope.outputs.dsp }}
       api_contract: ${{ steps.scope.outputs.api_contract }}
       frontend: ${{ steps.scope.outputs.frontend }}
       ops: ${{ steps.scope.outputs.ops }}
@@ -47,6 +48,7 @@ jobs:
           select_all() {
             printf '%s\n' \
               'rust=true' \
+              'dsp=true' \
               'api_contract=true' \
               'frontend=true' \
               'ops=true' >>"${GITHUB_OUTPUT}"
@@ -170,6 +172,66 @@ jobs:
       - name: Doc tests
         run: cargo test --doc --workspace
 
+  dsp:
+    needs: scope
+    if: needs.scope.outputs.dsp == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sakiot-DSP
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-targets: false
+          cache-save-if: ${{ github.event_name != 'pull_request' }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sakiot-DSP/package-lock.json
+
+      - name: Read pinned wasm-bindgen CLI version
+        run: echo "WASM_BINDGEN_CLI_VERSION=$(tr -d '[:space:]' <wasm-bindgen-cli-version)" >>"${GITHUB_ENV}"
+
+      - name: Cache wasm-bindgen CLI
+        id: cache-wasm-bindgen
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/bin/wasm-bindgen-test-runner
+            ~/.cargo/bin/wasm2es6js
+          key: wasm-bindgen-cli-${{ runner.os }}-${{ env.WASM_BINDGEN_CLI_VERSION }}
+
+      - name: Install wasm-bindgen CLI
+        if: steps.cache-wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_CLI_VERSION}" --locked
+
+      - name: Install browser harness dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Test native DSP
+        run: cargo test --locked
+
+      - name: Build WASM and worklet
+        run: npm run wasm:build && npm run browser:build-worklet
+
+      - name: Verify native/WASM parity
+        run: node web/verify-wasm.mjs
+
+      - name: Check generated WASM artifacts
+        run: git diff --exit-code -- pkg
+
   api-contract:
     needs: scope
     if: needs.scope.outputs.api_contract == 'true'
@@ -238,6 +300,7 @@ jobs:
       - scope
       - rust-clippy
       - rust-test
+      - dsp
       - api-contract
       - ops-shims
       - frontend
@@ -248,11 +311,12 @@ jobs:
           SCOPE: ${{ needs.scope.result }}
           RUST_CLIPPY: ${{ needs.rust-clippy.result }}
           RUST_TEST: ${{ needs.rust-test.result }}
+          DSP: ${{ needs.dsp.result }}
           API_CONTRACT: ${{ needs.api-contract.result }}
           OPS: ${{ needs.ops-shims.result }}
           FRONTEND: ${{ needs.frontend.result }}
         run: |
           set -euo pipefail
-          for result in "${SCOPE}" "${RUST_CLIPPY}" "${RUST_TEST}" "${API_CONTRACT}" "${OPS}" "${FRONTEND}"; do
+          for result in "${SCOPE}" "${RUST_CLIPPY}" "${RUST_TEST}" "${DSP}" "${API_CONTRACT}" "${OPS}" "${FRONTEND}"; do
             [[ "${result}" == "success" || "${result}" == "skipped" ]]
           done

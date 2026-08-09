@@ -21,6 +21,35 @@ function edit(...segments: TimelineSegment[]): ClipEdit {
 	return { segments, tracks: 2, masterVolumeDb: -3 };
 }
 
+function serializedAdvanced(effects = DEFAULT_EFFECTS) {
+	return {
+		tail_seconds: effects.tailSeconds,
+		distortion_amount: effects.distortionAmount,
+		distortion_wet: effects.distortionWet,
+		delay_seconds: effects.delaySeconds,
+		delay_feedback: effects.delayFeedback,
+		delay_wet: effects.delayWet,
+		compressor_enabled: effects.compressorEnabled,
+		compressor_threshold_db: effects.compressorThresholdDb,
+		compressor_knee_db: effects.compressorKneeDb,
+		compressor_ratio: effects.compressorRatio,
+		compressor_attack_seconds: effects.compressorAttackSeconds,
+		compressor_release_seconds: effects.compressorReleaseSeconds,
+		chorus_enabled: effects.chorusEnabled,
+		chorus_frequency_hz: effects.chorusFrequencyHz,
+		chorus_delay_ms: effects.chorusDelayMs,
+		chorus_depth: effects.chorusDepth,
+		chorus_spread_degrees: effects.chorusSpreadDegrees,
+		chorus_feedback: effects.chorusFeedback,
+		chorus_wet: effects.chorusWet,
+		reverb_enabled: effects.reverbEnabled,
+		reverb_decay_seconds: effects.reverbDecaySeconds,
+		reverb_pre_delay_seconds: effects.reverbPreDelaySeconds,
+		reverb_wet: effects.reverbWet,
+		reverb_seed: effects.reverbSeed,
+	};
+}
+
 describe("serializeEdit", () => {
 	test("maps every segment field to snake_case", () => {
 		const payload = serializeEdit(
@@ -44,6 +73,7 @@ describe("serializeEdit", () => {
 				bass_db: 0,
 				mid_db: 0,
 				treble_db: 0,
+				advanced: serializedAdvanced(),
 				reverse: false,
 			},
 		});
@@ -52,12 +82,22 @@ describe("serializeEdit", () => {
 	test("preserves non-default effects", () => {
 		const base = segment("clip-1", 0, 0, 0, 4);
 		base.effects = {
+			...DEFAULT_EFFECTS,
 			volumeDb: -6,
 			pitchCents: 300,
 			rate: 1.5,
 			bassDb: 3,
 			midDb: 1.5,
 			trebleDb: -3,
+			distortionAmount: 0.8,
+			distortionWet: 0.6,
+			delaySeconds: 0.4,
+			delayFeedback: 0.35,
+			delayWet: 0.25,
+			compressorEnabled: true,
+			chorusEnabled: true,
+			reverbEnabled: true,
+			reverbSeed: 42,
 			reverse: true,
 		};
 		const payload = serializeEdit(edit(base));
@@ -68,6 +108,7 @@ describe("serializeEdit", () => {
 			bass_db: 3,
 			mid_db: 1.5,
 			treble_db: -3,
+			advanced: serializedAdvanced(base.effects),
 			reverse: true,
 		});
 	});
@@ -108,9 +149,33 @@ describe("serializeEdit", () => {
 			volumeDb: 0,
 			pitchCents: 0,
 			rate: 1,
+			tailSeconds: 0,
 			bassDb: 0,
 			midDb: 0,
 			trebleDb: 0,
+			distortionAmount: 0.4,
+			distortionWet: 0,
+			delaySeconds: 0.25,
+			delayFeedback: 0.125,
+			delayWet: 0,
+			compressorEnabled: false,
+			compressorThresholdDb: -24,
+			compressorKneeDb: 30,
+			compressorRatio: 12,
+			compressorAttackSeconds: 0.003,
+			compressorReleaseSeconds: 0.25,
+			chorusEnabled: false,
+			chorusFrequencyHz: 1.5,
+			chorusDelayMs: 3.5,
+			chorusDepth: 0.7,
+			chorusSpreadDegrees: 180,
+			chorusFeedback: 0,
+			chorusWet: 0.5,
+			reverbEnabled: false,
+			reverbDecaySeconds: 1.5,
+			reverbPreDelaySeconds: 0.01,
+			reverbWet: 1,
+			reverbSeed: 0x5341_4b49,
 			reverse: false,
 		});
 	});
@@ -142,12 +207,21 @@ describe("deserializeEdit", () => {
 			segment("clip-2", 1, 8, 0, 3),
 		);
 		sourceEdit.segments[1].effects = {
+			...DEFAULT_EFFECTS,
 			volumeDb: -6,
+			tailSeconds: 2,
 			pitchCents: 300,
 			rate: 1.5,
 			bassDb: 3,
 			midDb: 1.5,
 			trebleDb: -3,
+			distortionAmount: 0.8,
+			distortionWet: 0.6,
+			delayWet: 0.25,
+			compressorEnabled: true,
+			chorusEnabled: true,
+			reverbEnabled: true,
+			reverbSeed: 42,
 			reverse: true,
 		};
 		const restored = deserializeEdit(serializeEdit(sourceEdit, "remix"));
@@ -163,13 +237,21 @@ describe("deserializeEdit", () => {
 			sourceOut: 5,
 			timelineStart: 2.5,
 		});
-		expect(restored?.segments[1].effects).toEqual({
+		expect(restored?.segments[1].effects).toMatchObject({
 			volumeDb: -6,
+			tailSeconds: 2,
 			pitchCents: 300,
 			rate: 1.5,
 			bassDb: 3,
 			midDb: 1.5,
 			trebleDb: -3,
+			distortionAmount: 0.8,
+			distortionWet: 0.6,
+			delayWet: 0.25,
+			compressorEnabled: true,
+			chorusEnabled: true,
+			reverbEnabled: true,
+			reverbSeed: 42,
 			reverse: true,
 		});
 		expect(restored?.segments[0].id).not.toBe(restored?.segments[1].id);

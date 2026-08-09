@@ -1,0 +1,5 @@
+/target/
+/node_modules/
+/test-results/
+/examples/**/*.ogg
+/examples/**/*.wav

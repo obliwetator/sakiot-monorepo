@@ -3,9 +3,14 @@ import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
 
 const bufferCache = new Map<string, Promise<AudioBuffer>>();
 let decodeContext: AudioContext | null = null;
+const SHARED_DSP_SAMPLE_RATE = 48_000;
 
 function contextForDecoding(): AudioContext {
-	if (!decodeContext) decodeContext = new AudioContext();
+	if (!decodeContext) {
+		// Keep source frame boundaries and DSP coefficients aligned with the
+		// server's canonical FFmpeg decode rate on every playback device.
+		decodeContext = new AudioContext({ sampleRate: SHARED_DSP_SAMPLE_RATE });
+	}
 	return decodeContext;
 }
 

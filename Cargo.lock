@@ -1927,7 +1927,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fbi_agent"
-version = "1.0.20"
+version = "1.0.21"
 dependencies = [
  "chrono",
  "console-subscriber",
@@ -4910,7 +4910,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sakiot-deploy"
-version = "1.0.20"
+version = "1.0.21"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4929,12 +4929,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sakiot-dsp"
+version = "0.1.0"
+
+[[package]]
 name = "sakiot-paths"
-version = "1.0.20"
+version = "1.0.21"
 
 [[package]]
 name = "sakiot-proto"
-version = "1.0.20"
+version = "1.0.21"
 dependencies = [
  "prost",
  "tonic",
@@ -4944,7 +4948,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-storage"
-version = "1.0.20"
+version = "1.0.21"
 dependencies = [
  "aws-sdk-s3",
  "axum",
@@ -7023,7 +7027,7 @@ dependencies = [
 
 [[package]]
 name = "web_server"
-version = "1.0.20"
+version = "1.0.21"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -7048,6 +7052,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "prost",
  "reqwest 0.12.28",
+ "sakiot-dsp",
  "sakiot-paths",
  "sakiot-proto",
  "sakiot-storage",

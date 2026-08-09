@@ -38,6 +38,8 @@ import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { deserializeEdit, serializeEdit } from "./composePayload";
 import { loadDraft, saveDraft } from "./draftStorage";
+import { EffectSettingsJsonDialog } from "./EffectSettingsJsonDialog";
+import { isEffectSettingsJsonShortcut } from "./effectSettingsJson";
 import { Inspector } from "./Inspector";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
 import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
@@ -63,6 +65,7 @@ export function ClipEditor(props: { guildId: string }) {
 	const seededForRef = useRef<string | null>(null);
 
 	const [composeOpen, setComposeOpen] = useState(false);
+	const [effectSettingsJsonOpen, setEffectSettingsJsonOpen] = useState(false);
 	const [composeName, setComposeName] = useState("");
 	const [composeError, setComposeError] = useState<string | null>(null);
 	const [composeDone, setComposeDone] = useState(false);
@@ -240,7 +243,7 @@ export function ClipEditor(props: { guildId: string }) {
 		[editor, props.guildId],
 	);
 
-	useKeyboardShortcuts(editor);
+	useKeyboardShortcuts(editor, () => setEffectSettingsJsonOpen(true));
 
 	const pureClips = (clips ?? []).filter((clip) => !isComposedClip(clip));
 
@@ -316,6 +319,11 @@ export function ClipEditor(props: { guildId: string }) {
 				segmentCount={editor.edit.segments.length}
 				onStart={() => void handleCompose()}
 				onClose={closeCompose}
+			/>
+			<EffectSettingsJsonDialog
+				open={effectSettingsJsonOpen}
+				onClose={() => setEffectSettingsJsonOpen(false)}
+				editor={editor}
 			/>
 			{unsavedDialog}
 			<Snackbar
@@ -577,15 +585,25 @@ function Monitor(props: {
 	);
 }
 
-function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
+function useKeyboardShortcuts(
+	editor: ReturnType<typeof useClipEditor>,
+	openEffectSettingsJson: () => void,
+) {
 	const editorRef = useRef(editor);
+	const openEffectSettingsJsonRef = useRef(openEffectSettingsJson);
 	useEffect(() => {
 		editorRef.current = editor;
-	}, [editor]);
+		openEffectSettingsJsonRef.current = openEffectSettingsJson;
+	}, [editor, openEffectSettingsJson]);
 
 	useEffect(() => {
 		const handleShortcut = (event: KeyboardEvent) => {
 			const current = editorRef.current;
+			if (isEffectSettingsJsonShortcut(event)) {
+				event.preventDefault();
+				openEffectSettingsJsonRef.current();
+				return;
+			}
 			if (playbackShortcutTargetAcceptsText(event.target)) return;
 			const modifier = event.ctrlKey || event.metaKey;
 			if (modifier && event.key.toLowerCase() === "z") {
