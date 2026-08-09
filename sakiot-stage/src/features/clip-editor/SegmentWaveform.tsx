@@ -21,7 +21,8 @@ export function waveformWindowFractions(
  * Draws the source clip's waveform inside a timeline segment box, cropped to
  * the segment's [sourceIn, sourceOut] window. The box width already encodes
  * the rate effect, so the peaks stretch to fill it at any playback speed.
- * Renders nothing while peaks are unavailable.
+ * Reversed segments mirror the window so the drawing matches the backwards
+ * playback. Renders nothing while peaks are unavailable.
  */
 export function SegmentWaveform(props: {
 	peaks: WaveformEnvelope;
@@ -29,6 +30,7 @@ export function SegmentWaveform(props: {
 	sourceOut: number;
 	durationSec: number;
 	selected: boolean;
+	reverse: boolean;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const { peaks, selected } = props;
@@ -60,13 +62,14 @@ export function SegmentWaveform(props: {
 				strokeStyle: selected
 					? "rgba(255, 255, 255, 0.9)"
 					: "rgba(255, 255, 255, 0.45)",
+				reverse: props.reverse,
 			});
 		};
 		draw();
 		const observer = new ResizeObserver(draw);
 		observer.observe(canvas);
 		return () => observer.disconnect();
-	}, [fractions, peaks, selected]);
+	}, [fractions, peaks, props.reverse, selected]);
 
 	if (!fractions) return null;
 	return (

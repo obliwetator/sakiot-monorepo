@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipEditorEngine } from "./engine";
-import type { ClipEdit } from "./model";
-import { emptyEdit, makeSegment, segmentDuration, splitSegment } from "./model";
+import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
+import {
+	addSegment,
+	type ClipEdit,
+	emptyEdit,
+	makeSegment,
+	segmentDuration,
+	snapToNeighbors,
+	splitSegment,
+	type TimelineSegment,
+} from "./model";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
@@ -14,9 +23,12 @@ export function useClipEditor() {
 	const [positionSec, setPositionSec] = useState(0);
 	const [playing, setPlaying] = useState(false);
 	const [loop, setLoop] = useState(false);
-	const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
-		null,
-	);
+	const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
+	/** Track that clicks on the timeline activate; paste and bin adds land here. */
+	const [activeTrack, setActiveTrack] = useState(0);
+	const [clipboard, setClipboard] = useState<TimelineSegment | null>(null);
+	/** Segment whose data is in the clipboard; it shows the copied ring. */
+	const [copySourceId, setCopySourceId] = useState<string | null>(null);
 	const [viewStartSec, setViewStartSec] = useState(0);
 	const [viewWidthSec, setViewWidthSec] = useState(30);
 	const [loadingClips, setLoadingClips] = useState<Map<string, boolean>>(
@@ -198,11 +210,11 @@ export function useClipEditor() {
 	);
 
 	useEffect(() => {
-		const selected = edit.segments.find((s) => s.id === selectedSegmentId);
-		if (selected) {
-			engine.applySegmentEffects(selected.id, selected.effects);
+		for (const id of selectedSegmentIds) {
+			const segment = edit.segments.find((s) => s.id === id);
+			if (segment) engine.applySegmentEffects(segment.id, segment.effects);
 		}
-	}, [edit.segments, engine, selectedSegmentId]);
+	}, [edit.segments, engine, selectedSegmentIds]);
 
 	useEffect(() => {
 		const segmentsChanged = segmentsRef.current !== edit.segments;
@@ -217,9 +229,29 @@ export function useClipEditor() {
 		}
 	}, [edit, engine]);
 
-	const select = useCallback(
-		(id: string | null) => setSelectedSegmentId(id),
-		[],
+	const select = useCallback((id: string | null) => {
+		setSelectedSegmentIds(id === null ? [] : [id]);
+	}, []);
+
+	/** Replaces the selection with the given ids (marquee multi-select). */
+	const selectMany = useCallback((ids: string[]) => {
+		setSelectedSegmentIds(Array.from(new Set(ids)));
+	}, []);
+
+	/**
+	 * Shift-click toggle: adds an unselected segment to the selection or
+	 * removes a selected one, leaving the rest untouched. Returns the next
+	 * selection so the caller can act on it synchronously.
+	 */
+	const toggleSelect = useCallback(
+		(id: string) => {
+			const next = selectedSegmentIds.includes(id)
+				? selectedSegmentIds.filter((selected) => selected !== id)
+				: [...selectedSegmentIds, id];
+			setSelectedSegmentIds(next);
+			return next;
+		},
+		[selectedSegmentIds],
 	);
 
 	const beginGesture = useCallback(() => {
@@ -253,23 +285,97 @@ export function useClipEditor() {
 	}, []);
 
 	const removeSelected = useCallback(() => {
-		if (!selectedSegmentId) return;
-		const id = selectedSegmentId;
+		if (selectedSegmentIds.length === 0) return;
+		if (isInspectorFeatureDisabled("delete", selectedSegmentIds.length)) return;
 		apply((current) => ({
 			...current,
-			segments: current.segments.filter((s) => s.id !== id),
+			segments: current.segments.filter(
+				(s) => !selectedSegmentIds.includes(s.id),
+			),
 		}));
-		setSelectedSegmentId(null);
-	}, [apply, selectedSegmentId]);
+		setSelectedSegmentIds([]);
+	}, [apply, selectedSegmentIds]);
 
 	const splitSelectedAtPlayhead = useCallback(() => {
-		if (!selectedSegmentId) return;
-		const id = selectedSegmentId;
+		if (isInspectorFeatureDisabled("split", selectedSegmentIds.length)) return;
+		if (selectedSegmentIds.length !== 1) return;
+		const id = selectedSegmentIds[0];
+		if (!id) return;
 		apply((current) => splitSegment(current, id, positionRef.current));
-	}, [apply, selectedSegmentId]);
+	}, [apply, selectedSegmentIds]);
 
-	const selectedSegment =
-		edit.segments.find((s) => s.id === selectedSegmentId) ?? null;
+	const toggleReverse = useCallback(() => {
+		if (selectedSegmentIds.length === 0) return;
+		if (isInspectorFeatureDisabled("reverse", selectedSegmentIds.length))
+			return;
+		const ids = selectedSegmentIds;
+		apply((current) => ({
+			...current,
+			segments: current.segments.map((segment) =>
+				ids.includes(segment.id)
+					? {
+							...segment,
+							effects: {
+								...segment.effects,
+								reverse: !segment.effects.reverse,
+							},
+						}
+					: segment,
+			),
+		}));
+	}, [apply, selectedSegmentIds]);
+
+	const selectedSegments = edit.segments.filter((s) =>
+		selectedSegmentIds.includes(s.id),
+	);
+	const selectedSegment = selectedSegments[0] ?? null;
+	const multiSelected = selectedSegments.length > 1;
+
+	const selectTrack = useCallback(
+		(track: number) => setActiveTrack(Math.max(0, track)),
+		[],
+	);
+
+	const copy = useCallback(() => {
+		if (!selectedSegment) return;
+		setClipboard(selectedSegment);
+		setCopySourceId(selectedSegment.id);
+	}, [selectedSegment]);
+
+	const cut = useCallback(() => {
+		if (!selectedSegment) return;
+		setClipboard(selectedSegment);
+		setCopySourceId(null);
+		removeSelected();
+	}, [removeSelected, selectedSegment]);
+
+	// Pasting lands on the active track at the playhead; if that overlaps a
+	// neighbour, snapToNeighbors finds the nearest non-overlapping start.
+	const paste = useCallback(() => {
+		if (!clipboard) return;
+		const source = clipboard;
+		const rawStart = positionRef.current;
+		const start = snapToNeighbors(
+			rawStart,
+			segmentDuration(source),
+			editRef.current.segments,
+			"",
+			activeTrack,
+			rawStart,
+		);
+		const segment = makeSegment(
+			source.source,
+			source.sourceId,
+			source.sourceIn,
+			source.sourceOut,
+			start,
+			activeTrack,
+		);
+		segment.effects = { ...source.effects };
+		apply((current) => addSegment(current, segment));
+		setCopySourceId(null);
+		select(segment.id);
+	}, [activeTrack, apply, clipboard, select]);
 
 	const sourceDuration = useCallback((sourceId: string): number | null => {
 		return buffersRef.current.get(sourceId)?.duration ?? null;
@@ -325,9 +431,20 @@ export function useClipEditor() {
 		setLooping,
 		masterVolumeDb: edit.masterVolumeDb,
 		setMasterVolume,
-		selectedSegmentId,
+		selectedSegmentId: selectedSegmentIds[0] ?? null,
+		selectedSegmentIds,
+		selectedSegments,
 		selectedSegment,
+		multiSelected,
 		select,
+		selectMany,
+		toggleSelect,
+		activeTrack,
+		selectTrack,
+		copySourceId,
+		copy,
+		cut,
+		paste,
 		loadClip,
 		registerBuffer,
 		sourceDuration,
@@ -341,6 +458,7 @@ export function useClipEditor() {
 		endGesture,
 		removeSelected,
 		splitSelectedAtPlayhead,
+		toggleReverse,
 	};
 }
 

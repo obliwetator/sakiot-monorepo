@@ -4,6 +4,7 @@ import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RedoIcon from "@mui/icons-material/Redo";
 import RepeatIcon from "@mui/icons-material/Repeat";
+import RestoreIcon from "@mui/icons-material/Restore";
 import UndoIcon from "@mui/icons-material/Undo";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -35,14 +36,18 @@ import {
 import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { deserializeEdit, serializeEdit } from "./composePayload";
+import { loadDraft, saveDraft } from "./draftStorage";
 import { Inspector } from "./Inspector";
+import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
 import {
 	addSegment,
 	type ClipEdit,
+	emptyEdit,
 	makeSegment,
 	segmentDuration,
 } from "./model";
 import { Timeline } from "./Timeline";
+import { useUnsavedChangesGuard } from "./unsavedChangesGuard";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
 
@@ -54,6 +59,10 @@ export function ClipEditor(props: { guildId: string }) {
 		{ skip: !props.guildId },
 	);
 	const editor = useClipEditor();
+	// Any undoable or redoable history step means the page holds work.
+	const { dialog: unsavedDialog } = useUnsavedChangesGuard(
+		editor.canUndo || editor.canRedo,
+	);
 	const [searchParams] = useSearchParams();
 	const sourceClipId = searchParams.get("source");
 	const seededForRef = useRef<string | null>(null);
@@ -115,18 +124,9 @@ export function ClipEditor(props: { guildId: string }) {
 		[clips],
 	);
 
-	// Single selection rule: any pointerdown that is not on a segment (their
-	// own handlers stop propagation) and not inside the inspector (which edits
-	// the selection) clears the selection.
-	useEffect(() => {
-		const onGlobalPointerDown = (event: PointerEvent) => {
-			const target = event.target as HTMLElement | null;
-			if (target?.closest("[data-clip-editor-inspector]")) return;
-			editor.select(null);
-		};
-		window.addEventListener("pointerdown", onGlobalPointerDown);
-		return () => window.removeEventListener("pointerdown", onGlobalPointerDown);
-	}, [editor.select]);
+	// The selection sticks: nothing else on the page clears it. Escape (see
+	// useKeyboardShortcuts) is the only way to deselect without picking
+	// another segment.
 
 	const {
 		buffer: sourceBuffer,
@@ -134,8 +134,43 @@ export function ClipEditor(props: { guildId: string }) {
 		error: sourceError,
 	} = useClipBuffer(props.guildId, sourceClipId);
 
+	// The working draft lives in localStorage per session context (the source
+	// clip it was seeded from, or one generic draft). Restore it before the
+	// seed effect so a refresh comes back to the last saved state; marking the
+	// source as seeded keeps the database payload from overwriting the draft.
+	const draftRestoredRef = useRef(false);
 	useEffect(() => {
-		if (seededForRef.current === sourceClipId || !sourceClipId) return;
+		if (draftRestoredRef.current) return;
+		draftRestoredRef.current = true;
+		const draft = loadDraft(props.guildId, sourceClipId);
+		if (!draft || draft.segments.length === 0) return;
+		editor.reset(draft);
+		editor.select(draft.segments[0]?.id ?? null);
+		seededForRef.current = sourceClipId;
+		// The draft's sources still need their buffers so the timeline plays.
+		void editor.preloadSources(
+			props.guildId,
+			draft.segments.map((segment) => segment.sourceId),
+		);
+	}, [editor, props.guildId, sourceClipId]);
+
+	// Persist the draft after every committed change; the debounce folds drag
+	// previews into one write. Empty edits are not stored, so a fresh session
+	// never creates a draft that shadows a later seed.
+	useEffect(() => {
+		if (editor.edit.segments.length === 0) return;
+		const timeout = window.setTimeout(
+			() => saveDraft(props.guildId, sourceClipId, editor.edit),
+			400,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [editor.edit, props.guildId, sourceClipId]);
+
+	// Loads the original version of the source clip - its stored composition
+	// or a single plain segment - into the editor. Returns whether the seed
+	// could be built (the clip data may still be loading).
+	const seedFromSource = useCallback((): boolean => {
+		if (!sourceClipId) return false;
 		const source = clips?.find((c) => c.clip_id === sourceClipId);
 		const edit = source?.composition
 			? deserializeEdit(source.composition)
@@ -144,27 +179,52 @@ export function ClipEditor(props: { guildId: string }) {
 			// Composed clip: restore the whole edit, then load every source
 			// buffer so the timeline plays as it did when it was exported.
 			// Reset (not apply) makes the restored edit the undo baseline.
-			seededForRef.current = sourceClipId;
 			editor.reset(edit);
 			editor.select(edit.segments[0]?.id ?? null);
 			void editor.preloadSources(
 				props.guildId,
 				edit.segments.map((segment) => segment.sourceId),
 			);
-			return;
+			return true;
 		}
-		if (!sourceBuffer) return;
+		if (!sourceBuffer) return false;
 		// The composition marker only exists in the clips list; without it a
 		// composed source would be seeded as a single plain segment, so wait
 		// for the list before assuming the source is a plain clip.
-		if (clips === undefined && !clipsError) return;
-		seededForRef.current = sourceClipId;
+		if (clips === undefined && !clipsError) return false;
 		editor.registerBuffer(sourceClipId, sourceBuffer);
 		const lengthSec = source?.length ?? sourceBuffer.duration;
 		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
 		editor.reset(addSegment(editor.edit, segment));
 		editor.select(segment.id);
+		return true;
 	}, [clips, clipsError, editor, props.guildId, sourceBuffer, sourceClipId]);
+
+	useEffect(() => {
+		if (seededForRef.current === sourceClipId || !sourceClipId) return;
+		if (seedFromSource()) seededForRef.current = sourceClipId;
+	}, [seedFromSource, sourceClipId]);
+
+	// Rebuilds the clip's original version on demand; apply (not reset) keeps
+	// the restore undoable, and the draft save picks up the change.
+	const restoreOriginal = useCallback(() => {
+		if (!sourceClipId) return;
+		const source = clips?.find((c) => c.clip_id === sourceClipId);
+		const edit = source?.composition
+			? deserializeEdit(source.composition)
+			: null;
+		if (edit && edit.segments.length > 0) {
+			editor.apply(() => edit);
+			editor.select(edit.segments[0]?.id ?? null);
+			return;
+		}
+		if (!sourceBuffer) return;
+		if (clips === undefined && !clipsError) return;
+		const lengthSec = source?.length ?? sourceBuffer.duration;
+		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
+		editor.apply(() => addSegment(emptyEdit(), segment));
+		editor.select(segment.id);
+	}, [clips, clipsError, editor, sourceBuffer, sourceClipId]);
 
 	const handleDropClip = useCallback(
 		(clipId: string, lengthSec: number, track: number, startSec: number) => {
@@ -175,7 +235,12 @@ export function ClipEditor(props: { guildId: string }) {
 
 	const handleAddFromBin = useCallback(
 		(clip: ClipData) => {
-			editor.loadClip(props.guildId, clip.clip_id, clip.length ?? 1, 0);
+			editor.loadClip(
+				props.guildId,
+				clip.clip_id,
+				clip.length ?? 1,
+				editor.activeTrack,
+			);
 		},
 		[editor, props.guildId],
 	);
@@ -203,6 +268,8 @@ export function ClipEditor(props: { guildId: string }) {
 				editor={editor}
 				onExport={() => setComposeOpen(true)}
 				canExport={editor.edit.segments.length > 0}
+				canRestore={sourceClipId !== null}
+				onRestore={restoreOriginal}
 			/>
 			<Box
 				sx={{
@@ -255,6 +322,7 @@ export function ClipEditor(props: { guildId: string }) {
 				onStart={() => void handleCompose()}
 				onClose={closeCompose}
 			/>
+			{unsavedDialog}
 		</Box>
 	);
 }
@@ -263,6 +331,8 @@ function ToolbarRow(props: {
 	editor: ReturnType<typeof useClipEditor>;
 	onExport: () => void;
 	canExport: boolean;
+	canRestore: boolean;
+	onRestore: () => void;
 }) {
 	const { editor } = props;
 	return (
@@ -302,6 +372,15 @@ function ToolbarRow(props: {
 					</IconButton>
 				</span>
 			</Tooltip>
+			{props.canRestore && (
+				<Tooltip title="Restore the clip to its original version (can be undone)">
+					<span>
+						<IconButton size="small" onClick={props.onRestore}>
+							<RestoreIcon fontSize="small" />
+						</IconButton>
+					</span>
+				</Tooltip>
+			)}
 			<Tooltip title="Add track">
 				<Button
 					size="small"
@@ -510,7 +589,38 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 				current.redo();
 				return;
 			}
+			if (modifier && event.key.toLowerCase() === "c") {
+				if (current.selectedSegment) {
+					event.preventDefault();
+					current.copy();
+				}
+				return;
+			}
+			if (modifier && event.key.toLowerCase() === "x") {
+				if (current.selectedSegment) {
+					event.preventDefault();
+					current.cut();
+				}
+				return;
+			}
+			if (modifier && event.key.toLowerCase() === "v") {
+				event.preventDefault();
+				current.paste();
+				return;
+			}
+			if (modifier && event.key.toLowerCase() === "a") {
+				event.preventDefault();
+				current.selectMany(current.edit.segments.map((segment) => segment.id));
+				return;
+			}
 			if (modifier) return;
+			if (event.key === "Escape") {
+				if (current.selectedSegments.length > 0) {
+					event.preventDefault();
+					current.select(null);
+				}
+				return;
+			}
 			if (event.key === " " || event.code === "Space") {
 				if (event.repeat) return;
 				event.preventDefault();
@@ -520,6 +630,13 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 			const segment = current.selectedSegment;
 			if (event.key === "Delete" || event.key === "Backspace") {
 				if (segment) {
+					if (
+						isInspectorFeatureDisabled(
+							"delete",
+							current.selectedSegments.length,
+						)
+					)
+						return;
 					event.preventDefault();
 					current.removeSelected();
 				}
@@ -527,8 +644,24 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 			}
 			if (segment) {
 				if (event.key === "s" || event.key === "S") {
+					if (
+						isInspectorFeatureDisabled("split", current.selectedSegments.length)
+					)
+						return;
 					event.preventDefault();
 					current.splitSelectedAtPlayhead();
+					return;
+				}
+				if (event.key === "r" || event.key === "R") {
+					if (
+						isInspectorFeatureDisabled(
+							"reverse",
+							current.selectedSegments.length,
+						)
+					)
+						return;
+					event.preventDefault();
+					current.toggleReverse();
 					return;
 				}
 			}
