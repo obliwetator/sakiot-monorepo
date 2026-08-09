@@ -1,12 +1,23 @@
 import Box from "@mui/material/Box";
 import CssBaseline from "@mui/material/CssBaseline";
 import { ThemeProvider } from "@mui/material/styles";
-import { BrowserRouter } from "react-router-dom";
+import {
+	BrowserRouter,
+	createBrowserRouter,
+	createRoutesFromElements,
+	RouterProvider,
+} from "react-router-dom";
 import { BundleUpdatePrompt } from "./app/BundleUpdatePrompt";
 import { darkTheme } from "./app/theme";
 import { useAuthBootstrap } from "./app/useAuthBootstrap";
 import { LayoutsWithNavbar } from "./layouts/LayoutsWithNavbar";
-import { AppRoutes } from "./routes/AppRoutes";
+import { appRoutesElement } from "./routes/AppRoutes";
+
+// A data router so route-level hooks (useBlocker and friends) work; the route
+// tree itself is the same declarative <Route> elements from AppRoutes.
+const mainRouter = createBrowserRouter(
+	createRoutesFromElements(appRoutesElement),
+);
 
 function App() {
 	const { authData, isLoading, isLoggedIn } = useAuthBootstrap();
@@ -30,9 +41,7 @@ function App() {
 	return (
 		<ThemeProvider theme={darkTheme}>
 			<CssBaseline />
-			<BrowserRouter>
-				<AppRoutes />
-			</BrowserRouter>
+			<RouterProvider router={mainRouter} />
 			<BundleUpdatePrompt />
 			{authData?.user?.is_dev && (
 				<Box
