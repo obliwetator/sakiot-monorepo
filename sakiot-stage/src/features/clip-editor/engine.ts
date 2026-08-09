@@ -1,3 +1,11 @@
+import {
+	connect as connectTone,
+	Filter,
+	PitchShift,
+	Context as ToneContext,
+	Volume,
+} from "tone";
+import { PARITY_APPROVED_EQ } from "./effectParity";
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
 import {
 	editDuration,
@@ -6,20 +14,25 @@ import {
 	sourcePositionAt,
 } from "./model";
 
-function dbToLinear(db: number): number {
-	return 10 ** (db / 20);
+/**
+ * Tone shifts the stream after playbackRate has already repitched it. Remove
+ * that rate-induced pitch first, then apply the user's pitch in semitones.
+ */
+export function pitchShiftSemitones(effects: SegmentEffects): number {
+	return (
+		effects.pitchCents / 100 - 12 * Math.log2(Math.max(0.01, effects.rate))
+	);
 }
 
 /**
  * Source-buffer window a segment must play to fill the given timeline range.
  * AudioBufferSourceNode.start() measures its duration in buffer seconds and
- * consumes the buffer at the computed rate (playbackRate times the detune
- * pitch factor), so a timeline window has to be scaled by that effective
- * rate: a 2x segment consumes twice the buffer content per timeline second,
- * and a pitch shift likewise accelerates or slows the consumption. Without
- * the scaling, fast clips go silent halfway through their box and slow clips
- * keep playing past its end. Reversed segments start at the source-window
- * end and walk backwards at the same rate (negative playbackRate).
+ * consumes the buffer at playbackRate, so a timeline window has to be scaled
+ * by that rate: a 2x segment consumes twice the buffer content per timeline
+ * second. Pitch shifting happens downstream and preserves this duration.
+ * Without the scaling, fast clips go silent halfway through their box and
+ * slow clips keep playing past its end. Reversed segments start at the
+ * source-window end and walk backwards at the same rate (negative rate).
  */
 export function segmentSourceWindow(
 	segment: TimelineSegment,
@@ -36,23 +49,118 @@ export function segmentSourceWindow(
 	};
 }
 
+interface SegmentAudioGraph {
+	connectSource(source: AudioBufferSourceNode): void;
+	setEffects(effects: SegmentEffects): void;
+	dispose(): void;
+}
+
+interface EditorAudioGraph {
+	createSegment(effects: SegmentEffects): SegmentAudioGraph;
+	setMasterVolume(db: number): void;
+	dispose(): void;
+}
+
+export type EditorAudioGraphFactory = (ctx: AudioContext) => EditorAudioGraph;
+
+class ToneEditorAudioGraph implements EditorAudioGraph {
+	private readonly context: ToneContext;
+	private readonly master: Volume;
+
+	constructor(ctx: AudioContext) {
+		this.context = new ToneContext({ context: ctx, lookAhead: 0 });
+		this.master = new Volume({ context: this.context, volume: 0 });
+		this.master.connect(ctx.destination);
+	}
+
+	createSegment(effects: SegmentEffects): SegmentAudioGraph {
+		const pitchSemitones = pitchShiftSemitones(effects);
+		const pitch =
+			Math.abs(pitchSemitones) > 0.000_001
+				? new PitchShift({
+						context: this.context,
+						pitch: pitchSemitones,
+						windowSize: 0.05,
+						wet: 1,
+					})
+				: null;
+		const volume = new Volume({
+			context: this.context,
+			volume: effects.volumeDb,
+		});
+		const bass = new Filter({
+			context: this.context,
+			frequency: PARITY_APPROVED_EQ.bass.frequencyHz,
+			gain: effects.bassDb,
+			rolloff: -12,
+			type: PARITY_APPROVED_EQ.bass.toneType,
+		});
+		const mid = new Filter({
+			context: this.context,
+			frequency: PARITY_APPROVED_EQ.mid.frequencyHz,
+			gain: effects.midDb,
+			Q: PARITY_APPROVED_EQ.mid.width,
+			rolloff: -12,
+			type: PARITY_APPROVED_EQ.mid.toneType,
+		});
+		const treble = new Filter({
+			context: this.context,
+			frequency: PARITY_APPROVED_EQ.treble.frequencyHz,
+			gain: effects.trebleDb,
+			rolloff: -12,
+			type: PARITY_APPROVED_EQ.treble.toneType,
+		});
+		volume.chain(bass, mid, treble, this.master);
+
+		return {
+			connectSource(source) {
+				if (pitch) {
+					connectTone(source, pitch);
+					pitch.connect(volume);
+				} else {
+					connectTone(source, volume);
+				}
+			},
+			setEffects(next) {
+				if (pitch) pitch.pitch = pitchShiftSemitones(next);
+				volume.volume.value = next.volumeDb;
+				bass.gain.value = next.bassDb;
+				mid.gain.value = next.midDb;
+				treble.gain.value = next.trebleDb;
+			},
+			dispose() {
+				pitch?.dispose();
+				volume.dispose();
+				bass.dispose();
+				mid.dispose();
+				treble.dispose();
+			},
+		};
+	}
+
+	setMasterVolume(db: number) {
+		this.master.volume.value = db;
+	}
+
+	dispose() {
+		this.master.dispose();
+		this.context.dispose();
+	}
+}
+
 interface ActiveSource {
 	node: AudioBufferSourceNode;
-	gain: GainNode;
-	bass: BiquadFilterNode;
-	treble: BiquadFilterNode;
+	graph: SegmentAudioGraph;
 }
 
 /**
  * One AudioContext rendering a ClipEdit. Segments are scheduled as
- * AudioBufferSourceNodes; the same graph shape is used by the offline
- * renderer later, so what you hear is what will export.
+ * AudioBufferSourceNodes; the server renderer uses the same effect semantics
+ * when it exports the composition.
  */
 export class ClipEditorEngine {
 	private ctx: AudioContext | null = null;
-	private bass: BiquadFilterNode | null = null;
-	private treble: BiquadFilterNode | null = null;
-	private master: GainNode | null = null;
+	private audioGraph: EditorAudioGraph | null = null;
 	private active = new Map<string, ActiveSource>();
 	private endTimer: number | null = null;
 	private startedAtMs = 0;
@@ -62,6 +170,11 @@ export class ClipEditorEngine {
 		buffers: ReadonlyMap<string, AudioBuffer>;
 		loop: boolean;
 	} | null = null;
+
+	constructor(
+		private readonly createAudioGraph: EditorAudioGraphFactory = (ctx) =>
+			new ToneEditorAudioGraph(ctx),
+	) {}
 
 	get isPlaying(): boolean {
 		return this.active.size > 0 || this.endTimer !== null;
@@ -83,7 +196,7 @@ export class ClipEditorEngine {
 		this.playheadSec = fromSec;
 		this.startedAtMs = performance.now();
 		const ctx = this.ensureContext();
-		if (this.master) this.master.gain.value = dbToLinear(edit.masterVolumeDb);
+		this.audioGraph?.setMasterVolume(edit.masterVolumeDb);
 		const now = ctx.currentTime;
 		const totalDuration = editDuration(edit);
 		let lastEndMs = 0;
@@ -98,24 +211,13 @@ export class ClipEditorEngine {
 			if (overlapEnd <= overlapStart) continue;
 			const node = ctx.createBufferSource();
 			node.buffer = buffer;
-			node.detune.value = segment.effects.pitchCents;
+			node.detune.value = 0;
 			node.playbackRate.value = segment.effects.reverse
 				? -segment.effects.rate
 				: segment.effects.rate;
-			const gain = ctx.createGain();
-			gain.gain.value = dbToLinear(segment.effects.volumeDb);
-			const bass = ctx.createBiquadFilter();
-			bass.type = "lowshelf";
-			bass.frequency.value = 250;
-			bass.gain.value = segment.effects.bassDb;
-			const treble = ctx.createBiquadFilter();
-			treble.type = "highshelf";
-			treble.frequency.value = 3000;
-			treble.gain.value = segment.effects.trebleDb;
-			node.connect(gain);
-			gain.connect(bass);
-			bass.connect(treble);
-			treble.connect(this.bass ?? ctx.destination);
+			const graph = this.audioGraph?.createSegment(segment.effects);
+			if (!graph) continue;
+			graph.connectSource(node);
 			const sourceWindow = segmentSourceWindow(
 				segment,
 				fromSec,
@@ -127,7 +229,7 @@ export class ClipEditorEngine {
 				sourceWindow.offset,
 				sourceWindow.duration,
 			);
-			this.active.set(segment.id, { node, gain, bass, treble });
+			this.active.set(segment.id, { node, graph });
 			lastEndMs = Math.max(
 				lastEndMs,
 				performance.now() + (overlapEnd - fromSec) * 1000,
@@ -166,12 +268,13 @@ export class ClipEditorEngine {
 			clearTimeout(this.endTimer);
 			this.endTimer = null;
 		}
-		for (const { node } of this.active.values()) {
+		for (const { node, graph } of this.active.values()) {
 			try {
 				node.stop();
 			} catch {
 				// Already stopped (loop restart or overlap resechedule).
 			}
+			graph.dispose();
 		}
 		this.active.clear();
 	}
@@ -192,28 +295,26 @@ export class ClipEditorEngine {
 	applySegmentEffects(id: string, effects: SegmentEffects) {
 		const active = this.active.get(id);
 		if (!active) return;
-		active.node.detune.value = effects.pitchCents;
+		active.node.detune.value = 0;
 		active.node.playbackRate.value = effects.reverse
 			? -effects.rate
 			: effects.rate;
-		active.gain.gain.value = dbToLinear(effects.volumeDb);
-		active.bass.gain.value = effects.bassDb;
-		active.treble.gain.value = effects.trebleDb;
+		active.graph.setEffects(effects);
 	}
 
 	setMasterVolume(db: number) {
-		if (this.master) this.master.gain.value = dbToLinear(db);
+		this.audioGraph?.setMasterVolume(db);
 	}
 
 	dispose() {
 		this.cancel();
-		if (this.ctx) {
-			void this.ctx.close();
-			this.ctx = null;
-		}
+		this.audioGraph?.dispose();
+		this.audioGraph = null;
+		this.ctx = null;
 	}
 
 	private finish() {
+		for (const { graph } of this.active.values()) graph.dispose();
 		this.active.clear();
 		this.playheadSec = 0;
 	}
@@ -221,16 +322,7 @@ export class ClipEditorEngine {
 	private ensureContext(): AudioContext {
 		if (!this.ctx) {
 			this.ctx = new AudioContext();
-			this.bass = this.ctx.createBiquadFilter();
-			this.bass.type = "lowshelf";
-			this.bass.frequency.value = 250;
-			this.treble = this.ctx.createBiquadFilter();
-			this.treble.type = "highshelf";
-			this.treble.frequency.value = 3000;
-			this.master = this.ctx.createGain();
-			this.bass.connect(this.treble);
-			this.treble.connect(this.master);
-			this.master.connect(this.ctx.destination);
+			this.audioGraph = this.createAudioGraph(this.ctx);
 		}
 		if (this.ctx.state === "suspended") void this.ctx.resume();
 		return this.ctx;

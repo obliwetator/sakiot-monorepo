@@ -33,6 +33,7 @@
 		"react-dom": "^19",
 		"react-redux": "^9.2.0",
 		"react-router-dom": "^7.0",
+		"tone": "15.1.22",
 		"waveform-data": "^4.3.0",
 		"wavesurfer.js": "^7.12.1"
 	},

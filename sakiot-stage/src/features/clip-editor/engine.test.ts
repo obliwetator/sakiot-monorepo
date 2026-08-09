@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { segmentSourceWindow } from "./engine";
+import { pitchShiftSemitones, segmentSourceWindow } from "./engine";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 
 function seg(rate: number, sourceIn = 0, sourceOut = 10, timelineStart = 0) {
@@ -51,31 +51,20 @@ describe("segmentSourceWindow", () => {
 		expect(duration).toBe(6);
 	});
 
-	test("pitch up doubles the buffer consumption like the speed control", () => {
-		// +1200 cents: effective rate 2, so 10s of content fits a 5s window.
+	test("pitch does not change buffer consumption", () => {
 		const pitched = seg(1, 0, 10, 0);
 		pitched.effects.pitchCents = 1200;
-		const { offset, duration } = segmentSourceWindow(pitched, 0, 0, 5);
+		const { offset, duration } = segmentSourceWindow(pitched, 0, 0, 10);
 		expect(offset).toBe(0);
 		expect(duration).toBe(10);
 	});
 
-	test("pitch down halves the buffer consumption", () => {
-		// -1200 cents: effective rate 0.5, so 6s of content fills a 12s window.
-		const pitched = seg(1, 2, 8, 0);
-		pitched.effects.pitchCents = -1200;
-		const { offset, duration } = segmentSourceWindow(pitched, 0, 0, 12);
-		expect(offset).toBe(2);
-		expect(duration).toBe(6);
-	});
-
-	test("pitch compounds with the speed when seeking", () => {
-		// rate 2 + pitch +1200: effective rate 4, so 2s in lands at buffer 8.
+	test("pitch does not compound with speed when seeking", () => {
 		const pitched = seg(2, 0, 10, 0);
 		pitched.effects.pitchCents = 1200;
 		const { offset, duration } = segmentSourceWindow(pitched, 2, 2, 3);
-		expect(offset).toBe(8);
-		expect(duration).toBe(4);
+		expect(offset).toBe(4);
+		expect(duration).toBe(2);
 	});
 
 	test("reversed segments start at the source-window end", () => {
@@ -102,5 +91,23 @@ describe("segmentSourceWindow", () => {
 		const { offset, duration } = segmentSourceWindow(reversed, 0, 0, 6);
 		expect(offset).toBe(8);
 		expect(duration).toBe(6);
+	});
+});
+
+describe("pitchShiftSemitones", () => {
+	test("uses cents directly at normal speed", () => {
+		const effects = { ...DEFAULT_EFFECTS, pitchCents: 700 };
+		expect(pitchShiftSemitones(effects)).toBe(7);
+	});
+
+	test("compensates for playback-rate pitch before applying user pitch", () => {
+		const faster = { ...DEFAULT_EFFECTS, rate: 2 };
+		expect(pitchShiftSemitones(faster)).toBe(-12);
+		const slowerAndRaised = {
+			...DEFAULT_EFFECTS,
+			rate: 0.5,
+			pitchCents: 1200,
+		};
+		expect(pitchShiftSemitones(slowerAndRaised)).toBe(24);
 	});
 });

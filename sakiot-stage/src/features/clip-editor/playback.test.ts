@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ClipEditorEngine } from "./engine";
+import { ClipEditorEngine, type EditorAudioGraphFactory } from "./engine";
 import { type ClipEdit, DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 
 Object.defineProperty(globalThis, "window", {
@@ -56,6 +56,16 @@ class MockAudioContext {
 
 globalThis.AudioContext = MockAudioContext as unknown as typeof AudioContext;
 
+const createMockAudioGraph: EditorAudioGraphFactory = () => ({
+	createSegment: () => ({
+		connectSource() {},
+		setEffects() {},
+		dispose() {},
+	}),
+	setMasterVolume() {},
+	dispose() {},
+});
+
 const segment: TimelineSegment = {
 	id: "seg-1",
 	track: 0,
@@ -79,7 +89,7 @@ const buffers = new Map<string, AudioBuffer>([
 
 describe("ClipEditorEngine playback", () => {
 	test("pause stops the sources and keeps the playhead for resume", async () => {
-		const engine = new ClipEditorEngine();
+		const engine = new ClipEditorEngine(createMockAudioGraph);
 		engine.play(edit, 0, buffers, false);
 		expect(engine.isPlaying).toBe(true);
 		await Bun.sleep(30);
@@ -97,7 +107,7 @@ describe("ClipEditorEngine playback", () => {
 	});
 
 	test("pause cancels the scheduled end so it cannot restart", async () => {
-		const engine = new ClipEditorEngine();
+		const engine = new ClipEditorEngine(createMockAudioGraph);
 		engine.play(edit, 0, buffers, true);
 		expect(engine.isPlaying).toBe(true);
 		await Bun.sleep(5);
@@ -118,7 +128,7 @@ describe("ClipEditorEngine playback", () => {
 			...segment,
 			effects: { ...segment.effects, reverse: true },
 		};
-		const engine = new ClipEditorEngine();
+		const engine = new ClipEditorEngine(createMockAudioGraph);
 		engine.play({ ...edit, segments: [reversed] }, 0, buffers, false);
 		const source = contexts[0]?.sources[0];
 		expect(source?.playbackRate.value).toBe(-1);
