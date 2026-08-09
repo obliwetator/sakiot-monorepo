@@ -43,6 +43,7 @@ describe("serializeEdit", () => {
 				rate: 1,
 				bass_db: 0,
 				treble_db: 0,
+				reverse: false,
 			},
 		});
 	});
@@ -55,6 +56,7 @@ describe("serializeEdit", () => {
 			rate: 1.5,
 			bassDb: 3,
 			trebleDb: -3,
+			reverse: true,
 		};
 		const payload = serializeEdit(edit(base));
 		expect(payload.segments[0].effects).toEqual({
@@ -63,6 +65,7 @@ describe("serializeEdit", () => {
 			rate: 1.5,
 			bass_db: 3,
 			treble_db: -3,
+			reverse: true,
 		});
 	});
 
@@ -92,6 +95,7 @@ describe("serializeEdit", () => {
 			rate: 1,
 			bassDb: 0,
 			trebleDb: 0,
+			reverse: false,
 		});
 	});
 });
@@ -126,6 +130,7 @@ describe("deserializeEdit", () => {
 			rate: 1.5,
 			bassDb: 3,
 			trebleDb: -3,
+			reverse: true,
 		};
 		const restored = deserializeEdit(serializeEdit(sourceEdit, "remix"));
 		expect(restored).not.toBeNull();
@@ -146,8 +151,31 @@ describe("deserializeEdit", () => {
 			rate: 1.5,
 			bassDb: 3,
 			trebleDb: -3,
+			reverse: true,
 		});
 		expect(restored?.segments[0].id).not.toBe(restored?.segments[1].id);
+	});
+
+	test("compositions without the reverse flag deserialize forward", () => {
+		const restored = deserializeEdit({
+			segments: [segmentPayload()],
+			master_volume_db: 0,
+		});
+		expect(restored).not.toBeNull();
+		expect(restored?.segments[0].effects.reverse).toBe(false);
+	});
+
+	test("rejects a non-boolean reverse flag", () => {
+		const payload = {
+			segments: [
+				{
+					...segmentPayload(),
+					effects: { ...segmentPayload().effects, reverse: "yes" },
+				},
+			],
+			master_volume_db: 0,
+		};
+		expect(deserializeEdit(payload)).toBeNull();
 	});
 
 	test("rejects missing or malformed payloads", () => {

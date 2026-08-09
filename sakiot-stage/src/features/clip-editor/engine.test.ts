@@ -77,4 +77,30 @@ describe("segmentSourceWindow", () => {
 		expect(offset).toBe(8);
 		expect(duration).toBe(4);
 	});
+
+	test("reversed segments start at the source-window end", () => {
+		const reversed = seg(1, 0, 10, 0);
+		reversed.effects.reverse = true;
+		const { offset, duration } = segmentSourceWindow(reversed, 0, 0, 10);
+		expect(offset).toBe(10);
+		expect(duration).toBe(10);
+	});
+
+	test("reversed segments walk the window backwards when seeking", () => {
+		const reversed = seg(2, 0, 10, 0);
+		reversed.effects.reverse = true;
+		// Two seconds into a 2x reversed segment plays the content that was
+		// two seconds before the window end, i.e. buffer second 6.
+		const { offset, duration } = segmentSourceWindow(reversed, 2, 2, 5);
+		expect(offset).toBe(6);
+		expect(duration).toBe(6);
+	});
+
+	test("reversed segments respect the source-in offset", () => {
+		const reversed = seg(1, 2, 8, 0);
+		reversed.effects.reverse = true;
+		const { offset, duration } = segmentSourceWindow(reversed, 0, 0, 6);
+		expect(offset).toBe(8);
+		expect(duration).toBe(6);
+	});
 });

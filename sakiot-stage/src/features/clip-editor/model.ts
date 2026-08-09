@@ -6,6 +6,8 @@ export interface SegmentEffects {
 	rate: number;
 	bassDb: number;
 	trebleDb: number;
+	/** Plays the trimmed content backwards; the timeline extent is unchanged. */
+	reverse: boolean;
 }
 
 export interface TimelineSegment {
@@ -33,6 +35,7 @@ export const DEFAULT_EFFECTS: SegmentEffects = {
 	rate: 1,
 	bassDb: 0,
 	trebleDb: 0,
+	reverse: false,
 };
 
 let nextSegmentId = 0;
@@ -96,6 +99,21 @@ export function segmentDuration(segment: TimelineSegment): number {
 
 export function segmentEnd(segment: TimelineSegment): number {
 	return segment.timelineStart + segmentDuration(segment);
+}
+
+/**
+ * Source-buffer position audible at a timeline position: the trimmed content
+ * is consumed at the effective rate, walking backwards from sourceOut when
+ * the segment is reversed.
+ */
+export function sourcePositionAt(
+	segment: TimelineSegment,
+	timelineSec: number,
+): number {
+	const elapsed = Math.max(0, timelineSec - segment.timelineStart);
+	return segment.effects.reverse
+		? segment.sourceOut - elapsed * effectiveRate(segment.effects)
+		: segment.sourceIn + elapsed * effectiveRate(segment.effects);
 }
 
 export function editDuration(edit: ClipEdit): number {
@@ -165,18 +183,26 @@ export function splitSegment(
 	) {
 		return edit;
 	}
-	const splitSource =
-		segment.sourceIn + (atSec - start) * effectiveRate(segment.effects);
-	const first: TimelineSegment = {
-		...segment,
-		sourceOut: splitSource,
-	};
-	const second: TimelineSegment = {
-		...segment,
-		id: newSegmentId(),
-		sourceIn: splitSource,
-		timelineStart: atSec,
-	};
+	const splitSource = sourcePositionAt(segment, atSec);
+	// A reversed segment plays its window backwards, so the left half covers
+	// the source range after the split point and the right half the range
+	// before it; the direction flag carries into both halves unchanged.
+	const first: TimelineSegment = segment.effects.reverse
+		? { ...segment, sourceIn: splitSource }
+		: { ...segment, sourceOut: splitSource };
+	const second: TimelineSegment = segment.effects.reverse
+		? {
+				...segment,
+				id: newSegmentId(),
+				sourceOut: splitSource,
+				timelineStart: atSec,
+			}
+		: {
+				...segment,
+				id: newSegmentId(),
+				sourceIn: splitSource,
+				timelineStart: atSec,
+			};
 	return {
 		...edit,
 		segments: [...edit.segments.map((s) => (s.id === id ? first : s)), second],
@@ -263,6 +289,90 @@ function resizeSegmentTo(edit: ClipEdit, id: string, oldEnd: number): ClipEdit {
 				: follower,
 		),
 	};
+}
+
+const SNAP_EPSILON = 0.01;
+
+/**
+ * Applies an effects change to every selected segment and keeps the selected
+ * group coherent: members that were snapped together move together, so a
+ * contraction pulls its snapped selected follower left and an extension
+ * carries it right, while unselected segments behave as normal obstacles -
+ * pushed only when a growth actually reaches them, never pulled. Segments
+ * that were not snapped keep their gaps.
+ */
+export function resizeSelectedSegments(
+	edit: ClipEdit,
+	ids: readonly string[],
+	patch: (id: string, effects: SegmentEffects) => SegmentEffects,
+): ClipEdit {
+	const selected = ids
+		.map((id) => edit.segments.find((s) => s.id === id))
+		.filter((segment): segment is TimelineSegment => Boolean(segment));
+	if (selected.length === 0) return edit;
+
+	const oldEnds = new Map(
+		selected.map((segment) => [segment.id, segmentEnd(segment)]),
+	);
+	const content = (segment: TimelineSegment) =>
+		segment.sourceOut - segment.sourceIn;
+
+	let next = edit;
+	for (const segment of selected) {
+		next = updateSegment(next, segment.id, {
+			effects: patch(segment.id, segment.effects),
+		});
+	}
+
+	// Snap the selected chain together per track, in timeline order. The
+	// shift of one member is the end delta of the selected segment before
+	// it; the snap decision itself always compares original positions, which
+	// are not affected by the shifts.
+	for (const track of new Set(selected.map((s) => s.track))) {
+		const group = next.segments
+			.filter((s) => ids.includes(s.id) && s.track === track)
+			.sort((a, b) => a.timelineStart - b.timelineStart);
+		if (group.length < 2) continue;
+		let previousStart = group[0].timelineStart;
+		for (let i = 1; i < group.length; i += 1) {
+			const current = group[i];
+			const previous = group[i - 1];
+			const originalStart = current.timelineStart;
+			const previousOldEnd = oldEnds.get(previous.id) ?? 0;
+			const previousNewEnd =
+				previousStart + content(previous) / effectiveRate(previous.effects);
+			const start =
+				Math.abs(originalStart - previousOldEnd) < SNAP_EPSILON
+					? previousNewEnd
+					: originalStart;
+			if (start !== current.timelineStart) {
+				next = updateSegment(next, current.id, { timelineStart: start });
+			}
+			previousStart = start;
+		}
+	}
+
+	// Resolve the new layout per track: everything keeps its position unless
+	// a growth reached it, in which case it is pushed to the new edge. A
+	// shrinkage never pulls an unselected segment.
+	for (const track of new Set(selected.map((s) => s.track))) {
+		const row = next.segments
+			.filter((s) => s.track === track)
+			.sort((a, b) => a.timelineStart - b.timelineStart);
+		let cursor = 0;
+		for (const segment of row) {
+			const start = Math.max(segment.timelineStart, cursor);
+			if (start !== segment.timelineStart) {
+				next = updateSegment(next, segment.id, { timelineStart: start });
+			}
+			cursor = Math.max(
+				cursor,
+				start + content(segment) / effectiveRate(segment.effects),
+			);
+		}
+	}
+
+	return next;
 }
 
 /**

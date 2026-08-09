@@ -27,6 +27,7 @@ export function serializeEdit(edit: ClipEdit, name?: string): ComposeClipBody {
 				rate: segment.effects.rate,
 				bass_db: segment.effects.bassDb,
 				treble_db: segment.effects.trebleDb,
+				reverse: segment.effects.reverse,
 			},
 		})),
 	};
@@ -102,6 +103,7 @@ function deserializeEffects(raw: unknown): SegmentEffects | null {
 	const effects = raw as Record<string, unknown>;
 	const { volume_db: volumeDb, pitch_cents: pitchCents } = effects;
 	const { rate, bass_db: bassDb, treble_db: trebleDb } = effects;
+	const reverse = effects.reverse;
 	if (
 		!isFiniteNumber(volumeDb) ||
 		!isFiniteNumber(pitchCents) ||
@@ -111,7 +113,17 @@ function deserializeEffects(raw: unknown): SegmentEffects | null {
 	) {
 		return null;
 	}
-	return { volumeDb, pitchCents, rate, bassDb, trebleDb };
+	// Compositions exported before reverse existed omit the flag; treat the
+	// absence as forward playback.
+	if (reverse !== undefined && typeof reverse !== "boolean") return null;
+	return {
+		volumeDb,
+		pitchCents,
+		rate,
+		bassDb,
+		trebleDb,
+		reverse: reverse === true,
+	};
 }
 
 function isFiniteNumber(value: unknown): value is number {

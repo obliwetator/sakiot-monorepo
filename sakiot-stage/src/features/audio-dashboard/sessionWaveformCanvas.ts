@@ -27,6 +27,12 @@ export interface WaveformStyle {
 	 * top of an already tinted surface such as a timeline segment).
 	 */
 	fillStyle?: string | null;
+	/**
+	 * Mirrors the window horizontally: the right edge of the source window is
+	 * drawn at the left of the canvas, so a reversed segment shows its audio
+	 * playing backwards.
+	 */
+	reverse?: boolean;
 }
 
 const FULL_WINDOW: WaveformWindow = { startFraction: 0, endFraction: 1 };
@@ -54,16 +60,20 @@ export function drawSessionWaveform(
 
 	const from = clampFraction(window.startFraction) * pointCount;
 	const to = clampFraction(window.endFraction) * pointCount;
-	const span = Math.max(to - from, Number.EPSILON);
+	// Reversed segments walk the source window from its end, so column 0
+	// samples the point the playback will reach last.
+	const start = style.reverse ? to : from;
+	const end = style.reverse ? from : to;
 
 	for (let x = 0; x < width; x += 1) {
 		// Every point falling in this column contributes, so raising the peak
 		// resolution sharpens the envelope instead of aliasing it into noise.
-		const first = Math.floor(from + (x / width) * span);
-		const last = Math.max(
-			first + 1,
-			Math.ceil(from + ((x + 1) / width) * span),
-		);
+		// Reversed windows walk the span downwards; the raw endpoints still
+		// delimit the same column, so aggregate their range either way.
+		const rawStart = start + (x / width) * (end - start);
+		const rawEnd = start + ((x + 1) / width) * (end - start);
+		const first = Math.floor(Math.min(rawStart, rawEnd));
+		const last = Math.max(first + 1, Math.ceil(Math.max(rawStart, rawEnd)));
 		let min = 0;
 		let max = 0;
 		for (

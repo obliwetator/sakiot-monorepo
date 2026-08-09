@@ -94,4 +94,62 @@ describe("drawSessionWaveform", () => {
 
 		expect(context.stroke).toHaveBeenCalledTimes(1);
 	});
+
+	it("mirrors the window horizontally when reversed", () => {
+		const context = canvasContext();
+
+		drawSessionWaveform(
+			context,
+			2,
+			100,
+			{ min: [-1, -0.5], max: [1, 0.5] },
+			undefined,
+			{ reverse: true },
+		);
+
+		// Column 0 draws the last point and column 1 the first: the forward
+		// order [0, 100], [25, 75] is drawn in reverse.
+		expect(drawnColumns(context)).toEqual([
+			[25, 75],
+			[0, 100],
+		]);
+	});
+
+	it("keeps the loudest sample of a column when reversed", () => {
+		const context = canvasContext();
+
+		drawSessionWaveform(
+			context,
+			1,
+			100,
+			{ min: [-0.1, -1, -0.1], max: [0.1, 0.2, 0.1] },
+			undefined,
+			{ reverse: true },
+		);
+
+		// The whole point range still contributes to the column envelope,
+		// so the middle sample (the loudest) is kept.
+		expect(drawnColumns(context)).toEqual([[40, 100]]);
+	});
+
+	it("never samples past the point range when reversed", () => {
+		const context = canvasContext();
+
+		drawSessionWaveform(
+			context,
+			3,
+			100,
+			{ min: [-1, -0.5, 0], max: [1, 0.5, 0] },
+			undefined,
+			{ reverse: true },
+		);
+
+		// Column 0 draws the silent last point as a flat centre line, column 1
+		// the middle sample, column 2 the loudest point - all inside bounds.
+		expect(drawnColumns(context)).toEqual([
+			[50, 50],
+			[25, 75],
+			[0, 100],
+		]);
+	});
 });

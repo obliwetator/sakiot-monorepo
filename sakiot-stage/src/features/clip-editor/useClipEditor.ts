@@ -87,15 +87,15 @@ export function useClipEditor() {
 	);
 
 	const togglePlay = useCallback(() => {
-		if (playingRef.current) {
-			engine.stop();
+		if (engine.isPlaying) {
+			engine.pause();
 			if (rafRef.current !== null) {
 				cancelAnimationFrame(rafRef.current);
 				rafRef.current = null;
 			}
 			setPlaying(false);
-			positionRef.current = 0;
-			setPositionSec(0);
+			positionRef.current = engine.positionSec;
+			setPositionSec(engine.positionSec);
 			return;
 		}
 		startPlayback();
@@ -104,7 +104,7 @@ export function useClipEditor() {
 	const seek = useCallback(
 		(sec: number) => {
 			const clamped = Math.max(0, sec);
-			if (playingRef.current) {
+			if (engine.isPlaying) {
 				engine.seekTo(
 					editRef.current,
 					clamped,
@@ -122,7 +122,7 @@ export function useClipEditor() {
 		(next: boolean) => {
 			setLoop(next);
 			loopRef.current = next;
-			if (playingRef.current) {
+			if (engine.isPlaying) {
 				engine.seekTo(
 					editRef.current,
 					positionRef.current,
@@ -207,7 +207,7 @@ export function useClipEditor() {
 	useEffect(() => {
 		const segmentsChanged = segmentsRef.current !== edit.segments;
 		segmentsRef.current = edit.segments;
-		if (segmentsChanged && !draggingRef.current && playingRef.current) {
+		if (segmentsChanged && !draggingRef.current && engine.isPlaying) {
 			engine.play(
 				editRef.current,
 				positionRef.current,

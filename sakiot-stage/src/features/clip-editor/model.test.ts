@@ -3,12 +3,14 @@ import {
 	DEFAULT_EFFECTS,
 	effectiveRate,
 	leftEdgeFloor,
+	resizeSelectedSegments,
 	rightEdgeCeiling,
 	segmentDuration,
 	segmentEnd,
 	setSegmentPitch,
 	setSegmentSpeed,
 	snapToNeighbors,
+	sourcePositionAt,
 	splitSegment,
 	type TimelineSegment,
 } from "./model";
@@ -175,6 +177,83 @@ describe("setSegmentSpeed", () => {
 		const a = seg("a", 0, 0, 4);
 		const edit = editWith(a);
 		expect(setSegmentSpeed(edit, "a", 0)).toBe(edit);
+	});
+});
+
+describe("resizeSelectedSegments", () => {
+	const slower = (ids: string[]) => (edit: ClipEdit) =>
+		resizeSelectedSegments(edit, ids, (_id, effects) => ({
+			...effects,
+			rate: 0.5,
+		}));
+	const faster = (ids: string[]) => (edit: ClipEdit) =>
+		resizeSelectedSegments(edit, ids, (_id, effects) => ({
+			...effects,
+			rate: 2,
+		}));
+
+	test("a contraction pulls its snapped selected follower", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = faster(["a", "b"])(editWith(a, b));
+		expect(next.segments[0]?.timelineStart).toBe(0);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(2);
+		expect(next.segments[1]?.timelineStart).toBe(2);
+		expect(segmentDuration(next.segments[1] as TimelineSegment)).toBe(2);
+	});
+
+	test("an extension carries its snapped selected follower", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = slower(["a", "b"])(editWith(a, b));
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(8);
+		expect(next.segments[1]?.timelineStart).toBe(8);
+		expect(segmentDuration(next.segments[1] as TimelineSegment)).toBe(8);
+	});
+
+	test("an unselected snapped neighbour stays put", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const c = seg("c", 0, 8, 4);
+		const next = faster(["a", "b"])(editWith(a, b, c));
+		// A and B contract together; the unselected C is never pulled.
+		expect(next.segments[0]?.timelineStart).toBe(0);
+		expect(next.segments[1]?.timelineStart).toBe(2);
+		expect(next.segments[2]?.timelineStart).toBe(8);
+	});
+
+	test("a growth reaches an unselected neighbour and pushes it", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 6, 4);
+		const next = slower(["a"])(editWith(a, b));
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(8);
+		expect(next.segments[1]?.timelineStart).toBe(8);
+	});
+
+	test("a gap between selected segments stays a gap", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 6, 4);
+		const next = faster(["a", "b"])(editWith(a, b));
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(2);
+		// Not snapped: B is not pulled towards A.
+		expect(next.segments[1]?.timelineStart).toBe(6);
+	});
+
+	test("non-resizing effect changes leave positions alone", () => {
+		const a = seg("a", 0, 0, 4);
+		const b = seg("b", 0, 4, 4);
+		const next = resizeSelectedSegments(
+			editWith(a, b),
+			["a", "b"],
+			(_id, effects) => ({
+				...effects,
+				volumeDb: -6,
+			}),
+		);
+		expect(next.segments[0]?.timelineStart).toBe(0);
+		expect(next.segments[1]?.timelineStart).toBe(4);
+		expect(next.segments[0]?.effects.volumeDb).toBe(-6);
+		expect(next.segments[1]?.effects.volumeDb).toBe(-6);
 	});
 });
 
@@ -349,5 +428,44 @@ describe("splitSegment", () => {
 		const a = seg("a", 0, 0, 10);
 		expect(splitSegment(editWith(a), "a", 0.01).segments).toHaveLength(1);
 		expect(splitSegment(editWith(a), "a", 9.99).segments).toHaveLength(1);
+	});
+
+	test("a reversed segment splits at the mirrored source position", () => {
+		const a = seg("a", 0, 0, 10);
+		a.effects.reverse = true;
+		const next = splitSegment(editWith(a), "a", 4);
+		const left = next.segments[0] as TimelineSegment;
+		const right = next.segments[1] as TimelineSegment;
+		// The box plays [0, 10] backwards, so 4s in is at source second 6: the
+		// left half covers [6, 10] (still reversed) and the right [0, 6].
+		expect(left.sourceIn).toBe(6);
+		expect(left.sourceOut).toBe(10);
+		expect(left.effects.reverse).toBe(true);
+		expect(segmentDuration(left)).toBe(4);
+		expect(right.sourceIn).toBe(0);
+		expect(right.sourceOut).toBe(6);
+		expect(right.effects.reverse).toBe(true);
+		expect(right.timelineStart).toBe(4);
+		expect(segmentDuration(right)).toBe(6);
+	});
+});
+
+describe("sourcePositionAt", () => {
+	test("walks forward from source-in at the effective rate", () => {
+		const a = seg("a", 0, 0, 10);
+		a.effects.rate = 2;
+		expect(sourcePositionAt(a, 3)).toBe(6);
+	});
+
+	test("walks backward from source-out when reversed", () => {
+		const a = seg("a", 0, 0, 10);
+		a.effects.reverse = true;
+		expect(sourcePositionAt(a, 4)).toBe(6);
+	});
+
+	test("clamps before the segment start", () => {
+		const a = seg("a", 0, 2, 10);
+		a.sourceIn = 4;
+		expect(sourcePositionAt(a, -5)).toBe(4);
 	});
 });

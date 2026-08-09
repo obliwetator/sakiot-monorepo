@@ -1,5 +1,10 @@
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
-import { editDuration, effectiveRate, segmentDuration } from "./model";
+import {
+	editDuration,
+	effectiveRate,
+	segmentDuration,
+	sourcePositionAt,
+} from "./model";
 
 function dbToLinear(db: number): number {
 	return 10 ** (db / 20);
@@ -13,18 +18,20 @@ function dbToLinear(db: number): number {
  * rate: a 2x segment consumes twice the buffer content per timeline second,
  * and a pitch shift likewise accelerates or slows the consumption. Without
  * the scaling, fast clips go silent halfway through their box and slow clips
- * keep playing past its end.
+ * keep playing past its end. Reversed segments start at the source-window
+ * end and walk backwards at the same rate (negative playbackRate).
  */
 export function segmentSourceWindow(
 	segment: TimelineSegment,
-	fromSec: number,
+	// The offset is fully determined by the overlap window; kept in the
+	// signature for callers that compute it alongside the overlap.
+	_fromSec: number,
 	overlapStart: number,
 	overlapEnd: number,
 ): { offset: number; duration: number } {
 	const rate = effectiveRate(segment.effects);
 	return {
-		offset:
-			segment.sourceIn + Math.max(0, fromSec - segment.timelineStart) * rate,
+		offset: sourcePositionAt(segment, overlapStart),
 		duration: (overlapEnd - overlapStart) * rate,
 	};
 }
@@ -92,7 +99,9 @@ export class ClipEditorEngine {
 			const node = ctx.createBufferSource();
 			node.buffer = buffer;
 			node.detune.value = segment.effects.pitchCents;
-			node.playbackRate.value = segment.effects.rate;
+			node.playbackRate.value = segment.effects.reverse
+				? -segment.effects.rate
+				: segment.effects.rate;
 			const gain = ctx.createGain();
 			gain.gain.value = dbToLinear(segment.effects.volumeDb);
 			const bass = ctx.createBiquadFilter();
@@ -146,9 +155,10 @@ export class ClipEditorEngine {
 		}
 	}
 
-	stop() {
+	/** Pause playback, keeping the playhead where it is so play() resumes. */
+	pause() {
+		this.playheadSec = this.positionSec;
 		this.cancel();
-		this.playheadSec = 0;
 	}
 
 	cancel() {
@@ -183,7 +193,9 @@ export class ClipEditorEngine {
 		const active = this.active.get(id);
 		if (!active) return;
 		active.node.detune.value = effects.pitchCents;
-		active.node.playbackRate.value = effects.rate;
+		active.node.playbackRate.value = effects.reverse
+			? -effects.rate
+			: effects.rate;
 		active.gain.gain.value = dbToLinear(effects.volumeDb);
 		active.bass.gain.value = effects.bassDb;
 		active.treble.gain.value = effects.trebleDb;

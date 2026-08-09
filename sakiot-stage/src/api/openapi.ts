@@ -713,6 +713,9 @@ export interface components {
 			pitch_cents: number;
 			/** Format: float */
 			rate: number;
+			/** Plays the trimmed content backwards. Defaults to false so requests and */
+			/** stored compositions from before the flag existed still deserialize. */
+			reverse?: boolean;
 			/** Format: float */
 			treble_db: number;
 			/** Format: float */

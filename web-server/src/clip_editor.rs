@@ -55,6 +55,10 @@ pub struct SegmentEffectsDto {
     pub rate: f32,
     pub bass_db: f32,
     pub treble_db: f32,
+    /// Plays the trimmed content backwards. Defaults to false so requests and
+    /// stored compositions from before the flag existed still deserialize.
+    #[serde(default)]
+    pub reverse: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -85,6 +89,7 @@ struct SegmentRender {
     volume_db: f32,
     bass_db: f32,
     treble_db: f32,
+    reverse: bool,
     timeline_start: f32,
 }
 
@@ -317,6 +322,7 @@ pub async fn compose_clip(
             volume_db: segment.effects.volume_db,
             bass_db: segment.effects.bass_db,
             treble_db: segment.effects.treble_db,
+            reverse: segment.effects.reverse,
             timeline_start: segment.timeline_start,
         })
         .collect();
@@ -610,8 +616,12 @@ fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f32) -> Stri
         let combined_rate = effective_rate(segment);
         let volume = db_to_linear(segment.volume_db);
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
+        // Reversed segments trim the source window first, then flip it, so the
+        // audible content is exactly the [source_in, source_out] window played
+        // backwards - the same as the client's negative playbackRate preview.
+        let reverse = if segment.reverse { ",areverse" } else { "" };
         graph.push_str(&format!(
-            "[{index}:a]atrim=start={:.6}:end={:.6},asetrate={:.4},aresample={SAMPLE_RATE:.4},volume={volume:.6},bass=g={:.3}:f=250,treble=g={:.3}:f=3000,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
+            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},asetrate={:.4},aresample={SAMPLE_RATE:.4},volume={volume:.6},bass=g={:.3}:f=250,treble=g={:.3}:f=3000,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
             segment.source_in,
             segment.source_out,
             SAMPLE_RATE * combined_rate,
@@ -714,6 +724,7 @@ mod tests {
             volume_db: 6.0,
             bass_db: -3.0,
             treble_db: 3.0,
+            reverse: false,
             timeline_start: 2.5,
         }
     }
@@ -740,6 +751,7 @@ mod tests {
                 rate: 1.0,
                 bass_db: 0.0,
                 treble_db: 0.0,
+                reverse: false,
             },
         }
     }
@@ -772,6 +784,23 @@ mod tests {
         let graph = build_filter_graph(&[render], 0.0);
         assert!(graph.contains("asetrate=48000"));
         assert!(graph.contains("volume=1.000000"));
+    }
+
+    #[test]
+    fn builds_filter_graph_with_reverse_after_the_trim() {
+        let mut render = segment_render();
+        render.reverse = true;
+        let graph = build_filter_graph(&[render], 0.0);
+        // The window is trimmed first and then flipped, so the audible
+        // content is [source_in, source_out] played backwards.
+        assert!(graph.contains("atrim=start=1.000000:end=5.000000,areverse"));
+        assert!(graph.contains("adelay=2500:all=1"));
+    }
+
+    #[test]
+    fn forward_segments_omit_the_reverse_filter() {
+        let graph = build_filter_graph(&[segment_render()], 0.0);
+        assert!(!graph.contains("areverse"));
     }
 
     #[test]
@@ -882,5 +911,22 @@ mod tests {
         assert_eq!(value["segments"][0]["effects"]["rate"], 1.0);
         assert_eq!(value["segments"][0]["effects"]["bass_db"], 0.0);
         assert_eq!(value["segments"][0]["effects"]["treble_db"], 0.0);
+        assert_eq!(value["segments"][0]["effects"]["reverse"], false);
+    }
+
+    #[test]
+    fn effects_default_to_forward_playback_when_reverse_is_missing() {
+        let mut seg = segment();
+        let mut value = serde_json::to_value(body(vec![seg.clone()])).unwrap();
+        value["segments"][0]["effects"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reverse");
+        let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+        assert!(!restored.segments[0].effects.reverse);
+        seg.effects.reverse = true;
+        let value = serde_json::to_value(body(vec![seg])).unwrap();
+        let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+        assert!(restored.segments[0].effects.reverse);
     }
 }
