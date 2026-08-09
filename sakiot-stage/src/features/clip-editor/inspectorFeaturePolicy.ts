@@ -14,10 +14,13 @@ export const INSPECTOR_FEATURE_POLICIES = {
 	pitch: { multiSelection: "handled" },
 	speed: { multiSelection: "handled" },
 	bass: { multiSelection: "handled" },
+	mid: { multiSelection: "handled" },
 	treble: { multiSelection: "handled" },
 	split: {},
 	reverse: { multiSelection: "handled" },
 	delete: { multiSelection: "handled" },
+	merge: { multiSelection: "handled" },
+	unmerge: { multiSelection: "handled" },
 } as const satisfies Record<string, InspectorFeaturePolicy>;
 
 export type InspectorFeatureId = keyof typeof INSPECTOR_FEATURE_POLICIES;

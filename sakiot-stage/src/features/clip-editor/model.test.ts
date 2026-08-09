@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
 	DEFAULT_EFFECTS,
 	effectiveRate,
+	expandMergeGroups,
 	leftEdgeFloor,
+	mergeBlockReason,
+	mergeSegments,
 	resizeSelectedSegments,
 	rightEdgeCeiling,
 	segmentDuration,
@@ -13,6 +16,7 @@ import {
 	sourcePositionAt,
 	splitSegment,
 	type TimelineSegment,
+	unmergeSegments,
 } from "./model";
 
 function seg(id: string, track: number, start: number, duration: number) {
@@ -258,58 +262,42 @@ describe("resizeSelectedSegments", () => {
 });
 
 describe("effectiveRate", () => {
-	test("pitch folds into the rate like the Web Audio detune", () => {
+	test("pitch does not change source consumption or duration", () => {
 		const a = seg("a", 0, 0, 4);
 		a.effects.rate = 2;
 		expect(effectiveRate(a.effects)).toBe(2);
 		a.effects.pitchCents = 1200;
-		expect(effectiveRate(a.effects)).toBe(4);
+		expect(effectiveRate(a.effects)).toBe(2);
 		a.effects.pitchCents = -1200;
-		expect(effectiveRate(a.effects)).toBe(1);
+		expect(effectiveRate(a.effects)).toBe(2);
 	});
 });
 
 describe("setSegmentPitch", () => {
-	test("pitch up shrinks the segment and leaves neighbours alone", () => {
+	test("pitch up preserves the segment and neighbour positions", () => {
 		const a = seg("a", 0, 0, 4);
 		const b = seg("b", 0, 4, 4);
 		const next = setSegmentPitch(editWith(a, b), "a", 1200);
 		expect(next.segments[0]?.effects.pitchCents).toBe(1200);
-		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(2);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(4);
 		expect(next.segments[1]?.timelineStart).toBe(4);
 	});
 
-	test("pitch down extends and pushes the snapped neighbour right", () => {
+	test("pitch down also preserves duration", () => {
 		const a = seg("a", 0, 0, 4);
 		const b = seg("b", 0, 4, 4);
 		const next = setSegmentPitch(editWith(a, b), "a", -1200);
-		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(8);
-		expect(next.segments[1]?.timelineStart).toBe(8);
+		expect(segmentDuration(next.segments[0] as TimelineSegment)).toBe(4);
+		expect(next.segments[1]?.timelineStart).toBe(4);
 	});
 
-	test("a chained suffix is pushed as a whole", () => {
-		const a = seg("a", 0, 0, 4);
-		const b = seg("b", 0, 4, 4);
-		const c = seg("c", 0, 8, 4);
-		const next = setSegmentPitch(editWith(a, b, c), "a", -1200);
-		expect(next.segments[1]?.timelineStart).toBe(8);
-		expect(next.segments[2]?.timelineStart).toBe(12);
-	});
-
-	test("pitch changes resize the box from the existing speed extent", () => {
+	test("pitch keeps an existing speed extent", () => {
 		const a = seg("a", 0, 0, 4);
 		const b = seg("b", 0, 4, 4);
 		const speed = setSegmentSpeed(editWith(a, b), "a", 2); // box 0..2
-		const pitched = setSegmentPitch(speed, "a", -1200); // box 0..4
-		expect(segmentDuration(pitched.segments[0] as TimelineSegment)).toBe(4);
+		const pitched = setSegmentPitch(speed, "a", -1200);
+		expect(segmentDuration(pitched.segments[0] as TimelineSegment)).toBe(2);
 		expect(pitched.segments[1]?.timelineStart).toBe(4);
-	});
-
-	test("contraction never pulls a snapped neighbour", () => {
-		const a = seg("a", 0, 0, 4);
-		const b = seg("b", 0, 4, 4);
-		const next = setSegmentPitch(editWith(a, b), "a", 1200);
-		expect(next.segments[1]?.timelineStart).toBe(4);
 	});
 
 	test("a bad pitch is rejected", () => {
@@ -467,5 +455,219 @@ describe("sourcePositionAt", () => {
 		const a = seg("a", 0, 2, 10);
 		a.sourceIn = 4;
 		expect(sourcePositionAt(a, -5)).toBe(4);
+	});
+});
+
+/** A segment trimmed out of the shared source clip `sourceId`. */
+function piece(
+	id: string,
+	sourceId: string,
+	sourceIn: number,
+	sourceOut: number,
+	timelineStart: number,
+	track = 0,
+) {
+	const segment = seg(id, track, timelineStart, sourceOut - sourceIn);
+	segment.sourceId = sourceId;
+	segment.sourceIn = sourceIn;
+	segment.sourceOut = sourceOut;
+	return segment;
+}
+
+describe("mergeBlockReason", () => {
+	test("a snapped forward chain is mergeable", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 10, 4);
+		expect(mergeBlockReason([a, b])).toBeNull();
+	});
+
+	test("a three-piece chain merges when every border snaps", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 7, 4);
+		const c = piece("c", "src", 7, 10, 7);
+		expect(mergeBlockReason([a, b, c])).toBeNull();
+	});
+
+	test("a reversed chain snapped on the timeline is mergeable", () => {
+		const a = piece("a", "src", 6, 10, 0);
+		a.effects.reverse = true;
+		const b = piece("b", "src", 0, 6, 4);
+		b.effects.reverse = true;
+		expect(mergeBlockReason([a, b])).toBeNull();
+	});
+
+	test("repeating the same source window is mergeable", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 0, 4, 4);
+		expect(mergeBlockReason([a, b])).toBeNull();
+	});
+
+	test("snapped clips from different sources are mergeable", () => {
+		const a = piece("a", "src1", 0, 4, 0);
+		const b = piece("b", "src2", 4, 8, 4);
+		expect(mergeBlockReason([a, b])).toBeNull();
+	});
+
+	test("snapped clips with different effects are mergeable", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 4);
+		b.effects.volumeDb = -6;
+		expect(mergeBlockReason([a, b])).toBeNull();
+	});
+
+	test("a single segment is refused", () => {
+		expect(mergeBlockReason([piece("a", "src", 0, 4, 0)])).toBe("too-few");
+	});
+
+	test("a selection across tracks is refused", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 4, 1);
+		expect(mergeBlockReason([a, b])).toBe("multi-track");
+	});
+
+	test("a gap on the timeline is refused", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 6);
+		expect(mergeBlockReason([a, b])).toBe("not-snapped");
+	});
+
+	test("an overlap is refused", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 3);
+		expect(mergeBlockReason([a, b])).toBe("not-snapped");
+	});
+});
+
+describe("mergeSegments", () => {
+	test("tags the chain with one group id and keeps every segment", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 10, 4);
+		const result = mergeSegments(editWith(a, b), ["a", "b"]);
+		expect(result).not.toBeNull();
+		const { edit, groupId } = result as {
+			edit: ReturnType<typeof editWith>;
+			groupId: string;
+		};
+		expect(groupId.startsWith("group-")).toBe(true);
+		expect(edit.segments).toHaveLength(2);
+		expect(edit.segments[0]?.mergeGroup).toBe(groupId);
+		expect(edit.segments[1]?.mergeGroup).toBe(groupId);
+		expect(edit.segments[0]?.sourceId).toBe("src");
+		expect(edit.segments[1]?.sourceId).toBe("src");
+	});
+
+	test("repeated windows merge without losing audio", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 0, 4, 4);
+		const result = mergeSegments(editWith(a, b), ["a", "b"]);
+		expect(result).not.toBeNull();
+		const segments = (result as { edit: { segments: TimelineSegment[] } }).edit
+			.segments as TimelineSegment[];
+		expect(segments).toHaveLength(2);
+		expect(segments[0]?.mergeGroup).toBe(segments[1]?.mergeGroup);
+		expect(segmentDuration(segments[0] as TimelineSegment)).toBe(4);
+		expect(segmentDuration(segments[1] as TimelineSegment)).toBe(4);
+	});
+
+	test("snapped clips from different sources merge", () => {
+		const a = piece("a", "src1", 0, 4, 0);
+		const b = piece("b", "src2", 4, 8, 4);
+		const result = mergeSegments(editWith(a, b), ["a", "b"]);
+		expect(result).not.toBeNull();
+		const segments = (result as { edit: { segments: TimelineSegment[] } }).edit
+			.segments as TimelineSegment[];
+		expect(segments[0]?.sourceId).toBe("src1");
+		expect(segments[1]?.sourceId).toBe("src2");
+		expect(segments[0]?.mergeGroup).toBe(segments[1]?.mergeGroup);
+	});
+
+	test("merging two existing groups unifies them", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		a.mergeGroup = "group-old-1";
+		const b = piece("b", "src", 4, 8, 4);
+		b.mergeGroup = "group-old-2";
+		const result = mergeSegments(editWith(a, b), ["a", "b"]);
+		expect(result).not.toBeNull();
+		const { groupId } = result as { groupId: string };
+		expect(groupId).not.toBe("group-old-1");
+		expect(groupId).not.toBe("group-old-2");
+		const segments = (result as { edit: { segments: TimelineSegment[] } }).edit
+			.segments as TimelineSegment[];
+		expect(segments[0]?.mergeGroup).toBe(groupId);
+		expect(segments[1]?.mergeGroup).toBe(groupId);
+	});
+
+	test("unselected segments are untouched", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 4);
+		const c = piece("c", "src2", 0, 4, 8, 1);
+		const result = mergeSegments(editWith(a, b, c), ["a", "b"]);
+		expect(result?.edit.segments).toHaveLength(3);
+		expect(result?.edit.segments[2]?.mergeGroup).toBeUndefined();
+	});
+
+	test("merges ids given in any order", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 4);
+		const result = mergeSegments(editWith(a, b), ["b", "a"]);
+		expect(result?.edit.segments[0]?.mergeGroup).toBe(
+			result?.edit.segments[1]?.mergeGroup,
+		);
+	});
+
+	test("returns null when the merge is refused", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 6);
+		expect(mergeSegments(editWith(a, b), ["a", "b"])).toBeNull();
+	});
+});
+
+describe("unmergeSegments", () => {
+	test("strips the group id from the given segments only", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		a.mergeGroup = "group-1";
+		const b = piece("b", "src", 4, 8, 4);
+		b.mergeGroup = "group-1";
+		const c = piece("c", "src2", 0, 4, 8, 1);
+		c.mergeGroup = "group-2";
+		const edit = unmergeSegments(editWith(a, b, c), ["a", "b"]);
+		expect(edit.segments[0]?.mergeGroup).toBeUndefined();
+		expect(edit.segments[1]?.mergeGroup).toBeUndefined();
+		expect(edit.segments[2]?.mergeGroup).toBe("group-2");
+	});
+
+	test("leaves ungrouped segments alone", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const edit = unmergeSegments(editWith(a), ["a"]);
+		expect(edit.segments[0]?.mergeGroup).toBeUndefined();
+	});
+});
+
+describe("expandMergeGroups", () => {
+	test("lone ids pass through unchanged", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		expect(expandMergeGroups([a], ["a"])).toEqual(["a"]);
+	});
+
+	test("selecting one member selects every member", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		a.mergeGroup = "group-1";
+		const b = piece("b", "src", 4, 8, 4);
+		b.mergeGroup = "group-1";
+		expect(expandMergeGroups([a, b], ["a"])).toEqual(["a", "b"]);
+	});
+
+	test("mixing members and lone segments keeps both", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		a.mergeGroup = "group-1";
+		const b = piece("b", "src", 4, 8, 4);
+		b.mergeGroup = "group-1";
+		const c = piece("c", "src2", 0, 4, 8, 1);
+		expect(expandMergeGroups([a, b, c], ["b", "c"])).toEqual(["a", "b", "c"]);
+	});
+
+	test("unknown ids are dropped", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		expect(expandMergeGroups([a], ["nope"])).toEqual([]);
 	});
 });

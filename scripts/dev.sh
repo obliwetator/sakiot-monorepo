@@ -136,6 +136,9 @@ db_up() {
 ensure_media_tools() {
     need ffmpeg "install the FFmpeg package (Ubuntu/Debian: sudo apt install ffmpeg)"
     need ffprobe "installed alongside FFmpeg (Ubuntu/Debian: sudo apt install ffmpeg)"
+    if ! ffmpeg -hide_banner -filters 2>/dev/null | grep '[[:space:]]rubberband[[:space:]]' >/dev/null; then
+        die "FFmpeg is missing the rubberband audio filter required for clip pitch shifting"
+    fi
     need audiowaveform "install audiowaveform (Ubuntu: sudo add-apt-repository ppa:chris-needham/ppa, then sudo apt update && sudo apt install audiowaveform)"
 }
 

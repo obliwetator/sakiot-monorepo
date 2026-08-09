@@ -5,6 +5,7 @@ export interface SegmentEffects {
 	pitchCents: number;
 	rate: number;
 	bassDb: number;
+	midDb: number;
 	trebleDb: number;
 	/** Plays the trimmed content backwards; the timeline extent is unchanged. */
 	reverse: boolean;
@@ -19,6 +20,14 @@ export interface TimelineSegment {
 	sourceOut: number;
 	timelineStart: number;
 	effects: SegmentEffects;
+	/**
+	 * Id of the merged unit this segment belongs to. Members render as one
+	 * box on the timeline and are selected, moved and edited as a whole,
+	 * while playback and export keep the individual segments, so merging
+	 * never changes the audio - repeated source windows and even different
+	 * source clips can be merged.
+	 */
+	mergeGroup?: string;
 }
 
 export interface ClipEdit {
@@ -34,6 +43,7 @@ export const DEFAULT_EFFECTS: SegmentEffects = {
 	pitchCents: 0,
 	rate: 1,
 	bassDb: 0,
+	midDb: 0,
 	trebleDb: 0,
 	reverse: false,
 };
@@ -43,6 +53,13 @@ let nextSegmentId = 0;
 export function newSegmentId(): string {
 	nextSegmentId += 1;
 	return `seg-${nextSegmentId}`;
+}
+
+let nextGroupId = 0;
+
+export function newGroupId(): string {
+	nextGroupId += 1;
+	return `group-${nextGroupId}`;
 }
 
 export function emptyEdit(): ClipEdit {
@@ -70,25 +87,16 @@ export function makeSegment(
 }
 
 /**
- * Pitch shift as a rate multiplier: 1200 cents is one octave, matching the
- * Web Audio detune semantics that fold into the computed playback rate.
- */
-export function pitchFactor(effects: SegmentEffects): number {
-	return 2 ** (effects.pitchCents / 1200);
-}
-
-/**
- * Effective playback rate of a segment: the Web Audio engine consumes the
- * source buffer at `playbackRate * 2^(detune/1200)` per real second, so both
- * speed and pitch resize the audible extent of a segment on the timeline.
+ * Source-buffer consumption rate of a segment. Pitch shifting preserves
+ * duration, so only the speed control changes the timeline extent.
  */
 export function effectiveRate(effects: SegmentEffects): number {
-	return effects.rate * pitchFactor(effects);
+	return effects.rate;
 }
 
 /**
  * Real-time duration of the segment on the timeline: the trimmed source
- * content played back at the segment's effective speed and pitch.
+ * content played back at the selected speed. Pitch is duration-preserving.
  */
 export function segmentDuration(segment: TimelineSegment): number {
 	return (
@@ -213,6 +221,119 @@ export function addTrack(edit: ClipEdit): ClipEdit {
 	return { ...edit, tracks: edit.tracks + 1 };
 }
 
+export type MergeBlockReason = "too-few" | "multi-track" | "not-snapped";
+
+export const MERGE_BLOCK_MESSAGES: Record<MergeBlockReason, string> = {
+	"too-few": "Select at least two clips to merge.",
+	"multi-track":
+		"This operation is impossible: the selection spans multiple tracks.",
+	"not-snapped":
+		"This operation is illegal: the selected clips are not snapped together.",
+};
+
+/**
+ * Whether the segments can be merged into one unit: at least two, all on the
+ * same track, snapped end-to-end (each box starts exactly where the previous
+ * one ends; gaps and overlaps are refused). Returns null when mergeable.
+ */
+export function mergeBlockReason(
+	segments: readonly TimelineSegment[],
+): MergeBlockReason | null {
+	if (segments.length < 2) return "too-few";
+	const tracks = new Set(segments.map((segment) => segment.track));
+	if (tracks.size > 1) return "multi-track";
+	const ordered = [...segments].sort(
+		(a, b) => a.timelineStart - b.timelineStart,
+	);
+	for (let i = 1; i < ordered.length; i += 1) {
+		const previous = ordered[i - 1];
+		const current = ordered[i];
+		if (!previous || !current) continue;
+		if (
+			Math.abs(current.timelineStart - segmentEnd(previous)) >= SNAP_EPSILON
+		) {
+			return "not-snapped";
+		}
+	}
+	return null;
+}
+
+/**
+ * Merges the selected segments into one unit by tagging them with a shared
+ * group id. The segments themselves are untouched, so playback and export
+ * render exactly what the chain played - repeated source windows and mixed
+ * source clips merge without losing audio. Returns null when the merge
+ * would be refused by `mergeBlockReason`.
+ */
+export function mergeSegments(
+	edit: ClipEdit,
+	ids: readonly string[],
+): { edit: ClipEdit; groupId: string } | null {
+	const selected = ids
+		.map((id) => edit.segments.find((segment) => segment.id === id))
+		.filter((segment): segment is TimelineSegment => Boolean(segment));
+	if (mergeBlockReason(selected) !== null) return null;
+	const groupId = newGroupId();
+	return {
+		edit: {
+			...edit,
+			segments: edit.segments.map((segment) =>
+				ids.includes(segment.id)
+					? { ...segment, mergeGroup: groupId }
+					: segment,
+			),
+		},
+		groupId,
+	};
+}
+
+/** Breaks the given segments out of their merged unit (no-op without groups). */
+export function unmergeSegments(
+	edit: ClipEdit,
+	ids: readonly string[],
+): ClipEdit {
+	const selected = new Set(ids);
+	return {
+		...edit,
+		segments: edit.segments.map((segment) =>
+			selected.has(segment.id)
+				? { ...segment, mergeGroup: undefined }
+				: segment,
+		),
+	};
+}
+
+/**
+ * Expands ids to their merged units: selecting one member selects every
+ * member, so a unit always acts as one element. Ids without a group pass
+ * through unchanged.
+ */
+export function expandMergeGroups(
+	segments: readonly TimelineSegment[],
+	ids: readonly string[],
+): string[] {
+	const membersByGroup = new Map<string, string[]>();
+	for (const segment of segments) {
+		if (!segment.mergeGroup) continue;
+		const members = membersByGroup.get(segment.mergeGroup) ?? [];
+		members.push(segment.id);
+		membersByGroup.set(segment.mergeGroup, members);
+	}
+	const expanded = new Set<string>();
+	for (const id of ids) {
+		const segment = segments.find((s) => s.id === id);
+		if (!segment) continue;
+		if (!segment.mergeGroup) {
+			expanded.add(id);
+			continue;
+		}
+		for (const member of membersByGroup.get(segment.mergeGroup) ?? []) {
+			expanded.add(member);
+		}
+	}
+	return [...expanded];
+}
+
 /**
  * Sets a segment's playback speed and resizes its timeline extent to match:
  * the box becomes `content / effectiveRate` wide, so faster clips shrink and
@@ -235,11 +356,7 @@ export function setSegmentSpeed(
 	return resizeSegmentTo(updated, id, oldEnd);
 }
 
-/**
- * Sets a segment's pitch and resizes its timeline extent to match, exactly
- * like the speed control: the pitch shift changes how fast the source buffer
- * is consumed, so the box follows the audible duration.
- */
+/** Sets a segment's pitch without changing its timeline extent. */
 export function setSegmentPitch(
 	edit: ClipEdit,
 	id: string,
@@ -248,11 +365,9 @@ export function setSegmentPitch(
 	if (!Number.isFinite(pitchCents)) return edit;
 	const segment = edit.segments.find((s) => s.id === id);
 	if (!segment || segment.effects.pitchCents === pitchCents) return edit;
-	const oldEnd = segmentEnd(segment);
-	const updated = updateSegment(edit, id, {
+	return updateSegment(edit, id, {
 		effects: { ...segment.effects, pitchCents },
 	});
-	return resizeSegmentTo(updated, id, oldEnd);
 }
 
 function resizeSegmentTo(edit: ClipEdit, id: string, oldEnd: number): ClipEdit {
@@ -291,7 +406,7 @@ function resizeSegmentTo(edit: ClipEdit, id: string, oldEnd: number): ClipEdit {
 	};
 }
 
-const SNAP_EPSILON = 0.01;
+export const SNAP_EPSILON = 0.01;
 
 /**
  * Applies an effects change to every selected segment and keeps the selected

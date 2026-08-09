@@ -1399,6 +1399,33 @@ function TrackRow(props: {
 	const segments = editor.edit.segments.filter((s) => s.track === track);
 	const showPreview = props.preview?.track === track;
 
+	// Rows are made of individual segments plus one box per merged unit,
+	// so a merged chain looks and behaves like a single clip.
+	const membersByGroup = new Map<string, TimelineSegment[]>();
+	for (const segment of segments) {
+		if (!segment.mergeGroup) continue;
+		const members = membersByGroup.get(segment.mergeGroup) ?? [];
+		members.push(segment);
+		membersByGroup.set(segment.mergeGroup, members);
+	}
+	type RowElement =
+		| { kind: "segment"; segment: TimelineSegment }
+		| { kind: "group"; members: TimelineSegment[] };
+	const renderedGroups = new Set<string>();
+	const elements: RowElement[] = [];
+	for (const segment of segments) {
+		if (!segment.mergeGroup) {
+			elements.push({ kind: "segment", segment });
+			continue;
+		}
+		if (renderedGroups.has(segment.mergeGroup)) continue;
+		renderedGroups.add(segment.mergeGroup);
+		elements.push({
+			kind: "group",
+			members: membersByGroup.get(segment.mergeGroup) ?? [segment],
+		});
+	}
+
 	return (
 		<TimelineRow label={`Track ${track + 1}`}>
 			<Box
@@ -1420,7 +1447,43 @@ function TrackRow(props: {
 					touchAction: "none",
 				}}
 			>
-				{segments.map((segment) => {
+				{elements.map((element) => {
+					if (element.kind === "group") {
+						const first = element.members[0];
+						if (!first) return null;
+						const start = Math.min(
+							...element.members.map((member) =>
+								props.fraction(member.timelineStart),
+							),
+						);
+						const end = Math.max(
+							...element.members.map((member) =>
+								props.fraction(segmentEnd(member)),
+							),
+						);
+						const width = end - start;
+						if (width <= 0) return null;
+						return (
+							<MergedUnitBox
+								key={first.mergeGroup}
+								members={element.members}
+								first={first}
+								editor={editor}
+								name={props.clipName(first)}
+								selected={element.members.some((member) =>
+									editor.selectedSegmentIds.includes(member.id),
+								)}
+								dragging={element.members.some((member) =>
+									props.draggingSegmentIds.includes(member.id),
+								)}
+								leftFraction={start}
+								widthFraction={width}
+								maxTrack={editor.edit.tracks - 1}
+								onBeginDrag={props.onBeginSegmentDrag}
+							/>
+						);
+					}
+					const segment = element.segment;
 					const start = props.fraction(segment.timelineStart);
 					const width = Math.max(
 						0,
@@ -1660,6 +1723,133 @@ function TrackSegment(props: {
 				}}
 			>
 				{props.name}
+			</Typography>
+		</Box>
+	);
+}
+
+/**
+ * One box for a merged unit: spans its whole chain and moves as a rigid
+ * group. The member segments keep their own sources and effects, so the
+ * unit has no trim handles - ungroup (or undo) to edit the pieces.
+ */
+function MergedUnitBox(props: {
+	members: TimelineSegment[];
+	first: TimelineSegment;
+	editor: UseClipEditorReturn;
+	name: string;
+	selected: boolean;
+	dragging: boolean;
+	leftFraction: number;
+	widthFraction: number;
+	maxTrack: number;
+	onBeginDrag: (drag: SegmentDragState) => void;
+}) {
+	const { members, editor } = props;
+
+	const beginGesture = (event: ReactPointerEvent<HTMLElement>) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const toGrouped = (s: TimelineSegment): GroupedSegment => ({
+			id: s.id,
+			originStart: s.timelineStart,
+			originTrack: s.track,
+			duration: segmentDuration(s),
+		});
+		const first = props.first;
+		// Selecting every member turns the existing multi-selection drag
+		// machinery into a rigid group move.
+		editor.selectMany(members.map((member) => member.id));
+		props.onBeginDrag({
+			mode: "move",
+			segmentId: first.id,
+			group: members.map(toGrouped),
+			originStart: first.timelineStart,
+			originIn: first.sourceIn,
+			originOut: first.sourceOut,
+			originTrack: first.track,
+			originRate: effectiveRate(first.effects),
+			reverse: first.effects.reverse,
+			maxSource: first.sourceOut,
+			maxTrack: props.maxTrack,
+			startX: event.clientX,
+			startY: event.clientY,
+			ghostStart: first.timelineStart,
+			ghostIn: first.sourceIn,
+			ghostOut: first.sourceOut,
+			ghostTrack: first.track,
+			ghostStarts: [],
+			shift: event.shiftKey,
+			trackCollision: false,
+			valid: true,
+			clamped: false,
+			pointerX: event.clientX,
+			pointerY: event.clientY,
+		});
+	};
+
+	return (
+		<Box
+			onPointerDown={beginGesture}
+			onDoubleClick={() =>
+				editor.selectMany(members.map((member) => member.id))
+			}
+			aria-label={`Merged unit of ${members.length} clips`}
+			sx={{
+				position: "absolute",
+				top: 8,
+				bottom: 8,
+				left: `${props.leftFraction}%`,
+				width: `max(2px, ${props.widthFraction}%)`,
+				borderRadius: 1,
+				opacity: props.dragging ? 0.45 : 1,
+				bgcolor: props.selected
+					? "rgba(168, 85, 247, 0.65)"
+					: "rgba(45, 212, 191, 0.2)",
+				border: props.selected ? "2px solid" : "1px dashed",
+				borderColor: props.selected
+					? "secondary.main"
+					: "rgba(45, 212, 191, 0.55)",
+				boxShadow: props.selected
+					? "0 0 0 3px rgba(217, 70, 239, 0.35), 0 2px 10px rgba(2, 6, 23, 0.6)"
+					: "0 1px 3px rgba(2, 6, 23, 0.4)",
+				cursor: "grab",
+				userSelect: "none",
+				overflow: "hidden",
+				zIndex: props.selected ? 4 : 2,
+			}}
+		>
+			<Typography
+				variant="caption"
+				sx={{
+					px: 0.5,
+					whiteSpace: "nowrap",
+					overflow: "hidden",
+					textOverflow: "ellipsis",
+					display: "block",
+					lineHeight: 1.6,
+					position: "relative",
+					zIndex: 1,
+					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
+				}}
+			>
+				{props.name}
+				{members.length > 1 ? ` +${members.length - 1}` : ""}
+			</Typography>
+			<Typography
+				variant="caption"
+				color="text.secondary"
+				sx={{
+					position: "absolute",
+					top: 2,
+					right: 4,
+					fontSize: 10,
+					lineHeight: 1.4,
+					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
+				}}
+			>
+				merged
 			</Typography>
 		</Box>
 	);

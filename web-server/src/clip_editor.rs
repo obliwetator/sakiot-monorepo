@@ -27,6 +27,7 @@ const RATE_MIN: f32 = 0.5;
 const RATE_MAX: f32 = 2.0;
 const SHELF_MIN: f32 = -12.0;
 const SHELF_MAX: f32 = 12.0;
+const MID_FREQUENCY_HZ: u16 = 1_000;
 const SAMPLE_RATE: f64 = 48_000.0;
 const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
 
@@ -46,6 +47,13 @@ pub struct ComposeSegment {
     pub timeline_start: f32,
     pub track: i32,
     pub effects: SegmentEffectsDto,
+    /// Id of the merged unit this segment belongs to, when the clip editor
+    /// merged several snapped segments into one element. Segments sharing an
+    /// id re-import as one unit. Purely an editing hint: the render ignores
+    /// it. Optional so compositions from before the field existed still
+    /// deserialize.
+    #[serde(default)]
+    pub merge_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -54,6 +62,10 @@ pub struct SegmentEffectsDto {
     pub pitch_cents: f32,
     pub rate: f32,
     pub bass_db: f32,
+    /// 1 kHz peaking EQ gain. Defaults to zero for saved compositions from
+    /// before the parity-matched mid control existed.
+    #[serde(default)]
+    pub mid_db: f32,
     pub treble_db: f32,
     /// Plays the trimmed content backwards. Defaults to false so requests and
     /// stored compositions from before the flag existed still deserialize.
@@ -88,6 +100,7 @@ struct SegmentRender {
     pitch_cents: f32,
     volume_db: f32,
     bass_db: f32,
+    mid_db: f32,
     treble_db: f32,
     reverse: bool,
     timeline_start: f32,
@@ -106,6 +119,7 @@ fn validate_effects(effects: &SegmentEffectsDto, index: usize) -> Result<(), App
         && effects.pitch_cents.is_finite()
         && effects.rate.is_finite()
         && effects.bass_db.is_finite()
+        && effects.mid_db.is_finite()
         && effects.treble_db.is_finite();
     if !all_finite {
         return Err(AppError::BadRequest(format!(
@@ -128,10 +142,11 @@ fn validate_effects(effects: &SegmentEffectsDto, index: usize) -> Result<(), App
         )));
     }
     if !(SHELF_MIN..=SHELF_MAX).contains(&effects.bass_db)
+        || !(SHELF_MIN..=SHELF_MAX).contains(&effects.mid_db)
         || !(SHELF_MIN..=SHELF_MAX).contains(&effects.treble_db)
     {
         return Err(AppError::BadRequest(format!(
-            "Segment {index}: bass and treble must be between {SHELF_MIN} and {SHELF_MAX} dB"
+            "Segment {index}: EQ gains must be between {SHELF_MIN} and {SHELF_MAX} dB"
         )));
     }
     Ok(())
@@ -164,6 +179,13 @@ fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
         if !(0..=MAX_TRACKS).contains(&segment.track) {
             return Err(AppError::BadRequest(format!(
                 "Segment {index}: track must be between 0 and {MAX_TRACKS}"
+            )));
+        }
+        if let Some(group) = &segment.merge_group
+            && !is_valid_clip_id(group)
+        {
+            return Err(AppError::BadRequest(format!(
+                "Segment {index}: invalid merge group id"
             )));
         }
         if !segment.source_in.is_finite()
@@ -321,6 +343,7 @@ pub async fn compose_clip(
             pitch_cents: segment.effects.pitch_cents,
             volume_db: segment.effects.volume_db,
             bass_db: segment.effects.bass_db,
+            mid_db: segment.effects.mid_db,
             treble_db: segment.effects.treble_db,
             reverse: segment.effects.reverse,
             timeline_start: segment.timeline_start,
@@ -473,11 +496,10 @@ fn expected_duration_ms(segments: &[SegmentRender]) -> i64 {
     (max_end * 1_000.0).round() as i64
 }
 
-/// Combined playback factor of a segment: speed times the pitch shift, so a
-/// pitch raise plays the content faster and a pitch drop slower, mirroring
-/// the Web Audio computed playback rate (playbackRate * 2^(detune/1200)).
+/// Timeline consumption rate of a segment. Pitch shifting preserves duration,
+/// so only the speed control changes the visible and exported extent.
 fn effective_rate(segment: &SegmentRender) -> f64 {
-    f64::from(segment.rate) * pitch_factor(segment.pitch_cents)
+    f64::from(segment.rate)
 }
 
 fn pitch_factor(pitch_cents: f32) -> f64 {
@@ -613,7 +635,14 @@ fn db_to_linear(db: f32) -> f64 {
 fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f32) -> String {
     let mut graph = String::new();
     for (index, segment) in segments.iter().enumerate() {
-        let combined_rate = effective_rate(segment);
+        let tempo = effective_rate(segment);
+        let pitch = pitch_factor(segment.pitch_cents);
+        let time_pitch = if (tempo - 1.0).abs() < f64::EPSILON && (pitch - 1.0).abs() < f64::EPSILON
+        {
+            String::new()
+        } else {
+            format!(",rubberband=tempo={tempo:.6}:pitch={pitch:.6}")
+        };
         let volume = db_to_linear(segment.volume_db);
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
         // Reversed segments trim the source window first, then flip it, so the
@@ -621,11 +650,11 @@ fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f32) -> Stri
         // backwards - the same as the client's negative playbackRate preview.
         let reverse = if segment.reverse { ",areverse" } else { "" };
         graph.push_str(&format!(
-            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},asetrate={:.4},aresample={SAMPLE_RATE:.4},volume={volume:.6},bass=g={:.3}:f=250,treble=g={:.3}:f=3000,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
+            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},aresample={SAMPLE_RATE:.4}{time_pitch},volume={volume:.6},bass=g={:.3}:f=250:t=s:w=1,equalizer=g={:.3}:f={MID_FREQUENCY_HZ}:t=q:w=1,treble=g={:.3}:f=3000:t=s:w=1,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
             segment.source_in,
             segment.source_out,
-            SAMPLE_RATE * combined_rate,
             segment.bass_db,
+            segment.mid_db,
             segment.treble_db,
         ));
     }
@@ -723,6 +752,7 @@ mod tests {
             pitch_cents: 1200.0,
             volume_db: 6.0,
             bass_db: -3.0,
+            mid_db: 2.0,
             treble_db: 3.0,
             reverse: false,
             timeline_start: 2.5,
@@ -750,9 +780,11 @@ mod tests {
                 pitch_cents: 0.0,
                 rate: 1.0,
                 bass_db: 0.0,
+                mid_db: 0.0,
                 treble_db: 0.0,
                 reverse: false,
             },
+            merge_group: None,
         }
     }
 
@@ -760,15 +792,14 @@ mod tests {
     fn builds_filter_graph_with_pitch_and_rate() {
         let graph = build_filter_graph(&[segment_render()], -6.0);
         assert!(graph.contains("atrim=start=1.000000:end=5.000000"));
-        // pitch factor 2, rate 2 -> combined 4 -> 192 kHz
-        assert!(graph.contains("asetrate=192000"));
-        // the audible duration follows the combined rate (content / 4), so no
-        // atempo compensation is applied; the box shows the same extent
-        assert!(!graph.contains("atempo"));
+        // Tempo and pitch are independent: 2x is half the duration while
+        // +1200 cents raises the result one octave without another resize.
+        assert!(graph.contains("rubberband=tempo=2.000000:pitch=2.000000"));
         // 10^(6/20) = 1.995262
         assert!(graph.contains("volume=1.995262"));
-        assert!(graph.contains("bass=g=-3.000:f=250"));
-        assert!(graph.contains("treble=g=3.000:f=3000"));
+        assert!(graph.contains("bass=g=-3.000:f=250:t=s:w=1"));
+        assert!(graph.contains("equalizer=g=2.000:f=1000:t=q:w=1"));
+        assert!(graph.contains("treble=g=3.000:f=3000:t=s:w=1"));
         assert!(graph.contains("adelay=2500:all=1"));
         assert!(graph.contains("amix=inputs=1:duration=longest:normalize=0"));
         // master volume 10^(-6/20) = 0.501187
@@ -782,7 +813,7 @@ mod tests {
         render.pitch_cents = 0.0;
         render.volume_db = 0.0;
         let graph = build_filter_graph(&[render], 0.0);
-        assert!(graph.contains("asetrate=48000"));
+        assert!(!graph.contains("rubberband"));
         assert!(graph.contains("volume=1.000000"));
     }
 
@@ -824,20 +855,20 @@ mod tests {
 
     #[test]
     fn computes_expected_duration_from_the_longest_segment() {
-        // content 1.0..5.0 = 4s at combined rate 2 * 2 (pitch one octave up)
-        // = 4 -> 1s, so the timeline ends at 2.5 + 1 = 3.5s.
-        assert_eq!(expected_duration_ms(&[segment_render()]), 3_500);
+        // Content 1.0..5.0 = 4s at 2x tempo -> 2s. The +1200-cent pitch
+        // shift preserves that duration, so the timeline ends at 4.5s.
+        assert_eq!(expected_duration_ms(&[segment_render()]), 4_500);
     }
 
     #[test]
-    fn expected_duration_follows_pitch_and_speed() {
+    fn expected_duration_ignores_pitch_and_follows_speed() {
         let mut render = segment_render();
-        render.pitch_cents = -1200.0; // half-speed playback
+        render.pitch_cents = -1200.0;
         render.source_in = 0.0;
         render.source_out = 10.0;
         render.timeline_start = 0.0;
-        // 10s at rate 2 * pitch 0.5 = 1 -> 10s.
-        assert_eq!(expected_duration_ms(&[render]), 10_000);
+        // Pitch is duration-preserving; only the 2x tempo resizes the clip.
+        assert_eq!(expected_duration_ms(&[render]), 5_000);
     }
 
     #[test]
@@ -861,6 +892,43 @@ mod tests {
         let mut seg = segment();
         seg.source = "session".into();
         assert!(validate_edit(&body(vec![seg])).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_merge_group_ids() {
+        let mut seg = segment();
+        seg.merge_group = Some("../escape".into());
+        assert!(validate_edit(&body(vec![seg.clone()])).is_err());
+        seg.merge_group = Some("".into());
+        assert!(validate_edit(&body(vec![seg])).is_err());
+    }
+
+    #[test]
+    fn merge_groups_round_trip_through_the_stored_json() {
+        let mut first = segment();
+        first.merge_group = Some("group-1".into());
+        let mut second = segment();
+        second.source_id = "def".into();
+        second.source_out = 20.0;
+        second.timeline_start = 10.0;
+        second.merge_group = Some("group-1".into());
+        let value = serde_json::to_value(body(vec![first, second])).unwrap();
+        assert_eq!(value["segments"][0]["merge_group"], "group-1");
+        assert_eq!(value["segments"][1]["merge_group"], "group-1");
+        let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.segments[0].merge_group.as_deref(), Some("group-1"));
+        assert_eq!(restored.segments[1].merge_group.as_deref(), Some("group-1"));
+    }
+
+    #[test]
+    fn merge_group_defaults_to_none_when_missing() {
+        let mut value = serde_json::to_value(body(vec![segment()])).unwrap();
+        value["segments"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("merge_group");
+        let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.segments[0].merge_group, None);
     }
 
     #[test]
@@ -910,6 +978,7 @@ mod tests {
         assert_eq!(value["segments"][0]["effects"]["pitch_cents"], 0.0);
         assert_eq!(value["segments"][0]["effects"]["rate"], 1.0);
         assert_eq!(value["segments"][0]["effects"]["bass_db"], 0.0);
+        assert_eq!(value["segments"][0]["effects"]["mid_db"], 0.0);
         assert_eq!(value["segments"][0]["effects"]["treble_db"], 0.0);
         assert_eq!(value["segments"][0]["effects"]["reverse"], false);
     }
@@ -928,5 +997,16 @@ mod tests {
         let value = serde_json::to_value(body(vec![seg])).unwrap();
         let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
         assert!(restored.segments[0].effects.reverse);
+    }
+
+    #[test]
+    fn effects_default_to_flat_mid_eq_when_mid_is_missing() {
+        let mut value = serde_json::to_value(body(vec![segment()])).unwrap();
+        value["segments"][0]["effects"]
+            .as_object_mut()
+            .unwrap()
+            .remove("mid_db");
+        let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.segments[0].effects.mid_db, 0.0);
     }
 }

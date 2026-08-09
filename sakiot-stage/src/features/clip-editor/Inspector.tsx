@@ -1,5 +1,7 @@
+import CallSplitIcon from "@mui/icons-material/CallSplit";
 import ContentCutIcon from "@mui/icons-material/ContentCut";
 import DeleteIcon from "@mui/icons-material/Delete";
+import MergeIcon from "@mui/icons-material/Merge";
 import ReplayIcon from "@mui/icons-material/Replay";
 import Box from "@mui/material/Box";
 import MuiButton, { type ButtonProps } from "@mui/material/Button";
@@ -86,6 +88,7 @@ function SegmentInspectorContent(props: {
 	const segments = editor.selectedSegments;
 	const multi = segments.length > 1;
 	const ids = segments.map((s) => s.id);
+	const mergedUnit = segments.some((s) => s.mergeGroup);
 
 	const patchEffects = (
 		feature: InspectorFeatureId,
@@ -100,18 +103,15 @@ function SegmentInspectorContent(props: {
 		}));
 	};
 
-	// Speed and pitch resize the boxes; the resize runs over the selected
-	// group so snapped members move together while others behave normally.
-	const patchResizingEffect = (
-		feature: InspectorFeatureId,
-		key: "rate" | "pitchCents",
-		value: number,
-	) => {
+	// Speed resizes the boxes; the resize runs over the selected group so
+	// snapped members move together while others behave normally. Pitch is a
+	// duration-preserving effect and goes through patchEffects instead.
+	const patchResizingEffect = (feature: InspectorFeatureId, value: number) => {
 		if (isInspectorFeatureDisabled(feature, segments.length)) return;
 		editor.preview((edit) =>
 			resizeSelectedSegments(edit, ids, (_id, effects) => ({
 				...effects,
-				[key]: value,
+				rate: value,
 			})),
 		);
 	};
@@ -142,6 +142,12 @@ function SegmentInspectorContent(props: {
 					? "Effect changes apply to all selected segments."
 					: `${formatDuration(duration)} · at ${formatDuration(segment.timelineStart)}`}
 			</Typography>
+			{mergedUnit && (
+				<Typography variant="caption" color="text.secondary" display="block">
+					Merged unit: the clips act as one element. Ungroup to edit them
+					individually.
+				</Typography>
+			)}
 
 			<Divider sx={{ my: 2 }} />
 
@@ -180,7 +186,7 @@ function SegmentInspectorContent(props: {
 				format={(value) =>
 					value === 0 ? "0" : `${value > 0 ? "+" : ""}${value} ct`
 				}
-				onChange={(value) => patchResizingEffect("pitch", "pitchCents", value)}
+				onChange={(value) => patchEffects("pitch", { pitchCents: value })}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider
@@ -192,7 +198,7 @@ function SegmentInspectorContent(props: {
 				max={2}
 				step={0.05}
 				format={(value) => `${value.toFixed(2)}×`}
-				onChange={(value) => patchResizingEffect("speed", "rate", value)}
+				onChange={(value) => patchResizingEffect("speed", value)}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider
@@ -205,6 +211,18 @@ function SegmentInspectorContent(props: {
 				step={0.5}
 				format={(value) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`}
 				onChange={(value) => patchEffects("bass", { bassDb: value })}
+				onCommitted={finishSlider}
+			/>
+			<EffectSlider
+				feature="mid"
+				selectionCount={segments.length}
+				label="Mid"
+				value={segment.effects.midDb}
+				min={-12}
+				max={12}
+				step={0.5}
+				format={(value) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`}
+				onChange={(value) => patchEffects("mid", { midDb: value })}
 				onCommitted={finishSlider}
 			/>
 			<EffectSlider
@@ -233,6 +251,28 @@ function SegmentInspectorContent(props: {
 				>
 					Split (S)
 				</InspectorActionButton>
+				<InspectorActionButton
+					feature="merge"
+					selectionCount={segments.length}
+					size="small"
+					variant="outlined"
+					startIcon={<MergeIcon />}
+					onClick={editor.mergeSelected}
+				>
+					Merge (M)
+				</InspectorActionButton>
+				{mergedUnit && (
+					<InspectorActionButton
+						feature="unmerge"
+						selectionCount={segments.length}
+						size="small"
+						variant="outlined"
+						startIcon={<CallSplitIcon />}
+						onClick={editor.unmergeSelected}
+					>
+						Ungroup
+					</InspectorActionButton>
+				)}
 				<InspectorActionButton
 					feature="reverse"
 					selectionCount={segments.length}

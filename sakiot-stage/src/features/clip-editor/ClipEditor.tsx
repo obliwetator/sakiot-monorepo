@@ -13,6 +13,7 @@ import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import LinearProgress from "@mui/material/LinearProgress";
 import Slider from "@mui/material/Slider";
+import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
@@ -323,6 +324,21 @@ export function ClipEditor(props: { guildId: string }) {
 				onClose={closeCompose}
 			/>
 			{unsavedDialog}
+			<Snackbar
+				open={editor.mergeWarning !== null}
+				anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+				autoHideDuration={5000}
+				onClose={editor.dismissMergeWarning}
+			>
+				<Alert
+					severity="warning"
+					variant="filled"
+					onClose={editor.dismissMergeWarning}
+					sx={{ alignItems: "center" }}
+				>
+					{editor.mergeWarning}
+				</Alert>
+			</Snackbar>
 		</Box>
 	);
 }
@@ -664,6 +680,11 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 					current.toggleReverse();
 					return;
 				}
+				if (event.key === "m" || event.key === "M") {
+					event.preventDefault();
+					current.mergeSelected();
+					return;
+				}
 			}
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			if (playbackShortcutTargetOwnsArrows(event.target)) return;
@@ -672,7 +693,11 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 			event.preventDefault();
 			if (segment) {
 				current.apply((edit) =>
-					moveSegmentBy(edit, segment.id, distance * direction),
+					moveSegmentsBy(
+						edit,
+						current.selectedSegmentIds,
+						distance * direction,
+					),
 				);
 			} else {
 				current.setPosition(
@@ -686,11 +711,16 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 	}, []);
 }
 
-function moveSegmentBy(edit: ClipEdit, id: string, delta: number): ClipEdit {
+function moveSegmentsBy(
+	edit: ClipEdit,
+	ids: string[],
+	delta: number,
+): ClipEdit {
+	const selected = new Set(ids);
 	return {
 		...edit,
 		segments: edit.segments.map((s) =>
-			s.id === id
+			selected.has(s.id)
 				? { ...s, timelineStart: Math.max(0, s.timelineStart + delta) }
 				: s,
 		),

@@ -5,11 +5,16 @@ import {
 	addSegment,
 	type ClipEdit,
 	emptyEdit,
+	expandMergeGroups,
+	MERGE_BLOCK_MESSAGES,
 	makeSegment,
+	mergeBlockReason,
+	mergeSegments,
 	segmentDuration,
 	snapToNeighbors,
 	splitSegment,
 	type TimelineSegment,
+	unmergeSegments,
 } from "./model";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
@@ -29,6 +34,8 @@ export function useClipEditor() {
 	const [clipboard, setClipboard] = useState<TimelineSegment | null>(null);
 	/** Segment whose data is in the clipboard; it shows the copied ring. */
 	const [copySourceId, setCopySourceId] = useState<string | null>(null);
+	/** Warning describing why the last merge attempt was refused. */
+	const [mergeWarning, setMergeWarning] = useState<string | null>(null);
 	const [viewStartSec, setViewStartSec] = useState(0);
 	const [viewWidthSec, setViewWidthSec] = useState(30);
 	const [loadingClips, setLoadingClips] = useState<Map<string, boolean>>(
@@ -230,25 +237,33 @@ export function useClipEditor() {
 	}, [edit, engine]);
 
 	const select = useCallback((id: string | null) => {
-		setSelectedSegmentIds(id === null ? [] : [id]);
+		if (id === null) {
+			setSelectedSegmentIds([]);
+			return;
+		}
+		setSelectedSegmentIds(expandMergeGroups(editRef.current.segments, [id]));
 	}, []);
 
 	/** Replaces the selection with the given ids (marquee multi-select). */
 	const selectMany = useCallback((ids: string[]) => {
-		setSelectedSegmentIds(Array.from(new Set(ids)));
+		setSelectedSegmentIds(expandMergeGroups(editRef.current.segments, ids));
 	}, []);
 
 	/**
 	 * Shift-click toggle: adds an unselected segment to the selection or
 	 * removes a selected one, leaving the rest untouched. Returns the next
-	 * selection so the caller can act on it synchronously.
+	 * selection so the caller can act on it synchronously. Merged units
+	 * toggle as a whole.
 	 */
 	const toggleSelect = useCallback(
 		(id: string) => {
-			const next = selectedSegmentIds.includes(id)
-				? selectedSegmentIds.filter((selected) => selected !== id)
-				: [...selectedSegmentIds, id];
-			setSelectedSegmentIds(next);
+			const ids = expandMergeGroups(editRef.current.segments, [id]);
+			const next = ids.every((selected) =>
+				selectedSegmentIds.includes(selected),
+			)
+				? selectedSegmentIds.filter((selected) => !ids.includes(selected))
+				: [...selectedSegmentIds, ...ids];
+			setSelectedSegmentIds(Array.from(new Set(next)));
 			return next;
 		},
 		[selectedSegmentIds],
@@ -303,6 +318,35 @@ export function useClipEditor() {
 		if (!id) return;
 		apply((current) => splitSegment(current, id, positionRef.current));
 	}, [apply, selectedSegmentIds]);
+
+	/**
+	 * Merges the selected segments into one unit when they form a snapped
+	 * chain on a single track. The segments keep their own sources and
+	 * effects - playback and export stay unchanged - but they render,
+	 * select and move as one element. Refused merges surface the reason in
+	 * `mergeWarning` instead of changing the edit.
+	 */
+	const mergeSelected = useCallback(() => {
+		const segments = edit.segments.filter((segment) =>
+			selectedSegmentIds.includes(segment.id),
+		);
+		const reason = mergeBlockReason(segments);
+		if (reason !== null) {
+			setMergeWarning(MERGE_BLOCK_MESSAGES[reason]);
+			return;
+		}
+		const result = mergeSegments(edit, selectedSegmentIds);
+		if (!result) return;
+		apply(() => result.edit);
+	}, [apply, edit, selectedSegmentIds]);
+
+	/** Breaks the selected merged unit back into individual segments. */
+	const unmergeSelected = useCallback(() => {
+		if (selectedSegmentIds.length === 0) return;
+		apply((current) => unmergeSegments(current, selectedSegmentIds));
+	}, [apply, selectedSegmentIds]);
+
+	const dismissMergeWarning = useCallback(() => setMergeWarning(null), []);
 
 	const toggleReverse = useCallback(() => {
 		if (selectedSegmentIds.length === 0) return;
@@ -458,6 +502,10 @@ export function useClipEditor() {
 		endGesture,
 		removeSelected,
 		splitSelectedAtPlayhead,
+		mergeSelected,
+		unmergeSelected,
+		mergeWarning,
+		dismissMergeWarning,
 		toggleReverse,
 	};
 }

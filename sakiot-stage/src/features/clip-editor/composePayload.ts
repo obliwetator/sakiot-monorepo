@@ -21,11 +21,13 @@ export function serializeEdit(edit: ClipEdit, name?: string): ComposeClipBody {
 			source_out: segment.sourceOut,
 			timeline_start: segment.timelineStart,
 			track: segment.track,
+			merge_group: segment.mergeGroup,
 			effects: {
 				volume_db: segment.effects.volumeDb,
 				pitch_cents: segment.effects.pitchCents,
 				rate: segment.effects.rate,
 				bass_db: segment.effects.bassDb,
+				mid_db: segment.effects.midDb,
 				treble_db: segment.effects.trebleDb,
 				reverse: segment.effects.reverse,
 			},
@@ -78,12 +80,16 @@ function deserializeSegment(raw: unknown): TimelineSegment | null {
 	} = segment;
 	const timelineStart = segment.timeline_start;
 	const track = segment.track;
+	const mergeGroup = segment.merge_group;
 	const effects = deserializeEffects(segment.effects);
 	if (typeof sourceId !== "string") return null;
 	if (!isFiniteNumber(sourceIn) || !isFiniteNumber(sourceOut)) return null;
 	if (!isFiniteNumber(timelineStart) || timelineStart < 0) return null;
 	if (typeof track !== "number" || !Number.isInteger(track) || track < 0) {
 		return null;
+	}
+	if (mergeGroup !== undefined && mergeGroup !== null) {
+		if (typeof mergeGroup !== "string" || mergeGroup.length === 0) return null;
 	}
 	if (!effects) return null;
 	return {
@@ -95,6 +101,7 @@ function deserializeSegment(raw: unknown): TimelineSegment | null {
 		sourceOut,
 		timelineStart,
 		effects,
+		...(typeof mergeGroup === "string" ? { mergeGroup } : {}),
 	};
 }
 
@@ -102,13 +109,19 @@ function deserializeEffects(raw: unknown): SegmentEffects | null {
 	if (typeof raw !== "object" || raw === null) return null;
 	const effects = raw as Record<string, unknown>;
 	const { volume_db: volumeDb, pitch_cents: pitchCents } = effects;
-	const { rate, bass_db: bassDb, treble_db: trebleDb } = effects;
+	const {
+		rate,
+		bass_db: bassDb,
+		mid_db: midDb = 0,
+		treble_db: trebleDb,
+	} = effects;
 	const reverse = effects.reverse;
 	if (
 		!isFiniteNumber(volumeDb) ||
 		!isFiniteNumber(pitchCents) ||
 		!isFiniteNumber(rate) ||
 		!isFiniteNumber(bassDb) ||
+		!isFiniteNumber(midDb) ||
 		!isFiniteNumber(trebleDb)
 	) {
 		return null;
@@ -121,6 +134,7 @@ function deserializeEffects(raw: unknown): SegmentEffects | null {
 		pitchCents,
 		rate,
 		bassDb,
+		midDb,
 		trebleDb,
 		reverse: reverse === true,
 	};

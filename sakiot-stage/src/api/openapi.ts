@@ -586,6 +586,14 @@ export interface components {
 		};
 		ComposeSegment: {
 			effects: components["schemas"]["SegmentEffectsDto"];
+			/**
+			 * @description Id of the merged unit this segment belongs to, when the clip editor
+			 *     merged several snapped segments into one element. Segments sharing an
+			 *     id re-import as one unit. Purely an editing hint: the render ignores
+			 *     it. Optional so compositions from before the field existed still
+			 *     deserialize.
+			 */
+			merge_group?: string | null;
 			source: string;
 			source_id: string;
 			/** Format: float */
@@ -709,12 +717,20 @@ export interface components {
 		SegmentEffectsDto: {
 			/** Format: float */
 			bass_db: number;
+			/**
+			 * Format: float
+			 * @description 1 kHz peaking EQ gain. Defaults to zero for saved compositions from
+			 *     before the parity-matched mid control existed.
+			 */
+			mid_db?: number;
 			/** Format: float */
 			pitch_cents: number;
 			/** Format: float */
 			rate: number;
-			/** Plays the trimmed content backwards. Defaults to false so requests and */
-			/** stored compositions from before the flag existed still deserialize. */
+			/**
+			 * @description Plays the trimmed content backwards. Defaults to false so requests and
+			 *     stored compositions from before the flag existed still deserialize.
+			 */
 			reverse?: boolean;
 			/** Format: float */
 			treble_db: number;
