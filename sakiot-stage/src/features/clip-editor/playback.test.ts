@@ -42,6 +42,7 @@ class MockGain {
 class MockAudioContext {
 	state = "running" as const;
 	currentTime = 0;
+	sampleRate = 48_000;
 	destination: Record<string, never> = {};
 	sources: MockSource[] = [];
 	createBufferSource() {
@@ -55,8 +56,36 @@ class MockAudioContext {
 	createBiquadFilter() {
 		return new MockFilter() as unknown as BiquadFilterNode;
 	}
+	createBuffer(channels: number, length: number, sampleRate: number) {
+		return new TestAudioBuffer(
+			channels,
+			length,
+			sampleRate,
+		) as unknown as AudioBuffer;
+	}
 	resume() {}
 	close() {}
+}
+
+class TestAudioBuffer {
+	readonly data: Float32Array[];
+	duration: number;
+
+	constructor(
+		readonly numberOfChannels: number,
+		readonly length: number,
+		readonly sampleRate: number,
+	) {
+		this.duration = length / sampleRate;
+		this.data = Array.from(
+			{ length: numberOfChannels },
+			() => new Float32Array(length),
+		);
+	}
+
+	getChannelData(channel: number) {
+		return this.data[channel] ?? new Float32Array();
+	}
 }
 
 globalThis.AudioContext = MockAudioContext as unknown as typeof AudioContext;
@@ -121,7 +150,7 @@ describe("ClipEditorEngine playback", () => {
 		expect(engine.isPlaying).toBe(false);
 	});
 
-	test("reversed segments schedule a negative playback rate", () => {
+	test("reversed segments schedule a negative playback rate", async () => {
 		const contexts: MockAudioContext[] = [];
 		globalThis.AudioContext = class extends MockAudioContext {
 			constructor() {
@@ -135,7 +164,52 @@ describe("ClipEditorEngine playback", () => {
 		};
 		const engine = new ClipEditorEngine(createMockAudioGraph);
 		engine.play({ ...edit, segments: [reversed] }, 0, buffers, false);
+		await Bun.sleep(0);
 		const source = contexts[0]?.sources[0];
 		expect(source?.playbackRate.value).toBe(-1);
+	});
+
+	test("uses cached preprocessing and applies streaming edits live", async () => {
+		let processing = "";
+		let updates = 0;
+		const streamingGraph: EditorAudioGraphFactory = () => ({
+			prepare: async () => true,
+			createSegment(_effects, nextProcessing) {
+				processing = nextProcessing;
+				return {
+					connectSource() {},
+					setEffects() {
+						updates += 1;
+					},
+					dispose() {},
+				};
+			},
+			setMasterVolume() {},
+			dispose() {},
+		});
+		const source = new TestAudioBuffer(2, 4_800, 48_000);
+		const streamingSegment: TimelineSegment = {
+			...segment,
+			sourceOut: 0.1,
+			effects: { ...segment.effects, pitchCents: 200 },
+		};
+		const engine = new ClipEditorEngine(streamingGraph);
+		engine.play(
+			{ ...edit, segments: [streamingSegment] },
+			0,
+			new Map([["clip-1", source as unknown as AudioBuffer]]),
+			false,
+		);
+		for (let attempt = 0; attempt < 20 && !processing; attempt += 1) {
+			await Bun.sleep(25);
+		}
+
+		expect(processing).toBe("streaming");
+		engine.applySegmentEffects(streamingSegment.id, {
+			...streamingSegment.effects,
+			volumeDb: -3,
+		});
+		expect(updates).toBe(1);
+		engine.dispose();
 	});
 });

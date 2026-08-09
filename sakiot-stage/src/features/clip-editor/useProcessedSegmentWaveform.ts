@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WaveformEnvelope } from "../audio-dashboard/waveformPeaks";
 import type { TimelineSegment } from "./model";
+
+export { waveformEnvelopeFromPcm } from "./processedWaveform";
+
 import {
-	renderSharedSegmentPcm,
-	type SharedDspPcm,
+	requestSharedSegmentRender,
 	sharedDspRenderKey,
 	warmSharedDsp,
 } from "./sharedDsp";
 import { loadClipBuffer } from "./useClipBuffer";
 
-const EFFECT_WAVEFORM_POINTS = 2_500;
 const EFFECT_WAVEFORM_DEBOUNCE_MS = 120;
 
 export interface SegmentWaveformResult {
@@ -51,56 +52,13 @@ export function resolveSegmentWaveform(
 	};
 }
 
-/** Reduce the exact rendered stereo PCM to the same min/max representation
- * used by server-generated waveforms. Both channels contribute to each point.
- */
-export function waveformEnvelopeFromPcm(
-	pcm: SharedDspPcm,
-	targetPoints = EFFECT_WAVEFORM_POINTS,
-): WaveformEnvelope {
-	if (
-		pcm.channels < 1 ||
-		pcm.frames < 1 ||
-		pcm.interleaved.length < pcm.channels * pcm.frames ||
-		!Number.isInteger(targetPoints) ||
-		targetPoints < 1
-	) {
-		return { min: [], max: [] };
-	}
-	const pointCount = Math.min(targetPoints, pcm.frames);
-	const min = new Array<number>(pointCount);
-	const max = new Array<number>(pointCount);
-	for (let point = 0; point < pointCount; point += 1) {
-		const startFrame = Math.floor((point * pcm.frames) / pointCount);
-		const endFrame = Math.max(
-			startFrame + 1,
-			Math.floor(((point + 1) * pcm.frames) / pointCount),
-		);
-		let low = 1;
-		let high = -1;
-		for (let frame = startFrame; frame < endFrame; frame += 1) {
-			for (let channel = 0; channel < pcm.channels; channel += 1) {
-				const sample = Math.max(
-					-1,
-					Math.min(1, pcm.interleaved[frame * pcm.channels + channel] ?? 0),
-				);
-				low = Math.min(low, sample);
-				high = Math.max(high, sample);
-			}
-		}
-		min[point] = low;
-		max[point] = high;
-	}
-	return { min, max };
-}
-
 /**
- * Rebuild a segment waveform from the same cached WASM output used by
- * playback. After the first successful render, its envelope remains visible
- * until the replacement is ready instead of flashing back to the unprocessed
- * source. A reverse edit mirrors that retained envelope optimistically. The
- * source/server envelope is used only for initial loading, source changes, or
- * when the shared renderer is unavailable.
+ * Rebuild a segment waveform from the same worker-rendered, cached WASM output
+ * used by playback. After the first successful render, its envelope remains
+ * visible until the replacement is ready instead of flashing back to the
+ * unprocessed source. A reverse edit mirrors that retained envelope
+ * optimistically. The source/server envelope is used only for initial loading,
+ * source changes, or when the shared renderer is unavailable.
  */
 export function useProcessedSegmentWaveform(
 	guildId: string,
@@ -118,15 +76,15 @@ export function useProcessedSegmentWaveform(
 				warmSharedDsp(),
 				loadClipBuffer(guildId, segment.sourceId),
 			])
-				.then(([, source]) => {
+				.then(async ([, source]) => {
 					if (cancelled) return;
-					const pcm = renderSharedSegmentPcm(source, segment);
-					if (!pcm || cancelled) return;
+					const render = await requestSharedSegmentRender(source, segment);
+					if (!render || cancelled) return;
 					setRendered({
 						key: renderKey,
 						sourceId: segment.sourceId,
 						reverse: segment.effects.reverse,
-						peaks: waveformEnvelopeFromPcm(pcm),
+						peaks: render.peaks,
 					});
 				})
 				.catch(() => {

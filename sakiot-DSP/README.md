@@ -67,27 +67,33 @@ both the browser WASM and native server renderers.
 
 ## Product integration
 
-- Browser previews pre-render each changed segment through the generated WASM
-  package, cache the result, and use Web Audio only for scheduling and master
-  gain. All implemented parameters participate in the cache key. Clip decoding
-  is fixed at the server's canonical 48 kHz rate. Playback waits for initial
-  WASM loading; a limited native Web Audio fallback remains for initialization
-  failure.
+- Browser previews split the fixed chain at its natural random-access boundary.
+  A dedicated Web Worker renders and caches reverse/pitch/rate/tail using a key
+  containing only those geometry parameters. The production AudioWorklet then
+  runs volume, EQ, distortion, delay, chorus, compressor, and reverb in 128-frame
+  blocks through the same Rust processor. Those downstream controls update
+  active playback immediately and no longer restart or await a complete segment
+  render. The worker independently runs the streaming suffix against a copy of
+  the cached geometry for the exact processed waveform. Geometry jobs have
+  priority, and obsolete queued waveform jobs are replaced by the newest edit.
+  No DSP executes synchronously on the main thread. Clip decoding is fixed at
+  the server's canonical 48 kHz rate; a limited native Web Audio fallback
+  remains for worker/worklet initialization failure.
 - The WASM boundary accepts one complete versioned effect object instead of a
   positional parameter list. Schema version 2 includes `tailSeconds`; unknown
   versions and incomplete configurations are rejected.
 - Live parameter changes use a deterministic 5 ms output-continuity ramp in
   the shared core, so native and WASM updates de-click over the same number of
   samples without interpolating unstable nonlinear/stateful coefficients.
-- Timeline segment waveforms are generated client-side from the exact cached
-  effect-processed PCM used for playback. The 2,500-point envelope updates
-  after the same 120 ms edit debounce and falls back to the source waveform
-  until the first render is available. Later edits retain the preceding
-  processed envelope until its replacement is ready; reverse changes mirror it
-  optimistically, preventing a flash of the raw-source waveform.
+- Timeline segment waveforms are generated inside the DSP worker from exact
+  complete-chain PCM. The 2,500-point envelope
+  updates after the same 120 ms edit debounce and falls back to the source
+  waveform until the first render is available. Later edits retain the
+  preceding processed envelope until its replacement is ready; reverse changes
+  mirror it optimistically, preventing a flash of the raw-source waveform.
 - The Effect tail inspector control extends the timeline box by a fixed number
   of seconds. That appended silence is part of the exact processed waveform,
-  browser AudioBuffer, saved composition, and server output. Rate changes only
+  cached preprocessing AudioBuffer, saved composition, and server output. Rate changes only
   scale source content, not the tail. Splitting keeps the configured tail on
   the final timeline piece so it is not duplicated.
 - A hidden effect-settings JSON editor opens with `Ctrl+Shift+O` (or
@@ -134,9 +140,10 @@ cd sakiot-DSP
 wasm-pack build --target web --features wasm
 ```
 
-`sakiot-stage` consumes the generated `pkg/sakiot_dsp.js` and WASM asset for
-offline segment rendering. `web/sakiot-dsp-worklet.js` remains a validated
-real-time worklet experiment; it is not the production playback boundary.
+`sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
+bundled `pkg/sakiot-dsp-worklet.bundle.js`. The worker owns random-access
+preprocessing and exact waveform rendering; the AudioWorklet is the production
+real-time boundary for the downstream chain.
 
 To verify the generated WASM processor against the native processor with the
 version-matched `wasm-bindgen` CLI and Node.js:
@@ -191,7 +198,8 @@ The real-time worklet harness also runs basic EQ, distortion, feedback delay,
 compressor, chorus, reverb, and the complete active chain separately. All seven captured
 cases are bit-identical to direct WASM once both processors are reset at the
 same segment-time origin. The harness detects the first fixture signal only as
-a test convenience; production scheduling needs an explicit start/reset event.
+a test convenience. Production passes an explicit absolute start frame to each
+worklet node and resets on that frame, including starts inside a render quantum.
 
 The Node verification also runs reverse with +700 cents at 1.35x through the
 offline WASM and native APIs. That fixture currently measures about -128 dB

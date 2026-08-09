@@ -29,8 +29,9 @@ The existing clip editor applies these operations per segment:
 The browser and server now use the shared offline clip renderer for every
 implemented operation: reverse, independent rate, duration-preserving pitch,
 segment volume, three-band EQ, distortion, feedback delay, compression,
-chorus, and deterministic reverb. Web Audio schedules the pre-rendered browser
-buffers. FFmpeg decodes, places, mixes, and encodes native server renders.
+chorus, and deterministic reverb. Browser playback caches the length-changing
+prefix and streams the remaining chain through the same DSP in an AudioWorklet.
+FFmpeg decodes, places, mixes, and encodes native server renders.
 
 Effect processing order is owned by the DSP and is fixed: reverse, pitch/rate,
 append the configured silent tail, volume, bass/mid/treble EQ, distortion,
@@ -139,11 +140,12 @@ and shared browser/server serialization and execution semantics.
 ## Integration added now
 
 - Browser: generated WASM bindings, eager initialization, deterministic
-  per-source/effect caching, offline segment rendering, and native Web Audio
-  scheduling/master gain. Browser clip decoding is fixed at the server's
+  per-source geometry/full-render caching, worker-owned offline transforms,
+  and AudioWorklet streaming of the remaining shared chain. Browser clip decoding is fixed at the server's
   canonical 48 kHz rate. Every shared effect parameter is exposed in grouped
-  inspector controls and participates in the cache key. Playback waits while
-  WASM loads. Tone.js and its frontend transitive dependencies are removed.
+  inspector controls and participates in the appropriate cache key. Playback
+  waits for uncached geometry, while downstream edits apply live. Tone.js and
+  its frontend transitive dependencies are removed.
   Timeline waveforms now reduce the exact cached, effect-processed PCM into
   2,500 min/max points client-side, with the source waveform as a loading/error
   fallback.
@@ -166,9 +168,11 @@ and shared browser/server serialization and execution semantics.
 - A user-reorderable effect-chain model. The current parameter object
   intentionally represents one fixed DSP-owned order and contains no editing
   chronology.
-- Worker/AudioWorklet-based background rendering. Current browser pre-renders
-  synchronously after WASM initialization and can block the main thread on
-  long clips or frequent uncached parameter changes.
+- Exact state pre-roll for playback that begins in the middle of a segment.
+  The worklet currently resets at the requested source offset, so delay,
+  compressor, chorus, and reverb do not inherit the preceding segment history
+  after a seek. Normal playback from the segment start shares the exact DSP
+  time origin with the server renderer.
 - Streaming/chunked length-changing DSP. Server segments over 60 seconds still
   take the legacy FFmpeg/Rubber Band path to cap temporary memory use.
 - A sample-accurate placement path; current FFmpeg `adelay` placement rounds
@@ -220,8 +224,9 @@ and shared browser/server serialization and execution semantics.
   A 1.5x rate kept a 440 Hz fixture at 440 Hz; +1,200 cents produced 880 Hz at
   unchanged duration. A combined +700-cent/1.35x native-versus-WASM fixture
   measured -117.55 dB relative residual with identical output length. Browser
-  integration now pre-renders the clip into an AudioBuffer; an in-place
-  AudioWorklet cannot represent a length-changing operation cleanly.
+  integration preprocesses this prefix into an AudioBuffer, then sends it
+  through the real-time AudioWorklet suffix; an in-place worklet cannot
+  represent the length-changing prefix cleanly.
 - Tone 15.1.22's `Distortion` constructor requests a 4,096-point WaveShaper,
   but assigning its amount calls `setMap` without that length and replaces the
   curve with the 1,024-point default. The shared implementation mirrors the
@@ -304,6 +309,40 @@ and shared browser/server serialization and execution semantics.
   names, so the worklet now provides a real minimal UTF-8 decoder rather than
   the earlier diagnostic-only placeholder. With that fix, every direct-WASM
   versus AudioWorklet case is again bit-identical.
+
+## Deferred browser performance work
+
+- [x] Move offline WASM rendering and processed-waveform extraction to a
+      dedicated Web Worker. Playback and waveform generation share one
+      asynchronous cache promise, and queued edits use latest-request-wins
+      coalescing per segment so slider activity cannot accumulate an unbounded
+      render backlog or block the browser main thread.
+- [x] Cache the reverse/pitch/rate/tail intermediate independently from the
+      downstream effect cache. On the 10.393-second production clip
+      `8161a145-9b3d-4bdb-bca1-4d12fd6781a2`, the `generation.txt` preset
+      expands 498,880 input frames to 682,918 output frames. Repeating that
+      preprocessing accounted for about 1.95-2.1 seconds of a local WASM
+      render even when the edited control was only volume. The worker now
+      shares this prefix across playback and exact waveform requests and
+      prioritizes it ahead of queued waveform suffix jobs.
+- [x] Stream volume, EQ, distortion, delay, chorus, compressor, and reverb
+      through the production AudioWorklet. Downstream edits now update active
+      playback through the versioned config boundary without restarting the
+      transport; the exact waveform suffix continues in the worker. An
+      explicit absolute start frame prevents scheduled silence from advancing
+      DSP state before a segment begins.
+- [ ] Profile and optimize the phase-vocoder/sinc implementation and seeded
+      reverb convolution without changing native/WASM samples. Reverb added
+      roughly 1.45 seconds to the same local full-chain render. Reuse immutable
+      reverb impulse spectra where practical and add a real-browser performance
+      budget before changing algorithms.
+- [ ] Consider interruptible worker jobs if coalescing is not sufficient for
+      very long source windows. The current worker cannot stop a synchronous
+      WASM call already in progress, but it discards obsolete queued requests
+      and keeps the UI responsive while the active render finishes.
+- [ ] Add exact state pre-roll or state snapshots for mid-segment seeks. Until
+      then, a seek starts stateful streaming effects fresh at the requested
+      offset, while ordinary segment-start playback remains exact.
 
 ## Status log
 
@@ -412,3 +451,17 @@ and shared browser/server serialization and execution semantics.
 - 2026-08-09: Added a dedicated DSP CI scope and job. It runs standalone
   formatting/clippy/tests, rebuilds WASM and the worklet with pinned tooling,
   verifies native/WASM parity, and rejects stale committed browser artifacts.
+- 2026-08-09: Moved production offline DSP and processed-waveform work into a
+  dedicated Web Worker after the combined production preset exposed
+  multi-second main-thread stalls. Waveform and playback now share the
+  asynchronous render cache, playback waits instead of synchronously
+  rerendering, and obsolete queued edits coalesce per segment. Intermediate
+  preprocessing, phase-vocoder, reverb, and interruptible-render optimizations
+  remain explicitly deferred above.
+- 2026-08-09: Split browser rendering into a cached reverse/pitch/rate/tail
+  prefix and a production AudioWorklet suffix. The exact split is bit-identical
+  to the monolithic WASM renderer on an all-effects fixture. On the 498,880-frame
+  production clip and `generation.txt`, this run measured 2.57 seconds for the
+  first prefix and 0.73 seconds for the offline suffix versus 3.27 seconds
+  monolithically. Once the prefix is cached, downstream edits are audible
+  immediately while the waveform update finishes in the worker.

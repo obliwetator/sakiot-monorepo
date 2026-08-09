@@ -16,6 +16,7 @@ import {
 	type TimelineSegment,
 	unmergeSegments,
 } from "./model";
+import { sharedDspPreprocessKey } from "./sharedDsp";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
@@ -48,7 +49,7 @@ export function useClipEditor() {
 	const playingRef = useRef(false);
 	const loopRef = useRef(loop);
 	const editRef = useRef(edit);
-	const segmentsRef = useRef(edit.segments);
+	const playbackStructureRef = useRef(playbackStructureKey(edit));
 	const draggingRef = useRef(false);
 	const rafRef = useRef<number | null>(null);
 	const playbackRefreshRef = useRef<number | null>(null);
@@ -228,15 +229,15 @@ export function useClipEditor() {
 	}, [edit.segments, engine, selectedSegmentIds]);
 
 	useEffect(() => {
-		const segmentsChanged = segmentsRef.current !== edit.segments;
-		segmentsRef.current = edit.segments;
-		if (segmentsChanged && !draggingRef.current && engine.isPlaying) {
+		const structureKey = playbackStructureKey(edit);
+		const structureChanged = playbackStructureRef.current !== structureKey;
+		playbackStructureRef.current = structureKey;
+		if (structureChanged && !draggingRef.current && engine.isPlaying) {
 			if (playbackRefreshRef.current !== null) {
 				clearTimeout(playbackRefreshRef.current);
 			}
-			// WASM renders complete segments. Coalesce rapid slider events so a drag
-			// produces one new render after the pointer settles instead of blocking
-			// the main thread for every intermediate value.
+			// Only geometry/timeline edits require a new source buffer and schedule.
+			// Streaming effect edits are applied live by the AudioWorklet.
 			playbackRefreshRef.current = window.setTimeout(() => {
 				playbackRefreshRef.current = null;
 				if (!engine.isPlaying) return;
@@ -528,6 +529,20 @@ export function useClipEditor() {
 		dismissMergeWarning,
 		toggleReverse,
 	};
+}
+
+function playbackStructureKey(edit: ClipEdit): string {
+	return edit.segments
+		.map((segment) =>
+			[
+				segment.id,
+				segment.source,
+				segment.sourceId,
+				segment.timelineStart,
+				sharedDspPreprocessKey(segment),
+			].join(":"),
+		)
+		.join("|");
 }
 
 function endOfTrack(edit: ClipEdit, track: number): number {

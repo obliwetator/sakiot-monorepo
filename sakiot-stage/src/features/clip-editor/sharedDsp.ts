@@ -1,37 +1,89 @@
-import initDsp, {
-	WasmSegmentProcessor,
-} from "../../../../sakiot-DSP/pkg/sakiot_dsp.js";
-import type { SegmentEffects, TimelineSegment } from "./model";
+import type { TimelineSegment } from "./model";
+import { SHARED_DSP_EFFECT_CONFIG_VERSION } from "./sharedDspConfig";
 
-const OUTPUT_CHANNELS = 2;
-export const SHARED_DSP_EFFECT_CONFIG_VERSION = 2 as const;
+export {
+	SHARED_DSP_EFFECT_CONFIG_VERSION,
+	sharedDspEffectConfig,
+} from "./sharedDspConfig";
 
+import type {
+	SharedDspPcm,
+	SharedDspRender,
+	SharedDspWorkerDspRequest,
+	SharedDspWorkerResponse,
+} from "./sharedDspProtocol";
+
+export type { SharedDspPcm, SharedDspRender } from "./sharedDspProtocol";
+
+interface CachedValue<T> {
+	value: T | null;
+	promise: Promise<T | null> | null;
+	audioBuffer: AudioBuffer | null;
+	lanes: Set<string>;
+}
+
+type WorkerOperation = SharedDspWorkerDspRequest extends infer Request
+	? Request extends SharedDspWorkerDspRequest
+		? Omit<Request, "id">
+		: never
+	: never;
+type WorkerResult = SharedDspPcm | SharedDspRender;
+
+interface QueuedOperation {
+	lane: string;
+	request: WorkerOperation;
+	resolve(result: WorkerResult | null): void;
+}
+
+const renderCache = new WeakMap<
+	AudioBuffer,
+	Map<string, CachedValue<SharedDspRender>>
+>();
+const preprocessCache = new WeakMap<
+	AudioBuffer,
+	Map<string, CachedValue<SharedDspPcm>>
+>();
+const pendingWorkerRequests = new Map<
+	number,
+	{
+		resolve(result: WorkerResult): void;
+		reject(error: Error): void;
+	}
+>();
+const queuedPreprocessByLane = new Map<string, QueuedOperation>();
+const queuedProcessByLane = new Map<string, QueuedOperation>();
+
+let worker: Worker | null = null;
+let initialization: Promise<void> | null = null;
+let resolveInitialization: (() => void) | null = null;
 let ready = false;
 let failed = false;
-const initialization = initDsp()
-	.then(() => {
-		ready = true;
-	})
-	.catch(() => {
-		failed = true;
-	});
+let nextRequestId = 0;
+let activeOperation: QueuedOperation | null = null;
 
-export interface SharedDspPcm {
-	channels: number;
-	sampleRate: number;
-	frames: number;
-	interleaved: Float32Array;
-}
-
-interface CachedRender {
-	pcm: SharedDspPcm;
-	audioBuffer: AudioBuffer | null;
-}
-
-const cache = new WeakMap<AudioBuffer, Map<string, CachedRender>>();
-
-/** Begin loading the shared module without delaying initial editor rendering. */
+/** Begin loading the worker-owned shared module without delaying the editor. */
 export function warmSharedDsp(): Promise<void> {
+	if (initialization) return initialization;
+	initialization = new Promise<void>((resolve) => {
+		resolveInitialization = resolve;
+		if (typeof Worker === "undefined") {
+			failed = true;
+			resolveInitialization = null;
+			resolve();
+			return;
+		}
+
+		try {
+			worker = new Worker(new URL("./sharedDsp.worker.ts", import.meta.url), {
+				type: "module",
+			});
+			worker.onmessage = handleWorkerMessage;
+			worker.onerror = () => failWorker("Shared DSP worker crashed");
+			worker.postMessage({ type: "initialize" });
+		} catch {
+			failWorker("Shared DSP worker could not be started");
+		}
+	});
 	return initialization;
 }
 
@@ -45,76 +97,26 @@ export function sharedDspSettled(): boolean {
 }
 
 /**
- * The only JavaScript-to-WASM effect schema. Unknown versions and incomplete
- * objects are rejected by Rust instead of being interpreted positionally.
+ * Render and cache reverse/pitch/rate/tail independently from live effects.
+ * Geometry work has priority over queued waveform work so playback can start
+ * as soon as its reusable prefix is ready.
  */
-export function sharedDspEffectConfig(effects: SegmentEffects) {
-	return {
-		version: SHARED_DSP_EFFECT_CONFIG_VERSION,
-		effects: { ...effects },
-	};
-}
-
-/**
- * Render a segment to canonical interleaved PCM. Playback and effect-aware
- * waveform generation share this exact cached result.
- */
-export function renderSharedSegmentPcm(
+export function requestSharedSegmentPreprocessedPcm(
 	source: AudioBuffer,
 	segment: TimelineSegment,
-): SharedDspPcm | null {
-	if (!sharedDspAvailable() || typeof source.getChannelData !== "function") {
-		return null;
+): Promise<SharedDspPcm | null> {
+	if (typeof source.getChannelData !== "function") return Promise.resolve(null);
+	const key = sharedDspPreprocessKey(segment);
+	const sourceCache =
+		preprocessCache.get(source) ?? new Map<string, CachedValue<SharedDspPcm>>();
+	preprocessCache.set(source, sourceCache);
+	releaseStaleLaneEntries(sourceCache, segment.id, key);
+	const existing = sourceCache.get(key);
+	if (existing) {
+		existing.lanes.add(segment.id);
+		if (existing.value) return Promise.resolve(existing.value);
+		if (existing.promise) return existing.promise;
 	}
-	return renderEntry(source, segment)?.pcm ?? null;
-}
-
-/**
- * Render a segment's complete trimmed source through the canonical WASM path.
- * Returns null when WASM initialization failed or the supplied browser audio
- * objects do not provide the APIs needed by the renderer.
- */
-export function renderSharedSegment(
-	context: AudioContext,
-	source: AudioBuffer,
-	segment: TimelineSegment,
-): AudioBuffer | null {
-	if (
-		!sharedDspAvailable() ||
-		typeof source.getChannelData !== "function" ||
-		typeof context.createBuffer !== "function"
-	) {
-		return null;
-	}
-	const entry = renderEntry(source, segment);
-	if (!entry) return null;
-	if (entry.audioBuffer) return entry.audioBuffer;
-
-	const output = context.createBuffer(
-		entry.pcm.channels,
-		entry.pcm.frames,
-		entry.pcm.sampleRate,
-	);
-	for (let channel = 0; channel < entry.pcm.channels; channel += 1) {
-		const channelData = output.getChannelData(channel);
-		for (let frame = 0; frame < entry.pcm.frames; frame += 1) {
-			channelData[frame] =
-				entry.pcm.interleaved[frame * entry.pcm.channels + channel] ?? 0;
-		}
-	}
-	entry.audioBuffer = output;
-	return output;
-}
-
-function renderEntry(
-	source: AudioBuffer,
-	segment: TimelineSegment,
-): CachedRender | null {
-	const key = sharedDspRenderKey(segment);
-	const sourceCache = cache.get(source) ?? new Map<string, CachedRender>();
-	cache.set(source, sourceCache);
-	const cached = sourceCache.get(key);
-	if (cached) return cached;
 
 	const startFrame = Math.max(
 		0,
@@ -124,50 +126,255 @@ function renderEntry(
 		startFrame,
 		Math.min(source.length, Math.round(segment.sourceOut * source.sampleRate)),
 	);
-	const frameCount = endFrame - startFrame;
-	if (frameCount === 0) return null;
-	const interleaved = new Float32Array(frameCount * OUTPUT_CHANNELS);
-	const left = source.getChannelData(0);
-	const right = source.getChannelData(Math.min(1, source.numberOfChannels - 1));
-	for (let frame = 0; frame < frameCount; frame += 1) {
-		interleaved[frame * OUTPUT_CHANNELS] = left[startFrame + frame] ?? 0;
-		interleaved[frame * OUTPUT_CHANNELS + 1] = right[startFrame + frame] ?? 0;
+	if (endFrame === startFrame) return Promise.resolve(null);
+
+	const entry: CachedValue<SharedDspPcm> = {
+		value: null,
+		promise: null,
+		audioBuffer: null,
+		lanes: new Set([segment.id]),
+	};
+	const promise = enqueueOperation(`preprocess:${segment.id}`, {
+		type: "preprocess",
+		sampleRate: source.sampleRate,
+		left: source.getChannelData(0).slice(startFrame, endFrame),
+		right: source
+			.getChannelData(Math.min(1, source.numberOfChannels - 1))
+			.slice(startFrame, endFrame),
+		effects: { ...segment.effects },
+	}).then((result) => {
+		entry.promise = null;
+		const pcm = isPcm(result) ? result : null;
+		if (pcm) entry.value = pcm;
+		else sourceCache.delete(key);
+		return pcm;
+	});
+	entry.promise = promise;
+	sourceCache.set(key, entry);
+	return promise;
+}
+
+/**
+ * Render the exact complete segment for waveform display. It reuses the
+ * geometry cache, then runs only the streaming suffix in the worker.
+ */
+export function requestSharedSegmentRender(
+	source: AudioBuffer,
+	segment: TimelineSegment,
+): Promise<SharedDspRender | null> {
+	if (typeof source.getChannelData !== "function") return Promise.resolve(null);
+	const key = sharedDspRenderKey(segment);
+	const sourceCache =
+		renderCache.get(source) ?? new Map<string, CachedValue<SharedDspRender>>();
+	renderCache.set(source, sourceCache);
+	releaseStaleLaneEntries(sourceCache, segment.id, key);
+	const existing = sourceCache.get(key);
+	if (existing) {
+		existing.lanes.add(segment.id);
+		if (existing.value) return Promise.resolve(existing.value);
+		if (existing.promise) return existing.promise;
 	}
 
-	const processor = new WasmSegmentProcessor(
-		source.sampleRate,
-		OUTPUT_CHANNELS,
-	);
-	try {
-		if (!processor.set_effect_config(sharedDspEffectConfig(segment.effects))) {
-			return null;
-		}
-		const rendered = processor.render_clip_interleaved(interleaved);
-		if (rendered.length === 0) return null;
-		const pcm: SharedDspPcm = {
-			channels: OUTPUT_CHANNELS,
-			sampleRate: source.sampleRate,
-			frames: Math.floor(rendered.length / OUTPUT_CHANNELS),
-			interleaved: rendered,
-		};
-		const entry: CachedRender = { pcm, audioBuffer: null };
-		sourceCache.set(key, entry);
-		return entry;
-	} finally {
-		processor.free();
+	const entry: CachedValue<SharedDspRender> = {
+		value: null,
+		promise: null,
+		audioBuffer: null,
+		lanes: new Set([segment.id]),
+	};
+	const promise = requestSharedSegmentPreprocessedPcm(source, segment)
+		.then((pcm) => {
+			if (!pcm) return null;
+			return enqueueOperation(`process:${segment.id}`, {
+				type: "process",
+				pcm: { ...pcm, interleaved: pcm.interleaved.slice() },
+				effects: { ...segment.effects },
+			});
+		})
+		.then((result) => {
+			entry.promise = null;
+			const render = isRender(result) ? result : null;
+			if (render) entry.value = render;
+			else sourceCache.delete(key);
+			return render;
+		});
+	entry.promise = promise;
+	sourceCache.set(key, entry);
+	return promise;
+}
+
+function releaseStaleLaneEntries<T>(
+	sourceCache: Map<string, CachedValue<T>>,
+	lane: string,
+	requestedKey: string,
+) {
+	for (const [key, entry] of sourceCache) {
+		if (key === requestedKey || !entry.lanes.delete(lane)) continue;
+		if (entry.lanes.size === 0) sourceCache.delete(key);
 	}
 }
 
-export function sharedDspRenderKey(segment: TimelineSegment): string {
+/** The complete effect-processed PCM used for exact waveform generation. */
+export async function requestSharedSegmentPcm(
+	source: AudioBuffer,
+	segment: TimelineSegment,
+): Promise<SharedDspPcm | null> {
+	return (await requestSharedSegmentRender(source, segment))?.pcm ?? null;
+}
+
+/** Build a Web Audio buffer from either cached geometry or a complete render. */
+export async function requestSharedSegment(
+	context: AudioContext,
+	source: AudioBuffer,
+	segment: TimelineSegment,
+	preprocessOnly = false,
+): Promise<AudioBuffer | null> {
+	if (typeof context.createBuffer !== "function") return null;
+	const pcm = preprocessOnly
+		? await requestSharedSegmentPreprocessedPcm(source, segment)
+		: await requestSharedSegmentPcm(source, segment);
+	if (!pcm) return null;
+
+	const sourceCache = preprocessOnly
+		? preprocessCache.get(source)
+		: renderCache.get(source);
+	const key = preprocessOnly
+		? sharedDspPreprocessKey(segment)
+		: sharedDspRenderKey(segment);
+	const entry = sourceCache?.get(key);
+	if (entry?.audioBuffer) return entry.audioBuffer;
+	const output = context.createBuffer(pcm.channels, pcm.frames, pcm.sampleRate);
+	for (let channel = 0; channel < pcm.channels; channel += 1) {
+		const channelData = output.getChannelData(channel);
+		for (let frame = 0; frame < pcm.frames; frame += 1) {
+			channelData[frame] = pcm.interleaved[frame * pcm.channels + channel] ?? 0;
+		}
+	}
+	if (entry) entry.audioBuffer = output;
+	return output;
+}
+
+function enqueueOperation(
+	lane: string,
+	request: WorkerOperation,
+): Promise<WorkerResult | null> {
+	return new Promise((resolve) => {
+		const queue =
+			request.type === "preprocess"
+				? queuedPreprocessByLane
+				: queuedProcessByLane;
+		const superseded = queue.get(lane);
+		if (superseded) superseded.resolve(null);
+		queue.set(lane, { lane, request, resolve });
+		pumpOperationQueue();
+	});
+}
+
+function pumpOperationQueue() {
+	if (activeOperation) return;
+	const next =
+		queuedPreprocessByLane.values().next().value ??
+		queuedProcessByLane.values().next().value;
+	if (!next) return;
+	const operation = next as QueuedOperation;
+	queuedPreprocessByLane.delete(operation.lane);
+	queuedProcessByLane.delete(operation.lane);
+	activeOperation = operation;
+	void sendWorkerOperation(operation.request)
+		.then(operation.resolve)
+		.catch(() => operation.resolve(null))
+		.finally(() => {
+			activeOperation = null;
+			pumpOperationQueue();
+		});
+}
+
+async function sendWorkerOperation(
+	request: WorkerOperation,
+): Promise<WorkerResult> {
+	await warmSharedDsp();
+	if (!worker || !sharedDspAvailable()) {
+		throw new Error("Shared DSP worker is unavailable");
+	}
+	const id = ++nextRequestId;
+	const response = new Promise<WorkerResult>((resolve, reject) => {
+		pendingWorkerRequests.set(id, { resolve, reject });
+	});
+	if (request.type === "preprocess") {
+		worker.postMessage({ ...request, id }, [
+			request.left.buffer,
+			request.right.buffer,
+		]);
+	} else {
+		worker.postMessage({ ...request, id }, [request.pcm.interleaved.buffer]);
+	}
+	return response;
+}
+
+function handleWorkerMessage(event: MessageEvent<SharedDspWorkerResponse>) {
+	const message = event.data;
+	if (message.type === "ready") {
+		ready = true;
+		resolveInitialization?.();
+		resolveInitialization = null;
+		return;
+	}
+	if (message.type === "preprocessed" || message.type === "rendered") {
+		const pending = pendingWorkerRequests.get(message.id);
+		pendingWorkerRequests.delete(message.id);
+		pending?.resolve(
+			message.type === "preprocessed" ? message.pcm : message.render,
+		);
+		return;
+	}
+	if (message.id !== undefined) {
+		const pending = pendingWorkerRequests.get(message.id);
+		pendingWorkerRequests.delete(message.id);
+		pending?.reject(new Error(message.message));
+		return;
+	}
+	failWorker(message.message);
+}
+
+function failWorker(message: string) {
+	failed = true;
+	ready = false;
+	worker?.terminate();
+	worker = null;
+	for (const pending of pendingWorkerRequests.values()) {
+		pending.reject(new Error(message));
+	}
+	pendingWorkerRequests.clear();
+	resolveInitialization?.();
+	resolveInitialization = null;
+}
+
+function isPcm(value: WorkerResult | null): value is SharedDspPcm {
+	return value !== null && "interleaved" in value;
+}
+
+function isRender(value: WorkerResult | null): value is SharedDspRender {
+	return value !== null && "pcm" in value;
+}
+
+/** Cache identity for the length-changing prefix only. */
+export function sharedDspPreprocessKey(segment: TimelineSegment): string {
 	const effect = segment.effects;
 	return [
 		SHARED_DSP_EFFECT_CONFIG_VERSION,
 		segment.sourceIn,
 		segment.sourceOut,
-		effect.volumeDb,
 		effect.pitchCents,
 		effect.rate,
 		effect.tailSeconds,
+		effect.reverse ? 1 : 0,
+	].join(":");
+}
+
+export function sharedDspRenderKey(segment: TimelineSegment): string {
+	const effect = segment.effects;
+	return [
+		sharedDspPreprocessKey(segment),
+		effect.volumeDb,
 		effect.bassDb,
 		effect.midDb,
 		effect.trebleDb,
@@ -194,6 +401,5 @@ export function sharedDspRenderKey(segment: TimelineSegment): string {
 		effect.reverbPreDelaySeconds,
 		effect.reverbWet,
 		effect.reverbSeed,
-		effect.reverse ? 1 : 0,
 	].join(":");
 }

@@ -227,6 +227,7 @@ function initSync(module) {
 }
 //#endregion
 //#region web/sakiot-dsp-worklet.js
+let wasmInitialized = false;
 var SakiotDspProcessor = class extends AudioWorkletProcessor {
 	constructor(options) {
 		super();
@@ -268,10 +269,14 @@ var SakiotDspProcessor = class extends AudioWorkletProcessor {
 		this.captureRemaining = options.processorOptions?.captureFrames ?? 0;
 		this.captureStarted = false;
 		this.deferUntilSignal = options.processorOptions?.deferUntilSignal ?? false;
-		this.processingStarted = !this.deferUntilSignal;
+		this.startFrame = options.processorOptions?.startFrame;
+		this.processingStarted = !this.deferUntilSignal && this.startFrame === void 0;
 		const wasmModule = options.processorOptions?.wasmModule;
 		if (!(wasmModule instanceof WebAssembly.Module)) throw new TypeError("sakiot-dsp requires a precompiled WebAssembly.Module");
-		initSync({ module: wasmModule });
+		if (!wasmInitialized) {
+			initSync({ module: wasmModule });
+			wasmInitialized = true;
+		}
 		this.processor = new WasmSegmentProcessor(sampleRate, this.channels);
 		this.port.onmessage = (event) => {
 			if (event.data?.type !== "effects") return;
@@ -303,19 +308,28 @@ var SakiotDspProcessor = class extends AudioWorkletProcessor {
 			for (const channel of output) channel.fill(0);
 			return true;
 		}
+		let processFromFrame = 0;
 		if (!this.processingStarted) {
-			if (!input.some((channel) => channel.some((sample) => sample !== 0))) {
+			if (this.startFrame !== void 0) {
+				processFromFrame = Math.max(0, this.startFrame - currentFrame);
+				if (processFromFrame >= (output[0]?.length ?? 0)) {
+					for (const channel of output) channel.fill(0);
+					return true;
+				}
+			} else if (!input.some((channel) => channel.some((sample) => sample !== 0))) {
 				for (const channel of output) channel.fill(0);
 				return true;
 			}
+			if (processFromFrame > 0) for (const channel of output) channel.fill(0);
 			this.processor.reset();
 			this.processingStarted = true;
 		}
 		const frames = output[0]?.length ?? 0;
-		const interleaved = new Float32Array(frames * this.channels);
-		for (let frame = 0; frame < frames; frame += 1) for (let channel = 0; channel < this.channels; channel += 1) interleaved[frame * this.channels + channel] = input[channel]?.[frame] ?? input[0]?.[frame] ?? 0;
+		const processingFrames = frames - processFromFrame;
+		const interleaved = new Float32Array(processingFrames * this.channels);
+		for (let frame = processFromFrame; frame < frames; frame += 1) for (let channel = 0; channel < this.channels; channel += 1) interleaved[(frame - processFromFrame) * this.channels + channel] = input[channel]?.[frame] ?? input[0]?.[frame] ?? 0;
 		this.processor.process_interleaved(interleaved);
-		for (let frame = 0; frame < frames; frame += 1) for (let channel = 0; channel < this.channels; channel += 1) output[channel][frame] = interleaved[frame * this.channels + channel];
+		for (let frame = processFromFrame; frame < frames; frame += 1) for (let channel = 0; channel < this.channels; channel += 1) output[channel][frame] = interleaved[(frame - processFromFrame) * this.channels + channel];
 		if (this.captureRemaining > 0) {
 			if (!this.captureStarted) this.captureStarted = input.some((channel) => channel.some((sample) => sample !== 0));
 			if (this.captureStarted) {

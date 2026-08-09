@@ -7,11 +7,13 @@ import {
 	segmentDuration,
 	sourcePositionAt,
 } from "./model";
+import { requestSharedSegment, warmSharedDsp } from "./sharedDsp";
 import {
-	renderSharedSegment,
-	sharedDspSettled,
-	warmSharedDsp,
-} from "./sharedDsp";
+	createSharedDspAudioWorkletNode,
+	updateSharedDspAudioWorkletNode,
+	type WorkletResources,
+	warmSharedDspAudioWorklet,
+} from "./sharedDspAudioWorklet";
 
 /**
  * Source-buffer window a segment must play to fill the given timeline range.
@@ -46,11 +48,15 @@ interface SegmentAudioGraph {
 	dispose(): void;
 }
 
+type SegmentProcessing = "source" | "streaming" | "complete";
+
 interface EditorAudioGraph {
 	createSegment(
 		effects: SegmentEffects,
-		preprocessed?: boolean,
+		processing: SegmentProcessing,
+		startTime: number,
 	): SegmentAudioGraph;
+	prepare?(): Promise<boolean>;
 	setMasterVolume(db: number): void;
 	dispose(): void;
 }
@@ -58,7 +64,7 @@ interface EditorAudioGraph {
 export type EditorAudioGraphFactory = (ctx: AudioContext) => EditorAudioGraph;
 
 class NativeEditorAudioGraph implements EditorAudioGraph {
-	private readonly master: GainNode;
+	protected readonly master: GainNode;
 
 	constructor(ctx: AudioContext) {
 		this.master = ctx.createGain();
@@ -67,9 +73,10 @@ class NativeEditorAudioGraph implements EditorAudioGraph {
 
 	createSegment(
 		effects: SegmentEffects,
-		preprocessed = false,
+		processing: SegmentProcessing = "source",
+		_startTime = 0,
 	): SegmentAudioGraph {
-		if (preprocessed) {
+		if (processing !== "source") {
 			return {
 				connectSource: (source) => source.connect(this.master),
 				setEffects: () => {},
@@ -122,6 +129,53 @@ class NativeEditorAudioGraph implements EditorAudioGraph {
 	}
 }
 
+class SharedDspEditorAudioGraph extends NativeEditorAudioGraph {
+	private resources: WorkletResources | null = null;
+
+	async prepare(): Promise<boolean> {
+		if (
+			typeof AudioWorkletNode === "undefined" ||
+			!(this.master.context as AudioContext).audioWorklet
+		) {
+			return false;
+		}
+		this.resources = await warmSharedDspAudioWorklet(
+			this.master.context as AudioContext,
+		);
+		return this.resources !== null;
+	}
+
+	override createSegment(
+		effects: SegmentEffects,
+		processing: SegmentProcessing = "source",
+		startTime = 0,
+	): SegmentAudioGraph {
+		if (processing !== "streaming" || !this.resources) {
+			return super.createSegment(effects, processing, startTime);
+		}
+		let node: AudioWorkletNode;
+		try {
+			node = createSharedDspAudioWorkletNode(
+				this.master.context as AudioContext,
+				this.resources,
+				effects,
+				startTime,
+			);
+		} catch {
+			return super.createSegment(effects, "source", startTime);
+		}
+		node.connect(this.master);
+		return {
+			connectSource: (source) => source.connect(node),
+			setEffects: (next) => updateSharedDspAudioWorkletNode(node, next),
+			dispose() {
+				node.port.close();
+				node.disconnect();
+			},
+		};
+	}
+}
+
 function dbToGain(db: number): number {
 	return 10 ** (db / 20);
 }
@@ -129,7 +183,16 @@ function dbToGain(db: number): number {
 interface ActiveSource {
 	node: AudioBufferSourceNode;
 	graph: SegmentAudioGraph;
-	preprocessed: boolean;
+	processing: SegmentProcessing;
+}
+
+interface PreparedSegment {
+	segment: TimelineSegment;
+	buffer: AudioBuffer;
+	prepared: AudioBuffer | null;
+	processing: SegmentProcessing;
+	overlapStart: number;
+	overlapEnd: number;
 }
 
 /**
@@ -154,7 +217,7 @@ export class ClipEditorEngine {
 
 	constructor(
 		private readonly createAudioGraph: EditorAudioGraphFactory = (ctx) =>
-			new NativeEditorAudioGraph(ctx),
+			new SharedDspEditorAudioGraph(ctx),
 	) {
 		void warmSharedDsp();
 	}
@@ -181,35 +244,32 @@ export class ClipEditorEngine {
 		this.lastPlay = { edit, buffers, loop };
 		this.playheadSec = fromSec;
 		const ctx = this.ensureContext();
-		if (!sharedDspSettled()) {
-			this.pendingPlayback = true;
-			const generation = this.playbackGeneration;
-			void warmSharedDsp().then(() => {
+		this.pendingPlayback = true;
+		const generation = this.playbackGeneration;
+		void this.preparePlayback(ctx, edit, fromSec, buffers)
+			.then((prepared) => {
 				if (generation !== this.playbackGeneration || !this.pendingPlayback)
 					return;
 				this.pendingPlayback = false;
-				this.schedulePlayback(ctx, edit, fromSec, buffers, loop);
+				this.schedulePlayback(edit, fromSec, loop, prepared);
+			})
+			.catch(() => {
+				if (generation !== this.playbackGeneration || !this.pendingPlayback)
+					return;
+				this.pendingPlayback = false;
+				this.finish();
 			});
-			return;
-		}
-		this.schedulePlayback(ctx, edit, fromSec, buffers, loop);
 	}
 
-	private schedulePlayback(
+	private async preparePlayback(
 		ctx: AudioContext,
 		edit: ClipEdit,
 		fromSec: number,
 		buffers: ReadonlyMap<string, AudioBuffer>,
-		loop: boolean,
-	) {
+	): Promise<PreparedSegment[]> {
 		const totalDuration = editDuration(edit);
-		const prepared: Array<{
-			segment: TimelineSegment;
-			buffer: AudioBuffer;
-			rendered: AudioBuffer | null;
-			overlapStart: number;
-			overlapEnd: number;
-		}> = [];
+		const streaming = (await this.audioGraph?.prepare?.()) ?? false;
+		const pending: Array<Promise<PreparedSegment>> = [];
 		for (const segment of edit.segments) {
 			const buffer = buffers.get(segment.sourceId);
 			if (!buffer) continue;
@@ -219,15 +279,37 @@ export class ClipEditorEngine {
 			const overlapStart = Math.max(fromSec, segment.timelineStart);
 			const overlapEnd = Math.min(fromSec + totalDuration, segmentEndSec);
 			if (overlapEnd <= overlapStart) continue;
-			prepared.push({
-				segment,
-				buffer,
-				rendered: renderSharedSegment(ctx, buffer, segment),
-				overlapStart,
-				overlapEnd,
-			});
+			pending.push(
+				requestSharedSegment(ctx, buffer, segment, streaming)
+					.catch(() => null)
+					.then((prepared) => ({
+						segment,
+						buffer,
+						prepared,
+						processing: prepared
+							? streaming
+								? "streaming"
+								: "complete"
+							: "source",
+						overlapStart,
+						overlapEnd,
+					})),
+			);
 		}
+		return Promise.all(pending);
+	}
 
+	private schedulePlayback(
+		edit: ClipEdit,
+		fromSec: number,
+		loop: boolean,
+		prepared: PreparedSegment[],
+	) {
+		const ctx = this.ctx;
+		if (!ctx) {
+			this.finish();
+			return;
+		}
 		// Rendering can be expensive. Establish the transport time only after all
 		// buffers are ready so every segment is scheduled from the same origin.
 		this.startedAtMs = performance.now();
@@ -237,22 +319,25 @@ export class ClipEditorEngine {
 		for (const {
 			segment,
 			buffer,
-			rendered,
+			prepared: preparedBuffer,
+			processing,
 			overlapStart,
 			overlapEnd,
 		} of prepared) {
-			const preprocessed = rendered !== null;
 			const node = ctx.createBufferSource();
-			node.buffer = rendered ?? buffer;
+			node.buffer = preparedBuffer ?? buffer;
 			node.detune.value = 0;
-			node.playbackRate.value = preprocessed
-				? 1
-				: segment.effects.reverse
-					? -segment.effects.rate
-					: segment.effects.rate;
+			node.playbackRate.value =
+				processing !== "source"
+					? 1
+					: segment.effects.reverse
+						? -segment.effects.rate
+						: segment.effects.rate;
+			const segmentStartTime = now + Math.max(0, overlapStart - fromSec);
 			const graph = this.audioGraph?.createSegment(
 				segment.effects,
-				preprocessed,
+				processing,
+				segmentStartTime,
 			);
 			if (!graph) continue;
 			graph.connectSource(node);
@@ -263,13 +348,15 @@ export class ClipEditorEngine {
 				overlapEnd,
 			);
 			node.start(
-				now + Math.max(0, overlapStart - fromSec),
-				preprocessed
+				segmentStartTime,
+				processing !== "source"
 					? overlapStart - segment.timelineStart
 					: sourceWindow.offset,
-				preprocessed ? overlapEnd - overlapStart : sourceWindow.duration,
+				processing !== "source"
+					? overlapEnd - overlapStart
+					: sourceWindow.duration,
 			);
-			this.active.set(segment.id, { node, graph, preprocessed });
+			this.active.set(segment.id, { node, graph, processing });
 			lastEndMs = Math.max(
 				lastEndMs,
 				performance.now() + (overlapEnd - fromSec) * 1000,
@@ -337,7 +424,11 @@ export class ClipEditorEngine {
 	applySegmentEffects(id: string, effects: SegmentEffects) {
 		const active = this.active.get(id);
 		if (!active) return;
-		if (active.preprocessed) return;
+		if (active.processing === "complete") return;
+		if (active.processing === "streaming") {
+			active.graph.setEffects(effects);
+			return;
+		}
 		active.node.detune.value = 0;
 		active.node.playbackRate.value = effects.reverse
 			? -effects.rate
