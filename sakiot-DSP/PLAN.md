@@ -107,7 +107,10 @@ and shared browser/server serialization and execution semantics.
       all use that same extent.
 - [x] Add dedicated CI coverage without making the crate a root workspace
       member: formatting, clippy, native tests, pinned WASM/worklet generation,
-      native/WASM parity, and a clean generated-artifact check.
+      committed/rebuilt native-WASM parity, and clean deterministic generated
+      text-artifact checks. Compiled WASM is behavior-checked rather than
+      byte-compared because rustc output can differ across build hosts while
+      producing sample-identical processing.
 
 ## Prototype acceptance criteria
 
@@ -118,8 +121,9 @@ and shared browser/server serialization and execution semantics.
 - The WASM wrapper calls the exact same Rust processing implementation.
 - The shared EQ response is sufficiently close to the current FFmpeg chain to
   make a listening comparison meaningful; any measurable mismatch is recorded.
-- Dedicated CI fails if native tests/parity regress or generated WASM artifacts
-  become stale.
+- Dedicated CI fails if native tests/parity regress, if either the committed or
+  freshly rebuilt WASM diverges from native DSP, or if deterministic generated
+  bindings/worklet artifacts become stale.
 
 ## Effect catalog boundary
 

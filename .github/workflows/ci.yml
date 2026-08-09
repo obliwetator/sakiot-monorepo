@@ -223,14 +223,25 @@ jobs:
       - name: Test native DSP
         run: cargo test --locked
 
+      - name: Verify committed WASM/native parity
+        run: node web/verify-wasm.mjs
+
       - name: Build WASM and worklet
         run: npm run wasm:build && npm run browser:build-worklet
 
-      - name: Verify native/WASM parity
+      - name: Verify rebuilt WASM/native parity
         run: node web/verify-wasm.mjs
 
-      - name: Check generated WASM artifacts
-        run: git diff --exit-code -- pkg
+      # rustc can emit byte-different but behavior-identical WASM on different
+      # build hosts. Both the committed and rebuilt modules are checked against
+      # native DSP above; keep exact stale checks for deterministic text assets.
+      - name: Check deterministic generated artifacts
+        run: |
+          git diff --exit-code -- \
+            pkg/sakiot_dsp.js \
+            pkg/sakiot_dsp.d.ts \
+            pkg/sakiot_dsp_bg.wasm.d.ts \
+            pkg/sakiot-dsp-worklet.bundle.js
 
   api-contract:
     needs: scope

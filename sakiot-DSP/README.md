@@ -148,6 +148,13 @@ wasm-bindgen target/wasm32-unknown-unknown/release/sakiot_dsp.wasm \
 node web/verify-wasm.mjs
 ```
 
+CI runs the parity verifier once against the committed browser asset and again
+after rebuilding it. The generated JavaScript, TypeScript declarations, and
+worklet bundle must also remain byte-for-byte clean. The compiled WASM module
+is not byte-compared across build hosts because rustc can produce different
+binary encodings with sample-identical behavior; its native parity is the
+release gate.
+
 ## Real-browser parity harness
 
 The standalone harness serves the installed Tone.js 15.1.22 modules, renders
