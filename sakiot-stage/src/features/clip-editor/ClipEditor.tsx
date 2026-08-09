@@ -40,13 +40,7 @@ import { deserializeEdit, serializeEdit } from "./composePayload";
 import { loadDraft, saveDraft } from "./draftStorage";
 import { Inspector } from "./Inspector";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
-import {
-	addSegment,
-	type ClipEdit,
-	emptyEdit,
-	makeSegment,
-	segmentDuration,
-} from "./model";
+import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
 import { Timeline } from "./Timeline";
 import { useUnsavedChangesGuard } from "./unsavedChangesGuard";
 import { useClipBuffer } from "./useClipBuffer";
@@ -688,41 +682,18 @@ function useKeyboardShortcuts(editor: ReturnType<typeof useClipEditor>) {
 			}
 			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 			if (playbackShortcutTargetOwnsArrows(event.target)) return;
-			const direction = event.key === "ArrowRight" ? 1 : -1;
 			const distance = event.shiftKey ? 1 : 0.1;
 			event.preventDefault();
-			if (segment) {
-				current.apply((edit) =>
-					moveSegmentsBy(
-						edit,
-						current.selectedSegmentIds,
-						distance * direction,
-					),
-				);
-			} else {
-				current.setPosition(
-					Math.max(0, current.positionSec + distance * direction),
-				);
-			}
+			current.setPosition(
+				Math.max(
+					0,
+					current.positionSec +
+						(event.key === "ArrowRight" ? distance : -distance),
+				),
+			);
 			return;
 		};
 		window.addEventListener("keydown", handleShortcut);
 		return () => window.removeEventListener("keydown", handleShortcut);
 	}, []);
-}
-
-function moveSegmentsBy(
-	edit: ClipEdit,
-	ids: string[],
-	delta: number,
-): ClipEdit {
-	const selected = new Set(ids);
-	return {
-		...edit,
-		segments: edit.segments.map((s) =>
-			selected.has(s.id)
-				? { ...s, timelineStart: Math.max(0, s.timelineStart + delta) }
-				: s,
-		),
-	};
 }
