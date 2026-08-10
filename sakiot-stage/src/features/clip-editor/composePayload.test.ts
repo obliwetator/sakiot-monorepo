@@ -119,6 +119,55 @@ describe("serializeEdit", () => {
 		expect(payload.segments).toHaveLength(1);
 	});
 
+	test("omits the overwrite target when not provided", () => {
+		const payload = serializeEdit(edit(segment("clip-1", 0, 0, 0, 1)));
+		expect(payload.overwrite_clip_id).toBeUndefined();
+	});
+
+	test("carries the overwrite target of a composed clip", () => {
+		const payload = serializeEdit(
+			edit(segment("clip-1", 0, 0, 0, 1)),
+			undefined,
+			"combined-9",
+		);
+		expect(payload.overwrite_clip_id).toBe("combined-9");
+	});
+
+	test("omits the limits when not provided", () => {
+		const payload = serializeEdit(edit(segment("clip-1", 0, 0, 0, 1)));
+		expect(payload.limits).toBeUndefined();
+	});
+
+	test("serializes the adjustable effect limits", () => {
+		const payload = serializeEdit(
+			edit(segment("clip-1", 0, 0, 0, 1)),
+			undefined,
+			undefined,
+			{
+				volumeDb: [-100, 60],
+				pitchCents: [-3600, 3600],
+				rate: [0.1, 8],
+				bassDb: [-36, 36],
+				midDb: [-36, 36],
+				trebleDb: [-36, 36],
+			},
+		);
+		expect(payload.limits).toEqual({
+			volume_db_min: -100,
+			volume_db_max: 60,
+			pitch_cents_min: -3600,
+			pitch_cents_max: 3600,
+			rate_min: 0.1,
+			rate_max: 8,
+			bass_db_min: -36,
+			bass_db_max: 36,
+			mid_db_min: -36,
+			mid_db_max: 36,
+			treble_db_min: -36,
+			treble_db_max: 36,
+		});
+	});
+
 	test("serializes every segment in order", () => {
 		const payload = serializeEdit(
 			edit(

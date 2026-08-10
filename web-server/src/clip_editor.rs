@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::{fs::File, io::BufWriter, io::Write};
 
-use actix_web::{HttpResponse, get, post, web};
+use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
@@ -12,6 +12,7 @@ use tracing::error;
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
+use crate::permissions::require_guild_manager;
 
 use crate::audio::clips_path;
 use crate::audio::types::WaveformProgressContainer;
@@ -22,12 +23,6 @@ const MAX_TOTAL_SECONDS: f64 = 3600.0;
 const MIN_SEGMENT_SECONDS: f32 = 0.05;
 const VOLUME_MIN: f32 = -40.0;
 const VOLUME_MAX: f32 = 12.0;
-const PITCH_MIN: f32 = -1200.0;
-const PITCH_MAX: f32 = 1200.0;
-const RATE_MIN: f32 = 0.5;
-const RATE_MAX: f32 = 2.0;
-const SHELF_MIN: f32 = -12.0;
-const SHELF_MAX: f32 = 12.0;
 const NORMALIZED_MIN: f32 = 0.0;
 const NORMALIZED_MAX: f32 = 1.0;
 const DELAY_MAX_SECONDS: f32 = 5.0;
@@ -38,6 +33,16 @@ const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
 // windows retain the existing FFmpeg/Rubber Band renderer until the shared DSP
 // gains a streaming length-changing API.
 const MAX_SHARED_DSP_SEGMENT_SECONDS: f32 = 60.0;
+// The phase-vocoder transient is proportional to pitch_ratio/rate; beyond 16x
+// a 60s segment holds ~370 MB in memory, so those renders use the FFmpeg path.
+const MAX_SHARED_DSP_STRETCH: f64 = 16.0;
+// Absolute safety caps the adjustable slider limits are clamped to. Above
+// these the renderers either overflow f32 to INF/NaN (gain past ~±770 dB) or
+// allocate hundreds of megabytes per segment (pitch beyond 16x resampling).
+const LIMIT_GAIN_MAX_ABS_DB: f32 = 240.0;
+const LIMIT_PITCH_MAX_ABS_CENTS: f32 = 4_800.0;
+const LIMIT_RATE_MIN: f32 = 0.1;
+const LIMIT_RATE_MAX: f32 = 10.0;
 const OUTPUT_CHANNELS: usize = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -45,6 +50,129 @@ pub struct ComposeClipBody {
     pub name: Option<String>,
     pub master_volume_db: f32,
     pub segments: Vec<ComposeSegment>,
+    /// Id of an existing composed clip to replace with this export. Only
+    /// composed clips (`original_file_name = 'compose'`) can be overwritten;
+    /// the clip keeps its id and owner, and its name when `name` is absent.
+    #[serde(default)]
+    pub overwrite_clip_id: Option<String>,
+    /// Per-user adjustable slider bounds for the six effects the editor lets
+    /// users widen (volume, pitch, rate, and the three EQ bands). Defaults to
+    /// the doubled editor ranges when absent; each pair is additionally
+    /// bounded by absolute safety caps so renders cannot overflow f32 to
+    /// INF/NaN or exhaust memory.
+    #[serde(default)]
+    pub limits: Option<ComposeLimitsDto>,
+}
+
+/// Slider bounds for the adjustable effects, matching the frontend's per-user
+/// limit settings. Missing fields fall back to the doubled default ranges.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(default)]
+pub struct ComposeLimitsDto {
+    pub volume_db_min: f32,
+    pub volume_db_max: f32,
+    pub pitch_cents_min: f32,
+    pub pitch_cents_max: f32,
+    pub rate_min: f32,
+    pub rate_max: f32,
+    pub bass_db_min: f32,
+    pub bass_db_max: f32,
+    pub mid_db_min: f32,
+    pub mid_db_max: f32,
+    pub treble_db_min: f32,
+    pub treble_db_max: f32,
+}
+
+impl Default for ComposeLimitsDto {
+    fn default() -> Self {
+        Self {
+            volume_db_min: -80.0,
+            volume_db_max: 24.0,
+            pitch_cents_min: -2_400.0,
+            pitch_cents_max: 2_400.0,
+            rate_min: 0.25,
+            rate_max: 4.0,
+            bass_db_min: -24.0,
+            bass_db_max: 24.0,
+            mid_db_min: -24.0,
+            mid_db_max: 24.0,
+            treble_db_min: -24.0,
+            treble_db_max: 24.0,
+        }
+    }
+}
+
+fn validate_limit_pair(
+    name: &str,
+    minimum: f32,
+    maximum: f32,
+    safety_min: f32,
+    safety_max: f32,
+) -> Result<(), AppError> {
+    if !minimum.is_finite() || !maximum.is_finite() {
+        return Err(AppError::BadRequest(format!(
+            "{name} limits must be finite"
+        )));
+    }
+    if minimum >= maximum {
+        return Err(AppError::BadRequest(format!(
+            "{name} minimum must be below the maximum"
+        )));
+    }
+    if minimum < safety_min || maximum > safety_max {
+        return Err(AppError::BadRequest(format!(
+            "{name} limits are outside the supported {safety_min}..{safety_max} range"
+        )));
+    }
+    Ok(())
+}
+
+impl ComposeLimitsDto {
+    fn validated(self) -> Result<Self, AppError> {
+        validate_limit_pair(
+            "volume",
+            self.volume_db_min,
+            self.volume_db_max,
+            -LIMIT_GAIN_MAX_ABS_DB,
+            LIMIT_GAIN_MAX_ABS_DB,
+        )?;
+        validate_limit_pair(
+            "pitch",
+            self.pitch_cents_min,
+            self.pitch_cents_max,
+            -LIMIT_PITCH_MAX_ABS_CENTS,
+            LIMIT_PITCH_MAX_ABS_CENTS,
+        )?;
+        validate_limit_pair(
+            "rate",
+            self.rate_min,
+            self.rate_max,
+            LIMIT_RATE_MIN,
+            LIMIT_RATE_MAX,
+        )?;
+        validate_limit_pair(
+            "bass",
+            self.bass_db_min,
+            self.bass_db_max,
+            -LIMIT_GAIN_MAX_ABS_DB,
+            LIMIT_GAIN_MAX_ABS_DB,
+        )?;
+        validate_limit_pair(
+            "mid",
+            self.mid_db_min,
+            self.mid_db_max,
+            -LIMIT_GAIN_MAX_ABS_DB,
+            LIMIT_GAIN_MAX_ABS_DB,
+        )?;
+        validate_limit_pair(
+            "treble",
+            self.treble_db_min,
+            self.treble_db_max,
+            -LIMIT_GAIN_MAX_ABS_DB,
+            LIMIT_GAIN_MAX_ABS_DB,
+        )?;
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -169,6 +297,13 @@ struct ResolvedSource {
     length: f32,
 }
 
+struct ComposeOverwrite {
+    clip_id: String,
+    old_saved_file_name: String,
+    fallback_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 struct SegmentRender {
     path: PathBuf,
     source_in: f32,
@@ -197,7 +332,11 @@ fn is_valid_clip_id(clip_id: &str) -> bool {
         && !clip_id.chars().any(char::is_control)
 }
 
-fn validate_effects(effects: &SegmentEffectsDto, index: usize) -> Result<(), AppError> {
+fn validate_effects(
+    effects: &SegmentEffectsDto,
+    index: usize,
+    limits: &ComposeLimitsDto,
+) -> Result<(), AppError> {
     let advanced = &effects.advanced;
     let all_finite = effects.volume_db.is_finite()
         && effects.pitch_cents.is_finite()
@@ -230,27 +369,31 @@ fn validate_effects(effects: &SegmentEffectsDto, index: usize) -> Result<(), App
             "Segment {index}: effect values must be finite"
         )));
     }
-    if !(VOLUME_MIN..=VOLUME_MAX).contains(&effects.volume_db) {
+    if !(limits.volume_db_min..=limits.volume_db_max).contains(&effects.volume_db) {
         return Err(AppError::BadRequest(format!(
-            "Segment {index}: volume must be between {VOLUME_MIN} and {VOLUME_MAX} dB"
+            "Segment {index}: volume must be between {} and {} dB",
+            limits.volume_db_min, limits.volume_db_max
         )));
     }
-    if !(PITCH_MIN..=PITCH_MAX).contains(&effects.pitch_cents) {
+    if !(limits.pitch_cents_min..=limits.pitch_cents_max).contains(&effects.pitch_cents) {
         return Err(AppError::BadRequest(format!(
-            "Segment {index}: pitch must be between {PITCH_MIN} and {PITCH_MAX} cents"
+            "Segment {index}: pitch must be between {} and {} cents",
+            limits.pitch_cents_min, limits.pitch_cents_max
         )));
     }
-    if !(RATE_MIN..=RATE_MAX).contains(&effects.rate) {
+    if !(limits.rate_min..=limits.rate_max).contains(&effects.rate) {
         return Err(AppError::BadRequest(format!(
-            "Segment {index}: rate must be between {RATE_MIN} and {RATE_MAX}"
+            "Segment {index}: rate must be between {} and {}",
+            limits.rate_min, limits.rate_max
         )));
     }
-    if !(SHELF_MIN..=SHELF_MAX).contains(&effects.bass_db)
-        || !(SHELF_MIN..=SHELF_MAX).contains(&effects.mid_db)
-        || !(SHELF_MIN..=SHELF_MAX).contains(&effects.treble_db)
+    if !(limits.bass_db_min..=limits.bass_db_max).contains(&effects.bass_db)
+        || !(limits.mid_db_min..=limits.mid_db_max).contains(&effects.mid_db)
+        || !(limits.treble_db_min..=limits.treble_db_max).contains(&effects.treble_db)
     {
         return Err(AppError::BadRequest(format!(
-            "Segment {index}: EQ gains must be between {SHELF_MIN} and {SHELF_MAX} dB"
+            "Segment {index}: EQ gains must be between {} and {} dB",
+            limits.bass_db_min, limits.bass_db_max
         )));
     }
     if !(0.0..=sakiot_dsp::MAX_EFFECT_TAIL_SECONDS).contains(&advanced.tail_seconds) {
@@ -321,6 +464,12 @@ fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
             "Composition must contain between 1 and {MAX_SEGMENTS} segments"
         )));
     }
+    if let Some(overwrite_clip_id) = &body.overwrite_clip_id
+        && !is_valid_clip_id(overwrite_clip_id)
+    {
+        return Err(AppError::BadRequest("Invalid overwrite clip id".into()));
+    }
+    let limits = body.limits.unwrap_or_default().validated()?;
     if !body.master_volume_db.is_finite()
         || !(VOLUME_MIN..=VOLUME_MAX).contains(&body.master_volume_db)
     {
@@ -365,7 +514,7 @@ fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
                 "Segment {index}: timeline_start must be non-negative"
             )));
         }
-        validate_effects(&segment.effects, index)?;
+        validate_effects(&segment.effects, index, &limits)?;
         if segment.source_out - segment.source_in > MAX_SHARED_DSP_SEGMENT_SECONDS
             && advanced_effects_active(&segment.effects)
         {
@@ -476,6 +625,7 @@ async fn resolve_sources(
 )]
 #[post("/audio/clips/{guild_id}/compose")]
 pub async fn compose_clip(
+    req: HttpRequest,
     path: web::Path<i64>,
     body: web::Json<ComposeClipBody>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -497,6 +647,40 @@ pub async fn compose_clip(
             )));
         }
     }
+    let overwrite = match body.overwrite_clip_id.as_deref() {
+        Some(target_id) => {
+            let row = sqlx::query(
+                "SELECT original_file_name, user_id, saved_file_name, name
+                   FROM clips
+                  WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+            )
+            .bind(guild_id)
+            .bind(target_id)
+            .fetch_optional(pool.get_ref())
+            .await?
+            .ok_or(AppError::ClipNotFound)?;
+            if row
+                .try_get::<Option<String>, _>("original_file_name")?
+                .as_deref()
+                != Some("compose")
+            {
+                return Err(AppError::BadRequest(
+                    "Only composed clips can be overwritten".into(),
+                ));
+            }
+            if row.try_get::<Option<i64>, _>("user_id")? != Some(user_id) {
+                require_guild_manager(&req, &pool, guild_id).await?;
+            }
+            Some(ComposeOverwrite {
+                clip_id: target_id.to_string(),
+                old_saved_file_name: row
+                    .try_get::<Option<String>, _>("saved_file_name")?
+                    .ok_or(AppError::ClipNotFound)?,
+                fallback_name: row.try_get::<Option<String>, _>("name")?,
+            })
+        }
+        None => None,
+    };
     let channel_id = resolved
         .first()
         .map(|source| source.channel_id)
@@ -519,11 +703,24 @@ pub async fn compose_clip(
         .name
         .as_deref()
         .and_then(crate::clips::normalized_clip_name)
-        .unwrap_or("composed-clip")
-        .to_string();
+        .map(str::to_owned)
+        .or_else(|| {
+            overwrite
+                .as_ref()
+                .and_then(|target| target.fallback_name.clone())
+        })
+        .unwrap_or_else(|| "composed-clip".to_string());
     let master_volume_db = body.master_volume_db;
-    let composition =
-        serde_json::to_value(body.into_inner()).map_err(|_| AppError::InternalError)?;
+    // The overwrite target and the per-user limits are request metadata, not
+    // part of the edit; keep them out of the stored composition so re-imports
+    // see the edit alone.
+    let mut composition_value =
+        serde_json::to_value(&*body).map_err(|_| AppError::InternalError)?;
+    if let Some(object) = composition_value.as_object_mut() {
+        object.remove("overwrite_clip_id");
+        object.remove("limits");
+    }
+    let composition = composition_value;
 
     let clip_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -546,6 +743,7 @@ pub async fn compose_clip(
 
     let pool_clone = pool.clone();
     let progress_clone = progress.clone();
+    let overwrite_job = overwrite.is_some();
     tokio::spawn(async move {
         progress_clone.0.write().await.insert(cache_key.clone(), 1);
         let result = run_compose_job(
@@ -563,11 +761,23 @@ pub async fn compose_clip(
             &name,
             &saved_file_name,
             &composition,
+            overwrite,
         )
         .await;
         match result {
             Ok(()) => {
-                progress_clone.0.write().await.remove(&cache_key);
+                if overwrite_job {
+                    // The render uuid never lands in the clips table (the row
+                    // keeps its original id), so leave a done marker the
+                    // status endpoint can report as ready.
+                    progress_clone
+                        .0
+                        .write()
+                        .await
+                        .insert(cache_key.clone(), 100);
+                } else {
+                    progress_clone.0.write().await.remove(&cache_key);
+                }
             }
             Err(error) => {
                 error!(clip_id = %clip_id_task, "clip composition failed: {}", error);
@@ -618,6 +828,13 @@ pub async fn compose_clip_status(
                 return Ok(HttpResponse::Ok().json(ComposeClipStatus {
                     status: "failed".into(),
                     progress: 0,
+                }));
+            }
+            if value >= 100 {
+                map.remove(&cache_key);
+                return Ok(HttpResponse::Ok().json(ComposeClipStatus {
+                    status: "ready".into(),
+                    progress: 100,
                 }));
             }
             return Ok(HttpResponse::Ok().json(ComposeClipStatus {
@@ -688,6 +905,7 @@ async fn run_compose_job(
     name: &str,
     saved_file_name: &str,
     composition: &serde_json::Value,
+    overwrite: Option<ComposeOverwrite>,
 ) -> Result<(), AppError> {
     render_compose(
         segments,
@@ -701,34 +919,119 @@ async fn run_compose_job(
     let duration = probe_duration(full_path).await?;
     let size = tokio::fs::metadata(full_path).await?.len() as i64;
 
-    let insert = sqlx::query(
-        "INSERT INTO clips
-            (clip_id, length, size, channel_id, guild_id, user_id,
-             original_file_name, saved_file_name, name, start_time, composition)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-    )
-    .bind(clip_id)
-    .bind(duration as f32)
-    .bind(size)
-    .bind(channel_id)
-    .bind(guild_id)
-    .bind(user_id)
-    .bind("compose")
-    .bind(saved_file_name)
-    .bind(name)
-    .bind(0.0f32)
-    .bind(composition)
-    .execute(pool.get_ref())
-    .await;
-    if let Err(err) = insert {
-        return Err(AppError::DbError(err));
+    match overwrite {
+        Some(target) => {
+            let result = sqlx::query(
+                "UPDATE clips
+                    SET saved_file_name = $3, length = $4, size = $5, name = $6,
+                        start_time = $7, composition = $8
+                  WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+            )
+            .bind(guild_id)
+            .bind(&target.clip_id)
+            .bind(saved_file_name)
+            .bind(duration as f32)
+            .bind(size)
+            .bind(name)
+            .bind(0.0f32)
+            .bind(composition)
+            .execute(pool.get_ref())
+            .await;
+            if let Err(err) = result {
+                return Err(AppError::DbError(err));
+            }
+            // The archive ledger keeps at most one object per clip id; reset
+            // it so the worker re-uploads the fresh render instead of serving
+            // the stale version once the local file is pruned.
+            if let Err(error) = sqlx::query(
+                "UPDATE media_objects
+                    SET state = 'pending',
+                        retry_at = now(),
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        object_key = NULL,
+                        bytes = NULL,
+                        sha256 = NULL,
+                        etag = NULL,
+                        attempts = 0,
+                        last_error = NULL,
+                        uploaded_at = NULL,
+                        verified_at = NULL,
+                        local_delete_after = NULL,
+                        updated_at = now()
+                  WHERE clip_id = $1
+                    AND state <> 'pending'",
+            )
+            .bind(&target.clip_id)
+            .execute(pool.get_ref())
+            .await
+            {
+                tracing::warn!(
+                    clip_id = %target.clip_id,
+                    ?error,
+                    "media archive ledger reset for overwritten clip failed"
+                );
+            }
+            // The replaced file and its waveform are stale; drop them so the
+            // fresh render (and its regenerated peaks) is the only version.
+            if let Ok(old_path) = crate::media_archive::clip_local_path(&target.old_saved_file_name)
+            {
+                let _ = tokio::fs::remove_file(&old_path).await;
+            }
+            let old_waveform = format!(
+                "{}clip-{}.dat",
+                crate::audio::waveform_path(),
+                target.clip_id
+            );
+            let _ = tokio::fs::remove_file(old_waveform).await;
+            crate::audio::spawn_clip_waveform(
+                target.clip_id.clone(),
+                full_path.to_path_buf(),
+                progress.clone(),
+            );
+        }
+        None => {
+            let insert = sqlx::query(
+                "INSERT INTO clips
+                    (clip_id, length, size, channel_id, guild_id, user_id,
+                     original_file_name, saved_file_name, name, start_time, composition)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            )
+            .bind(clip_id)
+            .bind(duration as f32)
+            .bind(size)
+            .bind(channel_id)
+            .bind(guild_id)
+            .bind(user_id)
+            .bind("compose")
+            .bind(saved_file_name)
+            .bind(name)
+            .bind(0.0f32)
+            .bind(composition)
+            .execute(pool.get_ref())
+            .await;
+            if let Err(err) = insert {
+                return Err(AppError::DbError(err));
+            }
+            crate::audio::spawn_clip_waveform(
+                clip_id.to_string(),
+                full_path.to_path_buf(),
+                progress.clone(),
+            );
+        }
     }
-    crate::audio::spawn_clip_waveform(
-        clip_id.to_string(),
-        full_path.to_path_buf(),
-        progress.clone(),
-    );
     Ok(())
+}
+
+/// The shared DSP keeps one segment in memory, so it only handles windows and
+/// pitch/rate stretches within its transient bounds; everything else renders
+/// through the FFmpeg/Rubber Band path.
+fn shared_dsp_capable(segments: &[SegmentRender]) -> bool {
+    segments.iter().all(|segment| {
+        segment.source_out - segment.source_in <= MAX_SHARED_DSP_SEGMENT_SECONDS
+            && pitch_factor(segment.effects.pitch_cents) / f64::from(segment.effects.rate)
+                <= MAX_SHARED_DSP_STRETCH
+    })
 }
 
 async fn render_compose(
@@ -739,10 +1042,7 @@ async fn render_compose(
     progress: &web::Data<WaveformProgressContainer>,
     cache_key: &str,
 ) -> Result<(), AppError> {
-    if segments
-        .iter()
-        .any(|segment| segment.source_out - segment.source_in > MAX_SHARED_DSP_SEGMENT_SECONDS)
-    {
+    if !shared_dsp_capable(segments) {
         return render_compose_legacy(
             segments,
             master_volume_db,
@@ -1134,11 +1434,12 @@ mod tests {
         DELAY_MAX_SECONDS, MAX_SEGMENTS, MAX_SHARED_DSP_SEGMENT_SECONDS, MAX_TOTAL_SECONDS,
         SegmentRender, build_filter_graph, build_shared_mix_graph, compose_progress_percent,
         expected_duration_ms, is_valid_clip_id, probe_duration, render_compose_shared,
-        shared_effects_from_dto, validate_edit,
+        shared_dsp_capable, shared_effects_from_dto, validate_edit,
     };
     use crate::audio::types::WaveformProgressContainer;
     use crate::clip_editor::{
-        AdvancedSegmentEffectsDto, ComposeClipBody, ComposeSegment, SegmentEffectsDto,
+        AdvancedSegmentEffectsDto, ComposeClipBody, ComposeLimitsDto, ComposeSegment,
+        SegmentEffectsDto,
     };
     use actix_web::web;
     use std::{collections::HashMap, path::PathBuf};
@@ -1166,6 +1467,8 @@ mod tests {
             name: None,
             master_volume_db: 0.0,
             segments,
+            overwrite_clip_id: None,
+            limits: None,
         }
     }
 
@@ -1377,6 +1680,26 @@ mod tests {
     }
 
     #[test]
+    fn routes_extreme_pitch_or_rate_stretches_off_the_shared_dsp() {
+        // Default segment: 2x pitch over 2x rate = 1x stretch, in bounds.
+        assert!(shared_dsp_capable(&[segment_render()]));
+        let mut render = segment_render();
+        render.effects.pitch_cents = 4_800.0; // 16x pitch, 2x rate = 8x stretch.
+        assert!(shared_dsp_capable(&[render.clone()]));
+        render.effects.rate = 0.25; // 16/0.25 = 64x stretch -> legacy path.
+        assert!(!shared_dsp_capable(&[render]));
+        let mut render = segment_render();
+        render.effects.pitch_cents = 0.0;
+        render.effects.rate = 0.1; // 1/0.1 = 10x stretch, still in bounds.
+        assert!(shared_dsp_capable(&[render.clone()]));
+        render.effects.pitch_cents = 2_400.0; // 4/0.1 = 40x -> legacy path.
+        assert!(!shared_dsp_capable(&[render]));
+        let mut render = segment_render();
+        render.source_out = MAX_SHARED_DSP_SEGMENT_SECONDS + 10.0;
+        assert!(!shared_dsp_capable(&[render]));
+    }
+
+    #[test]
     fn expected_duration_ignores_pitch_and_follows_speed() {
         let mut render = segment_render();
         render.effects.pitch_cents = -1200.0;
@@ -1401,6 +1724,22 @@ mod tests {
     fn rejects_empty_and_oversized_compositions() {
         assert!(validate_edit(&body(vec![])).is_err());
         assert!(validate_edit(&body(vec![segment(); MAX_SEGMENTS + 1])).is_err());
+    }
+
+    #[test]
+    fn accepts_plain_composed_clip_overwrite_ids() {
+        let mut edit = body(vec![segment()]);
+        edit.overwrite_clip_id = Some("abc-123".into());
+        assert!(validate_edit(&edit).is_ok());
+    }
+
+    #[test]
+    fn rejects_unsafe_overwrite_clip_ids() {
+        for id in ["", "../secret", "a/b", "a\\b", "a\nb"] {
+            let mut edit = body(vec![segment()]);
+            edit.overwrite_clip_id = Some(id.into());
+            assert!(validate_edit(&edit).is_err(), "id {id:?} was accepted");
+        }
     }
 
     #[test]
@@ -1450,16 +1789,16 @@ mod tests {
     #[test]
     fn rejects_out_of_bounds_effects() {
         let mut seg = segment();
-        seg.effects.volume_db = 13.0;
+        seg.effects.volume_db = 25.0;
         assert!(validate_edit(&body(vec![seg.clone()])).is_err());
         seg.effects.volume_db = 0.0;
-        seg.effects.pitch_cents = 1201.0;
+        seg.effects.pitch_cents = 2401.0;
         assert!(validate_edit(&body(vec![seg.clone()])).is_err());
         seg.effects.pitch_cents = 0.0;
-        seg.effects.rate = 0.4;
+        seg.effects.rate = 0.24;
         assert!(validate_edit(&body(vec![seg.clone()])).is_err());
         seg.effects.rate = 1.0;
-        seg.effects.bass_db = -13.0;
+        seg.effects.bass_db = -25.0;
         assert!(validate_edit(&body(vec![seg.clone()])).is_err());
         seg.effects.bass_db = 0.0;
         seg.effects.advanced.distortion_wet = 1.1;
@@ -1479,6 +1818,75 @@ mod tests {
         seg.effects.advanced.chorus_depth = 0.7;
         seg.effects.advanced.reverb_decay_seconds = 0.0;
         assert!(validate_edit(&body(vec![seg])).is_err());
+    }
+
+    #[test]
+    fn accepts_the_doubled_default_limits() {
+        let mut seg = segment();
+        seg.effects.volume_db = 24.0;
+        seg.effects.pitch_cents = -2400.0;
+        seg.effects.rate = 4.0;
+        seg.effects.mid_db = -24.0;
+        seg.effects.treble_db = 24.0;
+        assert!(validate_edit(&body(vec![seg])).is_ok());
+    }
+
+    #[test]
+    fn custom_limits_override_the_defaults() {
+        let mut seg = segment();
+        seg.effects.volume_db = 100.0;
+        let mut edit = body(vec![seg]);
+        edit.limits = Some(ComposeLimitsDto {
+            volume_db_max: 120.0,
+            ..ComposeLimitsDto::default()
+        });
+        assert!(validate_edit(&edit).is_ok());
+    }
+
+    #[test]
+    fn rejects_limits_outside_the_safety_caps() {
+        let limit_cases: Vec<ComposeLimitsDto> = vec![
+            ComposeLimitsDto {
+                volume_db_max: 241.0,
+                ..ComposeLimitsDto::default()
+            },
+            ComposeLimitsDto {
+                pitch_cents_max: 4801.0,
+                ..ComposeLimitsDto::default()
+            },
+            ComposeLimitsDto {
+                rate_min: 0.05,
+                ..ComposeLimitsDto::default()
+            },
+            ComposeLimitsDto {
+                bass_db_min: -241.0,
+                ..ComposeLimitsDto::default()
+            },
+        ];
+        for limits in limit_cases {
+            let mut edit = body(vec![segment()]);
+            edit.limits = Some(limits);
+            assert!(validate_edit(&edit).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_inverted_or_non_finite_limits() {
+        for limits in [
+            ComposeLimitsDto {
+                volume_db_min: 0.0,
+                volume_db_max: -1.0,
+                ..ComposeLimitsDto::default()
+            },
+            ComposeLimitsDto {
+                rate_min: f32::NAN,
+                ..ComposeLimitsDto::default()
+            },
+        ] {
+            let mut edit = body(vec![segment()]);
+            edit.limits = Some(limits);
+            assert!(validate_edit(&edit).is_err());
+        }
     }
 
     #[test]

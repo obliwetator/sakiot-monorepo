@@ -4,6 +4,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MergeIcon from "@mui/icons-material/Merge";
 import ReplayIcon from "@mui/icons-material/Replay";
+import SettingsIcon from "@mui/icons-material/Settings";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
@@ -11,6 +12,7 @@ import Box from "@mui/material/Box";
 import MuiButton, { type ButtonProps } from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
 import FormControlLabel from "@mui/material/FormControlLabel";
+import IconButton from "@mui/material/IconButton";
 import Slider from "@mui/material/Slider";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
@@ -19,6 +21,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { formatDuration } from "../../utils/formatTime";
+import { type EffectLimits, effectLimit } from "./effectLimits";
 import {
 	type InspectorFeatureId,
 	isInspectorFeatureDisabled,
@@ -40,6 +43,8 @@ const SLIDER_PROPS = {
 export function Inspector(props: {
 	editor: UseClipEditorReturn;
 	clipName: (sourceId: string) => string;
+	limits: EffectLimits;
+	onOpenLimits: () => void;
 }) {
 	const { editor } = props;
 	const segment = editor.selectedSegment;
@@ -63,6 +68,8 @@ export function Inspector(props: {
 					editor={editor}
 					segment={segment}
 					clipName={props.clipName}
+					limits={props.limits}
+					onOpenLimits={props.onOpenLimits}
 				/>
 			) : (
 				<>
@@ -90,6 +97,8 @@ function SegmentInspectorContent(props: {
 	editor: UseClipEditorReturn;
 	segment: TimelineSegment;
 	clipName: (sourceId: string) => string;
+	limits: EffectLimits;
+	onOpenLimits: () => void;
 }) {
 	const { editor } = props;
 	const segment = props.segment;
@@ -145,9 +154,16 @@ function SegmentInspectorContent(props: {
 
 	return (
 		<>
-			<Typography variant="overline" color="text.secondary">
-				{multi ? `${segments.length} segments selected` : "Selected segment"}
-			</Typography>
+			<Stack direction="row" alignItems="center" justifyContent="space-between">
+				<Typography variant="overline" color="text.secondary">
+					{multi ? `${segments.length} segments selected` : "Selected segment"}
+				</Typography>
+				<Tooltip title="Adjust the effect limits (volume, pitch, speed, EQ)">
+					<IconButton size="small" onClick={props.onOpenLimits}>
+						<SettingsIcon fontSize="small" />
+					</IconButton>
+				</Tooltip>
+			</Stack>
 			<Typography
 				variant="h6"
 				noWrap
@@ -191,8 +207,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Volume"
 				value={segment.effects.volumeDb}
-				min={-40}
-				max={12}
+				min={effectLimit("volumeDb", props.limits)[0]}
+				max={effectLimit("volumeDb", props.limits)[1]}
 				step={0.5}
 				format={(value) => `${value.toFixed(1)} dB`}
 				onChange={(value) => patchEffects("volume", { volumeDb: value })}
@@ -203,8 +219,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Pitch"
 				value={segment.effects.pitchCents}
-				min={-1200}
-				max={1200}
+				min={effectLimit("pitchCents", props.limits)[0]}
+				max={effectLimit("pitchCents", props.limits)[1]}
 				step={10}
 				format={(value) =>
 					value === 0 ? "0" : `${value > 0 ? "+" : ""}${value} ct`
@@ -217,8 +233,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Speed"
 				value={segment.effects.rate}
-				min={0.5}
-				max={2}
+				min={effectLimit("rate", props.limits)[0]}
+				max={effectLimit("rate", props.limits)[1]}
 				step={0.05}
 				format={(value) => `${value.toFixed(2)}×`}
 				onChange={(value) => patchResizingEffect("speed", { rate: value })}
@@ -229,8 +245,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Bass"
 				value={segment.effects.bassDb}
-				min={-12}
-				max={12}
+				min={effectLimit("bassDb", props.limits)[0]}
+				max={effectLimit("bassDb", props.limits)[1]}
 				step={0.5}
 				format={(value) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`}
 				onChange={(value) => patchEffects("bass", { bassDb: value })}
@@ -241,8 +257,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Mid"
 				value={segment.effects.midDb}
-				min={-12}
-				max={12}
+				min={effectLimit("midDb", props.limits)[0]}
+				max={effectLimit("midDb", props.limits)[1]}
 				step={0.5}
 				format={(value) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`}
 				onChange={(value) => patchEffects("mid", { midDb: value })}
@@ -253,8 +269,8 @@ function SegmentInspectorContent(props: {
 				selectionCount={segments.length}
 				label="Treble"
 				value={segment.effects.trebleDb}
-				min={-12}
-				max={12}
+				min={effectLimit("trebleDb", props.limits)[0]}
+				max={effectLimit("trebleDb", props.limits)[1]}
 				step={0.5}
 				format={(value) => `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`}
 				onChange={(value) => patchEffects("treble", { trebleDb: value })}

@@ -849,8 +849,8 @@ pub fn ffmpeg_filter_chain(sample_rate: f64, effects: SegmentEffects) -> Result<
 
 fn validate_effects(effects: SegmentEffects) -> Result<(), DspError> {
     if !effects.is_finite()
-        || !(-1_200.0..=1_200.0).contains(&effects.pitch_cents)
-        || !(0.5..=2.0).contains(&effects.rate)
+        || !(-4_800.0..=4_800.0).contains(&effects.pitch_cents)
+        || !(0.1..=10.0).contains(&effects.rate)
         || !(0.0..=MAX_EFFECT_TAIL_SECONDS).contains(&effects.tail_seconds)
         || effects.delay_seconds < 0.0
         || !(0.0..=1.0).contains(&effects.distortion_wet)
@@ -1483,6 +1483,40 @@ mod tests {
             }),
             Err(DspError::InvalidEffects)
         );
+    }
+
+    #[test]
+    fn accepts_the_widened_editor_limits_and_rejects_the_safety_caps() {
+        let widened = SegmentEffects {
+            volume_db: 24.0,
+            pitch_cents: 2_400.0,
+            rate: 0.25,
+            bass_db: -24.0,
+            mid_db: 24.0,
+            treble_db: -24.0,
+            ..SegmentEffects::default()
+        };
+        SegmentProcessor::new(SAMPLE_RATE, 2, widened).expect("widened limits valid");
+        let rejected = SegmentProcessor::new(
+            SAMPLE_RATE,
+            2,
+            SegmentEffects {
+                pitch_cents: 4_801.0,
+                ..SegmentEffects::default()
+            },
+        )
+        .expect_err("pitch beyond the safety cap is invalid");
+        assert_eq!(rejected, DspError::InvalidEffects);
+        let rejected = SegmentProcessor::new(
+            SAMPLE_RATE,
+            2,
+            SegmentEffects {
+                rate: 10.1,
+                ..SegmentEffects::default()
+            },
+        )
+        .expect_err("rate beyond the safety cap is invalid");
+        assert_eq!(rejected, DspError::InvalidEffects);
     }
 
     #[test]

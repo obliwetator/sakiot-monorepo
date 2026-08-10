@@ -10,8 +10,12 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import LinearProgress from "@mui/material/LinearProgress";
+import Radio from "@mui/material/Radio";
+import RadioGroup from "@mui/material/RadioGroup";
 import Slider from "@mui/material/Slider";
 import Snackbar from "@mui/material/Snackbar";
 import TextField from "@mui/material/TextField";
@@ -38,7 +42,13 @@ import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { deserializeEdit, serializeEdit } from "./composePayload";
 import { loadDraft, saveDraft } from "./draftStorage";
+import { EffectLimitsDialog } from "./EffectLimitsDialog";
 import { EffectSettingsJsonDialog } from "./EffectSettingsJsonDialog";
+import {
+	type EffectLimits,
+	loadEffectLimits,
+	saveEffectLimits,
+} from "./effectLimits";
 import { isEffectSettingsJsonShortcut } from "./effectSettingsJson";
 import { Inspector } from "./Inspector";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
@@ -66,10 +76,15 @@ export function ClipEditor(props: { guildId: string }) {
 
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [effectSettingsJsonOpen, setEffectSettingsJsonOpen] = useState(false);
+	const [effectLimitsOpen, setEffectLimitsOpen] = useState(false);
+	const [effectLimits, setEffectLimits] = useState<EffectLimits>(() =>
+		loadEffectLimits(),
+	);
 	const [composeName, setComposeName] = useState("");
 	const [composeError, setComposeError] = useState<string | null>(null);
 	const [composeDone, setComposeDone] = useState(false);
 	const [composeId, setComposeId] = useState<string | null>(null);
+	const [overwrite, setOverwrite] = useState(false);
 	const [composeClip, { isLoading: composeStarting }] =
 		useComposeClipMutation();
 	const { data: composeStatus } = useGetComposeClipStatusQuery(
@@ -99,19 +114,38 @@ export function ClipEditor(props: { guildId: string }) {
 		try {
 			const result = await composeClip({
 				guild_id: props.guildId,
-				body: serializeEdit(editor.edit, composeName.trim() || undefined),
+				body: serializeEdit(
+					editor.edit,
+					composeName.trim() || undefined,
+					overwrite ? (sourceClipId ?? undefined) : undefined,
+					effectLimits,
+				),
 			}).unwrap();
 			setComposeId(result.id);
 		} catch {
 			setComposeError("Could not start the render. Please try again.");
 		}
-	}, [composeClip, composeName, editor, props.guildId]);
+	}, [
+		composeClip,
+		composeName,
+		editor,
+		effectLimits,
+		overwrite,
+		props.guildId,
+		sourceClipId,
+	]);
+
+	const updateEffectLimits = useCallback((limits: EffectLimits) => {
+		setEffectLimits(limits);
+		saveEffectLimits(limits);
+	}, []);
 
 	const closeCompose = useCallback(() => {
 		if (composeStarting || composeId !== null) return;
 		setComposeOpen(false);
 		setComposeError(null);
 		setComposeDone(false);
+		setOverwrite(false);
 	}, [composeId, composeStarting]);
 
 	const clipName = useCallback(
@@ -247,6 +281,14 @@ export function ClipEditor(props: { guildId: string }) {
 
 	const pureClips = (clips ?? []).filter((clip) => !isComposedClip(clip));
 
+	// Overwriting replaces the composed clip this editor was opened from; it
+	// only makes sense when the source is a combined clip, not a raw one.
+	const sourceClip = clips?.find((clip) => clip.clip_id === sourceClipId);
+	const canOverwrite =
+		sourceClipId !== null &&
+		sourceClip !== undefined &&
+		isComposedClip(sourceClip);
+
 	const duration = editor.edit.segments.reduce(
 		(max, segment) =>
 			Math.max(max, segment.timelineStart + segmentDuration(segment)),
@@ -305,7 +347,12 @@ export function ClipEditor(props: { guildId: string }) {
 						/>
 					</Box>
 				</Box>
-				<Inspector editor={editor} clipName={clipName} />
+				<Inspector
+					editor={editor}
+					clipName={clipName}
+					limits={effectLimits}
+					onOpenLimits={() => setEffectLimitsOpen(true)}
+				/>
 			</Box>
 			<ClipExportDialog
 				open={composeOpen}
@@ -317,6 +364,9 @@ export function ClipEditor(props: { guildId: string }) {
 				progress={composeStatus?.progress ?? 0}
 				done={composeDone}
 				segmentCount={editor.edit.segments.length}
+				overwriteAvailable={canOverwrite}
+				overwrite={overwrite}
+				setOverwrite={setOverwrite}
 				onStart={() => void handleCompose()}
 				onClose={closeCompose}
 			/>
@@ -324,6 +374,12 @@ export function ClipEditor(props: { guildId: string }) {
 				open={effectSettingsJsonOpen}
 				onClose={() => setEffectSettingsJsonOpen(false)}
 				editor={editor}
+			/>
+			<EffectLimitsDialog
+				open={effectLimitsOpen}
+				onClose={() => setEffectLimitsOpen(false)}
+				limits={effectLimits}
+				onChange={updateEffectLimits}
 			/>
 			{unsavedDialog}
 			<Snackbar
@@ -415,7 +471,7 @@ function ToolbarRow(props: {
 					<FitScreenIcon fontSize="small" />
 				</IconButton>
 			</Tooltip>
-			<Tooltip title="Export the composition as a new clip">
+			<Tooltip title="Export the composition as a new clip or overwrite the combined clip">
 				<span>
 					<Button
 						size="small"
@@ -442,6 +498,9 @@ function ClipExportDialog(props: {
 	progress: number;
 	done: boolean;
 	segmentCount: number;
+	overwriteAvailable: boolean;
+	overwrite: boolean;
+	setOverwrite: (overwrite: boolean) => void;
 	onStart: () => void;
 	onClose: () => void;
 }) {
@@ -464,46 +523,87 @@ function ClipExportDialog(props: {
 							disabled={busy || props.segmentCount === 0}
 							onClick={props.onStart}
 						>
-							Render
+							{props.overwrite ? "Overwrite" : "Render"}
 						</Button>
 					)}
 				</>
 			}
 		>
-			<TextField
-				size="small"
-				fullWidth
-				label="Clip name"
-				value={props.name}
-				disabled={busy}
-				onChange={(event) => props.setName(event.currentTarget.value)}
-				sx={{ mb: 2 }}
-			/>
-			{props.done ? (
-				<Typography variant="body2">
-					Exported — the new clip is now in the bin.
-				</Typography>
-			) : props.isRendering ? (
-				<Box>
-					<Typography variant="body2" sx={{ mb: 1 }}>
-						Rendering {props.segmentCount} segment
-						{props.segmentCount === 1 ? "" : "s"} on the server…
+			{/* Fixed footprint: the overwrite/new toggle and helper text change
+			    the content height, so pin the box size to keep the dialog from
+			    resizing while the choice changes. */}
+			<Box
+				sx={{
+					width: 440,
+					minHeight: 230,
+					display: "flex",
+					flexDirection: "column",
+				}}
+			>
+				{props.overwriteAvailable && (
+					<FormControl component="fieldset" disabled={busy} sx={{ mb: 2 }}>
+						<RadioGroup
+							value={props.overwrite ? "overwrite" : "new"}
+							onChange={(event) =>
+								props.setOverwrite(event.currentTarget.value === "overwrite")
+							}
+						>
+							<FormControlLabel
+								value="new"
+								control={<Radio size="small" />}
+								label="Save as new clip"
+							/>
+							<FormControlLabel
+								value="overwrite"
+								control={<Radio size="small" />}
+								label="Overwrite this combined clip"
+							/>
+						</RadioGroup>
+					</FormControl>
+				)}
+				<TextField
+					size="small"
+					fullWidth
+					label="Clip name"
+					value={props.name}
+					disabled={busy}
+					onChange={(event) => props.setName(event.currentTarget.value)}
+					helperText={
+						props.overwrite
+							? "Leave empty to keep the current clip's name."
+							: undefined
+					}
+					sx={{ mb: 2 }}
+				/>
+				{props.done ? (
+					<Typography variant="body2">
+						{props.overwrite
+							? "Updated — the combined clip now reflects this version."
+							: "Exported — the new clip is now in the bin."}
 					</Typography>
-					<LinearProgress variant="determinate" value={props.progress} />
-					<Typography
-						variant="caption"
-						color="text.secondary"
-						sx={{ fontVariantNumeric: "tabular-nums" }}
-					>
-						{props.progress}%
+				) : props.isRendering ? (
+					<Box>
+						<Typography variant="body2" sx={{ mb: 1 }}>
+							Rendering {props.segmentCount} segment
+							{props.segmentCount === 1 ? "" : "s"} on the server…
+						</Typography>
+						<LinearProgress variant="determinate" value={props.progress} />
+						<Typography
+							variant="caption"
+							color="text.secondary"
+							sx={{ fontVariantNumeric: "tabular-nums" }}
+						>
+							{props.progress}%
+						</Typography>
+					</Box>
+				) : (
+					<Typography variant="body2" color="text.secondary">
+						{props.overwrite
+							? `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} and replaces the combined clip with this version.`
+							: `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} into a single new clip.`}
 					</Typography>
-				</Box>
-			) : (
-				<Typography variant="body2" color="text.secondary">
-					Renders {props.segmentCount} segment
-					{props.segmentCount === 1 ? "" : "s"} into a single new clip.
-				</Typography>
-			)}
+				)}
+			</Box>
 		</BaseDialog>
 	);
 }

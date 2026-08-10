@@ -689,15 +689,88 @@ export interface components {
 			status: string;
 		};
 		ComposeClipBody: {
+			limits?: null | components["schemas"]["ComposeLimitsDto"];
 			/** Format: float */
 			master_volume_db: number;
 			name?: string | null;
+			/**
+			 * @description Id of an existing composed clip to replace with this export. Only
+			 *     composed clips (`original_file_name = 'compose'`) can be overwritten;
+			 *     the clip keeps its id and owner, and its name when `name` is absent.
+			 */
+			overwrite_clip_id?: string | null;
 			segments: components["schemas"]["ComposeSegment"][];
 		};
 		ComposeClipStatus: {
 			/** Format: int32 */
 			progress: number;
 			status: string;
+		};
+		/**
+		 * @description Slider bounds for the adjustable effects, matching the frontend's per-user
+		 *     limit settings. Missing fields fall back to the doubled default ranges.
+		 */
+		ComposeLimitsDto: {
+			/**
+			 * Format: float
+			 * @default 24
+			 */
+			bass_db_max: number;
+			/**
+			 * Format: float
+			 * @default -24
+			 */
+			bass_db_min: number;
+			/**
+			 * Format: float
+			 * @default 24
+			 */
+			mid_db_max: number;
+			/**
+			 * Format: float
+			 * @default -24
+			 */
+			mid_db_min: number;
+			/**
+			 * Format: float
+			 * @default 2400
+			 */
+			pitch_cents_max: number;
+			/**
+			 * Format: float
+			 * @default -2400
+			 */
+			pitch_cents_min: number;
+			/**
+			 * Format: float
+			 * @default 4
+			 */
+			rate_max: number;
+			/**
+			 * Format: float
+			 * @default 0.25
+			 */
+			rate_min: number;
+			/**
+			 * Format: float
+			 * @default 24
+			 */
+			treble_db_max: number;
+			/**
+			 * Format: float
+			 * @default -24
+			 */
+			treble_db_min: number;
+			/**
+			 * Format: float
+			 * @default 24
+			 */
+			volume_db_max: number;
+			/**
+			 * Format: float
+			 * @default -80
+			 */
+			volume_db_min: number;
 		};
 		ComposeSegment: {
 			effects: components["schemas"]["SegmentEffectsDto"];

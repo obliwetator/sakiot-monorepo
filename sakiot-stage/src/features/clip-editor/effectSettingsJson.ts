@@ -3,13 +3,13 @@ import { DEFAULT_EFFECTS, type SegmentEffects } from "./model";
 type NumberRange = readonly [minimum: number, maximum: number];
 
 const NUMBER_RANGES = {
-	volumeDb: [-40, 12],
-	pitchCents: [-1200, 1200],
-	rate: [0.5, 2],
+	volumeDb: [-80, 24],
+	pitchCents: [-2400, 2400],
+	rate: [0.25, 4],
 	tailSeconds: [0, 30],
-	bassDb: [-12, 12],
-	midDb: [-12, 12],
-	trebleDb: [-12, 12],
+	bassDb: [-24, 24],
+	midDb: [-24, 24],
+	trebleDb: [-24, 24],
 	distortionAmount: [0, 1],
 	distortionWet: [0, 1],
 	delaySeconds: [0, 5],

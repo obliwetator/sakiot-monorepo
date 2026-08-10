@@ -1,4 +1,6 @@
 import type { components } from "../../api/openapi";
+import type { EffectLimits } from "./effectLimits";
+import { serializeLimits } from "./effectLimits";
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
 import { DEFAULT_EFFECTS, newSegmentId } from "./model";
 
@@ -8,12 +10,22 @@ type ComposeClipBody = components["schemas"]["ComposeClipBody"];
  * Mirrors the ClipEdit state onto the server's snake_case composition
  * request. The export endpoint renders exactly what the Web Audio engine
  * previews: every shared per-segment DSP parameter, mixed onto the timeline
- * with the master volume applied to the result.
+ * with the master volume applied to the result. When `overwriteClipId` is set
+ * the render replaces that composed clip instead of creating a new one. The
+ * per-user effect limits ride along so the server validates against the same
+ * bounds the sliders allow.
  */
-export function serializeEdit(edit: ClipEdit, name?: string): ComposeClipBody {
+export function serializeEdit(
+	edit: ClipEdit,
+	name?: string,
+	overwriteClipId?: string,
+	limits?: EffectLimits,
+): ComposeClipBody {
 	return {
 		name,
 		master_volume_db: edit.masterVolumeDb,
+		...(limits ? { limits: serializeLimits(limits) } : {}),
+		overwrite_clip_id: overwriteClipId,
 		segments: edit.segments.map((segment) => ({
 			source: segment.source,
 			source_id: segment.sourceId,
