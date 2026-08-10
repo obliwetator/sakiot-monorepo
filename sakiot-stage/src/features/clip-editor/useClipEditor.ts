@@ -271,7 +271,7 @@ export function useClipEditor() {
 	}, []);
 
 	/**
-	 * Shift-click toggle: adds an unselected segment to the selection or
+	 * Ctrl/Cmd-click toggle: adds an unselected segment to the selection or
 	 * removes a selected one, leaving the rest untouched. Returns the next
 	 * selection so the caller can act on it synchronously. Merged units
 	 * toggle as a whole.

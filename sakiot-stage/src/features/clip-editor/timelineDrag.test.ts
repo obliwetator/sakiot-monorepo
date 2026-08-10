@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 import {
+	clampPointToRect,
 	type GroupedSegment,
 	groupTrackCollision,
+	marqueeIntersectsSegment,
+	marqueeOverlayOffset,
 	resolveGroupDelta,
 } from "./Timeline";
 
@@ -80,7 +83,6 @@ describe("groupTrackCollision", () => {
 		...member(id, start),
 		originTrack: track,
 	});
-
 	test("moving up that squashes two tracks together collides", () => {
 		const group = [onTrack("a", 0, 0), onTrack("b", 1, 0), onTrack("c", 2, 0)];
 		// Track 0's member clamps at track 0 while track 1's member lands on
@@ -106,5 +108,114 @@ describe("groupTrackCollision", () => {
 	test("no vertical movement never collides", () => {
 		const group = [onTrack("a", 0, 0), onTrack("b", 1, 0)];
 		expect(groupTrackCollision(group, 0)).toBe(false);
+	});
+});
+
+describe("clampPointToRect", () => {
+	const rect = { left: 260, right: 900, top: 80, bottom: 600 };
+
+	test("keeps a point inside the rect unchanged", () => {
+		expect(clampPointToRect(500, 300, rect)).toEqual({ x: 500, y: 300 });
+	});
+
+	test("clamps a point above and left of the rect to its top-left corner", () => {
+		expect(clampPointToRect(0, 0, rect)).toEqual({ x: 260, y: 80 });
+	});
+
+	test("clamps a point below and right of the rect to its bottom-right corner", () => {
+		expect(clampPointToRect(2000, 2000, rect)).toEqual({ x: 900, y: 600 });
+	});
+
+	test("clamps only the out-of-bounds axis", () => {
+		expect(clampPointToRect(0, 300, rect)).toEqual({ x: 260, y: 300 });
+		expect(clampPointToRect(500, 0, rect)).toEqual({ x: 500, y: 80 });
+		expect(clampPointToRect(2000, 300, rect)).toEqual({ x: 900, y: 300 });
+		expect(clampPointToRect(500, 2000, rect)).toEqual({ x: 500, y: 600 });
+	});
+});
+
+describe("marqueeOverlayOffset", () => {
+	// Tracks container at (260, 48); the overlay is an absolutely positioned
+	// child of the scroll container, so its CSS offsets are relative to the
+	// scrolled content.
+	const rect = { left: 260, top: 48 };
+
+	test("places the box at the dragged corner when unscrolled", () => {
+		const offset = marqueeOverlayOffset(700, 500, 900, 700, rect, 0, 0);
+		expect(offset).toEqual({ left: 440, top: 452 });
+	});
+
+	test("anchors at the pointer when dragging up and left", () => {
+		const offset = marqueeOverlayOffset(700, 500, 300, 100, rect, 0, 0);
+		expect(offset).toEqual({ left: 40, top: 52 });
+	});
+
+	test("adds the scroll position back for a scrolled container", () => {
+		const offset = marqueeOverlayOffset(700, 500, 900, 700, rect, 0, 300);
+		expect(offset).toEqual({ left: 440, top: 752 });
+		const both = marqueeOverlayOffset(700, 500, 900, 700, rect, 120, 300);
+		expect(both).toEqual({ left: 560, top: 752 });
+	});
+});
+
+describe("marqueeIntersectsSegment", () => {
+	// Row box 600px wide, segment occupies 20%..60% of it (380..620), padded
+	// 8px vertically inside the row (108..152).
+	const rowRect = {
+		left: 260,
+		right: 860,
+		top: 100,
+		bottom: 160,
+		width: 600,
+	};
+	const bounds = (left: number, right: number, top: number, bottom: number) =>
+		({ left, right, top, bottom }) as const;
+
+	test("a rectangle overlapping the segment selects it", () => {
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(380, 450, 100, 160)),
+		).toBe(true);
+	});
+
+	test("a rectangle fully containing the segment selects it", () => {
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(200, 900, 50, 300)),
+		).toBe(true);
+	});
+
+	test("a rectangle beside the segment leaves it unselected", () => {
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(100, 379, 100, 160)),
+		).toBe(false);
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(621, 900, 100, 160)),
+		).toBe(false);
+	});
+
+	test("a rectangle outside the row's vertical padding leaves it unselected", () => {
+		// The top of the marquee sits in the row's 8px padding band.
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(380, 450, 90, 107)),
+		).toBe(false);
+	});
+
+	test("an empty row never matches", () => {
+		expect(
+			marqueeIntersectsSegment(
+				20,
+				60,
+				{ ...rowRect, width: 0 },
+				bounds(0, 900, 0, 300),
+			),
+		).toBe(false);
+	});
+
+	test("crossing the border selects; resting exactly on it does not", () => {
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(619, 620, 108, 152)),
+		).toBe(true);
+		expect(
+			marqueeIntersectsSegment(20, 60, rowRect, bounds(620, 621, 108, 152)),
+		).toBe(false);
 	});
 });

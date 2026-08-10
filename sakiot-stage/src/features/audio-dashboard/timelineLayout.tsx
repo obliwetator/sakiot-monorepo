@@ -29,11 +29,13 @@ export function TimelinePlayhead(props: { percent: number }) {
 	return (
 		<Box
 			aria-hidden="true"
+			// The position changes on every playback frame; inline style keeps
+			// emotion from injecting a new <style> tag per frame.
+			style={{ left: `${props.percent}%` }}
 			sx={{
 				position: "absolute",
 				top: 0,
 				bottom: 0,
-				left: `${props.percent}%`,
 				width: 2,
 				transform: "translateX(-1px)",
 				bgcolor: TIMELINE_PLAYHEAD_COLOR,

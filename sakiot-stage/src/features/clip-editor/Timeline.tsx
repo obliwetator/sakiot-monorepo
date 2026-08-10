@@ -63,7 +63,7 @@ interface DragPreviewState {
 
 type SegmentDragMode = "move" | "left" | "right";
 
-/** A live marquee on the active track; overlap toggles segment selection. */
+/** A live marquee; the rectangle spans the tracks the drag crosses. */
 interface MarqueeState {
 	startX: number;
 	startY: number;
@@ -104,8 +104,10 @@ interface SegmentDragState {
 	ghostTrack: number;
 	/** Snapped starts of the group members besides the primary segment. */
 	ghostStarts: Array<{ id: string; start: number }>;
-	/** Shift-click toggles the segment in the selection instead of dragging. */
-	shift: boolean;
+	/** Ctrl/Cmd-click toggles the segment in the selection instead of
+	 * replacing it; the commit must not collapse the already-toggled
+	 * selection after a plain click. */
+	modifierClick: boolean;
 	/**
 	 * The vertical move would push two members onto the same track with
 	 * overlapping times: the whole gesture is blocked and warns.
@@ -187,6 +189,73 @@ export function resolveGroupDelta(
 		(a, b) => Math.abs(a - targetDelta) - Math.abs(b - targetDelta),
 	);
 	return candidates.find(feasible) ?? targetDelta;
+}
+
+/**
+ * Clamps a viewport coordinate pair into a rectangle (e.g. the tracks
+ * container) so a marquee started inside it never renders outside its bounds
+ * when the pointer leaves the container.
+ */
+export function clampPointToRect(
+	pointX: number,
+	pointY: number,
+	rect: { left: number; right: number; top: number; bottom: number },
+): { x: number; y: number } {
+	return {
+		x: Math.min(Math.max(pointX, rect.left), rect.right),
+		y: Math.min(Math.max(pointY, rect.top), rect.bottom),
+	};
+}
+
+/**
+ * The marquee overlay's CSS offset inside the tracks container. The overlay
+ * is an absolutely positioned child of the scroll container, so its offsets
+ * are relative to the scrolled content: the visible-viewport coordinate must
+ * be shifted back by the scroll position, or the box drifts away from the
+ * pointer whenever the container is scrolled.
+ */
+export function marqueeOverlayOffset(
+	startX: number,
+	startY: number,
+	currentX: number,
+	currentY: number,
+	rect: { left: number; top: number },
+	scrollLeft: number,
+	scrollTop: number,
+): { left: number; top: number } {
+	return {
+		left: Math.min(startX, currentX) - rect.left + scrollLeft,
+		top: Math.min(startY, currentY) - rect.top + scrollTop,
+	};
+}
+
+/**
+ * Whether a marquee rectangle (viewport bounds) touches a segment's row box.
+ * The row's vertical padding mirrors the segment boxes drawn inside the row.
+ */
+export function marqueeIntersectsSegment(
+	startFraction: number,
+	endFraction: number,
+	rowRect: {
+		left: number;
+		right: number;
+		top: number;
+		bottom: number;
+		width: number;
+	},
+	bounds: { left: number; right: number; top: number; bottom: number },
+): boolean {
+	if (rowRect.width <= 0) return false;
+	const segmentLeft = rowRect.left + (startFraction / 100) * rowRect.width;
+	const segmentRight = rowRect.left + (endFraction / 100) * rowRect.width;
+	const segmentTop = rowRect.top + 8;
+	const segmentBottom = rowRect.bottom - 8;
+	return (
+		bounds.left < segmentRight &&
+		bounds.right > segmentLeft &&
+		bounds.top < segmentBottom &&
+		bounds.bottom > segmentTop
+	);
 }
 
 /**
@@ -568,6 +637,8 @@ export function Timeline(props: {
 		track: number,
 		startSec: number,
 	) => void;
+	/** Marquee selection covers every track the rectangle spans. */
+	multiTrackMarquee?: boolean;
 }) {
 	const { editor } = props;
 	const plotRef = useRef<HTMLDivElement | null>(null);
@@ -595,9 +666,9 @@ export function Timeline(props: {
 			}
 			// A click on a segment inside a multi-selection collapses the
 			// selection to that segment (pointerdown kept the group so a
-			// drag can move it together). Shift clicks toggled the segment
+			// drag can move it together). Ctrl/Cmd clicks toggled the segment
 			// already, so they must not collapse.
-			if (!ghost.shift) {
+			if (!ghost.modifierClick) {
 				editor.select(ghost.segmentId);
 			}
 		},
@@ -606,29 +677,27 @@ export function Timeline(props: {
 
 	const lastMarqueeSelectionRef = useRef<string[]>([]);
 
-	/** Segments on the marquee's track whose border the rectangle touches. */
+	/** Segments the marquee rectangle touches, optionally across all tracks. */
 	const marqueeOverlapIds = (state: MarqueeState) => {
-		const rowElement = rowElementsRef.current.get(state.track);
-		const rect = rowElement?.getBoundingClientRect();
-		if (!rect || rect.width <= 0) return [];
 		const left = Math.min(state.startX, state.currentX);
 		const right = Math.max(state.startX, state.currentX);
 		const top = Math.min(state.startY, state.currentY);
 		const bottom = Math.max(state.startY, state.currentY);
+		const bounds = { left, right, top, bottom };
 		return editor.edit.segments
-			.filter((segment) => segment.track === state.track)
+			.filter(
+				(segment) => props.multiTrackMarquee || segment.track === state.track,
+			)
 			.filter((segment) => {
-				const startFraction = fraction(segment.timelineStart);
-				const endFraction = fraction(segmentEnd(segment));
-				const segmentLeft = rect.left + (startFraction / 100) * rect.width;
-				const segmentRight = rect.left + (endFraction / 100) * rect.width;
-				const segmentTop = rect.top + 8;
-				const segmentBottom = rect.bottom - 8;
-				return (
-					left < segmentRight &&
-					right > segmentLeft &&
-					top < segmentBottom &&
-					bottom > segmentTop
+				const rowRect = rowElementsRef.current
+					.get(segment.track)
+					?.getBoundingClientRect();
+				if (!rowRect) return false;
+				return marqueeIntersectsSegment(
+					fraction(segment.timelineStart),
+					fraction(segmentEnd(segment)),
+					rowRect,
+					bounds,
 				);
 			})
 			.map((segment) => segment.id);
@@ -636,10 +705,18 @@ export function Timeline(props: {
 
 	const marquee = usePointerDrag<MarqueeState>({
 		compute: (ghost, event) => {
+			// Keep the rectangle inside the tracks container: dragging toward
+			// the screen corner would otherwise push it off its top-left edge
+			// (negative offsets), rendering the box out of bounds.
+			const container = tracksRef.current;
+			const rect = container?.getBoundingClientRect();
+			const point = rect
+				? clampPointToRect(event.clientX, event.clientY, rect)
+				: { x: event.clientX, y: event.clientY };
 			const next = {
 				...ghost,
-				currentX: event.clientX,
-				currentY: event.clientY,
+				currentX: point.x,
+				currentY: point.y,
 			};
 			const ids = marqueeOverlapIds(next);
 			if (ids.length !== lastMarqueeSelectionRef.current.length) {
@@ -651,6 +728,21 @@ export function Timeline(props: {
 		onCommit: () => {},
 	});
 
+	// Escape aborts a live marquee so a stuck or unwanted box never lingers.
+	const marqueeRef = useRef(marquee);
+	useEffect(() => {
+		marqueeRef.current = marquee;
+	}, [marquee]);
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape" && marqueeRef.current.isDragging) {
+				marqueeRef.current.cancel();
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, []);
+
 	// A click-drag on a track's empty space starts a live marquee: the track
 	// becomes active and the previous selection is replaced as the rectangle
 	// crosses segment borders.
@@ -660,6 +752,15 @@ export function Timeline(props: {
 	) => {
 		if (event.button !== 0) return;
 		event.preventDefault();
+		// Capture the pointer so the release is always delivered - without it,
+		// letting go outside the window misses the pointerup and leaves the
+		// marquee stuck following the mouse. Captured events bubble to the
+		// window listeners the drag hook relies on.
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// Best-effort: the window listeners still cover the usual drag.
+		}
 		editor.selectTrack(track);
 		lastMarqueeSelectionRef.current = [];
 		editor.selectMany([]);
@@ -894,17 +995,29 @@ export function Timeline(props: {
 						const container = tracksRef.current;
 						if (!marqueeState || !container) return null;
 						const rect = container.getBoundingClientRect();
-						const left = Math.min(marqueeState.startX, marqueeState.currentX);
-						const top = Math.min(marqueeState.startY, marqueeState.currentY);
+						const offset = marqueeOverlayOffset(
+							marqueeState.startX,
+							marqueeState.startY,
+							marqueeState.currentX,
+							marqueeState.currentY,
+							rect,
+							container.scrollLeft,
+							container.scrollTop,
+						);
 						return (
 							<Box
 								aria-hidden="true"
-								sx={{
+								// Per-frame geometry goes inline: emotion would
+								// otherwise inject a new <style> tag on every
+								// pointermove and never remove the old ones.
+								style={{
 									position: "absolute",
-									left: left - rect.left,
-									top: top - rect.top,
+									left: offset.left,
+									top: offset.top,
 									width: Math.abs(marqueeState.currentX - marqueeState.startX),
 									height: Math.abs(marqueeState.currentY - marqueeState.startY),
+								}}
+								sx={{
 									border: "1px dashed",
 									borderColor: "primary.light",
 									bgcolor: "rgba(56, 189, 248, 0.08)",
@@ -1097,12 +1210,14 @@ function DragGhost(props: {
 	return (
 		<Box
 			aria-hidden="true"
+			style={{
+				left: `${props.leftFraction}%`,
+				width: `max(2px, ${props.widthFraction}%)`,
+			}}
 			sx={{
 				position: "absolute",
 				top: 8,
 				bottom: 8,
-				left: `${props.leftFraction}%`,
-				width: `max(2px, ${props.widthFraction}%)`,
 				borderRadius: 1,
 				border: "2px dashed",
 				borderColor: props.invalid ? "error.main" : "primary.light",
@@ -1586,6 +1701,13 @@ function TrackSegment(props: {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		event.stopPropagation();
+		// Capture so releasing outside the window still delivers the pointerup
+		// (the drag hook listens on window, which misses it otherwise).
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// Best-effort: the window listeners still cover the usual drag.
+		}
 		const toGrouped = (s: TimelineSegment): GroupedSegment => ({
 			id: s.id,
 			originStart: s.timelineStart,
@@ -1594,11 +1716,12 @@ function TrackSegment(props: {
 		});
 		const findSegment = (id: string) =>
 			editor.edit.segments.find((s) => s.id === id);
-		// Shift-click toggles the segment in the selection: grabbing an
+		// Ctrl/Cmd-click toggles the segment in the selection: grabbing an
 		// unselected segment adds it and drags the new selection; grabbing a
 		// selected one removes it and drags only that segment.
+		const modifierClick = event.ctrlKey || event.metaKey;
 		let group: GroupedSegment[];
-		if (event.shiftKey) {
+		if (modifierClick) {
 			const next = editor.toggleSelect(segment.id);
 			group = next.includes(segment.id)
 				? next
@@ -1635,7 +1758,7 @@ function TrackSegment(props: {
 			ghostOut: segment.sourceOut,
 			ghostTrack: segment.track,
 			ghostStarts: [],
-			shift: event.shiftKey,
+			modifierClick,
 			trackCollision: false,
 			valid: true,
 			clamped: false,
@@ -1777,6 +1900,11 @@ function MergedUnitBox(props: {
 		if (event.button !== 0) return;
 		event.preventDefault();
 		event.stopPropagation();
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// Best-effort: the window listeners still cover the usual drag.
+		}
 		const toGrouped = (s: TimelineSegment): GroupedSegment => ({
 			id: s.id,
 			originStart: s.timelineStart,
@@ -1807,7 +1935,7 @@ function MergedUnitBox(props: {
 			ghostOut: first.sourceOut,
 			ghostTrack: first.track,
 			ghostStarts: [],
-			shift: event.shiftKey,
+			modifierClick: event.ctrlKey || event.metaKey,
 			trackCollision: false,
 			valid: true,
 			clamped: false,

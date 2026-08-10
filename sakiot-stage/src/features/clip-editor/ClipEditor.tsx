@@ -5,6 +5,7 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RedoIcon from "@mui/icons-material/Redo";
 import RepeatIcon from "@mui/icons-material/Repeat";
 import RestoreIcon from "@mui/icons-material/Restore";
+import SettingsIcon from "@mui/icons-material/Settings";
 import UndoIcon from "@mui/icons-material/Undo";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -42,8 +43,14 @@ import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { deserializeEdit, serializeEdit } from "./composePayload";
 import { loadDraft, saveDraft } from "./draftStorage";
+import { EditorOptionsDialog } from "./EditorOptionsDialog";
 import { EffectLimitsDialog } from "./EffectLimitsDialog";
 import { EffectSettingsJsonDialog } from "./EffectSettingsJsonDialog";
+import {
+	type EditorOptions,
+	loadEditorOptions,
+	saveEditorOptions,
+} from "./editorOptions";
 import {
 	type EffectLimits,
 	loadEffectLimits,
@@ -77,8 +84,12 @@ export function ClipEditor(props: { guildId: string }) {
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [effectSettingsJsonOpen, setEffectSettingsJsonOpen] = useState(false);
 	const [effectLimitsOpen, setEffectLimitsOpen] = useState(false);
+	const [optionsOpen, setOptionsOpen] = useState(false);
 	const [effectLimits, setEffectLimits] = useState<EffectLimits>(() =>
 		loadEffectLimits(),
+	);
+	const [options, setOptions] = useState<EditorOptions>(() =>
+		loadEditorOptions(),
 	);
 	const [composeName, setComposeName] = useState("");
 	const [composeError, setComposeError] = useState<string | null>(null);
@@ -138,6 +149,11 @@ export function ClipEditor(props: { guildId: string }) {
 	const updateEffectLimits = useCallback((limits: EffectLimits) => {
 		setEffectLimits(limits);
 		saveEffectLimits(limits);
+	}, []);
+
+	const updateOptions = useCallback((next: EditorOptions) => {
+		setOptions(next);
+		saveEditorOptions(next);
 	}, []);
 
 	const closeCompose = useCallback(() => {
@@ -277,7 +293,11 @@ export function ClipEditor(props: { guildId: string }) {
 		[editor, props.guildId],
 	);
 
-	useKeyboardShortcuts(editor, () => setEffectSettingsJsonOpen(true));
+	useKeyboardShortcuts(
+		editor,
+		() => setEffectSettingsJsonOpen(true),
+		() => setOptionsOpen(true),
+	);
 
 	const pureClips = (clips ?? []).filter((clip) => !isComposedClip(clip));
 
@@ -310,6 +330,7 @@ export function ClipEditor(props: { guildId: string }) {
 				canExport={editor.edit.segments.length > 0}
 				canRestore={sourceClipId !== null}
 				onRestore={restoreOriginal}
+				onOpenOptions={() => setOptionsOpen(true)}
 			/>
 			<Box
 				sx={{
@@ -344,6 +365,7 @@ export function ClipEditor(props: { guildId: string }) {
 							editor={editor}
 							clipName={(segment) => clipName(segment.sourceId)}
 							onDropClip={handleDropClip}
+							multiTrackMarquee={options.marqueeMultiTrack}
 						/>
 					</Box>
 				</Box>
@@ -381,6 +403,12 @@ export function ClipEditor(props: { guildId: string }) {
 				limits={effectLimits}
 				onChange={updateEffectLimits}
 			/>
+			<EditorOptionsDialog
+				open={optionsOpen}
+				onClose={() => setOptionsOpen(false)}
+				options={options}
+				onChange={updateOptions}
+			/>
 			{unsavedDialog}
 			<Snackbar
 				open={editor.mergeWarning !== null}
@@ -407,6 +435,7 @@ function ToolbarRow(props: {
 	canExport: boolean;
 	canRestore: boolean;
 	onRestore: () => void;
+	onOpenOptions: () => void;
 }) {
 	const { editor } = props;
 	return (
@@ -483,6 +512,11 @@ function ToolbarRow(props: {
 						Export
 					</Button>
 				</span>
+			</Tooltip>
+			<Tooltip title="Editor options (Ctrl+,)">
+				<IconButton size="small" onClick={props.onOpenOptions}>
+					<SettingsIcon fontSize="small" />
+				</IconButton>
 			</Tooltip>
 		</Box>
 	);
@@ -688,13 +722,16 @@ function Monitor(props: {
 function useKeyboardShortcuts(
 	editor: ReturnType<typeof useClipEditor>,
 	openEffectSettingsJson: () => void,
+	openOptions: () => void,
 ) {
 	const editorRef = useRef(editor);
 	const openEffectSettingsJsonRef = useRef(openEffectSettingsJson);
+	const openOptionsRef = useRef(openOptions);
 	useEffect(() => {
 		editorRef.current = editor;
 		openEffectSettingsJsonRef.current = openEffectSettingsJson;
-	}, [editor, openEffectSettingsJson]);
+		openOptionsRef.current = openOptions;
+	}, [editor, openEffectSettingsJson, openOptions]);
 
 	useEffect(() => {
 		const handleShortcut = (event: KeyboardEvent) => {
@@ -739,6 +776,11 @@ function useKeyboardShortcuts(
 			if (modifier && event.key.toLowerCase() === "a") {
 				event.preventDefault();
 				current.selectMany(current.edit.segments.map((segment) => segment.id));
+				return;
+			}
+			if (modifier && event.key === ",") {
+				event.preventDefault();
+				openOptionsRef.current();
 				return;
 			}
 			if (modifier) return;

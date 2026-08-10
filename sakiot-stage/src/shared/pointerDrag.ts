@@ -75,13 +75,24 @@ export function usePointerDrag<G>(options: PointerDragOptions<G>) {
 			}
 		};
 		const cancelDrag = () => cancel();
+		// A gesture can be orphaned without a pointerup: the browser can steal
+		// the pointer (losing capture), or the window can blur mid-drag. Both
+		// leave the ghost behind, so the marquee would keep following the
+		// mouse forever; treat them as a cancel. After a normal pointerup the
+		// snapshot is already null, so the extra cancel is a no-op.
+		const lostPointer = () => cancel();
+		const windowBlur = () => cancel();
 		window.addEventListener("pointermove", move);
 		window.addEventListener("pointerup", up);
 		window.addEventListener("pointercancel", cancelDrag);
+		window.addEventListener("lostpointercapture", lostPointer);
+		window.addEventListener("blur", windowBlur);
 		return () => {
 			window.removeEventListener("pointermove", move);
 			window.removeEventListener("pointerup", up);
 			window.removeEventListener("pointercancel", cancelDrag);
+			window.removeEventListener("lostpointercapture", lostPointer);
+			window.removeEventListener("blur", windowBlur);
 		};
 	}, [cancel, dragging]);
 
