@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 import {
+	applySegmentDrag,
 	clampPointToRect,
 	type GroupedSegment,
 	groupTrackCollision,
 	marqueeIntersectsSegment,
 	marqueeOverlayOffset,
 	resolveGroupDelta,
-} from "./Timeline";
+	type SegmentDragMode,
+	type SegmentDragState,
+	timelineScrollRequest,
+	transitionTimelineDrag,
+} from "./timelineDrag";
 
 function member(id: string, originStart: number, duration = 4): GroupedSegment {
 	return { id, originStart, originTrack: 0, duration };
@@ -23,6 +28,40 @@ function segment(id: string, start: number, duration = 4): TimelineSegment {
 		sourceOut: duration,
 		timelineStart: start,
 		effects: { ...DEFAULT_EFFECTS },
+	};
+}
+
+function dragState(
+	mode: SegmentDragMode,
+	overrides: Partial<SegmentDragState> = {},
+): SegmentDragState {
+	return {
+		mode,
+		segmentId: "a",
+		group: [member("a", 10, 6)],
+		originStart: 10,
+		originIn: 2,
+		originOut: 8,
+		originTrack: 0,
+		originRate: 1,
+		originTail: 0,
+		reverse: false,
+		maxSource: 10,
+		maxTrack: 1,
+		startX: 100,
+		startY: 50,
+		ghostStart: 10,
+		ghostIn: 2,
+		ghostOut: 8,
+		ghostTrack: 0,
+		ghostStarts: [],
+		modifierClick: false,
+		trackCollision: false,
+		valid: true,
+		clamped: false,
+		pointerX: 100,
+		pointerY: 50,
+		...overrides,
 	};
 }
 
@@ -108,6 +147,106 @@ describe("groupTrackCollision", () => {
 	test("no vertical movement never collides", () => {
 		const group = [onTrack("a", 0, 0), onTrack("b", 1, 0)];
 		expect(groupTrackCollision(group, 0)).toBe(false);
+	});
+});
+
+describe("timeline drag transitions", () => {
+	const pointer = (clientX: number, clientY = 50) => ({
+		clientX,
+		clientY,
+		containerRect: { top: 0, bottom: 100, height: 100 },
+	});
+
+	test("reverse left resize extends sourceOut and moves timeline start left", () => {
+		const result = transitionTimelineDrag(
+			dragState("left", { reverse: true }),
+			pointer(80),
+			1,
+			100,
+			[segment("a", 10, 6)],
+			0,
+		);
+		expect(result.state.ghostOut).toBe(10);
+		expect(result.state.ghostIn).toBe(2);
+		expect(result.state.ghostStart).toBe(8);
+	});
+
+	test("reverse right resize extends toward source start", () => {
+		const result = transitionTimelineDrag(
+			dragState("right", { reverse: true }),
+			pointer(120),
+			1,
+			100,
+			[segment("a", 10, 6)],
+			0,
+		);
+		expect(result.state.ghostIn).toBe(0);
+		expect(result.state.ghostOut).toBe(8);
+	});
+
+	test("rejects vertical group move that merges overlapping tracks", () => {
+		const group = [
+			{ ...member("a", 0), originTrack: 0 },
+			{ ...member("b", 0), originTrack: 1 },
+		];
+		const result = transitionTimelineDrag(
+			dragState("move", {
+				segmentId: "b",
+				group,
+				originStart: 0,
+				originTrack: 1,
+				ghostStart: 0,
+				ghostTrack: 1,
+			}),
+			pointer(110),
+			1,
+			100,
+			[segment("a", 0), { ...segment("b", 0), track: 1 }],
+			0,
+		);
+		expect(result.state.trackCollision).toBe(true);
+		expect(result.state.ghostStarts).toEqual([
+			{ id: "a", start: 0 },
+			{ id: "b", start: 0 },
+		]);
+	});
+
+	test("commits every group member and grows track count", () => {
+		const a = segment("a", 0);
+		const b = { ...segment("b", 4), track: 1 };
+		const edit = { segments: [a, b], tracks: 2, masterVolumeDb: 0 };
+		const next = applySegmentDrag(
+			edit,
+			dragState("move", {
+				group: [
+					{ ...member("a", 0), originTrack: 0 },
+					{ ...member("b", 4), originTrack: 1 },
+				],
+				originStart: 0,
+				ghostStart: 2,
+				ghostTrack: 2,
+				ghostStarts: [
+					{ id: "a", start: 2 },
+					{ id: "b", start: 6 },
+				],
+			}),
+		);
+		expect(next.tracks).toBe(4);
+		expect(
+			next.segments.map(({ timelineStart, track }) => ({
+				timelineStart,
+				track,
+			})),
+		).toEqual([
+			{ timelineStart: 2, track: 2 },
+			{ timelineStart: 6, track: 3 },
+		]);
+	});
+
+	test("returns signed edge-scroll request without mutating DOM", () => {
+		expect(timelineScrollRequest(pointer(100, 95))).toBe(86);
+		expect(timelineScrollRequest(pointer(100, 5))).toBe(-86);
+		expect(timelineScrollRequest(pointer(100, 50))).toBe(0);
 	});
 });
 
