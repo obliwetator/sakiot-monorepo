@@ -25,10 +25,11 @@ ON CONFLICT DO NOTHING;
 
 -- Sample roles so the members page has something to filter by out of the box.
 -- 8 = ADMINISTRATOR, 32 = MANAGE_GUILD, 1024 = VIEW_CHANNEL.
-INSERT INTO roles (guild_id, role_id, permission, name)
+-- VIP gets a gradient (color + color_secondary) so role colors are visible.
+INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary)
 VALUES
-    (111111111111111111, 111111111111111112, 40, 'Moderator'),
-    (111111111111111111, 111111111111111113, 1024, 'VIP')
+    (111111111111111111, 111111111111111112, 40, 'Moderator', 16711680, NULL),
+    (111111111111111111, 111111111111111113, 1024, 'VIP', 3050327, 16743936)
 ON CONFLICT DO NOTHING;
 
 -- Sample members with names (user_names) and, for one, a guild nickname.

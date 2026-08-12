@@ -82,21 +82,28 @@ pub(crate) async fn remove_guild_present(
 async fn update_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
     for guild in guild_cached {
         let roles: Vec<_> = guild.roles.iter().collect();
-        for chunk in roles.chunks(BIND_LIMIT / 4) {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> =
-                sqlx::QueryBuilder::new("INSERT INTO roles (guild_id, role_id, permission, name) ");
+        for chunk in roles.chunks(BIND_LIMIT / 7) {
+            let mut query_builder: sqlx::QueryBuilder<Postgres> = sqlx::QueryBuilder::new(
+                "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary, color_tertiary) ",
+            );
             query_builder
                 .push_values(chunk, |mut b, role| {
                     b.push_bind(role.1.guild_id.to_i64())
                         .push_bind(role.0.to_i64())
                         .push_bind(role.1.permissions.bits().to_i64())
-                        .push_bind(&role.1.name);
+                        .push_bind(&role.1.name)
+                        .push_bind(role.1.colours.primary_colour.0 as i64)
+                        .push_bind(role.1.colours.secondary_colour.map(|c| c.0 as i64))
+                        .push_bind(role.1.colours.tertiary_colour.map(|c| c.0 as i64));
                 })
                 .push(
                     " ON CONFLICT (role_id) DO UPDATE SET \
                      guild_id = EXCLUDED.guild_id, \
                      permission = EXCLUDED.permission, \
-                     name = EXCLUDED.name",
+                     name = EXCLUDED.name, \
+                     color = EXCLUDED.color, \
+                     color_secondary = EXCLUDED.color_secondary, \
+                     color_tertiary = EXCLUDED.color_tertiary",
                 );
 
             query_builder.build().execute(pool).await?;
@@ -111,17 +118,23 @@ async fn update_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult
 
 pub(crate) async fn sync_live_role(pool: &Pool<Postgres>, role: &Role) -> DbResult<()> {
     sqlx::query(
-        "INSERT INTO roles (guild_id, role_id, permission, name)
-         VALUES ($1, $2, $3, $4)
+        "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary, color_tertiary)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (role_id) DO UPDATE SET
              guild_id = EXCLUDED.guild_id,
              permission = EXCLUDED.permission,
-             name = EXCLUDED.name",
+             name = EXCLUDED.name,
+             color = EXCLUDED.color,
+             color_secondary = EXCLUDED.color_secondary,
+             color_tertiary = EXCLUDED.color_tertiary",
     )
     .bind(role.guild_id.to_i64())
     .bind(role.id.to_i64())
     .bind(role.permissions.bits().to_i64())
     .bind(&role.name)
+    .bind(role.colours.primary_colour.0 as i64)
+    .bind(role.colours.secondary_colour.map(|c| c.0 as i64))
+    .bind(role.colours.tertiary_colour.map(|c| c.0 as i64))
     .execute(pool)
     .await?;
 

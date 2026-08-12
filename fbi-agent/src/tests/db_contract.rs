@@ -5,12 +5,12 @@ use std::{
 
 use serenity::{
     all::{
-        ChannelId, ChannelType, Guild, GuildChannel, GuildId, Member, PermissionOverwrite,
-        PermissionOverwriteType, Permissions, Role, RoleId, User, UserId,
+        ChannelId, ChannelType, Colour, Guild, GuildChannel, GuildId, Member, PermissionOverwrite,
+        PermissionOverwriteType, Permissions, Role, RoleColours, RoleId, User, UserId,
     },
     prelude::{RwLock, TypeMap},
 };
-use sqlx::{PgPool, migrate::Migrator};
+use sqlx::{PgPool, Row, migrate::Migrator};
 
 use crate::cooldown::JamCooldown;
 use crate::database::{DbError, logical_recordings, recordings, stamps};
@@ -1428,6 +1428,10 @@ async fn sync_new_guild_populates_full_cache_and_presence(
     role.guild_id = guild_id;
     role.name = "new-guild-role".to_string();
     role.permissions = Permissions::VIEW_CHANNEL | Permissions::CONNECT;
+    let mut colours = RoleColours::default();
+    colours.primary_colour = Colour(0x112233);
+    colours.secondary_colour = Some(Colour(0x445566));
+    role.colours = colours;
 
     let mut channel = GuildChannel::default();
     channel.id = channel_id;
@@ -1460,6 +1464,17 @@ async fn sync_new_guild_populates_full_cache_and_presence(
         .fetch_one(&pool)
         .await?;
     assert_eq!(roles, 1);
+    let role_colors =
+        sqlx::query("SELECT color, color_secondary, color_tertiary FROM roles WHERE role_id = $1")
+            .bind(role_id.get() as i64)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(role_colors.get::<i64, _>("color"), 0x112233);
+    assert_eq!(
+        role_colors.get::<Option<i64>, _>("color_secondary"),
+        Some(0x445566)
+    );
+    assert_eq!(role_colors.get::<Option<i64>, _>("color_tertiary"), None);
     let channels =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM channels WHERE guild_id = $1")
             .bind(guild_id.get() as i64)

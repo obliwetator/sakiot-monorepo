@@ -30,6 +30,7 @@ import {
 	useGetRoleViewQuery,
 } from "../../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
+import { roleSwatchBackground, roleTextStyle } from "./roleColors";
 
 function RolePreviewDialog(props: {
 	open: boolean;
@@ -224,6 +225,18 @@ export function GuildMembers() {
 										selected={selectedRole?.role_id === role.role_id}
 										onClick={() => setSelectedRole(role)}
 									>
+										<Box
+											component="span"
+											aria-hidden="true"
+											sx={{
+												width: 14,
+												height: 14,
+												borderRadius: "4px",
+												flexShrink: 0,
+												mr: 1.5,
+												background: roleSwatchBackground(role),
+											}}
+										/>
 										<ListItemText
 											primary={role.name}
 											secondary={
@@ -249,7 +262,10 @@ export function GuildMembers() {
 					<TableContainer component={Paper} variant="outlined" sx={{ flex: 1 }}>
 						{selectedRole && (
 							<Typography variant="subtitle1" sx={{ p: 2 }}>
-								{selectedRole.name} — {members?.length ?? 0}{" "}
+								<span style={roleTextStyle(selectedRole)}>
+									{selectedRole.name}
+								</span>{" "}
+								— {members?.length ?? 0}{" "}
 								{members?.length === 1 ? "member" : "members"}
 							</Typography>
 						)}

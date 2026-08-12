@@ -55,12 +55,12 @@ async fn seed_members_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query!(
-        "INSERT INTO roles (guild_id, role_id, permission, name)
+        "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary)
          VALUES
-            ($1, $1, 1049600, '@everyone'),
-            ($1, $2, 8, 'Moderator'),
-            ($1, $3, 1024, 'VIP'),
-            ($4, $4, 1049600, '@everyone')",
+            ($1, $1, 1049600, '@everyone', 0, NULL),
+            ($1, $2, 8, 'Moderator', 16711680, 65280),
+            ($1, $3, 1024, 'VIP', 255, NULL),
+            ($4, $4, 1049600, '@everyone', 0, NULL)",
         GUILD_ID,
         MODERATOR_ROLE_ID,
         VIP_ROLE_ID,
@@ -139,10 +139,16 @@ async fn roles_listed_with_member_counts_for_manager(
     };
     assert_eq!(by_id(MODERATOR_ROLE_ID)["name"], "Moderator");
     assert_eq!(by_id(MODERATOR_ROLE_ID)["member_count"], 3);
+    assert_eq!(by_id(MODERATOR_ROLE_ID)["color"], 16711680);
+    assert_eq!(by_id(MODERATOR_ROLE_ID)["color_secondary"], 65280);
+    assert_eq!(by_id(MODERATOR_ROLE_ID)["color_tertiary"], Value::Null);
     assert_eq!(by_id(VIP_ROLE_ID)["name"], "VIP");
     assert_eq!(by_id(VIP_ROLE_ID)["member_count"], 2);
+    assert_eq!(by_id(VIP_ROLE_ID)["color"], 255);
+    assert_eq!(by_id(VIP_ROLE_ID)["color_secondary"], Value::Null);
     assert_eq!(by_id(GUILD_ID)["name"], "@everyone");
     assert_eq!(by_id(GUILD_ID)["member_count"], 0);
+    assert_eq!(by_id(GUILD_ID)["color"], 0);
     assert_eq!(
         roles.last().expect("ordered")["role_id"],
         json!(GUILD_ID.to_string())

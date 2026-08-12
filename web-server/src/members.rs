@@ -20,6 +20,12 @@ pub struct GuildRole {
     #[schema(value_type = String, example = "268435456")]
     pub permission: i64,
     pub member_count: i64,
+    #[schema(example = 16711680)]
+    pub color: i64,
+    #[schema(example = 65280)]
+    pub color_secondary: Option<i64>,
+    #[schema(example = 255)]
+    pub color_tertiary: Option<i64>,
 }
 
 #[derive(Serialize, Debug, utoipa::ToSchema)]
@@ -56,11 +62,14 @@ pub async fn get_guild_roles(
         "SELECT r.role_id,
                 r.name,
                 r.permission,
+                r.color,
+                r.color_secondary,
+                r.color_tertiary,
                 COALESCE(COUNT(ur.user_id), 0)::bigint AS member_count
          FROM roles r
          LEFT JOIN user_roles ur ON ur.role_id = r.role_id
          WHERE r.guild_id = $1
-         GROUP BY r.role_id, r.name, r.permission
+         GROUP BY r.role_id, r.name, r.permission, r.color, r.color_secondary, r.color_tertiary
          ORDER BY r.role_id = $1, r.role_id",
         guild_id
     )
@@ -74,6 +83,9 @@ pub async fn get_guild_roles(
             name: r.name,
             permission: r.permission,
             member_count: r.member_count.unwrap_or(0),
+            color: r.color,
+            color_secondary: r.color_secondary,
+            color_tertiary: r.color_tertiary,
         })
         .collect();
 

@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.role_id,\n                r.name,\n                r.permission,\n                r.color,\n                r.color_secondary,\n                r.color_tertiary,\n                COALESCE(COUNT(ur.user_id), 0)::bigint AS member_count\n         FROM roles r\n         LEFT JOIN user_roles ur ON ur.role_id = r.role_id\n         WHERE r.guild_id = $1\n         GROUP BY r.role_id, r.name, r.permission, r.color, r.color_secondary, r.color_tertiary\n         ORDER BY r.role_id = $1, r.role_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "role_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "permission",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "permission"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "color",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "color"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "color_secondary",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "color_secondary"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "color_tertiary",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "color_tertiary"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "member_count",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "ccf5231a668a33f1969f44f6e4e95a8a6e36c6b7689b656178f2ad6a279470d3"
+}

@@ -836,6 +836,21 @@ export interface components {
 			permissions: string;
 		};
 		GuildRole: {
+			/**
+			 * Format: int64
+			 * @example 16711680
+			 */
+			color: number;
+			/**
+			 * Format: int64
+			 * @example 65280
+			 */
+			color_secondary?: number | null;
+			/**
+			 * Format: int64
+			 * @example 255
+			 */
+			color_tertiary?: number | null;
 			/** Format: int64 */
 			member_count: number;
 			name: string;
