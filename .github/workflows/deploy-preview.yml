@@ -162,6 +162,23 @@ jobs:
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "preview-ci ${PREVIEW_SLOT} ${PREVIEW_SHA}"
 
+      - name: Verify public HTTPS deployment
+        env:
+          PREVIEW_SLOT: ${{ needs.compute.outputs.slot }}
+          PREVIEW_SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          version_url="https://${PREVIEW_SLOT}.preview.patrykstyla.com/version.json"
+          deployed_sha=""
+          for _ in $(seq 1 12); do
+            deployed_sha="$(curl -fsS --connect-timeout 5 --max-time 10 "${version_url}" \
+              | jq -r '.commitSha // empty' || true)"
+            [[ "${deployed_sha}" == "${PREVIEW_SHA}" ]] && break
+            sleep 5
+          done
+          [[ "${deployed_sha}" == "${PREVIEW_SHA}" ]] \
+            || { echo "error: preview is on '${deployed_sha}', expected ${PREVIEW_SHA}"; exit 1; }
+
   teardown:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch' && needs.compute.outputs.slot != ''
     needs: compute

@@ -212,25 +212,37 @@ if [[ "$ACTION" = create ]]; then
     systemctl enable "sakiot-preview-${SLOT}-web.service" >/dev/null 2>&1 || true
 
     # ---- nginx -------------------------------------------------------------
+    # Preview hostnames can exceed nginx's default 64-byte server-name hash
+    # bucket once the slot and preview domain are combined. Keep the shared
+    # HTTP-level setting in a dedicated file so every slot is supported.
+    nginx_hash_config="/etc/nginx/conf.d/sakiot-preview-server-names.conf"
+    if [[ ! -f "$nginx_hash_config" ]]; then
+        printf 'server_names_hash_bucket_size 128;\n' > "$nginx_hash_config"
+        log "configured nginx for preview hostnames"
+    fi
+
     vhost="/etc/nginx/sites-available/${SUBDOMAIN}"
     sed \
         -e "s|SLOT|${SLOT}|g" \
         -e "s|PORT|${PORT}|g" \
         "$OPS_DIR/nginx/preview-slot.conf.example" > "$vhost"
     ln -sfn "$vhost" "/etc/nginx/sites-enabled/${SUBDOMAIN}"
-    nginx -t >/dev/null && systemctl reload nginx
+    nginx -t >/dev/null
+    systemctl reload nginx
     log "installed nginx vhost ${SUBDOMAIN}"
 
     # ---- HTTPS -------------------------------------------------------------
     certbot_email="${CERTBOT_EMAIL:-$(sed -n 's/^CERTBOT_EMAIL=//p' "$ENV_FILE" 2>/dev/null | head -n1)}"
     if [[ -n "$certbot_email" ]] && command -v certbot >/dev/null 2>&1; then
-        if certbot --nginx -d "$SUBDOMAIN" --non-interactive --agree-tos -m "$certbot_email" >/dev/null 2>&1; then
-            log "issued HTTPS certificate for ${SUBDOMAIN}"
-        else
-            log "certbot failed for ${SUBDOMAIN}; slot stays on HTTP"
-        fi
+        certbot --nginx -d "$SUBDOMAIN" --non-interactive --agree-tos -m "$certbot_email" \
+            || die "certbot failed for ${SUBDOMAIN}"
+        nginx -t >/dev/null
+        systemctl reload nginx
+        log "issued HTTPS certificate for ${SUBDOMAIN}"
     elif [[ -z "$certbot_email" ]]; then
         log "no CERTBOT_EMAIL (shared ${ENV_FILE} or env); skipping HTTPS"
+    else
+        die "certbot is not installed; cannot configure HTTPS for ${SUBDOMAIN}"
     fi
 
     log "slot ${SLOT} ready: https://${SUBDOMAIN} (after dev-login creds in ${ENV_FILE} are set)"
