@@ -91,6 +91,7 @@ export function ClipRangeEditorView({
 			<ClipRangePrecisionOverlay controller={controller} />
 			<TimelineRow label="Session" sx={{ mb: 0.5 }}>
 				<Box
+					data-testid="clip-session-window"
 					{...viewDragHandlers("overview")}
 					sx={{
 						position: "relative",

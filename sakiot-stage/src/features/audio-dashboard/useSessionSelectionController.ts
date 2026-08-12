@@ -34,6 +34,13 @@ const CLIP_ARROW_SEEK_MS = 100;
 const CLIP_SHIFT_ARROW_SEEK_MS = 1_000;
 const CLIP_CTRL_ARROW_SEEK_MS = 5_000;
 
+function selectionsMatch(
+	left: SessionSelection,
+	right: SessionSelection,
+): boolean {
+	return left[0] === right[0] && left[1] === right[1];
+}
+
 interface SelectionControllerOptions {
 	sessionId: string;
 	manifest: SelectionManifest | null;
@@ -90,9 +97,19 @@ export function useSessionSelectionController(
 		setSelection(next);
 	}, []);
 
+	const manifestRecordingSessionId = options.manifest?.recordingSessionId;
+	const manifestDurationMs = options.manifest?.durationMs;
 	useEffect(() => {
-		const manifest = options.manifest;
-		if (!manifest) return;
+		if (
+			manifestRecordingSessionId === undefined ||
+			manifestDurationMs === undefined
+		) {
+			return;
+		}
+		const manifest: SelectionManifest = {
+			recordingSessionId: manifestRecordingSessionId,
+			durationMs: manifestDurationMs,
+		};
 		const previous = selectionManifestRef.current;
 		selectionManifestRef.current = manifest;
 		const next = reconcileSessionSelection(
@@ -103,9 +120,11 @@ export function useSessionSelectionController(
 		normalSelectionRef.current = next;
 		if (playbackTabRef.current === "normal") {
 			selectionRef.current = next;
-			setSelection(next);
+			setSelection((current) =>
+				selectionsMatch(current, next) ? current : next,
+			);
 		}
-	}, [options.manifest]);
+	}, [manifestDurationMs, manifestRecordingSessionId]);
 
 	useEffect(() => {
 		const duration = options.silence.durationMs;

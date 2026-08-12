@@ -8,7 +8,7 @@ import type {
 	DragEvent as ReactDragEvent,
 	PointerEvent as ReactPointerEvent,
 } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePointerDrag } from "../../shared/pointerDrag";
 import { formatDuration } from "../../utils/formatTime";
 import { pendingBinDrag } from "./ClipBin";
@@ -40,6 +40,15 @@ const SNAP_SECONDS = 0.25;
 interface DraggedClipPayload {
 	clipId: string;
 	lengthSec: number;
+}
+
+export interface MobileBinDragPreview extends DraggedClipPayload {
+	clientX: number;
+	clientY: number;
+}
+
+export interface MobileBinDropRequest extends MobileBinDragPreview {
+	id: number;
 }
 
 function parseDraggedClip(
@@ -78,12 +87,17 @@ export function Timeline(props: {
 		track: number,
 		startSec: number,
 	) => void;
+	mobileBinDragPreview?: MobileBinDragPreview | null;
+	mobileBinDrop?: MobileBinDropRequest | null;
+	onMobileBinDropHandled?: (id: number, accepted: boolean) => void;
 	/** Marquee selection covers every track the rectangle spans. */
 	multiTrackMarquee?: boolean;
 }) {
 	const { editor } = props;
 	const plotRef = useRef<HTMLDivElement | null>(null);
 	const tracksRef = useRef<HTMLDivElement | null>(null);
+	const processedMobileDropRef = useRef<number | null>(null);
+	const mobilePreviewWasActiveRef = useRef(false);
 	const rowElementsRef = useRef(new Map<number, HTMLElement>());
 	const [plotWidth, setPlotWidth] = useState(1);
 	const [preview, setPreview] = useState<DragPreviewState | null>(null);
@@ -255,7 +269,7 @@ export function Timeline(props: {
 	const pxPerSec = plotWidth / Math.max(1, editor.viewWidthSec);
 	const rows = Array.from({ length: editor.edit.tracks }, (_, track) => track);
 
-	const findTrackAtY = (clientY: number): number | null => {
+	const findTrackAtY = useCallback((clientY: number): number | null => {
 		let best: { track: number; dist: number } | null = null;
 		for (const [track, element] of rowElementsRef.current) {
 			const rect = element.getBoundingClientRect();
@@ -265,7 +279,7 @@ export function Timeline(props: {
 		}
 		if (!best || best.dist > TRACK_HEIGHT_PX) return null;
 		return best.track;
-	};
+	}, []);
 
 	/**
 	 * The row under the pointer, extrapolated past the last rendered row with
@@ -296,39 +310,126 @@ export function Timeline(props: {
 
 	// Ghosts and segments render inside the plot area (after the label gutter),
 	// so cursor-to-time mapping must use a track row's rect, not the container.
-	const currentPlotBounds = () => {
+	const currentPlotBounds = useCallback(() => {
 		for (const element of rowElementsRef.current.values()) {
 			const rect = element.getBoundingClientRect();
 			if (rect.width > 0) return rect;
 		}
 		return tracksRef.current?.getBoundingClientRect() ?? { left: 0, width: 1 };
-	};
+	}, []);
 
-	const computeDrop = (clientX: number, clientY: number, lengthSec: number) => {
-		const plotBounds = currentPlotBounds();
-		const found = findTrackAtY(clientY);
-		const track =
-			found === null ? editor.edit.tracks : Math.min(found, editor.edit.tracks);
-		const fractionOfWidth = Math.min(
-			1,
-			Math.max(0, (clientX - plotBounds.left) / Math.max(1, plotBounds.width)),
-		);
-		const rawStart =
-			editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
-		let startSec = rawStart;
-		if (Math.abs(startSec - editor.positionSec) < SNAP_SECONDS) {
-			startSec = editor.positionSec;
-		}
-		startSec = snapToNeighbors(
-			startSec,
-			lengthSec,
+	const computeDrop = useCallback(
+		(clientX: number, clientY: number, lengthSec: number) => {
+			const plotBounds = currentPlotBounds();
+			const found = findTrackAtY(clientY);
+			const track =
+				found === null
+					? editor.edit.tracks
+					: Math.min(found, editor.edit.tracks);
+			const fractionOfWidth = Math.min(
+				1,
+				Math.max(
+					0,
+					(clientX - plotBounds.left) / Math.max(1, plotBounds.width),
+				),
+			);
+			const rawStart =
+				editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
+			let startSec = rawStart;
+			if (Math.abs(startSec - editor.positionSec) < SNAP_SECONDS) {
+				startSec = editor.positionSec;
+			}
+			startSec = snapToNeighbors(
+				startSec,
+				lengthSec,
+				editor.edit.segments,
+				"",
+				track,
+				rawStart,
+			);
+			return { track, startSec: Math.max(0, startSec) };
+		},
+		[
+			currentPlotBounds,
 			editor.edit.segments,
-			"",
-			track,
-			rawStart,
+			editor.edit.tracks,
+			editor.positionSec,
+			editor.viewStartSec,
+			editor.viewWidthSec,
+			findTrackAtY,
+		],
+	);
+
+	useEffect(() => {
+		const drag = props.mobileBinDragPreview;
+		if (!drag) {
+			if (mobilePreviewWasActiveRef.current) setPreview(null);
+			mobilePreviewWasActiveRef.current = false;
+			return;
+		}
+		mobilePreviewWasActiveRef.current = true;
+		const rect = tracksRef.current?.getBoundingClientRect();
+		if (
+			!rect ||
+			drag.clientX < rect.left ||
+			drag.clientX > rect.right ||
+			drag.clientY < rect.top ||
+			drag.clientY > rect.bottom
+		) {
+			setPreview(null);
+			return;
+		}
+		const { track, startSec } = computeDrop(
+			drag.clientX,
+			drag.clientY,
+			drag.lengthSec,
 		);
-		return { track, startSec: Math.max(0, startSec) };
-	};
+		setPreview((previous) =>
+			previous &&
+			previous.clipId === drag.clipId &&
+			previous.lengthSec === drag.lengthSec &&
+			previous.track === track &&
+			previous.startSec === startSec
+				? previous
+				: {
+						clipId: drag.clipId,
+						lengthSec: drag.lengthSec,
+						track,
+						startSec,
+					},
+		);
+	}, [computeDrop, props.mobileBinDragPreview]);
+
+	useEffect(() => {
+		const request = props.mobileBinDrop;
+		if (!request || processedMobileDropRef.current === request.id) return;
+		processedMobileDropRef.current = request.id;
+		const container = tracksRef.current;
+		const rect = container?.getBoundingClientRect();
+		const accepted = Boolean(
+			rect &&
+				request.clientX >= rect.left &&
+				request.clientX <= rect.right &&
+				request.clientY >= rect.top &&
+				request.clientY <= rect.bottom,
+		);
+		if (!accepted) {
+			props.onMobileBinDropHandled?.(request.id, false);
+			return;
+		}
+		const { track, startSec } = computeDrop(
+			request.clientX,
+			request.clientY,
+			request.lengthSec,
+		);
+		props.onDropClip(request.clipId, request.lengthSec, track, startSec);
+		props.onMobileBinDropHandled?.(request.id, true);
+	}, [
+		computeDrop,
+		props.mobileBinDrop,
+		props.onDropClip,
+		props.onMobileBinDropHandled,
+	]);
 
 	const handleDragOver = (event: ReactDragEvent<HTMLElement>) => {
 		event.preventDefault();
@@ -431,6 +532,7 @@ export function Timeline(props: {
 				/>
 				<Box
 					ref={tracksRef}
+					data-testid="clip-timeline-dropzone"
 					onDragOver={handleDragOver}
 					onDrop={handleDrop}
 					onDragLeave={handleDragLeave}

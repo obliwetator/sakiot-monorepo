@@ -1,5 +1,6 @@
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import FitScreenIcon from "@mui/icons-material/FitScreen";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RedoIcon from "@mui/icons-material/Redo";
@@ -11,6 +12,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Drawer from "@mui/material/Drawer";
 import FormControl from "@mui/material/FormControl";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
@@ -19,9 +21,11 @@ import Radio from "@mui/material/Radio";
 import RadioGroup from "@mui/material/RadioGroup";
 import Slider from "@mui/material/Slider";
 import Snackbar from "@mui/material/Snackbar";
+import { useTheme } from "@mui/material/styles";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -60,12 +64,31 @@ import { isEffectSettingsJsonShortcut } from "./effectSettingsJson";
 import { Inspector } from "./Inspector";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
 import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
-import { Timeline } from "./Timeline";
+import {
+	type MobileBinDragPreview,
+	type MobileBinDropRequest,
+	Timeline,
+} from "./Timeline";
 import { useUnsavedChangesGuard } from "./unsavedChangesGuard";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
 
 export function ClipEditor(props: { guildId: string }) {
+	const theme = useTheme();
+	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
+	const isTouchInput = useMediaQuery("(hover: none), (pointer: coarse)");
+	const [clipBinOpen, setClipBinOpen] = useState(false);
+	const binDragStateRef = useRef<"idle" | "dragging" | "accepted">("idle");
+	const mobileDropIdRef = useRef(0);
+	const [mobileBinDrop, setMobileBinDrop] =
+		useState<MobileBinDropRequest | null>(null);
+	const [mobileTouchDragging, setMobileTouchDragging] = useState(false);
+	const [mobileDragGhost, setMobileDragGhost] = useState<
+		| (MobileBinDragPreview & {
+				name: string;
+		  })
+		| null
+	>(null);
 	const { asRoleArg } = useAsRole();
 	const dispatch = useAppDispatch();
 	const { data: clips, isError: clipsError } = useGetClipsQuery(
@@ -80,6 +103,15 @@ export function ClipEditor(props: { guildId: string }) {
 	const [searchParams] = useSearchParams();
 	const sourceClipId = searchParams.get("source");
 	const seededForRef = useRef<string | null>(null);
+
+	useEffect(() => {
+		if (isDesktop) {
+			setClipBinOpen(false);
+			setMobileBinDrop(null);
+			setMobileTouchDragging(false);
+			setMobileDragGhost(null);
+		}
+	}, [isDesktop]);
 
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [effectSettingsJsonOpen, setEffectSettingsJsonOpen] = useState(false);
@@ -274,23 +306,107 @@ export function ClipEditor(props: { guildId: string }) {
 		editor.select(segment.id);
 	}, [clips, clipsError, editor, sourceBuffer, sourceClipId]);
 
+	const completeMobileBinLoad = useCallback(
+		(success: boolean) => {
+			binDragStateRef.current = "idle";
+			if (!isDesktop && !success) setClipBinOpen(true);
+		},
+		[isDesktop],
+	);
+
 	const handleDropClip = useCallback(
 		(clipId: string, lengthSec: number, track: number, startSec: number) => {
-			editor.loadClip(props.guildId, clipId, lengthSec, track, startSec);
+			if (!isDesktop) binDragStateRef.current = "accepted";
+			void editor
+				.loadClip(props.guildId, clipId, lengthSec, track, startSec)
+				.then(completeMobileBinLoad);
 		},
-		[editor, props.guildId],
+		[completeMobileBinLoad, editor, isDesktop, props.guildId],
 	);
 
 	const handleAddFromBin = useCallback(
 		(clip: ClipData) => {
-			editor.loadClip(
-				props.guildId,
-				clip.clip_id,
-				clip.length ?? 1,
-				editor.activeTrack,
+			if (!isDesktop) {
+				binDragStateRef.current = "accepted";
+				setClipBinOpen(false);
+			}
+			void editor
+				.loadClip(
+					props.guildId,
+					clip.clip_id,
+					clip.length ?? 1,
+					editor.activeTrack,
+				)
+				.then(completeMobileBinLoad);
+		},
+		[completeMobileBinLoad, editor, isDesktop, props.guildId],
+	);
+
+	const handleBinDragStart = useCallback(() => {
+		if (isDesktop) return;
+		binDragStateRef.current = "dragging";
+		setClipBinOpen(false);
+	}, [isDesktop]);
+
+	const handleBinDragEnd = useCallback(() => {
+		if (binDragStateRef.current !== "dragging") return;
+		binDragStateRef.current = "idle";
+		if (!isDesktop) setClipBinOpen(true);
+	}, [isDesktop]);
+
+	const handleTouchDragStart = useCallback(
+		(clip: ClipData, clientX: number, clientY: number) => {
+			binDragStateRef.current = "dragging";
+			if (!isDesktop) setMobileTouchDragging(true);
+			setMobileDragGhost({
+				name: clip.name || "Unnamed clip",
+				clipId: clip.clip_id,
+				lengthSec: clip.length ?? 0,
+				clientX,
+				clientY,
+			});
+		},
+		[isDesktop],
+	);
+
+	const handleTouchDragMove = useCallback(
+		(_clip: ClipData, clientX: number, clientY: number) => {
+			setMobileDragGhost((current) =>
+				current ? { ...current, clientX, clientY } : current,
 			);
 		},
-		[editor, props.guildId],
+		[],
+	);
+
+	const handleTouchDrop = useCallback(
+		(clip: ClipData, clientX: number, clientY: number) => {
+			setMobileTouchDragging(false);
+			setClipBinOpen(false);
+			mobileDropIdRef.current += 1;
+			setMobileBinDrop({
+				id: mobileDropIdRef.current,
+				clipId: clip.clip_id,
+				lengthSec: clip.length ?? 0,
+				clientX,
+				clientY,
+			});
+			setMobileDragGhost(null);
+		},
+		[],
+	);
+
+	const handleTouchDragCancel = useCallback(() => {
+		setMobileTouchDragging(false);
+		setMobileDragGhost(null);
+		handleBinDragEnd();
+	}, [handleBinDragEnd]);
+
+	const handleMobileBinDropHandled = useCallback(
+		(id: number, accepted: boolean) => {
+			setMobileBinDrop((current) => (current?.id === id ? null : current));
+			if (!accepted) handleBinDragEnd();
+		},
+		[handleBinDragEnd],
 	);
 
 	useKeyboardShortcuts(
@@ -338,17 +454,82 @@ export function ClipEditor(props: { guildId: string }) {
 					minHeight: 0,
 					minWidth: 0,
 					display: "flex",
+					flexDirection: { xs: "column", md: "row" },
+					overflow: "hidden",
 				}}
 			>
-				<ClipBin
-					clips={pureClips}
-					loadingClips={editor.loadingClips}
-					onAdd={handleAddFromBin}
-				/>
+				{isDesktop ? (
+					<ClipBin
+						clips={pureClips}
+						loadingClips={editor.loadingClips}
+						onAdd={handleAddFromBin}
+						onTouchDragStart={handleTouchDragStart}
+						onTouchDragMove={handleTouchDragMove}
+						onTouchDrop={handleTouchDrop}
+						onTouchDragCancel={handleTouchDragCancel}
+						tapToAdd={isTouchInput}
+						disableNativeDrag={isTouchInput}
+					/>
+				) : (
+					<>
+						<Box
+							sx={{
+								flex: "0 0 auto",
+								p: 1,
+								borderBottom: 1,
+								borderColor: "divider",
+							}}
+						>
+							<Button
+								variant="outlined"
+								fullWidth
+								startIcon={<FolderOpenIcon />}
+								onClick={() => setClipBinOpen(true)}
+							>
+								Browse files
+							</Button>
+						</Box>
+						<Drawer
+							anchor="left"
+							open={clipBinOpen}
+							onClose={() => {
+								if (binDragStateRef.current === "idle") setClipBinOpen(false);
+							}}
+							transitionDuration={{ enter: 225, exit: 0 }}
+							ModalProps={{ keepMounted: true }}
+							sx={
+								mobileTouchDragging
+									? {
+											"& .MuiBackdrop-root": {
+												opacity: "0 !important",
+											},
+											"& .MuiDrawer-paper": { opacity: 0 },
+										}
+									: undefined
+							}
+						>
+							<ClipBin
+								clips={pureClips}
+								loadingClips={editor.loadingClips}
+								onAdd={handleAddFromBin}
+								onDragStart={handleBinDragStart}
+								onDragEnd={handleBinDragEnd}
+								onTouchDragStart={handleTouchDragStart}
+								onTouchDragMove={handleTouchDragMove}
+								onTouchDrop={handleTouchDrop}
+								onTouchDragCancel={handleTouchDragCancel}
+								tapToAdd
+								disableNativeDrag={isTouchInput}
+							/>
+						</Drawer>
+					</>
+				)}
 				<Box
 					sx={{
 						flex: 1,
 						minWidth: 0,
+						minHeight: 0,
+						width: "100%",
 						display: "flex",
 						flexDirection: "column",
 					}}
@@ -365,6 +546,9 @@ export function ClipEditor(props: { guildId: string }) {
 							editor={editor}
 							clipName={(segment) => clipName(segment.sourceId)}
 							onDropClip={handleDropClip}
+							mobileBinDragPreview={mobileDragGhost}
+							mobileBinDrop={mobileBinDrop}
+							onMobileBinDropHandled={handleMobileBinDropHandled}
 							multiTrackMarquee={options.marqueeMultiTrack}
 						/>
 					</Box>
@@ -376,6 +560,35 @@ export function ClipEditor(props: { guildId: string }) {
 					onOpenLimits={() => setEffectLimitsOpen(true)}
 				/>
 			</Box>
+			{mobileDragGhost && (
+				<Box
+					aria-hidden="true"
+					style={{
+						left: mobileDragGhost.clientX + 12,
+						top: mobileDragGhost.clientY + 12,
+					}}
+					sx={{
+						position: "fixed",
+						zIndex: theme.zIndex.tooltip,
+						maxWidth: 220,
+						px: 1.25,
+						py: 0.75,
+						border: "1px dashed",
+						borderColor: "primary.main",
+						borderRadius: 1,
+						bgcolor: "background.paper",
+						boxShadow: 4,
+						fontSize: "0.75rem",
+						fontWeight: 600,
+						whiteSpace: "nowrap",
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						pointerEvents: "none",
+					}}
+				>
+					{mobileDragGhost.name}
+				</Box>
+			)}
 			<ClipExportDialog
 				open={composeOpen}
 				name={composeName}
@@ -443,11 +656,13 @@ function ToolbarRow(props: {
 			sx={{
 				display: "flex",
 				alignItems: "center",
-				gap: 1,
-				px: 2,
+				gap: { xs: 0.5, sm: 1 },
+				px: { xs: 1, sm: 2 },
 				py: 1,
 				borderBottom: 1,
 				borderColor: "divider",
+				overflowX: "auto",
+				flex: "0 0 auto",
 			}}
 		>
 			<Typography variant="h6" sx={{ flex: 1, minWidth: 0 }} noWrap>
@@ -655,9 +870,9 @@ function Monitor(props: {
 			sx={{
 				display: "flex",
 				alignItems: "center",
-				gap: 2,
-				px: 2,
-				py: 1,
+				gap: { xs: 1, sm: 2 },
+				px: { xs: 1, sm: 2 },
+				py: { xs: 0.5, sm: 1 },
 				borderBottom: 1,
 				borderColor: "divider",
 				flexWrap: "wrap",

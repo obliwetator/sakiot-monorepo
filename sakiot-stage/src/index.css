@@ -1,16 +1,44 @@
+@layer theme, base, mui, components, utilities;
 @import "tailwindcss";
 
-/* @tailwind base;
-@tailwind components;
-@tailwind utilities; */
+@theme {
+	--color-canvas: #18181b;
+	--color-surface: #202023;
+	--color-surface-raised: #29292e;
+	--color-ui-border: #3f3f46;
+	--color-fg: #f8fafc;
+	--color-muted: #94a3b8;
+	--color-primary: #22d3ee;
+	--color-primary-strong: #0891b2;
+	--color-focus: #67e8f9;
+	--color-creative: #a78bfa;
+	--color-success: #34d399;
+	--color-warning: #fbbf24;
+	--color-danger: #f87171;
+	--color-info: #38bdf8;
+	--radius-panel: 0.75rem;
+	--shadow-panel: 0 12px 30px rgb(2 6 23 / 0.28);
+}
 
 html,
 body,
 #root {
 	height: 100%;
-	background-color: #121212;
-	color: #fff;
+	background-color: var(--color-canvas);
+	color: var(--color-fg);
 	font-family: "Inter Variable", system-ui, sans-serif;
+}
+
+body {
+	margin: 0;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+::selection {
+	background-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
 .menu {

@@ -133,6 +133,23 @@ export function windowForSelection(
 }
 
 /**
+ * Chooses the first detail viewport. A concrete draft takes priority over its
+ * originating focus because stamp drafts intentionally include more context
+ * before the stamp than after it. Empty selection state falls back to the
+ * focus/playhead while the manifest installs the real draft.
+ */
+export function initialDetailView(
+	selection: SessionSelection,
+	windowMs: number,
+	durationMs: number,
+	focusMs: number,
+): TimeWindow {
+	return selection[1] > selection[0]
+		? windowForSelection(selection, windowMs, durationMs)
+		: windowAround(focusMs, windowMs, durationMs);
+}
+
+/**
  * The edge that changed between two selections, or null when neither did.
  * Drives which end of a long selection the view scrolls to.
  */

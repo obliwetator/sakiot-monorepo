@@ -16,6 +16,7 @@ export function DragGhost(props: {
 	return (
 		<Box
 			aria-hidden="true"
+			data-testid="clip-drag-ghost"
 			style={{
 				left: `${props.leftFraction}%`,
 				width: `max(2px, ${props.widthFraction}%)`,

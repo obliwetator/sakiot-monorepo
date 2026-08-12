@@ -10,6 +10,7 @@ import {
 	constrainFineDragToWindow,
 	defaultDetailWindowMs,
 	fineDragMultiplier,
+	initialDetailView,
 	moveSelection,
 	moveSelectionWithinWindow,
 	nearestSelectionEdge,
@@ -78,6 +79,28 @@ describe("windowForSelection", () => {
 		expect(windowForSelection([0, 1_000], 60_000, 30_000)).toEqual({
 			startMs: 0,
 			endMs: 30_000,
+		});
+	});
+});
+
+describe("initialDetailView", () => {
+	test("expands a short-session viewport to contain the initial draft", () => {
+		expect(initialDetailView([0, 15_000], 9_000, 90_000, 0)).toEqual({
+			startMs: 0,
+			endMs: 15_000,
+		});
+	});
+
+	test("centres an asymmetric stamp draft instead of clipping its left edge", () => {
+		expect(
+			initialDetailView([50_000, 65_000], 12_000, 120_000, 60_000),
+		).toEqual({ startMs: 50_000, endMs: 65_000 });
+	});
+
+	test("uses the focus while waiting for the manifest selection", () => {
+		expect(initialDetailView([0, 0], 12_000, 120_000, 60_000)).toEqual({
+			startMs: 54_000,
+			endMs: 66_000,
 		});
 	});
 });

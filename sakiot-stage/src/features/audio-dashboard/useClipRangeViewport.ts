@@ -27,6 +27,7 @@ import {
 	constrainFineDragToWindow,
 	defaultDetailWindowMs,
 	FINE_DRAG_START_PX,
+	initialDetailView,
 	nearestSelectionEdge,
 	nudgeEdge,
 	panWindowToInclude,
@@ -35,7 +36,6 @@ import {
 	rollingEdgeStrength,
 	rollingRulerWindow,
 	type SelectionEdge,
-	selectionFitsWindow,
 	selectionShiftedAsBand,
 	selectionWindowGeometry,
 	setNearestSelectionEdge,
@@ -45,7 +45,6 @@ import {
 	ULTRA_FINE_DRAG_START_PX,
 	windowAround,
 	windowCenter,
-	windowForSelection,
 	windowFraction,
 	windowMsPerPixel,
 	zoomDetailWindow,
@@ -72,20 +71,19 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 	const edgeDriveLastTimeRef = useRef<number | null>(null);
 	const edgeDriveTickRef = useRef<(timestampMs: number) => void>(() => {});
 	const [plotWidth, setPlotWidth] = useState(0);
-	const [windowMs, setWindowMs] = useState(defaultWindowMs);
+	const initialView = initialDetailView(
+		selection,
+		defaultWindowMs,
+		durationMs,
+		props.initialFocusMs ?? props.positionMs,
+	);
+	const [windowMs, setWindowMs] = useState(
+		() => initialView.endMs - initialView.startMs,
+	);
 	const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
 	const [viewDragging, setViewDragging] = useState<ViewDragKind | null>(null);
-	const [view, setView] = useState<TimeWindow>(() =>
-		// Stamp focus wins over selection state because the draft is installed in
-		// an effect immediately after this component's first render.
-		props.initialFocusMs !== undefined
-			? windowAround(props.initialFocusMs, defaultWindowMs, durationMs)
-			: selectionFitsWindow(selection, defaultWindowMs)
-				? windowForSelection(selection, defaultWindowMs, durationMs)
-				: // A fresh session is selected end to end, which says nothing about
-					// where a clip will be, so start the view on the playhead instead.
-					windowAround(props.positionMs, defaultWindowMs, durationMs),
-	);
+	const [view, setView] = useState<TimeWindow>(() => initialView);
+	const awaitingInitialSelectionRef = useRef(selection[1] <= selection[0]);
 	const msPerPx = windowMsPerPixel(view, plotWidth);
 	const selectionDrag = usePointerDrag<SelectionDragState>({
 		compute: (ghost, event) => {
@@ -159,6 +157,9 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 	useEffect(() => {
 		const previous = previousSelectionRef.current;
 		previousSelectionRef.current = selection;
+		const installedInitialSelection =
+			awaitingInitialSelectionRef.current && selection[1] > selection[0];
+		if (installedInitialSelection) awaitingInitialSelectionRef.current = false;
 		const moved = changedEdge(previous, selection);
 		const movedByBand = selectionShiftedAsBand(previous, selection);
 		const draggedSelection = draggedSelectionRef.current;
@@ -168,6 +169,17 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 				selection[1] === draggedSelection[1],
 		);
 		if (movedByDirectDrag) draggedSelectionRef.current = null;
+		if (installedInitialSelection) {
+			const nextView = initialDetailView(
+				selection,
+				defaultWindowMs,
+				durationMs,
+				props.initialFocusMs ?? positionRef.current,
+			);
+			setWindowMs(nextView.endMs - nextView.startMs);
+			setView(nextView);
+			return;
+		}
 		setView((current) => {
 			const width = Math.min(windowMs, Math.max(durationMs, 1));
 			if (Math.abs(current.endMs - current.startMs - width) > 0.5) {
@@ -189,7 +201,7 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 				durationMs,
 			);
 		});
-	}, [durationMs, selection, windowMs]);
+	}, [defaultWindowMs, durationMs, props.initialFocusMs, selection, windowMs]);
 
 	const synchronizeSelectionWithView = useCallback(
 		(
