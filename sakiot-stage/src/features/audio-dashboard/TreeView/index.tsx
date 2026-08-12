@@ -84,7 +84,7 @@ export default function CustomizedTreeView() {
 		);
 	}, [requiredKey]);
 
-	if (!data) return <div className="w-full p-3">Loading Tree</div>;
+	if (!data) return <div className="w-full">Loading Tree</div>;
 
 	const years = data.map((el, index) => (
 		<TreeViewYears el={el} index={index} liveSet={liveSet} key={el.year} />
@@ -115,7 +115,7 @@ export default function CustomizedTreeView() {
 					navigate(targetPath + location.search);
 				}
 			}}
-			className="w-full p-3"
+			className="w-full"
 		>
 			{years}
 		</SimpleTreeView>

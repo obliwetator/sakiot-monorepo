@@ -191,10 +191,10 @@ export function useClipEditor() {
 						timelineStart ?? endOfTrack(current, track),
 					),
 				);
-				return;
+				return Promise.resolve(true);
 			}
 			setLoadingClips((previous) => new Map(previous).set(clipId, true));
-			loadClipBuffer(guildId, clipId)
+			return loadClipBuffer(guildId, clipId)
 				.then((buffer) => {
 					registerBuffer(clipId, buffer);
 					apply((current) =>
@@ -206,9 +206,11 @@ export function useClipEditor() {
 							timelineStart ?? endOfTrack(current, track),
 						),
 					);
+					return true;
 				})
 				.catch(() => {
 					// The bin stays clickable; a failed decode just adds nothing.
+					return false;
 				})
 				.finally(() => {
 					setLoadingClips((previous) => {

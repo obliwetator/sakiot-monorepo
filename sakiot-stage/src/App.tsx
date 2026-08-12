@@ -1,6 +1,8 @@
 import Box from "@mui/material/Box";
 import CssBaseline from "@mui/material/CssBaseline";
-import { ThemeProvider } from "@mui/material/styles";
+import GlobalStyles from "@mui/material/GlobalStyles";
+import { StyledEngineProvider, ThemeProvider } from "@mui/material/styles";
+import type { ReactNode } from "react";
 import {
 	BrowserRouter,
 	createBrowserRouter,
@@ -22,46 +24,54 @@ const mainRouter = createBrowserRouter(
 function App() {
 	const { authData, isLoading, isLoggedIn } = useAuthBootstrap();
 
+	let content: ReactNode;
 	if (isLoading || !isLoggedIn) {
-		return (
-			<ThemeProvider theme={darkTheme}>
-				<BrowserRouter>
-					<LayoutsWithNavbar />
-					<Box p={2}>
-						{!isLoggedIn && !isLoading
-							? "You are not logged in or you are not authorized to view this content"
-							: "Loading Site"}
+		content = (
+			<BrowserRouter>
+				<LayoutsWithNavbar />
+				<Box p={2}>
+					{!isLoggedIn && !isLoading
+						? "You are not logged in or you are not authorized to view this content"
+						: "Loading Site"}
+				</Box>
+				<BundleUpdatePrompt />
+			</BrowserRouter>
+		);
+	} else {
+		content = (
+			<>
+				<RouterProvider router={mainRouter} />
+				<BundleUpdatePrompt />
+				{authData?.user?.is_dev && (
+					<Box
+						sx={{
+							position: "fixed",
+							bottom: 16,
+							right: 16,
+							backgroundColor: "error.main",
+							color: "error.contrastText",
+							padding: "4px 8px",
+							borderRadius: 1,
+							fontWeight: "bold",
+							zIndex: 9999,
+							pointerEvents: "none",
+						}}
+					>
+						DEV ACCOUNT
 					</Box>
-					<BundleUpdatePrompt />
-				</BrowserRouter>
-			</ThemeProvider>
+				)}
+			</>
 		);
 	}
 
 	return (
-		<ThemeProvider theme={darkTheme}>
-			<CssBaseline />
-			<RouterProvider router={mainRouter} />
-			<BundleUpdatePrompt />
-			{authData?.user?.is_dev && (
-				<Box
-					sx={{
-						position: "fixed",
-						bottom: 16,
-						right: 16,
-						backgroundColor: "error.main",
-						color: "error.contrastText",
-						padding: "4px 8px",
-						borderRadius: 1,
-						fontWeight: "bold",
-						zIndex: 9999,
-						pointerEvents: "none",
-					}}
-				>
-					DEV ACCOUNT
-				</Box>
-			)}
-		</ThemeProvider>
+		<StyledEngineProvider enableCssLayer>
+			<GlobalStyles styles="@layer theme, base, mui, components, utilities;" />
+			<ThemeProvider theme={darkTheme}>
+				<CssBaseline />
+				{content}
+			</ThemeProvider>
+		</StyledEngineProvider>
 	);
 }
 

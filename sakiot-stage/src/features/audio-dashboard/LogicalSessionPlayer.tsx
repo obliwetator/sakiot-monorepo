@@ -106,6 +106,19 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				: physicalFragments,
 		[effectiveChannelId, physicalFragments],
 	);
+	const manifestRecordingSessionId = manifest?.recording_session_id;
+	const manifestDurationMs = manifest?.duration_ms;
+	const selectionManifest = useMemo(
+		() =>
+			manifestRecordingSessionId !== undefined &&
+			manifestDurationMs !== undefined
+				? {
+						recordingSessionId: manifestRecordingSessionId,
+						durationMs: manifestDurationMs,
+					}
+				: null,
+		[manifestDurationMs, manifestRecordingSessionId],
+	);
 
 	const [volume, setVolume] = useState(1);
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -141,12 +154,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	});
 	const selectionController = useSessionSelectionController({
 		sessionId: props.sessionId,
-		manifest: manifest
-			? {
-					recordingSessionId: manifest.recording_session_id,
-					durationMs: manifest.duration_ms,
-				}
-			: null,
+		manifest: selectionManifest,
 		deepLink,
 		normal,
 		silence,
@@ -544,11 +552,20 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						label="Clip name"
 						value={clipName}
 						onChange={(event) => setClipName(event.target.value)}
+						sx={{
+							"& .MuiInputBase-root": { height: 40 },
+							"& input": {
+								boxSizing: "border-box",
+								height: "100%",
+								py: 0,
+							},
+						}}
 					/>
 					<Button
 						variant="contained"
 						onClick={() => void createSelectedClip()}
 						disabled={clipState.isLoading}
+						sx={{ height: 40 }}
 					>
 						Create clip
 					</Button>

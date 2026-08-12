@@ -95,8 +95,10 @@ ops/preview-slot.sh clip-editor --remove
   root) — the deploy engine expects these to pre-exist.
 - Installs the web systemd unit from the staging template (no bot unit —
   previews run no FBI Agent) and the nginx vhost from
-  `ops/nginx/preview-slot.conf.example`; runs `certbot --nginx` when
-  `CERTBOT_EMAIL` is set.
+  `ops/nginx/preview-slot.conf.example`; configures nginx's server-name hash
+  for long preview hostnames and validates nginx before reloading it. Runs
+  `certbot --nginx` when `CERTBOT_EMAIL` is set and fails provisioning if
+  certificate issuance fails.
 - `--remove` reverses everything for that slot: DNS record, cert, vhost,
   unit, database, and the slot's local data files (recording/clip/waveform
   copies — never staging's). It also **purges the B2 objects the slot

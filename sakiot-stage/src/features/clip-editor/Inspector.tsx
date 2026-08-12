@@ -51,16 +51,24 @@ export function Inspector(props: {
 
 	return (
 		<Box
+			component="aside"
+			aria-label="Inspector"
+			data-testid="clip-inspector"
 			sx={{
-				width: 260,
-				flex: "0 0 auto",
+				width: { xs: "100%", md: 260 },
+				maxHeight: { xs: segment ? "33.333%" : "none", md: "none" },
+				flex: {
+					xs: segment ? "0 0 33.333%" : "0 0 auto",
+					md: "0 0 auto",
+				},
 				minHeight: 0,
 				minWidth: 0,
 				overflowY: "auto",
 				overflowX: "hidden",
-				borderLeft: 1,
+				borderLeft: { xs: 0, md: 1 },
+				borderTop: { xs: 1, md: 0 },
 				borderColor: "divider",
-				p: 2,
+				p: { xs: 1, md: 2 },
 			}}
 		>
 			{segment ? (
