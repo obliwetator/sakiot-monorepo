@@ -11,6 +11,7 @@ stores audio and metadata, and exposes recordings through a web application.
 - `sakiot-paths` - Shared Rust crate for filesystem and URL conventions.
 - `sakiot-proto` - Shared gRPC contract and generated Rust types.
 - `sakiot-db` - Canonical PostgreSQL migrations and backup tooling.
+- `ops/sakiot-dev` - Typed `cargo dev` local-development orchestration.
 - `data` - Local runtime media. Ignored by Git.
 
 The Rust services share `sakiot-paths`, `sakiot-proto`, and one database schema.
@@ -18,49 +19,80 @@ Changes spanning these contracts can therefore be committed atomically.
 
 ## Local Development
 
-One command brings up a local debug environment for `web-server` on any
-machine (Docker, `sqlx-cli`, FFmpeg—including `ffprobe` and the `rubberband`
-audio filter—and `audiowaveform` are required):
+One command brings up a local debug environment for `web-server` and the
+frontend (Docker, FFmpeg—including `ffprobe` and the `rubberband` audio
+filter—`audiowaveform`, Cargo Watch, Bun, and `rsync` for fixture transfers are
+required):
 
 ```sh
-scripts/dev.sh
+cargo dev up
 ```
 
-On first run it generates a root `.env` with local values (random JWT and dev
-login secrets, Postgres on `localhost:54320`) and a `.env.development.local`
-that points the frontend at the local API. It then starts Postgres via
-`compose.dev.yml`, runs migrations, seeds a dev account and guild, and mirrors
-**all** of staging automatically — every finalized recording, clip and stamp,
-so the local machine is an exact copy on every run (needs `SAKIOT_DEV_SSH` or
-a live SSH prompt; a failed mirror logs a warning and the server still comes
-up). `scripts/dev.sh up ask` (or `SAKIOT_DEV_FETCH=ask`) swaps the mirror for
-the interactive prompt, which pulls a random sample from other guilds instead.
-It then starts `web-server` under `cargo watch` with the `dev-login` feature,
-so saving a Rust file rebuilds and restarts the server. Discord OAuth is not
-needed: the frontend's dev login button calls `/api/dev_login` using
-`VITE_DEV_LOGIN_SECRET`.
+On first run it atomically generates a root `.env` with local values (random
+JWT and dev-login secrets, Postgres on `localhost:54320`) and a
+`.env.development.local` that points the frontend at the local API. It then
+starts Postgres via `compose.dev.yml`, runs embedded migrations, seeds a dev
+account and guild, and applies the requested fixture policy. The default
+interactive prompt offers skip, full, or custom; non-interactive invocations
+must choose `--fixtures skip` or `--fixtures full`.
 
-Stopping the script with Ctrl+C also stops the local PostgreSQL container. Its
+`cargo dev up` supervises `web-server` under Cargo Watch and the frontend under
+Bun, prefixes their output, and stops both when either exits or Ctrl+C is
+pressed. Discord OAuth is not needed: the frontend's dev login button calls
+`/api/dev_login` using `VITE_DEV_LOGIN_SECRET`.
+
+Stopping `cargo dev up` with Ctrl+C also stops the local PostgreSQL container. Its
 named volume is preserved, so the next run starts with the same database.
 
-Run the frontend against it in another terminal:
+If you need to run only the frontend manually, use:
 
 ```sh
 cd sakiot-stage
 bun dev
 ```
 
+The command above is only useful when running the frontend manually; normal
+development starts both processes through `cargo dev up`.
+
 Other subcommands:
 
 ```sh
-scripts/dev.sh db              # only start Postgres + migrate + seed
-scripts/dev.sh up ask          # up, but prompt for a random sample instead of the full mirror
-scripts/dev.sh down            # stop Postgres
-scripts/dev.sh reset           # drop the local database volume and re-seed
-scripts/dev.sh fetch-fixtures  # mirror all recordings/clips/stamps from staging (see below)
-scripts/dev.sh fetch <what>    # copy one recording/session/clip/stamp (see below)
-scripts/dev.sh clean           # drop the db volume + delete fetched fixture files
+cargo dev db up                                      # Postgres + migrate + seed
+cargo dev up --fixtures prompt                       # choose skip/full/custom
+cargo dev db down                                    # stop Postgres
+cargo dev db reset                                   # drop the volume and re-seed
+cargo dev fixtures sync                              # show counts, then choose latest recordings
+cargo dev fixtures fetch <what>                     # copy one recording/session/clip/stamp
+cargo dev clean --yes                                # drop the volume + delete managed fixtures
 ```
+
+To enable shell completion for `cargo dev`, generate the completion script once
+for your shell. The generated script is static and only needs to be regenerated
+when the CLI commands or flags change. For zsh:
+
+```sh
+mkdir -p ~/.zfunc
+rustup completions zsh cargo > ~/.zfunc/_cargo
+cargo dev completions zsh > ~/.zfunc/_cargo-dev
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit && compinit
+```
+
+The first generated file provides zsh's Cargo dispatcher; it is required for
+Cargo to delegate `cargo dev` completion to the `_cargo-dev` script. If your
+shell already loads Cargo's `_cargo` completion, only the second command is
+needed.
+
+For bash, save it where bash-completion discovers Cargo subcommands:
+
+```sh
+mkdir -p ~/.local/share/bash-completion/completions
+cargo dev completions bash > ~/.local/share/bash-completion/completions/cargo-dev
+```
+
+Fish and PowerShell scripts are also available with `completions fish` and
+`completions powershell`. Completion covers commands, flags, and fixed enum
+values; fixture URLs, UUIDs, and remote numeric IDs remain free-form.
 
 The synthetic seed leaves the recordings list empty. To test the recordings
 UI with real audio, waveforms, and metadata, pull a sample from a deployed
@@ -70,35 +102,50 @@ to avoid entering the SSH target when the startup prompt requests recordings:
 
 ```sh
 SAKIOT_DEV_SSH=user@vps-host
-# Or invoke the standalone command directly (no flags = mirror all of staging):
-SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures
-# A random sample instead:
-SAKIOT_DEV_SSH=user@vps-host scripts/dev.sh fetch-fixtures --count 20 --clips 5 --stamps 5
-# optionally: --guild <id>
+# Or invoke the standalone command directly. It reports the server counts for
+# the live-test guild and asks how many newest recordings to download:
+SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync
+# Explicit counts are non-interactive and only select categories you name:
+SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --recordings 20
+SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --recordings 20 --clips 5 --stamps 5
+# Every eligible recording, clip, and stamp from the last seven days:
+SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --days 7
+# The default guild is 362257054829641758; override it only when intentional:
+SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --guild <id> --recordings 20
 ```
 
-Recordings are taken newest-first, because a recent one is usually what is being
-debugged. Clips and stamps accumulate over the whole history and the interesting
-ones are as likely to be old as new, so `--clips` and `--stamps` take a random
-sample instead; the run says how large the pool was:
+The interactive sync prints how many finalized recordings, clips, and stamps the
+selected guild has on the server, then asks for a newest-first recording count
+(10 is the default). It does not offer an implicit “all” choice. Use
+`--recordings all` explicitly when you really want every recording. Clips and
+stamps are only copied when their flags are supplied. `--days N` is the global
+time-window form: it copies every eligible recording, clip, and stamp whose
+source timestamp falls within the last N days:
 
 ```
-[dev] sampling 5 of 412 clip(s) in staging at random
+[dev] staging guild 362257054829641758 has 509 finalized recording(s), 36 clip(s), and 123 stamp(s) on the server
+[dev] download latest recording(s) (server has 509; enter a number or none) [10]:
 ```
 
-`fetch-fixtures` with no flags mirrors **all** of staging — every finalized
-recording, clip and stamp — so the local environment tracks the deployment
-wholesale:
+Bulk sync is scoped to guild `362257054829641758` by default, including startup
+fixture sync. A different guild requires an explicit `--guild` or
+`SAKIOT_DEV_FIXTURE_GUILD`; no command silently samples unrelated guilds.
 
 ```sh
-scripts/dev.sh fetch-fixtures                 # everything in staging
-scripts/dev.sh fetch-fixtures --guild 850192711649722368   # all of one guild
+cargo dev fixtures sync --recordings all             # every recording in the live-test guild
+cargo dev fixtures sync --recordings 20 --clips 5    # newest recordings + five clips, same guild
+cargo dev fixtures sync --days 7                     # every category from last 7 days
+cargo dev fixtures sync --guild 362257054829641758 --recordings 20
 ```
 
-A positive `--count` replaces the previously managed fixture recordings and
-media; it does not touch unrelated local data. It is the only selection that
-re-answers "which recordings do I want?", so it is the only one that replaces
-anything (and the same applies to the `all` default): `--count 0` keeps the
+`--days` is mutually exclusive with the individual category count flags. For
+the global recent window, use `--days N` by itself.
+
+A positive `--recordings` count replaces the previously managed fixture
+recordings and media; it does not touch unrelated local data. It is the only
+selection that re-answers "which recordings do I want?", so it is the only one
+that replaces anything (and the same applies to the `all` default):
+`--recordings none` keeps the
 existing set even when the same run asks for clips or stamps, and
 `--clips`/`--stamps` only ever add. Tracking rows in
 `media_objects` for a replaced recording are dropped with it — the FK is
@@ -112,18 +159,18 @@ When a particular production file misbehaves or makes a good test sample, hand
 its dashboard URL straight to `fetch`:
 
 ```sh
-scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/763782256980131892/2026/7/1785336946781-161172393719496704
-scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/audio/session/384
-scripts/dev.sh fetch https://patrykstyla.com/dashboard/362257054829641758/clips/2ae61e36-ada8-45df-baed-8aa26386c826
-scripts/dev.sh fetch 1785336946781-161172393719496704   # bare file name
-scripts/dev.sh fetch 2ae61e36-ada8-45df-baed-8aa26386c826  # bare clip UUID
-scripts/dev.sh fetch 384                                # bare id, resolved remotely
-scripts/dev.sh fetch --stamp 1204                       # stamps have no URL of their own
+cargo dev fixtures fetch https://patrykstyla.com/dashboard/362257054829641758/audio/763782256980131892/2026/7/1785336946781-161172393719496704
+cargo dev fixtures fetch https://patrykstyla.com/dashboard/362257054829641758/audio/session/384
+cargo dev fixtures fetch https://patrykstyla.com/dashboard/362257054829641758/clips/2ae61e36-ada8-45df-baed-8aa26386c826
+cargo dev fixtures fetch 1785336946781-161172393719496704   # bare file name
+cargo dev fixtures fetch 2ae61e36-ada8-45df-baed-8aa26386c826  # bare clip UUID
+cargo dev fixtures fetch 384                                # bare id, resolved remotely
+cargo dev fixtures fetch 1204 --kind stamp                   # stamps have no URL of their own
 ```
 
 A file URL pulls that fragment; a session URL pulls every fragment of the
 logical session. Both also pull the parent `recording_sessions` row plus its
-gaps and timeline events. Unlike `--count`, this **adds** to the fixture set
+gaps and timeline events. Unlike a recording sync, this **adds** to the fixture set
 instead of replacing it, and re-running the same fetch is a no-op.
 
 ### Clips and stamps travel with their session
@@ -169,12 +216,13 @@ the recorded one, along with their names.
 
 The host in the URL picks the source, so a `patrykstyla.com` link reads from
 production and a `staging.patrykstyla.com` one from staging. Override with
-`--source prod|staging`, or set `SAKIOT_DEV_SOURCE` in `.env` for bare ids. A
+`--source production|staging`, or set `SAKIOT_DEV_SOURCE` in `.env` for bare ids. A
 bare number can be either an `audio_files.id` or a `recording_sessions.id`; the
-script looks it up and asks for `--recording` or `--session` only if both match.
+CLI looks it up and requires `--kind recording` or `--kind session` if both match.
 `stamps.id` is deliberately left out of that guess — it is a third dense sequence,
-so including it would make almost every bare number ambiguous; name a stamp with
-`--stamp` instead. A bare UUID can only be a clip, so it needs no disambiguation.
+so including it would make almost every bare number ambiguous; select a stamp
+with `--kind stamp`. A bare UUID can only be a clip, so it needs no
+disambiguation.
 
 URLs stay portable. `file_name`, guild, channel, year and month survive the
 import unchanged, and a session keeps its source `recording_sessions.id` when the
@@ -195,13 +243,13 @@ open when it finishes.
 
 ### Copying production data into staging
 
-`--into staging` puts the same selection into the staging instance instead of
+`--destination staging` puts the same selection into the staging instance instead of
 the local dev database, for reproducing something on `staging.patrykstyla.com`:
 
 ```sh
-scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../audio/session/384 --into staging
-scripts/dev.sh fetch https://patrykstyla.com/dashboard/362.../clips/2ae61e36-... --into staging
-scripts/dev.sh fetch --stamp 1204 --source prod --into staging
+cargo dev fixtures fetch https://patrykstyla.com/dashboard/362.../audio/session/384 --destination staging
+cargo dev fixtures fetch https://patrykstyla.com/dashboard/362.../clips/2ae61e36-... --destination staging
+cargo dev fixtures fetch 1204 --kind stamp --source production --destination staging
 ```
 
 It takes one named recording, session, clip or stamp — never a bulk or random
@@ -247,7 +295,7 @@ then direct `psql`. For a nonstandard database setup, override the remote
 command:
 
 ```sh
-SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" scripts/dev.sh fetch-fixtures
+SAKIOT_DEV_REMOTE_PSQL="sudo -n -u postgres psql" cargo dev fixtures sync
 ```
 
 Each candidate is accepted only if it actually holds `SELECT` on `audio_files`,
@@ -259,14 +307,13 @@ Archive-pruned recordings and clips are materialized and SHA-256 verified before
 `rsync` (`web_server media restore --audio-file-ids` / `--clip-ids`). The workflow
 first tries the source environment/binary directly, then `sudo -n -u sakiot`.
 
-Clips are checked on the source disk first and only the genuinely absent ones are
-requested, so the archive is usually not involved at all. The two failures are
-also weighted differently: a fetch whose *audio* never arrives is not worth
-having, so a failed recording restore aborts, while a failed clip restore warns
-and carries on — the rows and recordings are still useful, and the run ends by
-naming each clip that imported without audio. That also keeps the script working
-against a deployment older than `media restore --clip-ids`, which would otherwise
-reject the call outright.
+Recordings and clips are checked on the source disk first, so the archive is only
+asked for genuinely absent media. If a recording is still unavailable, sync warns
+and imports the metadata without that physical file; a missing recording is not a
+mission-critical sync failure. Clips behave the same way and are reported as
+metadata without audio. That also keeps the workflow useful against a deployment
+older than `media restore --clip-ids`, which would otherwise reject the call
+outright.
 
 Override unusual layouts with
 `SAKIOT_DEV_REMOTE_WEB_BINARY`, `SAKIOT_DEV_REMOTE_ENV_FILE`,
@@ -288,9 +335,11 @@ chmod 600 .env
 ```
 
 The root `.env` is used by both Rust services, SQLx macros and CLI commands, and
-the database backup scripts. Set `SAKIOT_ENV_FILE` to override its path for
-backup jobs. Frontend development values live in root `.env.development`; Vite
-loads environment files from the monorepo root.
+the database backup scripts. For `cargo dev`, command-line flags override
+exported variables, which override root `.env`, which override built-in
+defaults. Set `SAKIOT_ENV_FILE` to override its path for backup jobs. Frontend
+development values live in root `.env.development`; Vite loads environment
+files from the monorepo root.
 
 Backblaze archive variables default to disabled for local development. Enabled
 deployments require every `SAKIOT_MEDIA_S3_*` value and fail startup on partial
@@ -310,9 +359,7 @@ DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test --workspace
 For isolated local PostgreSQL on port `54320`:
 
 ```sh
-docker compose -f compose.dev.yml up -d
-DATABASE_URL=postgres://postgres:password@localhost:54320/sakiot_rouvas \
-  sqlx migrate run --source sakiot-db/migrations
+cargo dev db up
 ```
 
 ## Rust Workspace

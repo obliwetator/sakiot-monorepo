@@ -35,7 +35,7 @@ while IFS= read -r path; do
       dsp=true
       frontend=true
       ;;
-    ops/sakiot-deploy/*)
+    ops/sakiot-dev/*|ops/sakiot-deploy/*)
       rust=true
       ops=true
       ;;

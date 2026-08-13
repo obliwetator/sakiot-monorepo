@@ -12,9 +12,9 @@ the shared database migrations in `../sakiot-db`, and local setup.
 
 ## Local Debug
 
-For a quick local edit loop, `../scripts/dev.sh` starts Postgres, runs
-migrations, seeds a dev account, and runs this server under `cargo watch`
-with the `dev-login` cargo feature (Discord OAuth bypass via
+For a quick local edit loop, `cargo dev up --fixtures skip` starts Postgres,
+runs migrations, seeds a dev account, starts the frontend, and runs this server
+under `cargo watch` with the `dev-login` cargo feature (Discord OAuth bypass via
 `GET /api/dev_login` and `DEV_LOGIN_SECRET`). See the root `README.md`.
 
 When running manually:

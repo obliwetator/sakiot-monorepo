@@ -3,3 +3,6 @@ rustflags = ["--cfg", "tokio_unstable"]
 
 [env]
 SQLX_OFFLINE = "true"
+
+[alias]
+dev = "run --package sakiot-dev --"

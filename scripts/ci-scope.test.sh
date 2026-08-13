@@ -56,6 +56,11 @@ assert_scope \
   "ops/sakiot-deploy/src/deploy.rs"
 
 assert_scope \
+  "development CLI" \
+  true false false false true \
+  "ops/sakiot-dev/src/cli.rs"
+
+assert_scope \
   "mixed frontend and rust" \
   true false false true false \
   "sakiot-stage/src/index.tsx" \

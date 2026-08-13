@@ -1,5 +1,5 @@
 -- Minimal local-dev seed. Idempotent: every insert is ON CONFLICT DO NOTHING.
--- Run via scripts/dev.sh, which passes -v dev_id=<DEV_ACCOUNT_ID>.
+-- Run via `cargo dev db up`, which substitutes <DEV_ACCOUNT_ID> atomically.
 
 INSERT INTO discord_auth_user (id, username, discriminator, avatar, email, flags, public_flags)
 VALUES (:dev_id, 'local-dev', '0', '', 'dev@localhost', 0, 0)

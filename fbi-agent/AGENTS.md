@@ -15,8 +15,8 @@ Database tests use `#[sqlx::test]` and must never run with the runtime
 `DATABASE_URL`. Load the root `.env` first so `SAKIOT_TEST_DATABASE_URL` is set.
 
 Especially in local development, make sure the local PostgreSQL container is
-running before executing database-backed tests. Run `scripts/dev.sh` from the
-repository root for the full development environment, or `scripts/dev.sh db`
+running before executing database-backed tests. Run `cargo dev up --fixtures skip`
+from the repository root for the full development environment, or `cargo dev db up`
 when only PostgreSQL, migrations, and seed data are needed. Then run SQLx tests
 with `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL"` as shown above.
 
