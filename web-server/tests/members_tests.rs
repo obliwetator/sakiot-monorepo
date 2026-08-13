@@ -470,7 +470,7 @@ async fn seed_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn role_view_shows_channels_role_can_see(
+async fn role_view_lists_every_channel_with_access(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_preview_data(&pool).await?;
@@ -489,8 +489,9 @@ async fn role_view_shows_channels_role_can_see(
     .await;
 
     // Listeners: @everyone (1049600) + VIEW_CHANNEL, denied CONNECT on the
-    // restricted channel. Both channels stay visible — CHANNEL_B only as a
-    // channel they can see, not join.
+    // restricted channel and denied VIEW_CHANNEL on the secret channel. All
+    // three channels are listed: CHANNEL_B visible but not joinable, CHANNEL_C
+    // not even visible.
     let request = test::TestRequest::get()
         .uri(&format!(
             "/api/admin/guilds/{GUILD_ID}/roles/{VIEW_ROLE_ID}/channels"
@@ -503,7 +504,7 @@ async fn role_view_shows_channels_role_can_see(
     assert_eq!(body["permission"], json!("1049600".to_string()));
     assert_eq!(body["can_manage_guild"], false);
     let channels = body["channels"].as_array().unwrap();
-    assert_eq!(channels.len(), 2);
+    assert_eq!(channels.len(), 3);
     let by_id = |id: i64| -> Value {
         channels
             .iter()
@@ -512,9 +513,14 @@ async fn role_view_shows_channels_role_can_see(
             .expect("channel present")
     };
     assert_eq!(by_id(CHANNEL_A)["name"], "public");
+    assert_eq!(by_id(CHANNEL_A)["can_view"], true);
     assert_eq!(by_id(CHANNEL_A)["can_join"], true);
     assert_eq!(by_id(CHANNEL_B)["name"], "restricted");
+    assert_eq!(by_id(CHANNEL_B)["can_view"], true);
     assert_eq!(by_id(CHANNEL_B)["can_join"], false);
+    assert_eq!(by_id(CHANNEL_C)["name"], "secret");
+    assert_eq!(by_id(CHANNEL_C)["can_view"], false);
+    assert_eq!(by_id(CHANNEL_C)["can_join"], false);
 
     // Admins: ADMINISTRATOR short-circuits to every voice channel, joinable.
     let request = test::TestRequest::get()

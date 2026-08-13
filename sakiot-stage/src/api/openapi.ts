@@ -902,6 +902,7 @@ export interface components {
 		};
 		RoleChannel: {
 			can_join: boolean;
+			can_view: boolean;
 			/** @example 146638124288704513 */
 			channel_id: string;
 			name: string;

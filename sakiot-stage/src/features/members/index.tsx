@@ -96,12 +96,12 @@ function RolePreviewDialog(props: {
 							</Box>
 							{roleView.channels.length === 0 ? (
 								<Typography variant="body2" color="text.secondary">
-									No voice channels visible to this role.
+									No voice channels in this guild.
 								</Typography>
 							) : (
 								<Box>
 									<Typography variant="subtitle2" gutterBottom>
-										Visible voice channels ({roleView.channels.length})
+										Voice channels ({roleView.channels.length})
 									</Typography>
 									<List dense disablePadding>
 										{roleView.channels.map((channel) => (
@@ -109,14 +109,27 @@ function RolePreviewDialog(props: {
 												key={channel.channel_id}
 												disablePadding
 												secondaryAction={
-													<Chip
-														size="small"
-														variant="outlined"
-														color={channel.can_join ? "success" : "default"}
-														label={
-															channel.can_join ? "Can join" : "Visible only"
-														}
-													/>
+													channel.can_join ? (
+														<Chip
+															size="small"
+															variant="outlined"
+															color="success"
+															label="Can join"
+														/>
+													) : channel.can_view ? (
+														<Chip
+															size="small"
+															variant="outlined"
+															label="Visible only"
+														/>
+													) : (
+														<Chip
+															size="small"
+															variant="outlined"
+															color="error"
+															label="Hidden"
+														/>
+													)
 												}
 											>
 												<ListItemButton dense>
@@ -132,8 +145,10 @@ function RolePreviewDialog(props: {
 							)}
 							<Alert severity="info" variant="outlined">
 								Open the audio preview to browse recordings, clips and stamps as
-								this role. Channels marked "Visible only" won't appear there —
-								playback needs join permission, which the role lacks.
+								this role. Channels marked "Visible only" or "Hidden" won't
+								appear there — playback needs join permission, which the role
+								lacks. Sessions spanning a hidden channel are invisible
+								entirely.
 							</Alert>
 						</Stack>
 					)

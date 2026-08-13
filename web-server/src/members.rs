@@ -160,6 +160,7 @@ pub struct RoleChannel {
     #[schema(value_type = String, example = "146638124288704513")]
     pub channel_id: i64,
     pub name: String,
+    pub can_view: bool,
     pub can_join: bool,
 }
 
@@ -211,29 +212,28 @@ pub async fn get_role_view(
 
     let permission = get_combined_perm_for_role(&pool, guild_id, role_id).await?;
     let access = get_channel_access_for_role(&pool, guild_id, role_id).await?;
-    let visible: Vec<i64> = access
-        .iter()
-        .filter(|a| a.viewable)
-        .map(|a| a.channel_id)
-        .collect();
-    let can_join: std::collections::HashSet<i64> = access
-        .into_iter()
-        .filter(|a| a.joinable)
-        .map(|a| a.channel_id)
-        .collect();
+    // Every voice channel is listed, including ones the role cannot see at
+    // all — the manager preview shows the full picture per channel.
+    let all_ids: Vec<i64> = access.iter().map(|a| a.channel_id).collect();
+    let access: std::collections::HashMap<i64, _> =
+        access.into_iter().map(|a| (a.channel_id, a)).collect();
     let rows = sqlx::query!(
         "SELECT channel_id, name FROM channels WHERE channel_id = ANY($1)",
-        &visible
+        &all_ids
     )
     .fetch_all(pool.get_ref())
     .await?;
 
     let mut channels: Vec<RoleChannel> = rows
         .into_iter()
-        .map(|r| RoleChannel {
-            channel_id: r.channel_id,
-            name: r.name.unwrap_or_default(),
-            can_join: can_join.contains(&r.channel_id),
+        .filter_map(|r| {
+            let a = access.get(&r.channel_id)?;
+            Some(RoleChannel {
+                channel_id: r.channel_id,
+                name: r.name.unwrap_or_default(),
+                can_view: a.viewable,
+                can_join: a.joinable,
+            })
         })
         .collect();
     channels.sort_by(|a, b| a.name.cmp(&b.name));
