@@ -14,6 +14,7 @@ interface PlaybackBound {
 
 interface SilencePlaybackOptions {
 	mediaUrl: string | null;
+	initialDurationMs?: number;
 	volume: number;
 	playbackRate: number;
 	onLoopDisabled: () => void;
@@ -31,7 +32,7 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const retryRef = useRef(false);
 	const positionRef = useRef(0);
-	const durationRef = useRef(0);
+	const durationRef = useRef(options.initialDurationMs ?? 0);
 	const playingRef = useRef(false);
 	const boundRef = useRef<PlaybackBound | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
@@ -59,15 +60,15 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 		// with independent duration, position, and single-retry state.
 		void mediaUrl;
 		retryRef.current = false;
-		durationRef.current = 0;
+		durationRef.current = options.initialDurationMs ?? 0;
 		positionRef.current = 0;
-		setDurationMs(0);
+		setDurationMs(durationRef.current);
 		setPositionMs(0);
 		setSeekPreviewMs(null);
 		setPlaybackError(null);
 		boundRef.current = null;
 		setBoundActive(false);
-	}, [mediaUrl]);
+	}, [mediaUrl, options.initialDurationMs]);
 
 	const clearBound = useCallback(() => {
 		boundRef.current = null;

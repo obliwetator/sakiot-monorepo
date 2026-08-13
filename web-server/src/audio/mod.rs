@@ -20,9 +20,11 @@ pub use peaks::{get_clip_waveform_data, get_waveform_data, spawn_clip_waveform};
 pub use reaper::spawn_hls_reaper;
 pub use serve::{download_audio, get_audio};
 pub use sessions::{
-    create_session_clip, download_session, get_session_events, get_session_manifest,
-    get_session_segment, get_session_silence_free, get_session_silence_free_waveform,
-    get_session_silence_removal_status, get_session_waveform,
+    ChannelMixMediaQuery, ChannelMixParticipant, ChannelMixReason, ChannelMixResponse,
+    ChannelMixStatus, SessionMixContainer, create_session_clip, download_session,
+    generate_session_channel_mix, get_session_channel_mix, get_session_channel_mix_media,
+    get_session_events, get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
     rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
     session_live_playlist, session_live_segment,
 };

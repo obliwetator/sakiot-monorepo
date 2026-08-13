@@ -30,12 +30,14 @@ mod actions;
 mod clips;
 mod composition;
 mod manifest;
+mod mix;
 mod waveforms;
 
 pub(crate) use access::{require_recording_access, require_session_access};
 pub use actions::*;
 pub use clips::*;
 pub use manifest::*;
+pub use mix::*;
 pub use waveforms::*;
 
 use composition::*;
@@ -99,6 +101,8 @@ struct AudioFragment {
     id: i64,
     guild_id: i64,
     channel_id: i64,
+    user_id: i64,
+    recording_session_id: Option<i64>,
     file_name: String,
     year: i32,
     month: i32,

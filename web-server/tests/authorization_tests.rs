@@ -9,9 +9,10 @@ use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
 use web_server::audio::{
-    LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
-    download_audio, download_session, get_audio, get_recording_events, get_session_events,
-    get_session_manifest, get_session_segment, get_session_silence_free,
+    LiveContainer, SessionMixContainer, SilenceJobContainer, WaveformProgressContainer,
+    create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
+    get_recording_events, get_session_channel_mix, get_session_channel_mix_media,
+    get_session_events, get_session_manifest, get_session_segment, get_session_silence_free,
     get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
     get_waveform_data, live_playlist, live_segment, live_state,
     rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
@@ -125,12 +126,16 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
                 HashMap::new(),
             ))))
             .app_data(web::Data::new(LiveContainer::default()))
+            .app_data(web::Data::new(SessionMixContainer::default()))
             .app_data(web::Data::new(SilenceJobContainer::default()))
             .service(
                 web::scope("/api")
                     .wrap(AuthMiddleware)
                     .service(get_session_manifest)
                     .service(get_session_events)
+                    .service(get_session_channel_mix)
+                    .service(generate_session_channel_mix)
+                    .service(get_session_channel_mix_media)
                     .service(get_session_waveform)
                     .service(rebuild_session_waveform)
                     .service(download_session)
@@ -159,9 +164,12 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
     let forbidden_gets = [
         format!("/api/audio/sessions/{session_id}/manifest"),
         format!("/api/audio/sessions/{session_id}/events"),
+        format!("/api/audio/sessions/{session_id}/channel-mix"),
+        format!("/api/audio/sessions/{session_id}/channel-mix/media"),
         format!("/api/audio/sessions/{session_id}/silence-free"),
         format!("/api/audio/sessions/{session_id}/silence-free/waveform"),
         format!("/api/audio/sessions/{session_id}/remove-silence"),
+        format!("/api/audio/sessions/{session_id}/channel-mix"),
         format!("/api/audio/sessions/{session_id}/waveform"),
         format!("/api/audio/sessions/{session_id}/download"),
         format!("/api/audio/sessions/{session_id}/segments/{first_audio_id}"),

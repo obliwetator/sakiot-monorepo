@@ -77,6 +77,7 @@ export type SessionTimelineEvent = ApiSchema["SessionTimelineEventDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 
 export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
+export type ChannelMixResponse = ApiSchema["ChannelMixResponse"];
 
 export interface WaveformResponse {
 	progress: number;
@@ -162,6 +163,16 @@ export const apiSlice = createApi({
 		getSessionManifest: builder.query<SessionManifest, string>({
 			query: (recording_session_id) =>
 				`audio/sessions/${recording_session_id}/manifest`,
+		}),
+		getSessionChannelMix: builder.query<ChannelMixResponse, string>({
+			query: (recording_session_id) =>
+				`audio/sessions/${recording_session_id}/channel-mix`,
+		}),
+		generateSessionChannelMix: builder.mutation<ChannelMixResponse, string>({
+			query: (recording_session_id) => ({
+				url: `audio/sessions/${recording_session_id}/channel-mix`,
+				method: "POST",
+			}),
 		}),
 		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
 			query: (recording_session_id) =>
@@ -512,6 +523,8 @@ export const {
 	useGetCurrentGuildDirsQuery,
 	useGetLiveStemsQuery,
 	useGetSessionManifestQuery,
+	useGetSessionChannelMixQuery,
+	useGenerateSessionChannelMixMutation,
 	useGetSessionWaveformQuery,
 	useGetSilenceFreeSessionWaveformQuery,
 	useRebuildSessionWaveformMutation,

@@ -236,6 +236,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/sessions/{recording_session_id}/channel-mix": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_channel_mix"];
+		put?: never;
+		post: operations["generate_session_channel_mix"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/channel-mix/media": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_channel_mix_media"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/sessions/{recording_session_id}/clips": {
 		parameters: {
 			query?: never;
@@ -653,6 +685,40 @@ export interface components {
 			code: number;
 			message: string;
 		};
+		ChannelMixMediaQuery: {
+			download?: boolean | null;
+		};
+		ChannelMixParticipant: {
+			display_name?: string | null;
+			session_ids: string[];
+			/** Format: int32 */
+			source_count: number;
+			user_id: string;
+		};
+		ChannelMixReason: {
+			code: string;
+			message: string;
+		};
+		ChannelMixResponse: {
+			/** Format: int64 */
+			duration_ms: number;
+			media_url?: string | null;
+			participants: components["schemas"]["ChannelMixParticipant"][];
+			/** Format: int32 */
+			progress: number;
+			reason?: null | components["schemas"]["ChannelMixReason"];
+			/** Format: int32 */
+			source_count: number;
+			status: components["schemas"]["ChannelMixStatus"];
+		};
+		/** @enum {string} */
+		ChannelMixStatus:
+			| "unavailable"
+			| "waiting"
+			| "idle"
+			| "processing"
+			| "ready"
+			| "failed";
 		Channels: {
 			channel_id: string;
 			dirs: components["schemas"]["Directories"][];
@@ -2224,6 +2290,186 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_channel_mix: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Timestamp-aligned channel mix status */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ChannelMixResponse"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more contributor sessions are inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Mix status failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	generate_session_channel_mix: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Mix is ready or cannot currently be generated */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ChannelMixResponse"];
+				};
+			};
+			/** @description Mix render started or is already running */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ChannelMixResponse"];
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more contributor sessions are inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Session not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Mix render could not be started */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_channel_mix_media: {
+		parameters: {
+			query?: {
+				/** @description Download instead of inline playback */
+				download?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Timestamp-aligned Ogg/Opus mix */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Missing access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description One or more contributor sessions are inaccessible */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Mix has not been generated */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

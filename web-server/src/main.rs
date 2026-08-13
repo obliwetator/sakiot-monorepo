@@ -18,9 +18,10 @@ use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
 use web_server::audio::{
-    LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
-    download_audio, download_session, get_audio, get_clip_waveform_data,
-    get_current_month_permission, get_live_stems, get_recording_events, get_session_events,
+    LiveContainer, SessionMixContainer, SilenceJobContainer, WaveformProgressContainer,
+    create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
+    get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
+    get_session_channel_mix, get_session_channel_mix_media, get_session_events,
     get_session_manifest, get_session_segment, get_session_silence_free,
     get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
     get_waveform_data, live_playlist, live_segment, live_state,
@@ -111,6 +112,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let silence_jobs = web::Data::new(SilenceJobContainer::default());
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
     let live_container = web::Data::new(LiveContainer::default());
+    let session_mix_container = web::Data::new(SessionMixContainer::default());
     let agent_grpc_registry = web::Data::new(AgentGrpcRegistry::new(&cfg.grpc_address));
 
     let pool = PgPoolOptions::new()
@@ -196,6 +198,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(create_clip)
             .service(get_session_manifest)
             .service(get_session_events)
+            .service(get_session_channel_mix)
+            .service(generate_session_channel_mix)
+            .service(get_session_channel_mix_media)
             .service(get_session_waveform)
             .service(rebuild_session_waveform)
             .service(download_session)
@@ -236,6 +241,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(silence_jobs.clone())
             .app_data(waveform_progress.clone())
             .app_data(live_container.clone())
+            .app_data(session_mix_container.clone())
             .app_data(agent_grpc_registry.clone())
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
