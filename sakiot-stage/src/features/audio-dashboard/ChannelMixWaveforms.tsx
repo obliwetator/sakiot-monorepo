@@ -2,12 +2,12 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import { useCallback, useEffect, useState } from "react";
+import { useMemo } from "react";
 import type {
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
-import { authedFetch } from "../../app/authedFetch";
+import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
 import { formatDuration } from "../../utils/formatTime";
 import { layoutChannelMixSegment } from "./channelMixWaveform";
 import { WaveformCanvas } from "./WaveformCanvas";
@@ -28,58 +28,31 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	error: boolean;
 	build: () => void;
 } {
-	const [peaks, setPeaks] = useState<WaveformEnvelope>(EMPTY_WAVEFORM_ENVELOPE);
-	const [loading, setLoading] = useState(true);
-	const [building, setBuilding] = useState(false);
-	const [progress, setProgress] = useState(0);
-	const [error, setError] = useState(false);
+	const cached = apiSlice.endpoints.getWaveformByUrl.useQueryState(
+		segment.waveform_url,
+	);
+	const cachedData = cached.currentData?.data;
+	const cachedError = Boolean(cached.error || cached.currentData?.error);
+	const query = useGetWaveformByUrlQuery(segment.waveform_url, {
+		// Both live and finalized sources poll only until their first successful
+		// payload. RTK Query shares that one request across every rendering of the
+		// same physical source, and a live snapshot stays cached for this page.
+		pollingInterval: cachedError || cachedData ? 0 : 1_000,
+	});
+	const encoded = query.currentData?.data;
+	const peaks = useMemo(
+		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
+		[encoded],
+	);
+	const hasData = Boolean(encoded);
+	const error = query.isError || Boolean(query.currentData?.error);
+	const loading = query.isLoading && !hasData;
+	const building = !hasData && !error && Boolean(query.currentData);
+	const progress = Math.max(0, Math.min(99, query.currentData?.progress ?? 0));
 
-	const load = useCallback(async () => {
-		try {
-			const response = await authedFetch(segment.waveform_url);
-			if (!response.ok) throw new Error(`waveform ${response.status}`);
-			const payload = (await response.json()) as {
-				data?: string;
-				progress?: number;
-			};
-			if (payload.data) {
-				setPeaks(decodeWaveformPeaks(payload.data));
-				setError(false);
-				setLoading(false);
-				setBuilding(false);
-				setProgress(100);
-			} else {
-				setLoading(false);
-				setBuilding(true);
-				setProgress(Math.max(0, Math.min(99, payload.progress ?? 0)));
-			}
-		} catch {
-			setError(true);
-			setLoading(false);
-			setBuilding(false);
-		}
-	}, [segment.waveform_url]);
-
-	const build = useCallback(() => {
-		setError(false);
-		setLoading(true);
-		setBuilding(true);
-		setProgress(0);
-		void load();
-	}, [load]);
-
-	useEffect(() => {
-		setLoading(true);
-		setError(false);
-		void load();
-		const interval =
-			segment.live || building
-				? window.setInterval(() => void load(), segment.live ? 5_000 : 1_000)
-				: null;
-		return () => {
-			if (interval !== null) window.clearInterval(interval);
-		};
-	}, [building, load, segment.live]);
+	const build = () => {
+		void query.refetch();
+	};
 
 	return { peaks, loading, building, progress, error, build };
 }

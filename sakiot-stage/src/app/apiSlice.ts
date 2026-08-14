@@ -403,6 +403,13 @@ export const apiSlice = createApi({
 				};
 			},
 		}),
+		// Channel-mix source metadata already contains the canonical root-relative
+		// waveform URL. Keep those requests in RTK Query's cache too so the same
+		// physical source can be rendered in both the track and source rows without
+		// starting another fetch (or another server-side build).
+		getWaveformByUrl: builder.query<WaveformResponse, string>({
+			query: (url) => url.replace(/^\/api\//, ""),
+		}),
 		// Clips are their own trimmed file, keyed by clip_id — separate endpoint
 		// from the recording waveform (which needs channel_id/year/month).
 		getClipWaveform: builder.query<
@@ -563,6 +570,7 @@ export const {
 	useGetLiveStateQuery,
 	useGetRecordingEventsQuery,
 	useGetWaveformQuery,
+	useGetWaveformByUrlQuery,
 	useLazyGetWaveformQuery,
 	useGetClipWaveformQuery,
 	useGetStampsQuery,

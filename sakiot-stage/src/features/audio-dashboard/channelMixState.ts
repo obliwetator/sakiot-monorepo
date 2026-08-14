@@ -23,7 +23,8 @@ export function parseChannelMixStatus(
 
 export function channelMixPollInterval(status: unknown): number {
 	const parsed = parseChannelMixStatus(status);
-	return parsed === "waiting" || parsed === "processing" ? 1_500 : 0;
+	if (parsed === "processing") return 1_500;
+	return 0;
 }
 
 export function canGenerateChannelMix(

@@ -76,8 +76,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	useEffect(() => {
 		if (manifest?.state === "finalized") setFinalizedSessionId(props.sessionId);
 	}, [manifest?.state, props.sessionId]);
-	const [channelMixPollingInterval, setChannelMixPollingInterval] =
-		useState(1_500);
+	const [channelMixPollingInterval, setChannelMixPollingInterval] = useState(0);
 	const [activePlaybackTab, setActivePlaybackTab] = useState<
 		"normal" | "silence" | "mix"
 	>("normal");
@@ -97,10 +96,19 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 	const channelMixStatus = channelMix?.status;
 	useEffect(() => {
-		setChannelMixPollingInterval(
-			channelMixStatus ? channelMixPollInterval(channelMixStatus) : 1_500,
-		);
+		setChannelMixPollingInterval(channelMixPollInterval(channelMixStatus));
 	}, [channelMixStatus]);
+	const previousManifestStateRef = useRef<string | null>(null);
+	useEffect(() => {
+		const state = manifest?.state ?? null;
+		if (state === "finalized" && previousManifestStateRef.current !== state) {
+			// A live mix deliberately stops polling while the anchor is waiting.
+			// Refresh once when the manifest becomes final so it can move to idle or
+			// ready without keeping a live page on a tight status loop.
+			void refetchChannelMix();
+		}
+		previousManifestStateRef.current = state;
+	}, [manifest?.state, refetchChannelMix]);
 	const [generateMix, generateMixState] =
 		useGenerateSessionChannelMixMutation();
 	const mixDraft = useChannelMixDraft(props.sessionId, channelMix);

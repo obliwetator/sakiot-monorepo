@@ -23,8 +23,8 @@ describe("channel mix status parsing", () => {
 		expect(parseChannelMixStatus(1)).toBeNull();
 	});
 
-	test("polls only while waiting or processing", () => {
-		expect(channelMixPollInterval("waiting")).toBe(1_500);
+	test("polls only while a mix is rendering", () => {
+		expect(channelMixPollInterval("waiting")).toBe(0);
 		expect(channelMixPollInterval("processing")).toBe(1_500);
 		expect(channelMixPollInterval("ready")).toBe(0);
 		expect(channelMixPollInterval(undefined)).toBe(0);

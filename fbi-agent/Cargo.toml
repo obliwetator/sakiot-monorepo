@@ -15,7 +15,7 @@ serenity = { version = "0.12", default-features = false, features = [
 	"http",
 	"model",
 	"utils",
-	"rustls_backend",
+	"native_tls_backend",
 	"unstable_discord_api",
 ] }
 tokio = { version = "1.0", features = [
@@ -24,10 +24,14 @@ tokio = { version = "1.0", features = [
 	"tracing",
 	"signal",
 ] }
-songbird = { version = "0.6", features = [
+songbird = { version = "0.6", default-features = false, features = [
 	"driver",
+	"gateway",
 	"builtin-queue",
 	"receive",
+	"native",
+	"serenity",
+	"tungstenite",
 ] }
 symphonia = { version = "0.5", features = ["ogg", "vorbis"] }
 serde_json = "1.0"
