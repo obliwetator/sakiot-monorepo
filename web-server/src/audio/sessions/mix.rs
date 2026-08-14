@@ -154,11 +154,15 @@ struct MixJob {
     failed: Option<String>,
 }
 
+type MixJobKey = (i64, ChannelMixScope);
+type MixJobHandle = Arc<Mutex<MixJob>>;
+type MixJobs = HashMap<MixJobKey, MixJobHandle>;
+
 /// A separate job container prevents a session mix from sharing progress or
 /// retry state with waveform, silence-removal, or per-recording HLS jobs.
 #[derive(Default, Debug)]
 pub struct SessionMixContainer {
-    jobs: RwLock<HashMap<(i64, ChannelMixScope), Arc<Mutex<MixJob>>>>,
+    jobs: RwLock<MixJobs>,
     locks: Mutex<HashMap<i64, Arc<Mutex<()>>>>,
 }
 
