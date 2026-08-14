@@ -1232,10 +1232,7 @@ fn source_segment(source: &MixSource, anchor_started_at_ms: i64) -> ChannelMixSo
     let start_ms = source.overlap_start_ms.saturating_sub(anchor_started_at_ms);
     let end_ms = source.overlap_end_ms.saturating_sub(anchor_started_at_ms);
     ChannelMixSourceSegment {
-        id: format!(
-            "{}:{}:{}",
-            source.audio_file_id, source.overlap_start_ms, source.overlap_end_ms
-        ),
+        id: format!("{}:{}", source.audio_file_id, source.overlap_start_ms),
         audio_file_id: source.audio_file_id.to_string(),
         recording_session_id: source.recording_session_id.map(|id| id.to_string()),
         start_ms,
@@ -2070,6 +2067,7 @@ mod tests {
         assert_eq!(segment.end_ms, 2_000);
         assert_eq!(segment.source_offset_ms, 500);
         assert!(segment.live);
+        assert_eq!(segment.id, "22:1500");
         assert_eq!(segment.recording_session_id.as_deref(), Some("2"));
         assert_eq!(segment.media_url, "/api/audio/sessions/2/segments/22");
         assert_eq!(
@@ -2079,6 +2077,12 @@ mod tests {
         assert_eq!(
             segment.waveform_url,
             "/api/audio/waveform/1/10/2026/08/1200-7"
+        );
+        let mut extended_source = sources[0].clone();
+        extended_source.overlap_end_ms += 1_000;
+        assert_eq!(
+            source_segment(&sources[0], 1_000).id,
+            source_segment(&extended_source, 1_000).id
         );
     }
 
