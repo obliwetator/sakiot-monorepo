@@ -5,6 +5,8 @@
 export interface WaveformEnvelope {
 	min: number[];
 	max: number[];
+	/** Duration inferred from the audiowaveform sample-rate metadata. */
+	durationMs?: number;
 }
 
 export const EMPTY_WAVEFORM_ENVELOPE: WaveformEnvelope = { min: [], max: [] };
@@ -25,6 +27,8 @@ export function decodeWaveformPeaks(base64: string): WaveformEnvelope {
 	if (bytes.byteLength < HEADER_BYTES) return EMPTY_WAVEFORM_ENVELOPE;
 	const view = new DataView(bytes.buffer);
 	const eightBit = view.getUint32(4, true) === FLAG_EIGHT_BIT;
+	const sampleRate = view.getUint32(8, true);
+	const samplesPerPoint = view.getUint32(12, true);
 	const pointCount = view.getUint32(16, true);
 	const bytesPerValue = eightBit ? 1 : 2;
 	const scale = eightBit ? 128 : 32768;
@@ -43,5 +47,9 @@ export function decodeWaveformPeaks(base64: string): WaveformEnvelope {
 		}
 		offset += bytesPerValue * 2;
 	}
-	return { min, max };
+	const durationMs =
+		sampleRate > 0 && samplesPerPoint > 0
+			? (min.length * samplesPerPoint * 1_000) / sampleRate
+			: undefined;
+	return { min, max, durationMs };
 }

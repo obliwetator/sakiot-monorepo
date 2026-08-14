@@ -10,6 +10,7 @@ const muiAllowlist = new Set([
 	"src/features/admin-voice-settings/index.tsx",
 	"src/features/audio-dashboard/AudioEventTimeline.tsx",
 	"src/features/audio-dashboard/ChannelMixPlayer.tsx",
+	"src/features/audio-dashboard/ChannelMixWaveforms.tsx",
 	"src/features/audio-dashboard/ClipRangeEditorView.tsx",
 	"src/features/audio-dashboard/ClipRangePrecisionOverlay.tsx",
 	"src/features/audio-dashboard/LogicalSessionPanels.tsx",

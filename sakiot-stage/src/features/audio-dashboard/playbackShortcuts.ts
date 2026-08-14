@@ -2,6 +2,13 @@ function targetElement(target: EventTarget | null): HTMLElement | null {
 	return target instanceof HTMLElement ? target : null;
 }
 
+export interface PlaybackShortcutTarget {
+	id: string;
+	toggle: () => void;
+	seek: (positionMs: number) => void;
+	position: () => number;
+}
+
 /** Text-entry controls retain ordinary typing instead of triggering playback. */
 export function playbackShortcutTargetAcceptsText(
 	target: EventTarget | null,

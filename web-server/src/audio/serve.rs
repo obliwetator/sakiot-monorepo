@@ -16,6 +16,19 @@ use sakiot_paths::RecordingKey;
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 
+fn audio_leaf(file_name: &str, silence_free: bool) -> String {
+    let file_name = if file_name.ends_with(".ogg") {
+        file_name.to_owned()
+    } else {
+        format!("{file_name}.ogg")
+    };
+    if silence_free {
+        format!("{NO_SILENCE_PREFIX}{file_name}")
+    } else {
+        file_name
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {
     pub silence: Option<bool>,
@@ -52,14 +65,13 @@ pub async fn get_audio(
     )
     .await?;
 
-    let (root, leaf) = if query_param.silence.is_some() {
-        (
-            no_silence_recording_path(),
-            format!("{}{}", NO_SILENCE_PREFIX, file_name),
-        )
+    let silence_free = query_param.silence.is_some();
+    let root = if silence_free {
+        no_silence_recording_path()
     } else {
-        (recording_path(), file_name.clone())
+        recording_path()
     };
+    let leaf = audio_leaf(&file_name, silence_free);
 
     let path = RecordingKey::new(guild_id, channel_id, year, month as u32, "")
         .recording_dir(&root)
@@ -125,14 +137,13 @@ pub async fn download_audio(
     )
     .await?;
 
-    let (root, leaf) = if is_silence.silence.is_some() {
-        (
-            no_silence_recording_path(),
-            format!("{}{}", NO_SILENCE_PREFIX, file_name_from_url),
-        )
+    let silence_free = is_silence.silence.is_some();
+    let root = if silence_free {
+        no_silence_recording_path()
     } else {
-        (recording_path(), file_name_from_url.clone())
+        recording_path()
     };
+    let leaf = audio_leaf(&file_name_from_url, silence_free);
 
     let path = RecordingKey::new(guild_id, channel_id, year, month as u32, "")
         .recording_dir(&root)
@@ -173,4 +184,27 @@ pub async fn download_audio(
             RemoteDisposition::Attachment,
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::audio_leaf;
+
+    #[test]
+    fn audio_leaf_adds_ogg_to_a_recording_stem() {
+        assert_eq!(
+            audio_leaf("1786473460682-183931044829986817", false),
+            "1786473460682-183931044829986817.ogg"
+        );
+    }
+
+    #[test]
+    fn audio_leaf_preserves_an_existing_extension() {
+        assert_eq!(audio_leaf("recording.ogg", false), "recording.ogg");
+    }
+
+    #[test]
+    fn audio_leaf_adds_the_silence_free_prefix_after_normalizing() {
+        assert_eq!(audio_leaf("recording", true), "_no_silence_recording.ogg");
+    }
 }

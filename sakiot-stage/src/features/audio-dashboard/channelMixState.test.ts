@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	canGenerateChannelMix,
 	channelMixPollInterval,
+	clampChannelMixGain,
+	commonLiveSeekPosition,
 	parseChannelMixStatus,
 } from "./channelMixState";
 
@@ -33,5 +35,18 @@ describe("channel mix status parsing", () => {
 		expect(canGenerateChannelMix("failed", true)).toBe(true);
 		expect(canGenerateChannelMix("waiting", true)).toBe(false);
 		expect(canGenerateChannelMix("idle", false)).toBe(false);
+	});
+
+	test("mute rules control generation", () => {
+		expect(
+			canGenerateChannelMix("idle", true, true, [
+				{ user_id: "1", gain_db: 0, muted: true },
+				{ user_id: "2", gain_db: 0, muted: true },
+			]),
+		).toBe(false);
+		expect(clampChannelMixGain(-100)).toBe(-60);
+		expect(clampChannelMixGain(100)).toBe(12);
+		expect(commonLiveSeekPosition([10_000, 12_000])).toBe(8_000);
+		expect(commonLiveSeekPosition([])).toBeNull();
 	});
 });

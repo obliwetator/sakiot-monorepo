@@ -22,6 +22,7 @@ import {
 	selectionAroundStamp,
 } from "./logicalSessionSelection";
 import {
+	type PlaybackShortcutTarget,
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
 } from "./playbackShortcuts";
@@ -49,6 +50,7 @@ interface SelectionControllerOptions {
 	silence: SilenceFreePlayback;
 	clipEditorRef: RefObject<HTMLDivElement | null>;
 	loopDisableRef: MutableRefObject<() => void>;
+	lastPlaybackRef: MutableRefObject<PlaybackShortcutTarget | null>;
 }
 
 export function useSessionSelectionController(
@@ -68,6 +70,10 @@ export function useSessionSelectionController(
 	const selectionManifestRef = useRef<SelectionManifest | null>(null);
 	const previousSilenceDurationRef = useRef(0);
 	const appliedDeepLinkRef = useRef<string | null>(null);
+	const normalPlaybackRef = useRef(options.normal);
+	const silencePlaybackRef = useRef(options.silence);
+	normalPlaybackRef.current = options.normal;
+	silencePlaybackRef.current = options.silence;
 
 	useEffect(() => {
 		selectionRef.current = selection;
@@ -208,6 +214,47 @@ export function useSessionSelectionController(
 		[options.manifest?.durationMs, options.silence.durationMs],
 	);
 
+	const playbackTargetFor = useCallback(
+		(tab: "normal" | "silence"): PlaybackShortcutTarget => ({
+			id: `${options.sessionId}:${tab}`,
+			toggle: () => {
+				const playback =
+					tab === "silence"
+						? silencePlaybackRef.current
+						: normalPlaybackRef.current;
+				playback.togglePlay(selectionRef.current, loopSelectionRef.current);
+			},
+			seek: (position) => {
+				const playback =
+					tab === "silence"
+						? silencePlaybackRef.current
+						: normalPlaybackRef.current;
+				playback.seek(position, selectionRef.current, loopSelectionRef.current);
+			},
+			position: () =>
+				(tab === "silence"
+					? silencePlaybackRef.current
+					: normalPlaybackRef.current
+				).positionMs,
+		}),
+		[options.sessionId],
+	);
+
+	const rememberPlayback = useCallback(
+		(target: PlaybackShortcutTarget) => {
+			options.lastPlaybackRef.current = target;
+		},
+		[options.lastPlaybackRef],
+	);
+
+	const rememberActivePlayback = useCallback(
+		(tab: "normal" | "silence") => {
+			const target = playbackTargetFor(tab);
+			rememberPlayback(target);
+		},
+		[playbackTargetFor, rememberPlayback],
+	);
+
 	const setSelectionEdgeFromPlayhead = useCallback(
 		(edge: SelectionEdge) => {
 			const current = selectionRef.current;
@@ -274,6 +321,7 @@ export function useSessionSelectionController(
 	const seekActive = useCallback(
 		(position: number) => {
 			setSelectionHint(null);
+			rememberActivePlayback(playbackTabRef.current);
 			if (playbackTabRef.current === "silence") {
 				options.silence.seek(
 					position,
@@ -288,14 +336,19 @@ export function useSessionSelectionController(
 				);
 			}
 		},
-		[options.normal, options.silence],
+		[options.normal, options.silence, rememberActivePlayback],
 	);
 
 	const toggleActivePlay = useCallback(() => {
-		const active =
-			playbackTabRef.current === "silence" ? options.silence : options.normal;
-		active.togglePlay(selectionRef.current, loopSelectionRef.current);
-	}, [options.normal, options.silence]);
+		const remembered = options.lastPlaybackRef.current;
+		if (remembered) {
+			remembered.toggle();
+			return;
+		}
+		const target = playbackTargetFor(playbackTabRef.current);
+		rememberPlayback(target);
+		target.toggle();
+	}, [options.lastPlaybackRef, playbackTargetFor, rememberPlayback]);
 
 	const toggleActivePreview = useCallback(() => {
 		const active =
@@ -378,7 +431,9 @@ export function useSessionSelectionController(
 			if (playbackShortcutTargetOwnsArrows(event.target)) return;
 			if (event.altKey) return;
 			event.preventDefault();
-			const stampMode = playbackTab === "normal" && options.deepLink?.fromStamp;
+			const remembered = options.lastPlaybackRef.current;
+			const stampMode =
+				!remembered && playbackTab === "normal" && options.deepLink?.fromStamp;
 			const distance = stampMode
 				? event.ctrlKey || event.metaKey
 					? CLIP_CTRL_ARROW_SEEK_MS
@@ -388,15 +443,24 @@ export function useSessionSelectionController(
 				: event.ctrlKey || event.metaKey
 					? CTRL_ARROW_SEEK_MS
 					: ARROW_SEEK_MS;
-			seekActive(
-				activePosition() + (event.key === "ArrowRight" ? distance : -distance),
-			);
+			if (remembered) {
+				remembered.seek(
+					remembered.position() +
+						(event.key === "ArrowRight" ? distance : -distance),
+				);
+			} else {
+				seekActive(
+					activePosition() +
+						(event.key === "ArrowRight" ? distance : -distance),
+				);
+			}
 		};
 		window.addEventListener("keydown", handleShortcut);
 		return () => window.removeEventListener("keydown", handleShortcut);
 	}, [
 		activePosition,
 		options.deepLink?.fromStamp,
+		options.lastPlaybackRef,
 		playbackTab,
 		resetSelection,
 		seekActive,
@@ -424,6 +488,8 @@ export function useSessionSelectionController(
 		setNearestEdgeFromPlayhead,
 		selectPlaybackTab,
 		disableLoop,
+		rememberActivePlayback,
+		rememberPlayback,
 	};
 }
 

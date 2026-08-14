@@ -42,7 +42,11 @@ describe("decodeWaveformPeaks", () => {
 					8,
 				),
 			),
-		).toEqual({ min: [-1, -0.5, 0], max: [127 / 128, 0.5, 0] });
+		).toEqual({
+			min: [-1, -0.5, 0],
+			max: [127 / 128, 0.5, 0],
+			durationMs: 12,
+		});
 	});
 
 	test("normalizes 16-bit waveform samples", () => {
@@ -56,7 +60,11 @@ describe("decodeWaveformPeaks", () => {
 					16,
 				),
 			),
-		).toEqual({ min: [-1, -0.5], max: [32767 / 32768, 0.5] });
+		).toEqual({
+			min: [-1, -0.5],
+			max: [32767 / 32768, 0.5],
+			durationMs: 8,
+		});
 	});
 
 	test("decodes every point instead of half the recording", () => {
@@ -84,7 +92,7 @@ describe("decodeWaveformPeaks", () => {
 
 		expect(
 			decodeWaveformPeaks(btoa(complete.slice(0, complete.length - 1))),
-		).toEqual({ min: [-0.5], max: [0.5] });
+		).toEqual({ min: [-0.5], max: [0.5], durationMs: 4 });
 	});
 
 	test("returns no peaks for an incomplete header", () => {

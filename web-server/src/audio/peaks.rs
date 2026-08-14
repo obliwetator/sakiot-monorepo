@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, get, web};
 use base64::prelude::*;
 use serde_json::json;
 use sqlx::{Pool, Postgres, Row};
+use std::time::Duration;
 use tracing::{error, info};
 
 use crate::auth::{Access, Token};
@@ -17,6 +18,7 @@ use super::util::{file_exists, get_file_path_root, is_stale};
 
 const LIVE_WAVEFORM_READY: i16 = 100;
 const FINAL_WAVEFORM_WRITTEN: i16 = 101;
+const LIVE_WAVEFORM_MIN_REFRESH: Duration = Duration::from_secs(5);
 
 async fn silence_free_waveform(
     path: &(i64, i64, i32, i32, String),
@@ -71,10 +73,17 @@ async fn silence_free_waveform(
 }
 
 async fn waveform_response(output: &str) -> Result<HttpResponse, AppError> {
+    waveform_response_with_progress(output, 100).await
+}
+
+async fn waveform_response_with_progress(
+    output: &str,
+    progress: i16,
+) -> Result<HttpResponse, AppError> {
     let file_content = tokio::fs::read(output).await?;
     let base64_content = BASE64_STANDARD.encode(file_content);
     Ok(HttpResponse::Ok().json(json!({
-        "progress": 100,
+        "progress": progress,
         "data": base64_content
     })))
 }
@@ -165,7 +174,7 @@ pub async fn get_waveform_data(
         if pct == LIVE_WAVEFORM_READY {
             if file_exists(&output).await {
                 if end_ts.is_none() {
-                    let response = waveform_response(&output).await;
+                    let response = waveform_response_with_progress(&output, pct).await;
                     progress_map.0.write().await.remove(&file_name);
                     return response;
                 }
@@ -174,8 +183,27 @@ pub async fn get_waveform_data(
                 progress_map.0.write().await.remove(&file_name);
             }
         } else {
+            if end_ts.is_none() && file_exists(&output).await {
+                return waveform_response_with_progress(&output, pct).await;
+            }
             return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
         }
+    }
+
+    // A live recording keeps serving its last complete atomic snapshot while
+    // a refresh is in flight. Do not launch a new audiowaveform process more
+    // often than the snapshot interval, even when several track rows poll at
+    // once.
+    if end_ts.is_none()
+        && file_exists(&output).await
+        && tokio::fs::metadata(&output)
+            .await
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age < LIVE_WAVEFORM_MIN_REFRESH)
+    {
+        return waveform_response_with_progress(&output, 100).await;
     }
 
     {

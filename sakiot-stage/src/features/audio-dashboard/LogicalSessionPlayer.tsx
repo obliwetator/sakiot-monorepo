@@ -20,12 +20,10 @@ import {
 } from "../../app/apiSlice";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
-import {
-	ChannelMixParticipants,
-	ChannelMixPlayer,
-	ChannelMixProgress,
-} from "./ChannelMixPlayer";
+import { ChannelMixPlayer, ChannelMixProgress } from "./ChannelMixPlayer";
 import { ClipRangeEditor } from "./ClipRangeEditor";
+import { channelMixRenderSettingsEqual } from "./channelMixDrafts";
+import { useChannelMixPreferences } from "./channelMixPreferences";
 import {
 	canGenerateChannelMix,
 	channelMixPollInterval,
@@ -44,15 +42,19 @@ import {
 	normalizeSessionSegments,
 } from "./logicalSessionTimeline";
 import { PlaybackControls } from "./PlaybackControls";
+import type { PlaybackShortcutTarget } from "./playbackShortcuts";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
 import { SilenceFreePlayer } from "./SilenceFreePlayer";
+import { useChannelMixDraft } from "./useChannelMixDraft";
 import { useSegmentedSessionPlayback } from "./useSegmentedSessionPlayback";
 import { useSessionSelectionController } from "./useSessionSelectionController";
 import { useSilenceFreePlayback } from "./useSilenceFreePlayback";
 import { useSilenceRemoval } from "./useSilenceRemoval";
 
 export function LogicalSessionPlayer(props: { sessionId: string }) {
+	const channelMixPreferences = useChannelMixPreferences();
+	const channelMixScope = channelMixPreferences.options.scope;
 	const location = useLocation();
 	const deepLink = useMemo(
 		() => parseSessionDeepLink(location.search),
@@ -76,14 +78,23 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	}, [manifest?.state, props.sessionId]);
 	const [channelMixPollingInterval, setChannelMixPollingInterval] =
 		useState(1_500);
+	const [activePlaybackTab, setActivePlaybackTab] = useState<
+		"normal" | "silence" | "mix"
+	>("normal");
 	const {
-		data: channelMix,
+		currentData: channelMix,
 		isError: channelMixError,
 		refetch: refetchChannelMix,
-	} = useGetSessionChannelMixQuery(props.sessionId, {
-		pollingInterval: channelMixPollingInterval,
-		skip: !manifest,
-	});
+	} = useGetSessionChannelMixQuery(
+		{
+			recording_session_id: props.sessionId,
+			scope: channelMixScope,
+		},
+		{
+			pollingInterval: channelMixPollingInterval,
+			skip: !manifest,
+		},
+	);
 	const channelMixStatus = channelMix?.status;
 	useEffect(() => {
 		setChannelMixPollingInterval(
@@ -92,6 +103,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	}, [channelMixStatus]);
 	const [generateMix, generateMixState] =
 		useGenerateSessionChannelMixMutation();
+	const mixDraft = useChannelMixDraft(props.sessionId, channelMix);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
 		null,
@@ -158,6 +170,15 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	>(null);
 	const loopDisableRef = useRef<() => void>(() => {});
 	const mixStopRef = useRef<() => void>(() => {});
+	const lastPlaybackRef = useRef<PlaybackShortcutTarget | null>(null);
+	const rememberLastPlayback = useCallback((target: PlaybackShortcutTarget) => {
+		lastPlaybackRef.current = target;
+	}, []);
+	const clearLastPlayback = useCallback((targetId: string) => {
+		if (lastPlaybackRef.current?.id === targetId) {
+			lastPlaybackRef.current = null;
+		}
+	}, []);
 	const registerMixStop = useCallback((stop: () => void) => {
 		mixStopRef.current = stop;
 	}, []);
@@ -200,6 +221,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		silence,
 		clipEditorRef,
 		loopDisableRef,
+		lastPlaybackRef,
 	});
 	selectionControllerRef.current = selectionController;
 
@@ -217,7 +239,19 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		setSelectionEdgeFromPlayhead,
 		setNearestEdgeFromPlayhead,
 		selectPlaybackTab,
+		rememberActivePlayback,
 	} = selectionController;
+	const showChannelMixTab = Boolean(channelMix?.tracks.length);
+	useEffect(() => {
+		if (activePlaybackTab === "mix" && !showChannelMixTab) {
+			mixStopRef.current();
+			setActivePlaybackTab(playbackTab);
+			return;
+		}
+		if (activePlaybackTab !== "mix" && activePlaybackTab !== playbackTab) {
+			setActivePlaybackTab(playbackTab);
+		}
+	}, [activePlaybackTab, playbackTab, showChannelMixTab]);
 	const positionMs = normal.positionMs;
 	const seekPreviewMs = normal.seekPreviewMs;
 	const setSeekPreviewMs = normal.setSeekPreviewMs;
@@ -242,10 +276,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const seekSilence = (position: number) =>
 		silence.seek(position, selection, loopSelection);
 	const togglePlay = () => {
+		rememberActivePlayback("normal");
 		mixStopRef.current();
 		normal.togglePlay(selection, loopSelection);
 	};
 	const toggleSilencePlay = () => {
+		rememberActivePlayback("silence");
 		mixStopRef.current();
 		silence.togglePlay(selection, loopSelection);
 	};
@@ -256,6 +292,16 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const selectPlaybackTabWithMix = (tab: "normal" | "silence") => {
 		mixStopRef.current();
 		selectPlaybackTab(tab);
+	};
+	const selectPlaybackTabFromTabs = (tab: "normal" | "silence" | "mix") => {
+		if (tab === "mix") {
+			normal.stop();
+			silence.stop();
+			setActivePlaybackTab("mix");
+			return;
+		}
+		setActivePlaybackTab(tab);
+		selectPlaybackTabWithMix(tab);
 	};
 	const selectPlaybackChannel = (channelId: string | null) => {
 		const next = isolateSessionChannel(normalizedSegments, channelId);
@@ -291,7 +337,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		normal.stop();
 		silence.stop();
 		try {
-			await generateMix(props.sessionId).unwrap();
+			await generateMix({
+				recording_session_id: props.sessionId,
+				scope: channelMixScope,
+				body: { participants: mixDraft.settings },
+			}).unwrap();
 			await refetchChannelMix();
 		} catch {
 			setChannelMixActionError("Channel mix generation failed. Try again.");
@@ -323,9 +373,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
 	const clipSelectionIsValid = isValidClipSelection(selection);
 	const mixStatus = parseChannelMixStatus(channelMix?.status);
+	const renderedMixSettings = channelMix?.generation_settings?.participants;
+	const mixRenderDirty = Boolean(
+		renderedMixSettings &&
+			!channelMixRenderSettingsEqual(mixDraft.settings, renderedMixSettings),
+	);
 	const mixCanGenerate = canGenerateChannelMix(
 		mixStatus,
 		manifest.state === "finalized",
+		channelMix?.can_generate ?? false,
+		mixDraft.settings,
+		mixRenderDirty,
 	);
 	const mixProcessing = mixStatus === "processing";
 
@@ -367,9 +425,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 			<PlaybackActionsPanel>
 				<Tabs
-					value={playbackTab}
-					onChange={(_event, value: "normal" | "silence") =>
-						selectPlaybackTabWithMix(value)
+					value={activePlaybackTab}
+					onChange={(_event, value: "normal" | "silence" | "mix") =>
+						selectPlaybackTabFromTabs(value)
 					}
 					sx={{ minHeight: 32, mb: 1 }}
 				>
@@ -381,9 +439,18 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 							sx={{ minHeight: 32, py: 0 }}
 						/>
 					)}
+					{showChannelMixTab && (
+						<Tab
+							label="Channel mix"
+							value="mix"
+							sx={{ minHeight: 32, py: 0 }}
+						/>
+					)}
 				</Tabs>
 
-				<Box sx={{ display: playbackTab === "normal" ? "block" : "none" }}>
+				<Box
+					sx={{ display: activePlaybackTab === "normal" ? "block" : "none" }}
+				>
 					<SessionPlaybackTimeline
 						waveform={
 							<SessionWaveform
@@ -430,7 +497,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					/>
 				</Box>
 
-				{playbackTab === "silence" && silenceFreeUrl && (
+				{activePlaybackTab === "silence" && silenceFreeUrl && (
 					<SilenceFreePlayer
 						sessionId={props.sessionId}
 						durationMs={silenceDurationMs}
@@ -537,91 +604,111 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						{sessionError ?? actionError}
 					</Alert>
 				)}
-			</PlaybackActionsPanel>
 
-			<Paper variant="outlined" sx={{ p: 2, my: 2 }}>
-				<Stack
-					direction={{ xs: "column", sm: "row" }}
-					justifyContent="space-between"
-					alignItems={{ xs: "flex-start", sm: "center" }}
-					spacing={1}
-				>
-					<Box>
-						<Typography variant="h6">Channel mix</Typography>
-						<Typography variant="body2" color="text.secondary">
-							Everyone with an overlapping recording is mixed automatically,
-							using the anchor session’s channel journey.
-						</Typography>
-					</Box>
-					<Button
-						variant="contained"
-						onClick={() => void createChannelMix()}
-						disabled={!mixCanGenerate || generateMixState.isLoading}
-						title={
-							manifest.state === "finalized"
-								? undefined
-								: "The anchor recording must be finalized first"
-						}
-					>
-						{generateMixState.isLoading
-							? "Starting…"
-							: channelMix?.status === "failed"
-								? "Retry mix"
-								: "Generate channel mix"}
-					</Button>
-				</Stack>
-
-				{channelMixError && !channelMix && (
-					<Alert severity="error" sx={{ mt: 1.5 }}>
-						Channel mix status is unavailable.{" "}
-						<Button size="small" onClick={() => void refetchChannelMix()}>
-							Retry status
-						</Button>
-					</Alert>
-				)}
-				{channelMix && (
-					<>
-						<ChannelMixParticipants participants={channelMix.participants} />
-						{channelMix.reason && channelMix.status !== "ready" && (
-							<Alert
-								severity={channelMix.status === "failed" ? "error" : "info"}
-								sx={{ mt: 1.5 }}
+				<Box sx={{ display: activePlaybackTab === "mix" ? "block" : "none" }}>
+					<Paper variant="outlined" sx={{ p: 2, mt: 1.5 }}>
+						<Stack
+							direction={{ xs: "column", sm: "row" }}
+							justifyContent="space-between"
+							alignItems={{ xs: "flex-start", sm: "center" }}
+							spacing={1}
+						>
+							<Box>
+								<Typography variant="h6">Channel mix</Typography>
+								<Typography variant="body2" color="text.secondary">
+									{channelMixScope === "all_recordings"
+										? "All recordings while the bot was continuously connected to this channel are shown on one timeline."
+										: "Only recordings overlapping this selected session are shown on one timeline (anchor-style)."}
+								</Typography>
+							</Box>
+							<Button
+								variant="contained"
+								onClick={() => void createChannelMix()}
+								disabled={!mixCanGenerate || generateMixState.isLoading}
+								title={
+									channelMix?.reason?.message ??
+									(channelMix?.can_generate === false
+										? "Every recording in this mix must be finalized"
+										: undefined)
+								}
 							>
-								{channelMix.reason.message}
+								{generateMixState.isLoading
+									? "Starting…"
+									: mixRenderDirty || channelMix?.status === "ready"
+										? "Regenerate channel mix"
+										: channelMix?.status === "failed"
+											? "Retry mix"
+											: "Generate channel mix"}
+							</Button>
+						</Stack>
+
+						{channelMixError && !channelMix && (
+							<Alert severity="error" sx={{ mt: 1.5 }}>
+								Channel mix status is unavailable.{" "}
+								<Button size="small" onClick={() => void refetchChannelMix()}>
+									Retry status
+								</Button>
 							</Alert>
 						)}
-						{mixProcessing && (
-							<ChannelMixProgress progress={channelMix.progress} />
+						{channelMix && (
+							<>
+								{channelMix.reason && channelMix.status !== "ready" && (
+									<Alert
+										severity={channelMix.status === "failed" ? "error" : "info"}
+										sx={{ mt: 1.5 }}
+									>
+										{channelMix.reason.message}
+									</Alert>
+								)}
+								{mixProcessing && (
+									<ChannelMixProgress progress={channelMix.progress} />
+								)}
+								{channelMix.status === "idle" && (
+									<Typography
+										variant="body2"
+										color="text.secondary"
+										sx={{ mt: 1 }}
+									>
+										{channelMix.source_count} source recordings found. The mix
+										is ready to generate.
+									</Typography>
+								)}
+								{channelMix.tracks.length > 0 && (
+									<ChannelMixPlayer
+										sessionId={props.sessionId}
+										mix={channelMix}
+										settings={mixDraft.settings}
+										onSettingsChange={mixDraft.setSettings}
+										options={channelMixPreferences.options}
+										onOptionsChange={channelMixPreferences.setOptions}
+										dialogOpen={channelMixPreferences.dialogOpen}
+										onDialogOpenChange={channelMixPreferences.setDialogOpen}
+										volume={volume}
+										playbackRate={playbackRate}
+										onVolumeChange={setVolume}
+										onPlaybackRateChange={setPlaybackRate}
+										onBeforePlay={() => {
+											normal.stop();
+											silence.stop();
+										}}
+										onRegisterStop={registerMixStop}
+										onPlaybackUse={rememberLastPlayback}
+										onPlaybackClear={clearLastPlayback}
+										onGenerate={
+											mixCanGenerate ? () => void createChannelMix() : undefined
+										}
+									/>
+								)}
+							</>
 						)}
-						{channelMix.status === "idle" && (
-							<Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-								{channelMix.source_count} source recordings found. The mix is
-								ready to generate.
-							</Typography>
+						{channelMixActionError && (
+							<Alert severity="error" sx={{ mt: 1 }}>
+								{channelMixActionError}
+							</Alert>
 						)}
-						{channelMix.status === "ready" && (
-							<ChannelMixPlayer
-								sessionId={props.sessionId}
-								mix={channelMix}
-								volume={volume}
-								playbackRate={playbackRate}
-								onVolumeChange={setVolume}
-								onPlaybackRateChange={setPlaybackRate}
-								onBeforePlay={() => {
-									normal.stop();
-									silence.stop();
-								}}
-								onRegisterStop={registerMixStop}
-							/>
-						)}
-					</>
-				)}
-				{channelMixActionError && (
-					<Alert severity="error" sx={{ mt: 1 }}>
-						{channelMixActionError}
-					</Alert>
-				)}
-			</Paper>
+					</Paper>
+				</Box>
+			</PlaybackActionsPanel>
 
 			<SessionClipEditorPanel panelRef={clipEditorRef}>
 				<Stack

@@ -101,6 +101,18 @@ describe("authedFetch", () => {
 		expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-123");
 	});
 
+	it("resolves API-root-relative media URLs without duplicating the API prefix", async () => {
+		setCookie("logged_in=1");
+		const fetchMock = mock(async () => new Response("ok", { status: 200 }));
+		globalThis.fetch = fetchMock as typeof fetch;
+
+		await authedFetch("/api/audio/waveform/recording");
+
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			`${new URL(BASE_API_URL).origin}/api/audio/waveform/recording`,
+		);
+	});
+
 	it("refreshes once and retries after a 401", async () => {
 		setCookie("xsrf_token=csrf-123; logged_in=1");
 		const fetchMock = mock(async (url: RequestInfo | URL) => {

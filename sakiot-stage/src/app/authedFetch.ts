@@ -111,7 +111,13 @@ function buildHeaders(init: RequestInit): Headers {
 }
 
 function resolveUrl(path: string): string {
-	return /^https?:\/\//.test(path) ? path : BASE_API_URL + path;
+	if (/^https?:\/\//.test(path)) return path;
+
+	const base = new URL(BASE_API_URL);
+	// API responses use root-relative paths (for example, /api/audio/...).
+	// Resolve those against the origin so the /api prefix is not duplicated.
+	if (path.startsWith("/")) return new URL(path, base.origin).toString();
+	return new URL(path.replace(/^\/+/, ""), base).toString();
 }
 
 export async function authedFetch(

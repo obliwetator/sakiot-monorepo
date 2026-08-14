@@ -685,8 +685,13 @@ export interface components {
 			code: number;
 			message: string;
 		};
+		ChannelMixGenerationSettings: {
+			participants: components["schemas"]["ChannelMixParticipantSettings"][];
+			source_fingerprint?: string | null;
+		};
 		ChannelMixMediaQuery: {
 			download?: boolean | null;
+			scope?: null | components["schemas"]["ChannelMixScope"];
 		};
 		ChannelMixParticipant: {
 			display_name?: string | null;
@@ -695,21 +700,55 @@ export interface components {
 			source_count: number;
 			user_id: string;
 		};
+		ChannelMixParticipantSettings: {
+			/** Format: float */
+			gain_db: number;
+			muted: boolean;
+			user_id: string;
+		};
+		ChannelMixQuery: {
+			scope?: null | components["schemas"]["ChannelMixScope"];
+		};
 		ChannelMixReason: {
 			code: string;
 			message: string;
 		};
 		ChannelMixResponse: {
+			can_generate: boolean;
 			/** Format: int64 */
 			duration_ms: number;
+			generation_settings?:
+				| null
+				| components["schemas"]["ChannelMixGenerationSettings"];
 			media_url?: string | null;
 			participants: components["schemas"]["ChannelMixParticipant"][];
 			/** Format: int32 */
 			progress: number;
 			reason?: null | components["schemas"]["ChannelMixReason"];
+			scope: components["schemas"]["ChannelMixScope"];
 			/** Format: int32 */
 			source_count: number;
 			status: components["schemas"]["ChannelMixStatus"];
+			tracks: components["schemas"]["ChannelMixTrack"][];
+		};
+		/** @enum {string} */
+		ChannelMixScope: "all_recordings" | "selected_session";
+		ChannelMixSourceSegment: {
+			audio_file_id: string;
+			/** Format: int64 */
+			end_ms: number;
+			hls_playlist_url: string;
+			id: string;
+			live: boolean;
+			media_url: string;
+			recording_session_id?: string | null;
+			/** Format: int64 */
+			source_duration_ms: number;
+			/** Format: int64 */
+			source_offset_ms: number;
+			/** Format: int64 */
+			start_ms: number;
+			waveform_url: string;
 		};
 		/** @enum {string} */
 		ChannelMixStatus:
@@ -719,6 +758,12 @@ export interface components {
 			| "processing"
 			| "ready"
 			| "failed";
+		ChannelMixTrack: {
+			display_name?: string | null;
+			is_anchor: boolean;
+			segments: components["schemas"]["ChannelMixSourceSegment"][];
+			user_id: string;
+		};
 		Channels: {
 			channel_id: string;
 			dirs: components["schemas"]["Directories"][];
@@ -887,6 +932,9 @@ export interface components {
 			recording_session_id?: string | null;
 			state?: string | null;
 			user_id?: string | null;
+		};
+		GenerateChannelMixBody: {
+			participants?: components["schemas"]["ChannelMixParticipantSettings"][];
 		};
 		GuildCooldown: {
 			/** Format: int32 */
@@ -2301,7 +2349,10 @@ export interface operations {
 	};
 	get_session_channel_mix: {
 		parameters: {
-			query?: never;
+			query?: {
+				/** @description Timeline scope; all recordings during the bot's connected presence by default */
+				scope?: components["schemas"]["ChannelMixScope"];
+			};
 			header?: never;
 			path: {
 				/** @description Logical recording session id */
@@ -2360,7 +2411,10 @@ export interface operations {
 	};
 	generate_session_channel_mix: {
 		parameters: {
-			query?: never;
+			query?: {
+				/** @description Timeline scope; all recordings during the bot's connected presence by default */
+				scope?: components["schemas"]["ChannelMixScope"];
+			};
 			header?: never;
 			path: {
 				/** @description Logical recording session id */
@@ -2368,7 +2422,11 @@ export interface operations {
 			};
 			cookie?: never;
 		};
-		requestBody?: never;
+		requestBody?: {
+			content: {
+				"application/json": components["schemas"]["GenerateChannelMixBody"];
+			};
+		};
 		responses: {
 			/** @description Mix is ready or cannot currently be generated */
 			200: {
@@ -2415,6 +2473,15 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
+			/** @description Mix generation is not allowed while a source is live or pending */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ChannelMixResponse"];
+				};
+			};
 			/** @description Mix render could not be started */
 			500: {
 				headers: {
@@ -2431,6 +2498,8 @@ export interface operations {
 			query?: {
 				/** @description Download instead of inline playback */
 				download?: boolean;
+				/** @description Timeline scope; all recordings during the bot's connected presence by default */
+				scope?: components["schemas"]["ChannelMixScope"];
 			};
 			header?: never;
 			path: {

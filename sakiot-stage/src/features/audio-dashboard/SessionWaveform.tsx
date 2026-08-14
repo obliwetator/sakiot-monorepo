@@ -36,7 +36,7 @@ export function SessionWaveform(props: {
 	const rebuildState = props.silenceFree
 		? silenceFreeRebuildState
 		: normalRebuildState;
-	const waveformName = props.silenceFree ? "Silence-free" : "Combined";
+	const waveformName = props.silenceFree ? "Silence-free" : "Logical session";
 
 	const pollRebuild = useCallback(async () => {
 		const result = await refetch();
@@ -135,6 +135,8 @@ export function SessionWaveform(props: {
 				>
 					<Typography color="text.secondary" variant="caption">
 						{waveformName} waveform has not been built.
+						{!props.silenceFree &&
+							" Channel Mix uses separate physical-source waveforms."}
 					</Typography>
 				</Box>
 			)}

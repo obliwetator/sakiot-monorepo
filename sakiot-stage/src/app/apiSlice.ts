@@ -78,6 +78,14 @@ export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 
 export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
 export type ChannelMixResponse = ApiSchema["ChannelMixResponse"];
+export type ChannelMixScope = ApiSchema["ChannelMixScope"];
+export type ChannelMixTrack = ApiSchema["ChannelMixTrack"];
+export type ChannelMixSourceSegment = ApiSchema["ChannelMixSourceSegment"];
+export type ChannelMixParticipantSettings =
+	ApiSchema["ChannelMixParticipantSettings"];
+export type ChannelMixGenerationSettings =
+	ApiSchema["ChannelMixGenerationSettings"];
+export type GenerateChannelMixBody = ApiSchema["GenerateChannelMixBody"];
 
 export interface WaveformResponse {
 	progress: number;
@@ -164,14 +172,25 @@ export const apiSlice = createApi({
 			query: (recording_session_id) =>
 				`audio/sessions/${recording_session_id}/manifest`,
 		}),
-		getSessionChannelMix: builder.query<ChannelMixResponse, string>({
-			query: (recording_session_id) =>
-				`audio/sessions/${recording_session_id}/channel-mix`,
+		getSessionChannelMix: builder.query<
+			ChannelMixResponse,
+			{ recording_session_id: string; scope?: ChannelMixScope }
+		>({
+			query: ({ recording_session_id, scope = "all_recordings" }) =>
+				`audio/sessions/${recording_session_id}/channel-mix?scope=${scope}`,
 		}),
-		generateSessionChannelMix: builder.mutation<ChannelMixResponse, string>({
-			query: (recording_session_id) => ({
-				url: `audio/sessions/${recording_session_id}/channel-mix`,
+		generateSessionChannelMix: builder.mutation<
+			ChannelMixResponse,
+			{
+				recording_session_id: string;
+				scope?: ChannelMixScope;
+				body?: GenerateChannelMixBody;
+			}
+		>({
+			query: ({ recording_session_id, scope = "all_recordings", body }) => ({
+				url: `audio/sessions/${recording_session_id}/channel-mix?scope=${scope}`,
 				method: "POST",
+				...(body ? { body } : {}),
 			}),
 		}),
 		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
