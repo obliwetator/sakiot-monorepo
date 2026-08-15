@@ -32,7 +32,12 @@ function segment(
 }
 
 function edit(...segments: TimelineSegment[]): ClipEdit {
-	return { segments, tracks: 2, masterVolumeDb: -3 };
+	return {
+		segments,
+		tracks: 2,
+		mutedTracks: [false, false],
+		masterVolumeDb: -3,
+	};
 }
 
 describe("draftKey", () => {
@@ -54,6 +59,7 @@ describe("saveDraft / loadDraft", () => {
 	test("round-trips an edit through the composition payload", () => {
 		const store = storage();
 		const source = edit(segment("clip-1", 1, 5));
+		source.mutedTracks[1] = true;
 		source.segments[0].effects = {
 			...DEFAULT_EFFECTS,
 			rate: 1.5,
@@ -63,6 +69,7 @@ describe("saveDraft / loadDraft", () => {
 		const restored = loadDraft("42", "clip-9", store);
 		expect(restored).not.toBeNull();
 		expect(restored?.masterVolumeDb).toBe(-3);
+		expect(restored?.mutedTracks).toEqual([false, true]);
 		expect(restored?.segments).toHaveLength(1);
 		expect(restored?.segments[0]).toMatchObject({
 			sourceId: "clip-1",

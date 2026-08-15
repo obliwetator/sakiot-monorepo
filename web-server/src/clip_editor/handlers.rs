@@ -84,6 +84,11 @@ pub async fn compose_clip(
             source_out: segment.source_out,
             effects: shared_effects_from_dto(&segment.effects),
             timeline_start: segment.timeline_start,
+            muted: body
+                .muted_tracks
+                .get(segment.track as usize)
+                .copied()
+                .unwrap_or(false),
         })
         .collect();
     let expected_total_ms = expected_duration_ms(&segments);

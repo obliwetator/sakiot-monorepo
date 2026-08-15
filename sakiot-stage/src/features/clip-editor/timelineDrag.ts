@@ -4,6 +4,7 @@ import {
 	MIN_SEGMENT_SECONDS,
 	moveSegment,
 	rightEdgeCeiling,
+	segmentDuration,
 	segmentEnd,
 	setSegmentRange,
 	snapToNeighbors,
@@ -60,6 +61,28 @@ export interface SegmentDragState {
 	clamped: boolean;
 	pointerX: number;
 	pointerY: number;
+}
+
+/**
+ * Resolves the rigid group for a move gesture from the selection snapshot at
+ * pointer-down. A selected member carries the full selection; an unselected
+ * member starts a new single-segment gesture.
+ */
+export function dragGroupForSelection(
+	segments: readonly TimelineSegment[],
+	selectedIds: readonly string[],
+	draggedId: string,
+): GroupedSegment[] {
+	const selected = new Set(selectedIds);
+	const group = selected.has(draggedId)
+		? segments.filter((segment) => selected.has(segment.id))
+		: segments.filter((segment) => segment.id === draggedId);
+	return group.map((segment) => ({
+		id: segment.id,
+		originStart: segment.timelineStart,
+		originTrack: segment.track,
+		duration: segmentDuration(segment),
+	}));
 }
 
 function snapTo(value: number, target: number): number {
@@ -253,25 +276,10 @@ function computeGhostState(
 		// unselected segments are the only obstacles, and the whole group
 		// shifts by one shared delta so the selection stays rigid.
 		const others = segments.filter((segment) => !groupIds.has(segment.id));
-		// A vertical move that would squash two tracks together cannot be
-		// done: the gesture is rejected and the ghosts stay put.
+		// A vertical move that would squash two tracks together remains invalid,
+		// but its horizontal time position should still follow the pointer so the
+		// user can correct the track and time in one continuous gesture.
 		const trackCollision = groupTrackCollision(drag.group, trackDelta);
-		if (trackCollision) {
-			return {
-				...drag,
-				ghostStart: drag.originStart,
-				ghostStarts: drag.group.map((member) => ({
-					id: member.id,
-					start: member.originStart,
-				})),
-				ghostTrack,
-				valid,
-				clamped: false,
-				trackCollision,
-				pointerX: pointer.clientX,
-				pointerY: pointer.clientY,
-			};
-		}
 		const targetStart = snapToNeighbors(
 			snapTo(rawStart, positionSec),
 			primary?.duration ??
@@ -302,7 +310,7 @@ function computeGhostState(
 			ghostTrack,
 			valid,
 			clamped: false,
-			trackCollision: false,
+			trackCollision,
 			pointerX: pointer.clientX,
 			pointerY: pointer.clientY,
 		};

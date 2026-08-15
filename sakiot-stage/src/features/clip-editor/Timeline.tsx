@@ -6,14 +6,16 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import type {
 	DragEvent as ReactDragEvent,
+	KeyboardEvent as ReactKeyboardEvent,
 	PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePointerDrag } from "../../shared/pointerDrag";
 import { formatDuration } from "../../utils/formatTime";
+import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import { pendingBinDrag } from "./ClipBin";
 import type { TimelineSegment } from "./model";
-import { segmentEnd, snapToNeighbors } from "./model";
+import { isTrackMuted, segmentEnd, snapToNeighbors } from "./model";
 import {
 	ClampedEdgeWarning,
 	clipNameOfDragged,
@@ -34,7 +36,7 @@ import {
 } from "./timelineDrag";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
-const TRACK_HEIGHT_PX = 72;
+const TRACK_HEIGHT_PX = 83;
 const SNAP_SECONDS = 0.25;
 
 interface DraggedClipPayload {
@@ -49,6 +51,168 @@ export interface MobileBinDragPreview extends DraggedClipPayload {
 
 export interface MobileBinDropRequest extends MobileBinDragPreview {
 	id: number;
+}
+
+function TimelineViewportScrollbar(props: {
+	viewStartSec: number;
+	viewWidthSec: number;
+	totalDurationSec: number;
+	maxStartSec: number;
+	onViewStartChange: (startSec: number) => void;
+}) {
+	const trackRef = useRef<HTMLDivElement | null>(null);
+	const dragRef = useRef<{
+		pointerId: number;
+		startX: number;
+		originStartSec: number;
+		trackWidth: number;
+	} | null>(null);
+	const totalDurationSec = Math.max(
+		props.totalDurationSec,
+		props.viewWidthSec,
+		1,
+	);
+	const maxStartSec = Math.max(0, props.maxStartSec);
+	const viewportFraction = Math.min(1, props.viewWidthSec / totalDurationSec);
+	const startFraction = Math.min(
+		1 - viewportFraction,
+		Math.max(0, props.viewStartSec / totalDurationSec),
+	);
+
+	const clampStart = (startSec: number) =>
+		Math.min(maxStartSec, Math.max(0, startSec));
+
+	const beginPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const track = trackRef.current;
+		if (!track) return;
+		const bounds = track.getBoundingClientRect();
+		const width = Math.max(1, bounds.width);
+		const pointerFraction = Math.min(
+			1,
+			Math.max(0, (event.clientX - bounds.left) / width),
+		);
+		const thumbStart = startFraction * width;
+		const thumbEnd = thumbStart + viewportFraction * width;
+		if (
+			event.clientX < bounds.left + thumbStart ||
+			event.clientX > bounds.left + thumbEnd
+		) {
+			props.onViewStartChange(
+				clampStart(pointerFraction * totalDurationSec - props.viewWidthSec / 2),
+			);
+			return;
+		}
+		dragRef.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			originStartSec: props.viewStartSec,
+			trackWidth: width,
+		};
+		try {
+			event.currentTarget.setPointerCapture(event.pointerId);
+		} catch {
+			// Best-effort: pointer capture is unavailable in some test DOMs.
+		}
+	};
+
+	const movePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+		const drag = dragRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		event.preventDefault();
+		props.onViewStartChange(
+			clampStart(
+				drag.originStartSec +
+					((event.clientX - drag.startX) / drag.trackWidth) * totalDurationSec,
+			),
+		);
+	};
+
+	const finishPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+		movePointer(event);
+		if (dragRef.current?.pointerId === event.pointerId) {
+			dragRef.current = null;
+		}
+	};
+
+	const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+		let delta = 0;
+		if (event.key === "ArrowLeft") delta = -props.viewWidthSec * 0.1;
+		if (event.key === "ArrowRight") delta = props.viewWidthSec * 0.1;
+		if (event.key === "PageUp") delta = -props.viewWidthSec;
+		if (event.key === "PageDown") delta = props.viewWidthSec;
+		if (event.key === "Home") {
+			event.preventDefault();
+			props.onViewStartChange(0);
+			return;
+		}
+		if (event.key === "End") {
+			event.preventDefault();
+			props.onViewStartChange(maxStartSec);
+			return;
+		}
+		if (delta === 0) return;
+		event.preventDefault();
+		props.onViewStartChange(clampStart(props.viewStartSec + delta));
+	};
+
+	return (
+		<Box
+			ref={trackRef}
+			role="scrollbar"
+			aria-label="Timeline horizontal scroll"
+			aria-orientation="horizontal"
+			aria-valuemin={0}
+			aria-valuemax={maxStartSec}
+			aria-valuenow={Math.min(maxStartSec, Math.max(0, props.viewStartSec))}
+			aria-valuetext={`${formatDuration(props.viewStartSec)} to ${formatDuration(props.viewStartSec + props.viewWidthSec)}`}
+			tabIndex={0}
+			onKeyDown={handleKeyDown}
+			onPointerDown={beginPointer}
+			onPointerMove={movePointer}
+			onPointerUp={finishPointer}
+			onPointerCancel={finishPointer}
+			onLostPointerCapture={() => {
+				dragRef.current = null;
+			}}
+			sx={{
+				position: "relative",
+				height: 16,
+				my: 0.25,
+				borderRadius: 1,
+				bgcolor: "action.hover",
+				border: "1px solid",
+				borderColor: "divider",
+				cursor: maxStartSec > 0 ? "grab" : "default",
+				touchAction: "none",
+				userSelect: "none",
+				"&:focus-visible": {
+					outline: "2px solid",
+					outlineColor: "primary.main",
+					outlineOffset: 1,
+				},
+			}}
+		>
+			<Box
+				aria-hidden="true"
+				style={{
+					position: "absolute",
+					left: `${startFraction * 100}%`,
+					width: `${viewportFraction * 100}%`,
+				}}
+				sx={{
+					top: 1,
+					bottom: 1,
+					minWidth: 8,
+					borderRadius: 1,
+					bgcolor: "text.secondary",
+					opacity: maxStartSec > 0 ? 0.8 : 0.45,
+				}}
+			/>
+		</Box>
+	);
 }
 
 function parseDraggedClip(
@@ -92,8 +256,12 @@ export function Timeline(props: {
 	onMobileBinDropHandled?: (id: number, accepted: boolean) => void;
 	/** Marquee selection covers every track the rectangle spans. */
 	multiTrackMarquee?: boolean;
+	/** Segment selection/movement is restricted to the top interaction bar. */
+	audacityStyleInteraction?: boolean;
 }) {
 	const { editor } = props;
+	const audacityStyleInteraction = props.audacityStyleInteraction ?? false;
+	const timelineRef = useRef<HTMLDivElement | null>(null);
 	const plotRef = useRef<HTMLDivElement | null>(null);
 	const tracksRef = useRef<HTMLDivElement | null>(null);
 	const processedMobileDropRef = useRef<number | null>(null);
@@ -318,6 +486,130 @@ export function Timeline(props: {
 		return tracksRef.current?.getBoundingClientRect() ?? { left: 0, width: 1 };
 	}, []);
 
+	const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(
+		null,
+	);
+	const updatePasteTargetAtPoint = useCallback(
+		(clientX: number, clientY: number) => {
+			const container = tracksRef.current;
+			const containerBounds = container?.getBoundingClientRect();
+			const plotBounds = currentPlotBounds();
+			if (
+				!containerBounds ||
+				clientY < containerBounds.top ||
+				clientY > containerBounds.bottom ||
+				clientX < plotBounds.left ||
+				clientX > plotBounds.left + plotBounds.width
+			) {
+				editor.setPasteTarget(null);
+				return;
+			}
+			const track = findTrackAtY(clientY);
+			if (track === null) {
+				editor.setPasteTarget(null);
+				return;
+			}
+			const fractionOfWidth = Math.min(
+				1,
+				Math.max(
+					0,
+					(clientX - plotBounds.left) / Math.max(1, plotBounds.width),
+				),
+			);
+			const startSec = Math.max(
+				0,
+				editor.viewStartSec + fractionOfWidth * editor.viewWidthSec,
+			);
+			const overSegment = editor.edit.segments.some(
+				(segment) =>
+					segment.track === track &&
+					segment.timelineStart <= startSec &&
+					segmentEnd(segment) > startSec,
+			);
+			editor.setPasteTarget(overSegment ? null : { startSec, track });
+		},
+		[
+			currentPlotBounds,
+			editor.edit.segments,
+			editor.setPasteTarget,
+			editor.viewStartSec,
+			editor.viewWidthSec,
+			findTrackAtY,
+		],
+	);
+	const handleTracksPointerMove = useCallback(
+		(event: ReactPointerEvent<HTMLElement>) => {
+			lastPointerRef.current = {
+				clientX: event.clientX,
+				clientY: event.clientY,
+			};
+			updatePasteTargetAtPoint(event.clientX, event.clientY);
+		},
+		[updatePasteTargetAtPoint],
+	);
+	const clearPasteTarget = useCallback(() => {
+		lastPointerRef.current = null;
+		editor.setPasteTarget(null);
+	}, [editor.setPasteTarget]);
+	const handleTracksScroll = useCallback(() => {
+		const point = lastPointerRef.current;
+		if (point) updatePasteTargetAtPoint(point.clientX, point.clientY);
+	}, [updatePasteTargetAtPoint]);
+
+	const handleTimelineWheel = useCallback(
+		(event: WheelEvent) => {
+			const zooming = (event.ctrlKey || event.metaKey) && event.deltaY !== 0;
+			const panning =
+				event.shiftKey && (event.deltaY !== 0 || event.deltaX !== 0);
+			if (!zooming && !panning) return;
+			event.preventDefault();
+			if (zooming) {
+				const bounds = currentPlotBounds();
+				const fraction = Math.min(
+					1,
+					Math.max(
+						0,
+						(event.clientX - bounds.left) / Math.max(1, bounds.width),
+					),
+				);
+				const anchorSec = editor.viewStartSec + fraction * editor.viewWidthSec;
+				const factor = event.deltaY > 0 ? 1.1 : 1 / 1.1;
+				editor.zoomAt(factor, anchorSec);
+				return;
+			}
+
+			const bounds = currentPlotBounds();
+			const rawDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+			const deltaPixels =
+				event.deltaMode === 1
+					? rawDelta * 16
+					: event.deltaMode === 2
+						? rawDelta * Math.max(1, bounds.width)
+						: rawDelta;
+			editor.panView(
+				(deltaPixels / Math.max(1, bounds.width)) * editor.viewWidthSec,
+			);
+		},
+		[
+			currentPlotBounds,
+			editor.panView,
+			editor.viewStartSec,
+			editor.viewWidthSec,
+			editor.zoomAt,
+		],
+	);
+
+	useEffect(() => {
+		const timeline = timelineRef.current;
+		if (!timeline) return;
+		timeline.addEventListener("wheel", handleTimelineWheel, {
+			capture: true,
+			passive: false,
+		});
+		return () =>
+			timeline.removeEventListener("wheel", handleTimelineWheel, true);
+	}, [handleTimelineWheel]);
+
 	const computeDrop = useCallback(
 		(clientX: number, clientY: number, lengthSec: number) => {
 			const plotBounds = currentPlotBounds();
@@ -500,6 +792,7 @@ export function Timeline(props: {
 	return (
 		<Box
 			component="section"
+			ref={timelineRef}
 			aria-label="Clip editor timeline"
 			sx={{
 				display: "flex",
@@ -523,6 +816,15 @@ export function Timeline(props: {
 					minWidth: 0,
 				}}
 			>
+				<TimelineRow label="Scroll" sx={{ mb: 0.5 }}>
+					<TimelineViewportScrollbar
+						viewStartSec={editor.viewStartSec}
+						viewWidthSec={editor.viewWidthSec}
+						totalDurationSec={editor.timelineDurationSec}
+						maxStartSec={editor.viewMaxStartSec}
+						onViewStartChange={editor.setViewStart}
+					/>
+				</TimelineRow>
 				<TimelineRuler
 					fraction={fraction}
 					positionSec={editor.positionSec}
@@ -533,6 +835,9 @@ export function Timeline(props: {
 				<Box
 					ref={tracksRef}
 					data-testid="clip-timeline-dropzone"
+					onPointerMove={handleTracksPointerMove}
+					onPointerLeave={clearPasteTarget}
+					onScroll={handleTracksScroll}
 					onDragOver={handleDragOver}
 					onDrop={handleDrop}
 					onDragLeave={handleDragLeave}
@@ -594,7 +899,12 @@ export function Timeline(props: {
 								pxPerSec={pxPerSec}
 								preview={preview}
 								active={editor.activeTrack === track}
+								muted={isTrackMuted(editor.edit, track)}
+								canRemove={editor.edit.tracks > 1}
+								audacityStyleInteraction={audacityStyleInteraction}
 								onActivate={() => editor.selectTrack(track)}
+								onToggleMute={() => editor.toggleTrackMute(track)}
+								onRemoveTrack={() => editor.removeTrack(track)}
 								dragGhosts={ghostGeometriesForTrack(track)}
 								draggingSegmentIds={
 									segmentDragGhost
@@ -616,16 +926,22 @@ export function Timeline(props: {
 					})}
 					{segmentDragGhost?.valid &&
 						(() => {
-							// One phantom row per new track the group lands on,
-							// so a wide vertical move previews every track it
-							// would create.
-							const tracks = [
-								...new Set(
-									dragGhostGeometries(segmentDragGhost)
-										.map((geometry) => geometry.track)
-										.filter((track) => track >= editor.edit.tracks),
+							// Render every missing row up to the furthest destination.
+							// A dragged clip can land on track 4 while tracks 2 and 3
+							// do not yet exist, so using only tracks that contain a
+							// ghost leaves the intervening rows out of the preview.
+							const maxTrack = Math.max(
+								editor.edit.tracks - 1,
+								...dragGhostGeometries(segmentDragGhost).map(
+									(geometry) => geometry.track,
 								),
-							].sort((a, b) => a - b);
+							);
+							const tracks = Array.from(
+								{
+									length: Math.max(0, maxTrack - editor.edit.tracks + 1),
+								},
+								(_, index) => editor.edit.tracks + index,
+							);
 							if (tracks.length === 0) return null;
 							return tracks.map((track) => (
 								<PhantomTrackRow

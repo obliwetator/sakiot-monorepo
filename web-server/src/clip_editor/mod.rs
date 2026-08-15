@@ -82,6 +82,7 @@ struct SegmentRender {
     source_out: f32,
     effects: sakiot_dsp::SegmentEffects,
     timeline_start: f32,
+    muted: bool,
 }
 
 struct TemporaryRawFiles {

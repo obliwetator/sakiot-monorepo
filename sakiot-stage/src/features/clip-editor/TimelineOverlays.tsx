@@ -5,7 +5,7 @@ import type { TimelineSegment } from "./model";
 import type { SegmentDragState } from "./timelineDrag";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
-const TRACK_HEIGHT_PX = 72;
+const TRACK_HEIGHT_PX = 83;
 
 export function DragGhost(props: {
 	leftFraction: number;

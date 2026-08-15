@@ -2,18 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipEditorEngine } from "./engine";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
 import {
-	addSegment,
 	type ClipEdit,
+	cloneTimelineSegments,
+	duplicateTimelineSegments,
+	editDuration,
 	emptyEdit,
 	expandMergeGroups,
+	isPastePlacementLegal,
 	MERGE_BLOCK_MESSAGES,
 	makeSegment,
 	mergeBlockReason,
 	mergeSegments,
+	removeTrack as removeTrackFromEdit,
 	segmentDuration,
-	snapToNeighbors,
+	segmentsForCopy,
+	snapToPastedLayout,
 	splitSegment,
 	type TimelineSegment,
+	toggleTrackMute as toggleTrackMuteInEdit,
 	unmergeSegments,
 } from "./model";
 import { sharedDspPreprocessKey } from "./sharedDsp";
@@ -22,7 +28,13 @@ import { useEditHistory } from "./useEditHistory";
 
 export type UseClipEditorReturn = ReturnType<typeof useClipEditor>;
 
-export function useClipEditor() {
+export interface PasteTarget {
+	startSec: number;
+	track: number;
+}
+
+export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
+	const copyAllSelected = options.copyAllSelected ?? true;
 	const history = useEditHistory(emptyEdit());
 	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo, reset } =
 		history;
@@ -32,13 +44,16 @@ export function useClipEditor() {
 	const [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]);
 	/** Track that clicks on the timeline activate; paste and bin adds land here. */
 	const [activeTrack, setActiveTrack] = useState(0);
-	const [clipboard, setClipboard] = useState<TimelineSegment | null>(null);
-	/** Segment whose data is in the clipboard; it shows the copied ring. */
-	const [copySourceId, setCopySourceId] = useState<string | null>(null);
+	const [clipboard, setClipboard] = useState<TimelineSegment[] | null>(null);
+	/** Segments whose data is in the clipboard; they show the copied ring. */
+	const [copySourceIds, setCopySourceIds] = useState<string[]>([]);
 	/** Warning describing why the last merge attempt was refused. */
 	const [mergeWarning, setMergeWarning] = useState<string | null>(null);
 	const [viewStartSec, setViewStartSec] = useState(0);
 	const [viewWidthSec, setViewWidthSec] = useState(30);
+	const contentDurationSec = editDuration(edit) + 2;
+	const timelineDurationSec = Math.max(viewWidthSec, contentDurationSec);
+	const viewMaxStartSec = Math.max(0, timelineDurationSec - viewWidthSec);
 	const [loadingClips, setLoadingClips] = useState<Map<string, boolean>>(
 		new Map(),
 	);
@@ -51,6 +66,7 @@ export function useClipEditor() {
 	const editRef = useRef(edit);
 	const playbackStructureRef = useRef(playbackStructureKey(edit));
 	const draggingRef = useRef(false);
+	const pasteTargetRef = useRef<PasteTarget | null>(null);
 	const rafRef = useRef<number | null>(null);
 	const playbackRefreshRef = useRef<number | null>(null);
 
@@ -63,6 +79,12 @@ export function useClipEditor() {
 	useEffect(() => {
 		playingRef.current = playing;
 	}, [playing]);
+
+	useEffect(() => {
+		setViewStartSec((current) =>
+			Math.min(viewMaxStartSec, Math.max(0, current)),
+		);
+	}, [viewMaxStartSec]);
 
 	const engine = useMemo(() => {
 		if (!engineRef.current) engineRef.current = new ClipEditorEngine();
@@ -166,6 +188,31 @@ export function useClipEditor() {
 		[apply, engine],
 	);
 
+	const toggleTrackMute = useCallback(
+		(track: number) => {
+			apply((current) => toggleTrackMuteInEdit(current, track));
+		},
+		[apply],
+	);
+
+	const removeTrack = useCallback(
+		(track: number) => {
+			const current = editRef.current;
+			if (current.tracks <= 1 || track < 0 || track >= current.tracks) return;
+			const removedIds = new Set(
+				current.segments
+					.filter((segment) => segment.track === track)
+					.map((segment) => segment.id),
+			);
+			apply((edit) => removeTrackFromEdit(edit, track));
+			setSelectedSegmentIds((ids) => ids.filter((id) => !removedIds.has(id)));
+			setActiveTrack((active) =>
+				active > track ? active - 1 : Math.min(active, current.tracks - 2),
+			);
+		},
+		[apply],
+	);
+
 	const registerBuffer = useCallback(
 		(sourceId: string, buffer: AudioBuffer) => {
 			buffersRef.current.set(sourceId, buffer);
@@ -238,8 +285,8 @@ export function useClipEditor() {
 			if (playbackRefreshRef.current !== null) {
 				clearTimeout(playbackRefreshRef.current);
 			}
-			// Only geometry/timeline edits require a new source buffer and schedule.
-			// Streaming effect edits are applied live by the AudioWorklet.
+			// Structural edits, including track mute changes, require a new source
+			// schedule. Streaming effect edits are applied live by the AudioWorklet.
 			playbackRefreshRef.current = window.setTimeout(() => {
 				playbackRefreshRef.current = null;
 				if (!engine.isPlaying) return;
@@ -301,15 +348,40 @@ export function useClipEditor() {
 		flush();
 	}, [flush]);
 
-	const zoom = useCallback(
-		(factor: number) => {
-			const center = positionRef.current;
+	const zoomAt = useCallback(
+		(factor: number, anchorSec: number) => {
 			const nextWidth = Math.max(1, Math.min(120, viewWidthSec * factor));
-			const ratio = nextWidth / viewWidthSec;
-			setViewStartSec(Math.max(0, center - (center - viewStartSec) * ratio));
+			const anchorFraction =
+				(anchorSec - viewStartSec) / Math.max(1, viewWidthSec);
+			const nextStart = anchorSec - anchorFraction * nextWidth;
+			const nextMaxStart = Math.max(0, contentDurationSec - nextWidth);
+			setViewStartSec(Math.min(nextMaxStart, Math.max(0, nextStart)));
 			setViewWidthSec(nextWidth);
 		},
-		[viewStartSec, viewWidthSec],
+		[contentDurationSec, viewStartSec, viewWidthSec],
+	);
+
+	const zoom = useCallback(
+		(factor: number) => zoomAt(factor, positionRef.current),
+		[zoomAt],
+	);
+
+	const setViewStart = useCallback(
+		(startSec: number) => {
+			if (!Number.isFinite(startSec)) return;
+			setViewStartSec(Math.min(viewMaxStartSec, Math.max(0, startSec)));
+		},
+		[viewMaxStartSec],
+	);
+
+	const panView = useCallback(
+		(deltaSec: number) => {
+			if (!Number.isFinite(deltaSec) || deltaSec === 0) return;
+			setViewStartSec((current) =>
+				Math.min(viewMaxStartSec, Math.max(0, current + deltaSec)),
+			);
+		},
+		[viewMaxStartSec],
 	);
 
 	const fitView = useCallback(() => {
@@ -354,6 +426,7 @@ export function useClipEditor() {
 			selectedSegmentIds.includes(segment.id),
 		);
 		const reason = mergeBlockReason(segments);
+		if (reason === "already-merged") return;
 		if (reason !== null) {
 			setMergeWarning(MERGE_BLOCK_MESSAGES[reason]);
 			return;
@@ -404,45 +477,90 @@ export function useClipEditor() {
 	);
 
 	const copy = useCallback(() => {
-		if (!selectedSegment) return;
-		setClipboard(selectedSegment);
-		setCopySourceId(selectedSegment.id);
-	}, [selectedSegment]);
+		const copied = cloneTimelineSegments(
+			segmentsForCopy(edit.segments, selectedSegmentIds, copyAllSelected),
+		);
+		if (copied.length === 0) return;
+		setClipboard(copied);
+		setCopySourceIds(copied.map((segment) => segment.id));
+	}, [copyAllSelected, edit.segments, selectedSegmentIds]);
+
+	const setPasteTarget = useCallback((target: PasteTarget | null) => {
+		pasteTargetRef.current = target;
+	}, []);
 
 	const cut = useCallback(() => {
-		if (!selectedSegment) return;
-		setClipboard(selectedSegment);
-		setCopySourceId(null);
+		if (selectedSegments.length === 0) return;
+		const copied = cloneTimelineSegments(selectedSegments);
+		setClipboard(copied);
+		setCopySourceIds([]);
 		removeSelected();
-	}, [removeSelected, selectedSegment]);
+	}, [removeSelected, selectedSegments]);
 
-	// Pasting lands on the active track at the playhead; if that overlaps a
-	// neighbour, snapToNeighbors finds the nearest non-overlapping start.
+	// Pasting prefers a legal empty space under the mouse. Otherwise it falls
+	// back to the active track at the playhead, preserving the copied layout and
+	// snapping the complete multi-track group past every obstruction.
 	const paste = useCallback(() => {
-		if (!clipboard) return;
-		const source = clipboard;
+		if (!clipboard || clipboard.length === 0) return;
+		const sourceStart = Math.min(
+			...clipboard.map((segment) => segment.timelineStart),
+		);
+		const sourceTrack = Math.min(...clipboard.map((segment) => segment.track));
+		const mouseTarget = pasteTargetRef.current;
+		const useMouseTarget = Boolean(
+			mouseTarget &&
+				isPastePlacementLegal(
+					clipboard,
+					editRef.current.segments,
+					mouseTarget.startSec,
+					mouseTarget.track,
+				),
+		);
 		const rawStart = positionRef.current;
-		const start = snapToNeighbors(
-			rawStart,
-			segmentDuration(source),
-			editRef.current.segments,
-			"",
-			activeTrack,
-			rawStart,
+		const targetTrack = useMouseTarget
+			? (mouseTarget?.track ?? activeTrack)
+			: activeTrack;
+		const start = useMouseTarget
+			? (mouseTarget?.startSec ?? rawStart)
+			: snapToPastedLayout(
+					rawStart,
+					clipboard,
+					editRef.current.segments,
+					activeTrack,
+				);
+		const pasted = duplicateTimelineSegments(
+			clipboard,
+			start - sourceStart,
+			targetTrack - sourceTrack,
 		);
-		const segment = makeSegment(
-			source.source,
-			source.sourceId,
-			source.sourceIn,
-			source.sourceOut,
-			start,
-			activeTrack,
+		const pastedIds = pasted.map((segment) => segment.id);
+		const highestPastedTrack = Math.max(
+			...pasted.map((segment) => segment.track),
 		);
-		segment.effects = { ...source.effects };
-		apply((current) => addSegment(current, segment));
-		setCopySourceId(null);
-		select(segment.id);
-	}, [activeTrack, apply, clipboard, select]);
+		apply((current) => {
+			const tracks = Math.max(current.tracks, highestPastedTrack + 1);
+			const mutedTracks =
+				current.mutedTracks.length >= tracks
+					? current.mutedTracks
+					: [
+							...current.mutedTracks,
+							...Array.from(
+								{ length: tracks - current.mutedTracks.length },
+								() => false,
+							),
+						];
+			return {
+				...current,
+				segments: [...current.segments, ...pasted],
+				tracks,
+				mutedTracks,
+			};
+		});
+		setCopySourceIds([]);
+		// apply() schedules the edit update, so select the known new ids
+		// directly instead of asking the still-current edit to expand them.
+		setSelectedSegmentIds(pastedIds);
+	}, [activeTrack, apply, clipboard]);
 
 	const sourceDuration = useCallback((sourceId: string): number | null => {
 		return buffersRef.current.get(sourceId)?.duration ?? null;
@@ -508,8 +626,10 @@ export function useClipEditor() {
 		toggleSelect,
 		activeTrack,
 		selectTrack,
-		copySourceId,
+		copySourceId: copySourceIds[0] ?? null,
+		copySourceIds,
 		copy,
+		setPasteTarget,
 		cut,
 		paste,
 		loadClip,
@@ -519,23 +639,32 @@ export function useClipEditor() {
 		loadingClips,
 		viewStartSec,
 		viewWidthSec,
+		timelineDurationSec,
+		viewMaxStartSec,
 		zoom,
+		zoomAt,
+		setViewStart,
+		panView,
 		fitView,
 		beginGesture,
 		endGesture,
 		removeSelected,
+		removeTrack,
 		splitSelectedAtPlayhead,
 		mergeSelected,
 		unmergeSelected,
 		mergeWarning,
 		dismissMergeWarning,
+		toggleTrackMute,
 		toggleReverse,
 	};
 }
 
 function playbackStructureKey(edit: ClipEdit): string {
-	return edit.segments
-		.map((segment) =>
+	return [
+		edit.tracks,
+		edit.mutedTracks.map((muted) => (muted ? 1 : 0)).join(","),
+		...edit.segments.map((segment) =>
 			[
 				segment.id,
 				segment.source,
@@ -543,8 +672,8 @@ function playbackStructureKey(edit: ClipEdit): string {
 				segment.timelineStart,
 				sharedDspPreprocessKey(segment),
 			].join(":"),
-		)
-		.join("|");
+		),
+	].join("|");
 }
 
 function endOfTrack(edit: ClipEdit, track: number): number {

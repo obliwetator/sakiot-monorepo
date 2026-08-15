@@ -17,6 +17,17 @@ export function waveformWindowFractions(
 	return endFraction > startFraction ? { startFraction, endFraction } : null;
 }
 
+/** Stroke colors keep audible clips vivid while making muted tracks obvious. */
+export function segmentWaveformStrokeStyle(
+	selected: boolean,
+	muted: boolean,
+): string {
+	if (muted) {
+		return selected ? "rgba(203, 213, 225, 0.9)" : "rgba(148, 163, 184, 0.72)";
+	}
+	return selected ? "rgba(165, 243, 252, 0.95)" : "rgba(45, 212, 191, 0.9)";
+}
+
 /**
  * Draws the source clip's waveform inside a timeline segment box, cropped to
  * the segment's [sourceIn, sourceOut] window. The box width already encodes
@@ -32,6 +43,7 @@ export function SegmentWaveform(props: {
 	sourceOut: number;
 	durationSec: number;
 	selected: boolean;
+	muted: boolean;
 	reverse: boolean;
 	processed: boolean;
 }) {
@@ -64,9 +76,7 @@ export function SegmentWaveform(props: {
 			context.scale(ratio, ratio);
 			drawSessionWaveform(context, width, height, peaks, fractions, {
 				fillStyle: null,
-				strokeStyle: selected
-					? "rgba(255, 255, 255, 0.9)"
-					: "rgba(255, 255, 255, 0.45)",
+				strokeStyle: segmentWaveformStrokeStyle(selected, props.muted),
 				reverse: props.processed ? false : props.reverse,
 			});
 		};
@@ -74,7 +84,7 @@ export function SegmentWaveform(props: {
 		const observer = new ResizeObserver(draw);
 		observer.observe(canvas);
 		return () => observer.disconnect();
-	}, [fractions, peaks, props.processed, props.reverse, selected]);
+	}, [fractions, peaks, props.muted, props.processed, props.reverse, selected]);
 
 	if (!fractions) return null;
 	return (

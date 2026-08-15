@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { waveformWindowFractions } from "./SegmentWaveform";
+import {
+	segmentWaveformStrokeStyle,
+	waveformWindowFractions,
+} from "./SegmentWaveform";
 
 describe("waveformWindowFractions", () => {
 	test("maps the source window onto the clip duration", () => {
@@ -28,5 +31,25 @@ describe("waveformWindowFractions", () => {
 			startFraction: 0,
 			endFraction: 1,
 		});
+	});
+});
+
+describe("segmentWaveformStrokeStyle", () => {
+	test("uses a colored stroke for audible clips", () => {
+		expect(segmentWaveformStrokeStyle(false, false)).toBe(
+			"rgba(45, 212, 191, 0.9)",
+		);
+		expect(segmentWaveformStrokeStyle(true, false)).toBe(
+			"rgba(165, 243, 252, 0.95)",
+		);
+	});
+
+	test("uses gray tones for muted clips", () => {
+		expect(segmentWaveformStrokeStyle(false, true)).toBe(
+			"rgba(148, 163, 184, 0.72)",
+		);
+		expect(segmentWaveformStrokeStyle(true, true)).toBe(
+			"rgba(203, 213, 225, 0.9)",
+		);
 	});
 });

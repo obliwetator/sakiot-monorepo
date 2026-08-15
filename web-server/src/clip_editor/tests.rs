@@ -26,6 +26,7 @@ fn segment_render() -> SegmentRender {
             ..sakiot_dsp::SegmentEffects::default()
         },
         timeline_start: 2.5,
+        muted: false,
     }
 }
 
@@ -33,6 +34,7 @@ fn body(segments: Vec<ComposeSegment>) -> ComposeClipBody {
     ComposeClipBody {
         name: None,
         master_volume_db: 0.0,
+        muted_tracks: Vec::new(),
         segments,
         overwrite_clip_id: None,
         limits: None,
@@ -105,6 +107,16 @@ fn builds_filter_graph_with_reverse_after_the_trim() {
 fn forward_segments_omit_the_reverse_filter() {
     let graph = build_filter_graph(&[segment_render()], 0.0);
     assert!(!graph.contains("areverse"));
+}
+
+#[test]
+fn muted_segments_are_silenced_in_both_render_graphs() {
+    let mut render = segment_render();
+    render.muted = true;
+    let legacy = build_filter_graph(std::slice::from_ref(&render), 0.0);
+    let shared = build_shared_mix_graph(std::slice::from_ref(&render), 0.0);
+    assert!(legacy.contains("aformat=sample_fmts=fltp:channel_layouts=mono,volume=0,adelay"));
+    assert!(shared.contains("[0:a]volume=0,adelay"));
 }
 
 #[test]
@@ -351,6 +363,14 @@ fn merge_group_defaults_to_none_when_missing() {
         .remove("merge_group");
     let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
     assert_eq!(restored.segments[0].merge_group, None);
+}
+
+#[test]
+fn muted_tracks_default_to_empty_when_missing() {
+    let mut value = serde_json::to_value(body(vec![segment()])).unwrap();
+    value.as_object_mut().unwrap().remove("muted_tracks");
+    let restored: ComposeClipBody = serde_json::from_value(value).unwrap();
+    assert!(restored.muted_tracks.is_empty());
 }
 
 #[test]

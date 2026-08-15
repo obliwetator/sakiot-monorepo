@@ -57,8 +57,8 @@ export function resolveSegmentWaveform(
  * used by playback. After the first successful render, its envelope remains
  * visible until the replacement is ready instead of flashing back to the
  * unprocessed source. A reverse edit mirrors that retained envelope
- * optimistically. The source/server envelope is used only for initial loading,
- * source changes, or when the shared renderer is unavailable.
+ * optimistically. The caller-provided fallback is used only for initial
+ * loading, source changes, or when the shared renderer is unavailable.
  */
 export function useProcessedSegmentWaveform(
 	guildId: string,
@@ -89,7 +89,7 @@ export function useProcessedSegmentWaveform(
 				})
 				.catch(() => {
 					// Playback already owns the visible WASM failure path. A waveform
-					// failure simply retains the server-provided source envelope.
+					// failure simply retains the caller-provided fallback envelope.
 				});
 		}, EFFECT_WAVEFORM_DEBOUNCE_MS);
 		return () => {

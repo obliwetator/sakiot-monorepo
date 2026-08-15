@@ -4,6 +4,10 @@ use super::*;
 pub struct ComposeClipBody {
     pub name: Option<String>,
     pub master_volume_db: f32,
+    /// Per-track mute state, indexed by track number. Missing values are
+    /// treated as unmuted so older compositions remain compatible.
+    #[serde(default)]
+    pub muted_tracks: Vec<bool>,
     pub segments: Vec<ComposeSegment>,
     /// Id of an existing composed clip to replace with this export. Only
     /// composed clips (`original_file_name = 'compose'`) can be overwritten;

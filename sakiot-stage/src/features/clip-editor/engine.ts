@@ -1,8 +1,9 @@
 import { PARITY_APPROVED_EQ } from "./effectParity";
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
 import {
-	editDuration,
 	effectiveRate,
+	isTrackMuted,
+	nonMutedEditDuration,
 	segmentContentDuration,
 	segmentDuration,
 	sourcePositionAt,
@@ -267,10 +268,11 @@ export class ClipEditorEngine {
 		fromSec: number,
 		buffers: ReadonlyMap<string, AudioBuffer>,
 	): Promise<PreparedSegment[]> {
-		const totalDuration = editDuration(edit);
+		const totalDuration = nonMutedEditDuration(edit);
 		const streaming = (await this.audioGraph?.prepare?.()) ?? false;
 		const pending: Array<Promise<PreparedSegment>> = [];
 		for (const segment of edit.segments) {
+			if (isTrackMuted(edit, segment.track)) continue;
 			const buffer = buffers.get(segment.sourceId);
 			if (!buffer) continue;
 			const duration = segmentDuration(segment);
@@ -315,7 +317,11 @@ export class ClipEditorEngine {
 		this.startedAtMs = performance.now();
 		this.audioGraph?.setMasterVolume(edit.masterVolumeDb);
 		const now = ctx.currentTime;
-		let lastEndMs = 0;
+		const editEndSec = nonMutedEditDuration(edit);
+		let lastEndMs =
+			editEndSec > fromSec
+				? performance.now() + (editEndSec - fromSec) * 1000
+				: 0;
 		for (const {
 			segment,
 			buffer,

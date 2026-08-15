@@ -63,7 +63,13 @@ import {
 import { isEffectSettingsJsonShortcut } from "./effectSettingsJson";
 import { Inspector } from "./Inspector";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
-import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
+import {
+	addSegment,
+	addTrack,
+	emptyEdit,
+	makeSegment,
+	segmentDuration,
+} from "./model";
 import {
 	type MobileBinDragPreview,
 	type MobileBinDropRequest,
@@ -95,7 +101,11 @@ export function ClipEditor(props: { guildId: string }) {
 		{ guild_id: props.guildId, ...asRoleArg },
 		{ skip: !props.guildId },
 	);
-	const editor = useClipEditor();
+	const [optionsOpen, setOptionsOpen] = useState(false);
+	const [options, setOptions] = useState<EditorOptions>(() =>
+		loadEditorOptions(),
+	);
+	const editor = useClipEditor({ copyAllSelected: options.copyAllSelected });
 	// Any undoable or redoable history step means the page holds work.
 	const { dialog: unsavedDialog } = useUnsavedChangesGuard(
 		editor.canUndo || editor.canRedo,
@@ -116,12 +126,8 @@ export function ClipEditor(props: { guildId: string }) {
 	const [composeOpen, setComposeOpen] = useState(false);
 	const [effectSettingsJsonOpen, setEffectSettingsJsonOpen] = useState(false);
 	const [effectLimitsOpen, setEffectLimitsOpen] = useState(false);
-	const [optionsOpen, setOptionsOpen] = useState(false);
 	const [effectLimits, setEffectLimits] = useState<EffectLimits>(() =>
 		loadEffectLimits(),
-	);
-	const [options, setOptions] = useState<EditorOptions>(() =>
-		loadEditorOptions(),
 	);
 	const [composeName, setComposeName] = useState("");
 	const [composeError, setComposeError] = useState<string | null>(null);
@@ -550,6 +556,7 @@ export function ClipEditor(props: { guildId: string }) {
 							mobileBinDrop={mobileBinDrop}
 							onMobileBinDropHandled={handleMobileBinDropHandled}
 							multiTrackMarquee={options.marqueeMultiTrack}
+							audacityStyleInteraction={options.audacityStyleInteraction}
 						/>
 					</Box>
 				</Box>
@@ -703,9 +710,7 @@ function ToolbarRow(props: {
 				<Button
 					size="small"
 					variant="outlined"
-					onClick={() =>
-						editor.apply((edit) => ({ ...edit, tracks: edit.tracks + 1 }))
-					}
+					onClick={() => editor.apply(addTrack)}
 				>
 					+ Track
 				</Button>

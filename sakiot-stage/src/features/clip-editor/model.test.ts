@@ -1,21 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
+	addTrack,
+	type ClipEdit,
+	cloneTimelineSegments,
 	DEFAULT_EFFECTS,
+	duplicateTimelineSegments,
 	effectiveRate,
+	effectTailFractions,
+	emptyEdit,
 	expandMergeGroups,
+	isPastePlacementLegal,
+	isTrackMuted,
 	leftEdgeFloor,
 	mergeBlockReason,
 	mergeSegments,
+	nonMutedEditDuration,
+	removeTrack,
 	resizeSelectedSegments,
 	rightEdgeCeiling,
 	segmentDuration,
 	segmentEnd,
+	segmentsForCopy,
 	setSegmentPitch,
 	setSegmentSpeed,
 	snapToNeighbors,
+	snapToPastedLayout,
 	sourcePositionAt,
 	splitSegment,
 	type TimelineSegment,
+	toggleTrackMute,
 	unmergeSegments,
 } from "./model";
 
@@ -39,9 +52,82 @@ function editWith(...segments: TimelineSegment[]) {
 	return {
 		segments,
 		tracks: 1,
+		mutedTracks: [false],
 		masterVolumeDb: 0,
 	};
 }
+
+describe("track controls", () => {
+	test("adds an unmuted track", () => {
+		const next = addTrack(emptyEdit());
+		expect(next.tracks).toBe(2);
+		expect(next.mutedTracks).toEqual([false, false]);
+	});
+
+	test("toggles mute for a valid track", () => {
+		const edit = addTrack(emptyEdit());
+		const muted = toggleTrackMute(edit, 1);
+		expect(isTrackMuted(muted, 1)).toBe(true);
+		expect(isTrackMuted(toggleTrackMute(muted, 1), 1)).toBe(false);
+		expect(toggleTrackMute(edit, 2)).toBe(edit);
+	});
+
+	test("removes clips and shifts higher tracks down", () => {
+		const first = seg("first", 0, 0, 1);
+		const removed = seg("removed", 1, 0, 1);
+		const third = seg("third", 2, 0, 1);
+		const edit: ClipEdit = {
+			segments: [first, removed, third],
+			tracks: 3,
+			mutedTracks: [false, true, false],
+			masterVolumeDb: 0,
+		};
+		const next = removeTrack(edit, 1);
+		expect(next.tracks).toBe(2);
+		expect(next.mutedTracks).toEqual([false, false]);
+		expect(next.segments.map((segment) => [segment.id, segment.track])).toEqual(
+			[
+				["first", 0],
+				["third", 1],
+			],
+		);
+	});
+
+	test("keeps the final track so the editor always has a lane", () => {
+		const edit = emptyEdit();
+		expect(removeTrack(edit, 0)).toBe(edit);
+	});
+});
+
+describe("effect tail geometry", () => {
+	test("marks the rate-adjusted content boundary and tail width", () => {
+		const segment = seg("tail", 0, 0, 4);
+		segment.effects.rate = 2;
+		segment.effects.tailSeconds = 1;
+		expect(effectTailFractions(segment)).toEqual({
+			startFraction: 2 / 3,
+			widthFraction: 1 / 3,
+		});
+	});
+
+	test("returns no tail geometry when the tail is absent", () => {
+		expect(effectTailFractions(seg("plain", 0, 0, 4))).toBeNull();
+	});
+});
+
+describe("nonMutedEditDuration", () => {
+	test("ignores the longest segment on a muted track", () => {
+		const audible = seg("audible", 0, 2, 2);
+		const muted = seg("muted", 1, 0, 10);
+		const edit: ClipEdit = {
+			segments: [audible, muted],
+			tracks: 2,
+			mutedTracks: [false, true],
+			masterVolumeDb: 0,
+		};
+		expect(nonMutedEditDuration(edit)).toBe(segmentEnd(audible));
+	});
+});
 
 describe("snapToNeighbors", () => {
 	test("leaves a non-overlapping start alone", () => {
@@ -562,6 +648,21 @@ describe("mergeBlockReason", () => {
 		expect(mergeBlockReason([piece("a", "src", 0, 4, 0)])).toBe("too-few");
 	});
 
+	test("an already-merged unit is refused without creating a new group", () => {
+		const a = piece("a", "src", 0, 4, 0);
+		const b = piece("b", "src", 4, 8, 4);
+		a.mergeGroup = "group-existing";
+		b.mergeGroup = "group-existing";
+		const edit = editWith(a, b);
+
+		expect(mergeBlockReason(edit.segments)).toBe("already-merged");
+		expect(mergeSegments(edit, ["a", "b"])).toBeNull();
+		expect(edit.segments.map((segment) => segment.mergeGroup)).toEqual([
+			"group-existing",
+			"group-existing",
+		]);
+	});
+
 	test("a selection across tracks is refused", () => {
 		const a = piece("a", "src", 0, 4, 0);
 		const b = piece("b", "src", 4, 8, 4, 1);
@@ -662,6 +763,97 @@ describe("mergeSegments", () => {
 		const a = piece("a", "src", 0, 4, 0);
 		const b = piece("b", "src", 4, 8, 6);
 		expect(mergeSegments(editWith(a, b), ["a", "b"])).toBeNull();
+	});
+});
+
+describe("clipboard duplication", () => {
+	test("accepts a pasted layout only when every member is legal", () => {
+		const first = seg("first", 0, 0, 2);
+		const second = seg("second", 1, 0, 6);
+		const blocked = seg("blocked", 1, 4, 4);
+
+		expect(isPastePlacementLegal([first, second], [blocked], 0, 0)).toBe(false);
+		expect(isPastePlacementLegal([first, second], [blocked], 10, 0)).toBe(true);
+	});
+
+	test("snaps a multi-track paste past the longest blocking member", () => {
+		const first = seg("first", 0, 0, 2);
+		const second = seg("second", 1, 0, 6);
+		const trackOneBlock = seg("track-one-block", 0, 5, 2);
+		const trackTwoBlock = seg("track-two-block", 1, 4, 6);
+
+		expect(
+			snapToPastedLayout(5, [first, second], [trackOneBlock, trackTwoBlock], 0),
+		).toBe(10);
+	});
+
+	test("single-copy mode chooses the earliest selected timeline element", () => {
+		const later = seg("later", 0, 10, 2);
+		const first = seg("first", 0, 2, 2);
+		const copied = segmentsForCopy([later, first], ["later", "first"], false);
+
+		expect(copied.map((segment) => segment.id)).toEqual(["first"]);
+	});
+
+	test("multi-copy mode keeps every selected element", () => {
+		const later = seg("later", 0, 10, 2);
+		const first = seg("first", 0, 2, 2);
+		const copied = segmentsForCopy([later, first], ["later", "first"], true);
+
+		expect(copied.map((segment) => segment.id)).toEqual(["later", "first"]);
+	});
+
+	test("single-copy mode keeps a selected merged element together", () => {
+		const later = seg("later", 0, 10, 2);
+		const first = seg("first", 0, 2, 2);
+		first.mergeGroup = "group-copy";
+		const second = seg("second", 0, 4, 2);
+		second.mergeGroup = "group-copy";
+		const copied = segmentsForCopy(
+			[later, first, second],
+			["later", "first"],
+			false,
+		);
+
+		expect(copied.map((segment) => segment.id)).toEqual(["first", "second"]);
+	});
+
+	test("copies every merged member into a separate merged unit", () => {
+		const first = piece("first", "src", 0, 4, 0);
+		first.mergeGroup = "group-original";
+		first.effects.volumeDb = -6;
+		const second = piece("second", "src", 4, 8, 4);
+		second.mergeGroup = "group-original";
+
+		const clipboard = cloneTimelineSegments([first, second]);
+		const pasted = duplicateTimelineSegments(clipboard, 10, 1);
+
+		expect(pasted).toHaveLength(2);
+		expect(pasted.map((segment) => segment.timelineStart)).toEqual([10, 14]);
+		expect(pasted.map((segment) => segment.track)).toEqual([1, 1]);
+		expect(pasted[0]?.id).not.toBe(first.id);
+		expect(pasted[1]?.id).not.toBe(second.id);
+		expect(pasted[0]?.mergeGroup).toBe(pasted[1]?.mergeGroup);
+		expect(pasted[0]?.mergeGroup).not.toBe(first.mergeGroup);
+		expect(pasted[0]?.effects).toEqual(first.effects);
+		expect(pasted[0]?.effects).not.toBe(first.effects);
+
+		const pastedEffects = pasted[0]?.effects;
+		if (pastedEffects) pastedEffects.volumeDb = 3;
+		expect(first.effects.volumeDb).toBe(-6);
+	});
+
+	test("keeps standalone copied segments standalone", () => {
+		const source = piece("source", "src", 0, 2, 3);
+		const [pasted] = duplicateTimelineSegments(
+			cloneTimelineSegments([source]),
+			5,
+			1,
+		);
+
+		expect(pasted?.mergeGroup).toBeUndefined();
+		expect(pasted?.timelineStart).toBe(8);
+		expect(pasted?.track).toBe(1);
 	});
 });
 

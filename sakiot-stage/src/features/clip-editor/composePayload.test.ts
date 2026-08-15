@@ -18,7 +18,12 @@ function segment(
 }
 
 function edit(...segments: TimelineSegment[]): ClipEdit {
-	return { segments, tracks: 2, masterVolumeDb: -3 };
+	return {
+		segments,
+		tracks: 2,
+		mutedTracks: [false, false],
+		masterVolumeDb: -3,
+	};
 }
 
 function serializedAdvanced(effects = DEFAULT_EFFECTS) {
@@ -58,6 +63,7 @@ describe("serializeEdit", () => {
 		);
 		expect(payload.name).toBe("my composition");
 		expect(payload.master_volume_db).toBe(-3);
+		expect(payload.muted_tracks).toEqual([false, false]);
 		expect(payload.segments).toHaveLength(1);
 		expect(payload.segments[0]).toEqual({
 			source: "clip",
@@ -273,10 +279,12 @@ describe("deserializeEdit", () => {
 			reverbSeed: 42,
 			reverse: true,
 		};
+		sourceEdit.mutedTracks[1] = true;
 		const restored = deserializeEdit(serializeEdit(sourceEdit, "remix"));
 		expect(restored).not.toBeNull();
 		expect(restored?.masterVolumeDb).toBe(-3);
 		expect(restored?.tracks).toBe(2);
+		expect(restored?.mutedTracks).toEqual([false, true]);
 		expect(restored?.segments).toHaveLength(2);
 		expect(restored?.segments[0]).toMatchObject({
 			track: 0,
@@ -325,6 +333,7 @@ describe("deserializeEdit", () => {
 		});
 		expect(restored).not.toBeNull();
 		expect(restored?.segments[0].effects.reverse).toBe(false);
+		expect(restored?.mutedTracks).toEqual([false]);
 	});
 
 	test("compositions without mid EQ deserialize flat", () => {

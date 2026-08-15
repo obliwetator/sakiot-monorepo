@@ -153,6 +153,12 @@ pub(super) fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
             "Master volume must be between {VOLUME_MIN} and {VOLUME_MAX} dB"
         )));
     }
+    if body.muted_tracks.len() > MAX_TRACKS as usize + 1 {
+        return Err(AppError::BadRequest(format!(
+            "muted_tracks cannot contain more than {} tracks",
+            MAX_TRACKS + 1
+        )));
+    }
     for (index, segment) in body.segments.iter().enumerate() {
         if segment.source != "clip" {
             return Err(AppError::BadRequest(format!(

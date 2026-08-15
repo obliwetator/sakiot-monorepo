@@ -28,6 +28,7 @@ import {
 	MULTI_SELECTION_DISABLED_REASON,
 } from "./inspectorFeaturePolicy";
 import {
+	isSingleMergedUnit,
 	resizeSelectedSegments,
 	type SegmentEffects,
 	segmentDuration,
@@ -114,6 +115,7 @@ function SegmentInspectorContent(props: {
 	const multi = segments.length > 1;
 	const ids = segments.map((s) => s.id);
 	const mergedUnit = segments.some((s) => s.mergeGroup);
+	const alreadyMerged = isSingleMergedUnit(segments);
 
 	const patchEffects = (
 		feature: InspectorFeatureId,
@@ -676,6 +678,10 @@ function SegmentInspectorContent(props: {
 				<InspectorActionButton
 					feature="merge"
 					selectionCount={segments.length}
+					disabled={alreadyMerged}
+					disabledReason={
+						alreadyMerged ? "This unit is already merged." : undefined
+					}
 					size="small"
 					variant="outlined"
 					startIcon={<MergeIcon />}
@@ -881,13 +887,17 @@ function InspectorActionButton(
 	props: ButtonProps & {
 		feature: InspectorFeatureId;
 		selectionCount: number;
+		disabledReason?: string;
 	},
 ) {
-	const { feature, selectionCount, disabled, ...buttonProps } = props;
+	const { feature, selectionCount, disabled, disabledReason, ...buttonProps } =
+		props;
 	const gated = isInspectorFeatureDisabled(feature, selectionCount);
 
 	return (
-		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
+		<Tooltip
+			title={gated ? MULTI_SELECTION_DISABLED_REASON : (disabledReason ?? "")}
+		>
 			<span>
 				<MuiButton {...buttonProps} disabled={disabled || gated} />
 			</span>

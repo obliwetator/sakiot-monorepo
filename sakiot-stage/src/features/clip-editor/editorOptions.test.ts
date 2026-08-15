@@ -25,12 +25,23 @@ describe("loadEditorOptions", () => {
 	test("returns the defaults when nothing is stored", () => {
 		expect(loadEditorOptions(storage())).toEqual(DEFAULT_EDITOR_OPTIONS);
 		expect(loadEditorOptions(storage()).marqueeMultiTrack).toBe(false);
+		expect(loadEditorOptions(storage()).audacityStyleInteraction).toBe(false);
+		expect(loadEditorOptions(storage()).copyAllSelected).toBe(true);
 	});
 
 	test("round-trips saved options", () => {
 		const store = storage();
-		saveEditorOptions({ marqueeMultiTrack: true }, store);
+		saveEditorOptions(
+			{
+				marqueeMultiTrack: true,
+				audacityStyleInteraction: true,
+				copyAllSelected: false,
+			},
+			store,
+		);
 		expect(loadEditorOptions(store).marqueeMultiTrack).toBe(true);
+		expect(loadEditorOptions(store).audacityStyleInteraction).toBe(true);
+		expect(loadEditorOptions(store).copyAllSelected).toBe(false);
 	});
 
 	test("falls back to defaults for corrupt storage", () => {
@@ -66,6 +77,7 @@ describe("loadEditorOptions", () => {
 					storage({
 						"sakiot:clip-editor:options": JSON.stringify({
 							marqueeMultiTrack: true,
+							audacityStyleInteraction: true,
 							someFutureOption: 42,
 						}),
 					}),

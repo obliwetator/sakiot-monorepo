@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { EMPTY_WAVEFORM_ENVELOPE } from "../audio-dashboard/waveformPeaks";
 import {
 	mirrorWaveformEnvelope,
 	resolveSegmentWaveform,
@@ -90,5 +91,15 @@ describe("mirrorWaveformEnvelope", () => {
 				fallback,
 			),
 		).toEqual({ peaks: fallback, processed: false });
+	});
+
+	test("can start with an empty fallback for local-only rendering", () => {
+		expect(
+			resolveSegmentWaveform(
+				null,
+				{ key: "local", sourceId: "clip", reverse: false },
+				EMPTY_WAVEFORM_ENVELOPE,
+			),
+		).toEqual({ peaks: EMPTY_WAVEFORM_ENVELOPE, processed: false });
 	});
 });

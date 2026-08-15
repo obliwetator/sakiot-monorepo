@@ -58,6 +58,8 @@ export interface TimelineSegment {
 export interface ClipEdit {
 	segments: TimelineSegment[];
 	tracks: number;
+	/** Mute state indexed by track number. */
+	mutedTracks: boolean[];
 	masterVolumeDb: number;
 }
 
@@ -112,7 +114,7 @@ export function newGroupId(): string {
 }
 
 export function emptyEdit(): ClipEdit {
-	return { segments: [], tracks: 1, masterVolumeDb: 0 };
+	return { segments: [], tracks: 1, mutedTracks: [false], masterVolumeDb: 0 };
 }
 
 export function makeSegment(
@@ -133,6 +135,219 @@ export function makeSegment(
 		timelineStart,
 		effects: { ...DEFAULT_EFFECTS },
 	};
+}
+
+/** Copies segment data into clipboard state without sharing mutable effects. */
+export function cloneTimelineSegments(
+	segments: readonly TimelineSegment[],
+): TimelineSegment[] {
+	return segments.map((segment) => ({
+		...segment,
+		effects: { ...segment.effects },
+	}));
+}
+
+/**
+ * Returns the segments a copy operation should place on the clipboard. When
+ * multi-copy is disabled, the earliest selected visual element wins; a merged
+ * element keeps all of its members so it still pastes as one merged unit.
+ */
+export function segmentsForCopy(
+	segments: readonly TimelineSegment[],
+	selectedIds: readonly string[],
+	copyAllSelected: boolean,
+): TimelineSegment[] {
+	const selected = segments.filter((segment) =>
+		selectedIds.includes(segment.id),
+	);
+	if (copyAllSelected) return selected;
+	if (selected.length === 0) return [];
+
+	const units = new Map<string, TimelineSegment[]>();
+	for (const segment of selected) {
+		const key = segment.mergeGroup
+			? `group:${segment.mergeGroup}`
+			: `segment:${segment.id}`;
+		if (units.has(key)) continue;
+		units.set(
+			key,
+			segment.mergeGroup
+				? segments.filter(
+						(candidate) => candidate.mergeGroup === segment.mergeGroup,
+					)
+				: [segment],
+		);
+	}
+
+	return (
+		[...units.values()].sort((left, right) => {
+			const leftStart = Math.min(
+				...left.map((segment) => segment.timelineStart),
+			);
+			const rightStart = Math.min(
+				...right.map((segment) => segment.timelineStart),
+			);
+			if (leftStart !== rightStart) return leftStart - rightStart;
+			const leftTrack = Math.min(...left.map((segment) => segment.track));
+			const rightTrack = Math.min(...right.map((segment) => segment.track));
+			return leftTrack - rightTrack;
+		})[0] ?? []
+	);
+}
+
+/**
+ * Creates new segments for a paste operation, preserving relative placement
+ * while keeping copied merged units separate from their originals.
+ */
+export function duplicateTimelineSegments(
+	segments: readonly TimelineSegment[],
+	timelineOffset: number,
+	trackOffset: number,
+): TimelineSegment[] {
+	const copiedGroups = new Map<string, string>();
+	return segments.map((segment) => {
+		const duplicate: TimelineSegment = {
+			...segment,
+			id: newSegmentId(),
+			timelineStart: segment.timelineStart + timelineOffset,
+			track: Math.max(0, segment.track + trackOffset),
+			effects: { ...segment.effects },
+		};
+		if (segment.mergeGroup) {
+			let groupId = copiedGroups.get(segment.mergeGroup);
+			if (!groupId) {
+				groupId = newGroupId();
+				copiedGroups.set(segment.mergeGroup, groupId);
+			}
+			duplicate.mergeGroup = groupId;
+		}
+		return duplicate;
+	});
+}
+
+/**
+ * Whether a copied layout can be placed with its bounding-box start at
+ * `startSec` and its minimum source track mapped to `track` without any
+ * overlap or negative coordinates.
+ */
+export function isPastePlacementLegal(
+	clipboard: readonly TimelineSegment[],
+	existing: readonly TimelineSegment[],
+	startSec: number,
+	track: number,
+): boolean {
+	if (
+		clipboard.length === 0 ||
+		!Number.isFinite(startSec) ||
+		startSec < 0 ||
+		!Number.isInteger(track) ||
+		track < 0
+	)
+		return false;
+
+	const sourceStart = Math.min(
+		...clipboard.map((segment) => segment.timelineStart),
+	);
+	const sourceTrack = Math.min(...clipboard.map((segment) => segment.track));
+	const pasted = clipboard.map((segment) => ({
+		start: startSec + segment.timelineStart - sourceStart,
+		end: startSec + segmentEnd(segment) - sourceStart,
+		track: track + segment.track - sourceTrack,
+	}));
+
+	if (
+		pasted.some(
+			(segment) =>
+				segment.start < 0 || segment.end < segment.start || segment.track < 0,
+		)
+	)
+		return false;
+
+	for (let i = 0; i < pasted.length; i += 1) {
+		const candidate = pasted[i];
+		if (!candidate) continue;
+		for (let j = i + 1; j < pasted.length; j += 1) {
+			const other = pasted[j];
+			if (!other || candidate.track !== other.track) continue;
+			if (candidate.start < other.end && other.start < candidate.end) {
+				return false;
+			}
+		}
+		if (
+			existing.some(
+				(segment) =>
+					segment.track === candidate.track &&
+					segment.timelineStart < candidate.end &&
+					candidate.start < segmentEnd(segment),
+			)
+		)
+			return false;
+	}
+	return true;
+}
+
+/**
+ * Moves a pasted layout to the nearest start that does not overlap existing
+ * segments on any of its destination tracks. Relative offsets inside the
+ * copied layout stay unchanged, so a long member on a secondary track cannot
+ * be left overlapping while a shorter member on the active track is snapped.
+ */
+export function snapToPastedLayout(
+	rawStart: number,
+	clipboard: readonly TimelineSegment[],
+	existing: readonly TimelineSegment[],
+	targetTrack: number,
+): number {
+	if (clipboard.length === 0) return Math.max(0, rawStart);
+	const sourceStart = Math.min(
+		...clipboard.map((segment) => segment.timelineStart),
+	);
+	const sourceTrack = Math.min(...clipboard.map((segment) => segment.track));
+	const forbidden: Array<{ start: number; end: number }> = [];
+	for (const existingSegment of existing) {
+		for (const copiedSegment of clipboard) {
+			const destinationTrack = targetTrack + copiedSegment.track - sourceTrack;
+			if (existingSegment.track !== destinationTrack) continue;
+			const relativeStart = copiedSegment.timelineStart - sourceStart;
+			const relativeEnd = segmentEnd(copiedSegment) - sourceStart;
+			forbidden.push({
+				start: existingSegment.timelineStart - relativeEnd,
+				end: segmentEnd(existingSegment) - relativeStart,
+			});
+		}
+	}
+	if (forbidden.length === 0) return Math.max(0, rawStart);
+
+	forbidden.sort((a, b) => a.start - b.start);
+	const merged: Array<{ start: number; end: number }> = [];
+	for (const interval of forbidden) {
+		const last = merged[merged.length - 1];
+		if (last && interval.start < last.end) {
+			last.end = Math.max(last.end, interval.end);
+		} else {
+			merged.push({ ...interval });
+		}
+	}
+
+	const start = Math.max(0, rawStart);
+	const conflict = merged.some(
+		(interval) => start > interval.start && start < interval.end,
+	);
+	if (!conflict) return start;
+
+	const candidates: number[] = [];
+	if (merged[0] && merged[0].start > 0) candidates.push(0);
+	for (const interval of merged) {
+		if (interval.start > 0) candidates.push(interval.start);
+		candidates.push(interval.end);
+	}
+	let best = candidates[0] ?? 0;
+	for (const candidate of candidates) {
+		if (Math.abs(candidate - start) < Math.abs(best - start)) {
+			best = candidate;
+		}
+	}
+	return Math.max(0, best);
 }
 
 /**
@@ -162,6 +377,25 @@ export function segmentDuration(segment: TimelineSegment): number {
 
 export function segmentEnd(segment: TimelineSegment): number {
 	return segment.timelineStart + segmentDuration(segment);
+}
+
+/** Fractional position and width of the non-audible effect tail. */
+export function effectTailFractions(
+	segment: TimelineSegment,
+): { startFraction: number; widthFraction: number } | null {
+	const content = segmentContentDuration(segment);
+	const total = segmentDuration(segment);
+	const tail = total - content;
+	if (
+		!Number.isFinite(content) ||
+		!Number.isFinite(total) ||
+		!Number.isFinite(tail) ||
+		total <= 0 ||
+		tail <= 0
+	) {
+		return null;
+	}
+	return { startFraction: content / total, widthFraction: tail / total };
 }
 
 /**
@@ -279,18 +513,91 @@ export function splitSegment(
 }
 
 export function addTrack(edit: ClipEdit): ClipEdit {
-	return { ...edit, tracks: edit.tracks + 1 };
+	return {
+		...edit,
+		tracks: edit.tracks + 1,
+		mutedTracks: [...edit.mutedTracks, false],
+	};
 }
 
-export type MergeBlockReason = "too-few" | "multi-track" | "not-snapped";
+/** Whether a track is muted; missing legacy state means unmuted. */
+export function isTrackMuted(edit: ClipEdit, track: number): boolean {
+	return edit.mutedTracks[track] === true;
+}
+
+/** Playback boundary: the end of the longest segment on an audible track. */
+export function nonMutedEditDuration(edit: ClipEdit): number {
+	return edit.segments.reduce(
+		(max, segment) =>
+			isTrackMuted(edit, segment.track)
+				? max
+				: Math.max(max, segmentEnd(segment)),
+		0,
+	);
+}
+
+/** Toggles one track's mute state. */
+export function toggleTrackMute(edit: ClipEdit, track: number): ClipEdit {
+	if (!Number.isInteger(track) || track < 0 || track >= edit.tracks) {
+		return edit;
+	}
+	const mutedTracks = edit.mutedTracks.slice();
+	mutedTracks[track] = !isTrackMuted(edit, track);
+	return { ...edit, mutedTracks };
+}
+
+/**
+ * Removes a track and its clips, shifting higher track numbers down. The last
+ * remaining track cannot be removed so the editor always has a drop target.
+ */
+export function removeTrack(edit: ClipEdit, track: number): ClipEdit {
+	if (
+		edit.tracks <= 1 ||
+		!Number.isInteger(track) ||
+		track < 0 ||
+		track >= edit.tracks
+	) {
+		return edit;
+	}
+	return {
+		...edit,
+		tracks: edit.tracks - 1,
+		mutedTracks: edit.mutedTracks.filter((_, index) => index !== track),
+		segments: edit.segments
+			.filter((segment) => segment.track !== track)
+			.map((segment) =>
+				segment.track > track
+					? { ...segment, track: segment.track - 1 }
+					: segment,
+			),
+	};
+}
+
+export type MergeBlockReason =
+	| "too-few"
+	| "already-merged"
+	| "multi-track"
+	| "not-snapped";
 
 export const MERGE_BLOCK_MESSAGES: Record<MergeBlockReason, string> = {
 	"too-few": "Select at least two clips to merge.",
+	"already-merged": "This unit is already merged.",
 	"multi-track":
 		"This operation is impossible: the selection spans multiple tracks.",
 	"not-snapped":
 		"This operation is illegal: the selected clips are not snapped together.",
 };
+
+/** Whether the selection is exactly one existing merged unit. */
+export function isSingleMergedUnit(
+	segments: readonly TimelineSegment[],
+): boolean {
+	if (segments.length < 2) return false;
+	const group = segments[0]?.mergeGroup;
+	return (
+		Boolean(group) && segments.every((segment) => segment.mergeGroup === group)
+	);
+}
 
 /**
  * Whether the segments can be merged into one unit: at least two, all on the
@@ -301,6 +608,7 @@ export function mergeBlockReason(
 	segments: readonly TimelineSegment[],
 ): MergeBlockReason | null {
 	if (segments.length < 2) return "too-few";
+	if (isSingleMergedUnit(segments)) return "already-merged";
 	const tracks = new Set(segments.map((segment) => segment.track));
 	if (tracks.size > 1) return "multi-track";
 	const ordered = [...segments].sort(

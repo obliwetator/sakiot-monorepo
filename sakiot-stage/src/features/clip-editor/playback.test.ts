@@ -114,6 +114,7 @@ const segment: TimelineSegment = {
 const edit: ClipEdit = {
 	segments: [segment],
 	tracks: 1,
+	mutedTracks: [false],
 	masterVolumeDb: 0,
 };
 
@@ -148,6 +149,49 @@ describe("ClipEditorEngine playback", () => {
 		engine.pause();
 		await Bun.sleep(30);
 		expect(engine.isPlaying).toBe(false);
+	});
+
+	test("loops at the longest non-muted segment", async () => {
+		const contexts: MockAudioContext[] = [];
+		const previousAudioContext = globalThis.AudioContext;
+		globalThis.AudioContext = class extends MockAudioContext {
+			constructor() {
+				super();
+				contexts.push(this);
+			}
+		} as unknown as typeof AudioContext;
+		const audible = {
+			...segment,
+			id: "audible",
+			sourceOut: 0.05,
+		};
+		const muted = {
+			...segment,
+			id: "muted",
+			sourceId: "muted-clip",
+			sourceOut: 0.5,
+			track: 1,
+		};
+		const loopEdit: ClipEdit = {
+			segments: [audible, muted],
+			tracks: 2,
+			mutedTracks: [false, true],
+			masterVolumeDb: 0,
+		};
+		const engine = new ClipEditorEngine(createMockAudioGraph);
+		try {
+			engine.play(
+				loopEdit,
+				0,
+				new Map([["clip-1", { duration: 0.05 } as unknown as AudioBuffer]]),
+				true,
+			);
+			await Bun.sleep(120);
+			expect(contexts[0]?.sources.length ?? 0).toBeGreaterThan(1);
+		} finally {
+			engine.dispose();
+			globalThis.AudioContext = previousAudioContext;
+		}
 	});
 
 	test("reversed segments schedule a negative playback rate", async () => {

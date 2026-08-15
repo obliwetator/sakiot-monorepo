@@ -3,6 +3,7 @@ import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 import {
 	applySegmentDrag,
 	clampPointToRect,
+	dragGroupForSelection,
 	type GroupedSegment,
 	groupTrackCollision,
 	marqueeIntersectsSegment,
@@ -117,6 +118,32 @@ describe("resolveGroupDelta", () => {
 	});
 });
 
+describe("dragGroupForSelection", () => {
+	test("dragging any selected member carries the full selection", () => {
+		const segments = [segment("a", 0), segment("b", 4), segment("c", 8)];
+
+		for (const draggedId of ["a", "b", "c"]) {
+			expect(
+				dragGroupForSelection(segments, ["a", "b", "c"], draggedId).map(
+					(member) => member.id,
+				),
+			).toEqual(["a", "b", "c"]);
+		}
+	});
+
+	test("dragging an unselected member starts a single-member group", () => {
+		const segments = [segment("a", 0), segment("b", 4), segment("c", 8)];
+		expect(dragGroupForSelection(segments, ["a", "b"], "c")).toEqual([
+			{
+				id: "c",
+				originStart: 8,
+				originTrack: 0,
+				duration: 4,
+			},
+		]);
+	});
+});
+
 describe("groupTrackCollision", () => {
 	const onTrack = (id: string, track: number, start: number) => ({
 		...member(id, start),
@@ -206,15 +233,20 @@ describe("timeline drag transitions", () => {
 		);
 		expect(result.state.trackCollision).toBe(true);
 		expect(result.state.ghostStarts).toEqual([
-			{ id: "a", start: 0 },
-			{ id: "b", start: 0 },
+			{ id: "a", start: 10 },
+			{ id: "b", start: 10 },
 		]);
 	});
 
 	test("commits every group member and grows track count", () => {
 		const a = segment("a", 0);
 		const b = { ...segment("b", 4), track: 1 };
-		const edit = { segments: [a, b], tracks: 2, masterVolumeDb: 0 };
+		const edit = {
+			segments: [a, b],
+			tracks: 2,
+			mutedTracks: [false, false],
+			masterVolumeDb: 0,
+		};
 		const next = applySegmentDrag(
 			edit,
 			dragState("move", {

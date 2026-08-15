@@ -24,6 +24,10 @@ export function serializeEdit(
 	return {
 		name,
 		master_volume_db: edit.masterVolumeDb,
+		muted_tracks: Array.from(
+			{ length: Math.max(1, edit.tracks) },
+			(_, track) => edit.mutedTracks[track] === true,
+		),
 		...(limits ? { limits: serializeLimits(limits) } : {}),
 		overwrite_clip_id: overwriteClipId,
 		segments: edit.segments.map((segment) => ({
@@ -94,11 +98,27 @@ export function deserializeEdit(data: unknown): ClipEdit | null {
 	if (typeof masterVolumeDb !== "number" || !Number.isFinite(masterVolumeDb)) {
 		return null;
 	}
-	const tracks = segments.reduce(
-		(max, segment) => Math.max(max, segment.track + 1),
+	const rawMutedTracks = record.muted_tracks;
+	let storedMutedTracks: boolean[] | undefined;
+	if (rawMutedTracks !== undefined) {
+		if (
+			!Array.isArray(rawMutedTracks) ||
+			rawMutedTracks.some((muted) => typeof muted !== "boolean")
+		) {
+			return null;
+		}
+		storedMutedTracks = rawMutedTracks;
+	}
+	const tracks = Math.max(
 		1,
+		segments.reduce((max, segment) => Math.max(max, segment.track + 1), 1),
+		storedMutedTracks?.length ?? 0,
 	);
-	return { segments, tracks, masterVolumeDb };
+	const mutedTracks = Array.from(
+		{ length: tracks },
+		(_, track) => storedMutedTracks?.[track] === true,
+	);
+	return { segments, tracks, mutedTracks, masterVolumeDb };
 }
 
 function deserializeSegment(raw: unknown): TimelineSegment | null {

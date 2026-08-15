@@ -803,6 +803,11 @@ export interface components {
 			limits?: null | components["schemas"]["ComposeLimitsDto"];
 			/** Format: float */
 			master_volume_db: number;
+			/**
+			 * @description Per-track mute state, indexed by track number. Missing values are
+			 *     treated as unmuted so older compositions remain compatible.
+			 */
+			muted_tracks?: boolean[];
 			name?: string | null;
 			/**
 			 * @description Id of an existing composed clip to replace with this export. Only

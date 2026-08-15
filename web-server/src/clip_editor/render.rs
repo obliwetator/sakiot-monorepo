@@ -282,7 +282,10 @@ pub(super) fn build_shared_mix_graph(segments: &[SegmentRender], master_volume_d
     let mut graph = String::new();
     for (index, segment) in segments.iter().enumerate() {
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
-        graph.push_str(&format!("[{index}:a]adelay={delay_ms}:all=1[s{index}];"));
+        let mute = if segment.muted { "volume=0," } else { "" };
+        graph.push_str(&format!(
+            "[{index}:a]{mute}adelay={delay_ms}:all=1[s{index}];"
+        ));
     }
     for index in 0..segments.len() {
         graph.push_str(&format!("[s{index}]"));
@@ -312,6 +315,7 @@ pub(super) fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f
         };
         let volume = db_to_linear(segment.effects.volume_db);
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
+        let mute = if segment.muted { ",volume=0" } else { "" };
         // Reversed segments trim the source window first, then flip it, so the
         // audible content is exactly the [source_in, source_out] window played
         // backwards - the same as the client's negative playbackRate preview.
@@ -321,7 +325,7 @@ pub(super) fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f
             ""
         };
         graph.push_str(&format!(
-            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},aresample={SAMPLE_RATE:.4}{time_pitch},volume={volume:.6},bass=g={:.3}:f=250:t=s:w=1,equalizer=g={:.3}:f={MID_FREQUENCY_HZ}:t=q:w=1,treble=g={:.3}:f=3000:t=s:w=1,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono,adelay={delay_ms}:all=1[s{index}];",
+            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},aresample={SAMPLE_RATE:.4}{time_pitch},volume={volume:.6},bass=g={:.3}:f=250:t=s:w=1,equalizer=g={:.3}:f={MID_FREQUENCY_HZ}:t=q:w=1,treble=g={:.3}:f=3000:t=s:w=1,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono{mute},adelay={delay_ms}:all=1[s{index}];",
             segment.source_in,
             segment.source_out,
             segment.effects.bass_db,
