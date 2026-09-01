@@ -5,7 +5,8 @@ use tracing::info;
 
 use super::FbiAgentGrpc;
 use super::proto::admin_server::Admin;
-use super::proto::{DrainRequest, DrainStatus, Empty};
+use super::proto::{BotRole as ProtoBotRole, DrainRequest, DrainStatus, Empty, VoicePresence};
+use crate::runtime::BotRole as RuntimeBotRole;
 
 #[tonic::async_trait]
 impl Admin for FbiAgentGrpc {
@@ -116,9 +117,16 @@ impl FbiAgentGrpc {
                 .unwrap_or(0)
         };
 
-        DrainStatus {
+        let runtime_role = self.data_cache.runtime.role();
+        let voice_presence = if active_voice_connections > 0 {
+            VoicePresence::Connected
+        } else {
+            VoicePresence::Empty
+        };
+        #[allow(deprecated)]
+        let status = DrainStatus {
             instance_id: self.data_cache.runtime.config().instance_id.clone(),
-            role: self.data_cache.runtime.role().as_str().to_string(),
+            role: runtime_role.as_str().to_string(),
             draining: self.data_cache.runtime.is_draining(),
             shutdown_when_empty: self.data_cache.runtime.shutdown_when_empty(),
             drain_timeout_seconds: self.data_cache.runtime.config().drain_timeout.as_secs(),
@@ -126,12 +134,40 @@ impl FbiAgentGrpc {
             message: message.to_string(),
             drain_age_seconds: self.data_cache.runtime.drain_age_seconds(),
             force_shutdown: self.data_cache.runtime.force_shutdown_requested(),
-            voice_state: if active_voice_connections > 0 {
-                "connected".to_string()
-            } else {
-                "empty".to_string()
-            },
+            voice_state: legacy_voice_presence(voice_presence).to_string(),
             active_recordings,
-        }
+            bot_role: proto_bot_role(runtime_role) as i32,
+            voice_presence: voice_presence as i32,
+        };
+        status
+    }
+}
+
+fn proto_bot_role(role: RuntimeBotRole) -> ProtoBotRole {
+    match role {
+        RuntimeBotRole::Active => ProtoBotRole::Active,
+        RuntimeBotRole::Drain => ProtoBotRole::Drain,
+    }
+}
+
+fn legacy_voice_presence(presence: VoicePresence) -> &'static str {
+    match presence {
+        VoicePresence::Unspecified | VoicePresence::Empty => "empty",
+        VoicePresence::Connected => "connected",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ProtoBotRole, RuntimeBotRole, VoicePresence, legacy_voice_presence, proto_bot_role,
+    };
+
+    #[test]
+    fn runtime_roles_have_typed_grpc_values() {
+        assert_eq!(proto_bot_role(RuntimeBotRole::Active), ProtoBotRole::Active);
+        assert_eq!(proto_bot_role(RuntimeBotRole::Drain), ProtoBotRole::Drain);
+        assert_eq!(legacy_voice_presence(VoicePresence::Empty), "empty");
+        assert_eq!(legacy_voice_presence(VoicePresence::Connected), "connected");
     }
 }

@@ -1,15 +1,4 @@
-import {
-	Copy as ContentCopyIcon,
-	Maximize as FitScreenIcon,
-	FolderOpen as FolderOpenIcon,
-	Pause as PauseIcon,
-	Play as PlayArrowIcon,
-	Redo2 as RedoIcon,
-	Repeat as RepeatIcon,
-	History as RestoreIcon,
-	Settings as SettingsIcon,
-	Undo2 as UndoIcon,
-} from "lucide-react";
+import { FolderOpen as FolderOpenIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -21,34 +10,19 @@ import {
 } from "../../app/apiSlice";
 import { useAppDispatch } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
-import { BaseDialog } from "../../shared/BaseDialog";
 import {
 	Alert,
 	Box,
 	Button,
-	Chip,
 	Drawer,
-	FormControl,
-	FormControlLabel,
-	IconButton,
-	LinearProgress,
-	Radio,
-	RadioGroup,
-	Slider,
 	Snackbar,
-	LegacyTextField as TextField,
-	Tooltip,
-	Typography,
 	useMediaQuery,
 	useTheme,
 } from "../../shared/ui";
-import { formatDuration } from "../../utils/formatTime";
-import {
-	playbackShortcutTargetAcceptsText,
-	playbackShortcutTargetOwnsArrows,
-} from "../audio-dashboard/playbackShortcuts";
 import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
+import { ClipEditorMonitor, ClipEditorToolbar } from "./ClipEditorChrome";
+import { ClipExportDialog } from "./ClipExportDialog";
 import { deserializeEdit, serializeEdit } from "./composePayload";
 import { loadDraft, saveDraft } from "./draftStorage";
 import { EditorOptionsDialog } from "./EditorOptionsDialog";
@@ -64,16 +38,8 @@ import {
 	loadEffectLimits,
 	saveEffectLimits,
 } from "./effectLimits";
-import { isEffectSettingsJsonShortcut } from "./effectSettingsJson";
 import { Inspector } from "./Inspector";
-import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
-import {
-	addSegment,
-	addTrack,
-	emptyEdit,
-	makeSegment,
-	segmentDuration,
-} from "./model";
+import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
 import {
 	type MobileBinDragPreview,
 	type MobileBinDropRequest,
@@ -82,6 +48,7 @@ import {
 import { useUnsavedChangesGuard } from "./unsavedChangesGuard";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
+import { useClipEditorKeyboardShortcuts } from "./useClipEditorKeyboardShortcuts";
 
 export function ClipEditor(props: { guildId: string }) {
 	const theme = useTheme();
@@ -419,7 +386,7 @@ export function ClipEditor(props: { guildId: string }) {
 		[handleBinDragEnd],
 	);
 
-	useKeyboardShortcuts(
+	useClipEditorKeyboardShortcuts(
 		editor,
 		() => setEffectSettingsJsonOpen(true),
 		() => setOptionsOpen(true),
@@ -450,7 +417,7 @@ export function ClipEditor(props: { guildId: string }) {
 				flexDirection: "column",
 			}}
 		>
-			<ToolbarRow
+			<ClipEditorToolbar
 				editor={editor}
 				onExport={() => setComposeOpen(true)}
 				canExport={editor.edit.segments.length > 0}
@@ -535,7 +502,7 @@ export function ClipEditor(props: { guildId: string }) {
 						flexDirection: "column",
 					}}
 				>
-					<Monitor
+					<ClipEditorMonitor
 						editor={editor}
 						duration={duration}
 						sourceStatus={sourceStatus}
@@ -642,429 +609,4 @@ export function ClipEditor(props: { guildId: string }) {
 			</Snackbar>
 		</Box>
 	);
-}
-
-function ToolbarRow(props: {
-	editor: ReturnType<typeof useClipEditor>;
-	onExport: () => void;
-	canExport: boolean;
-	canRestore: boolean;
-	onRestore: () => void;
-	onOpenOptions: () => void;
-}) {
-	const { editor } = props;
-	return (
-		<Box
-			sx={{
-				display: "flex",
-				alignItems: "center",
-				gap: { xs: 0.5, sm: 1 },
-				px: { xs: 1, sm: 2 },
-				py: 1,
-				borderBottom: 1,
-				borderColor: "divider",
-				overflowX: "auto",
-				flex: "0 0 auto",
-			}}
-		>
-			<Typography variant="h6" sx={{ flex: 1, minWidth: 0 }} noWrap>
-				Clip Editor
-			</Typography>
-			<Tooltip title="Undo (Ctrl+Z)">
-				<span>
-					<IconButton
-						size="small"
-						disabled={!editor.canUndo}
-						onClick={editor.undo}
-					>
-						<UndoIcon size={16} />
-					</IconButton>
-				</span>
-			</Tooltip>
-			<Tooltip title="Redo (Ctrl+Shift+Z)">
-				<span>
-					<IconButton
-						size="small"
-						disabled={!editor.canRedo}
-						onClick={editor.redo}
-					>
-						<RedoIcon size={16} />
-					</IconButton>
-				</span>
-			</Tooltip>
-			{props.canRestore && (
-				<Tooltip title="Restore the clip to its original version (can be undone)">
-					<span>
-						<IconButton size="small" onClick={props.onRestore}>
-							<RestoreIcon size={16} />
-						</IconButton>
-					</span>
-				</Tooltip>
-			)}
-			<Tooltip title="Add track">
-				<Button
-					size="small"
-					variant="outlined"
-					onClick={() => editor.apply(addTrack)}
-				>
-					+ Track
-				</Button>
-			</Tooltip>
-			<Tooltip title="Fit edit in view">
-				<IconButton size="small" onClick={editor.fitView}>
-					<FitScreenIcon size={16} />
-				</IconButton>
-			</Tooltip>
-			<Tooltip title="Export the composition as a new clip or overwrite the combined clip">
-				<span>
-					<Button
-						size="small"
-						variant="contained"
-						startIcon={<ContentCopyIcon />}
-						disabled={!props.canExport}
-						onClick={props.onExport}
-					>
-						Export
-					</Button>
-				</span>
-			</Tooltip>
-			<Tooltip title="Editor options (Ctrl+,)">
-				<IconButton size="small" onClick={props.onOpenOptions}>
-					<SettingsIcon size={16} />
-				</IconButton>
-			</Tooltip>
-		</Box>
-	);
-}
-
-function ClipExportDialog(props: {
-	open: boolean;
-	name: string;
-	setName: (name: string) => void;
-	error: string | null;
-	isStarting: boolean;
-	isRendering: boolean;
-	progress: number;
-	done: boolean;
-	segmentCount: number;
-	overwriteAvailable: boolean;
-	overwrite: boolean;
-	setOverwrite: (overwrite: boolean) => void;
-	onStart: () => void;
-	onClose: () => void;
-}) {
-	const busy = props.isStarting || props.isRendering;
-	return (
-		<BaseDialog
-			open={props.open}
-			onClose={props.onClose}
-			title="Export composition"
-			error={props.error ?? undefined}
-			busy={busy}
-			actions={
-				<>
-					<Button onClick={props.onClose} disabled={busy}>
-						{props.done ? "Done" : "Cancel"}
-					</Button>
-					{!props.done && (
-						<Button
-							variant="contained"
-							disabled={busy || props.segmentCount === 0}
-							onClick={props.onStart}
-						>
-							{props.overwrite ? "Overwrite" : "Render"}
-						</Button>
-					)}
-				</>
-			}
-		>
-			{/* Fixed footprint: the overwrite/new toggle and helper text change
-			    the content height, so pin the box size to keep the dialog from
-			    resizing while the choice changes. */}
-			<Box
-				sx={{
-					width: 440,
-					minHeight: 230,
-					display: "flex",
-					flexDirection: "column",
-				}}
-			>
-				{props.overwriteAvailable && (
-					<FormControl component="fieldset" disabled={busy} sx={{ mb: 2 }}>
-						<RadioGroup
-							value={props.overwrite ? "overwrite" : "new"}
-							onChange={(event) =>
-								props.setOverwrite(event.currentTarget.value === "overwrite")
-							}
-						>
-							<FormControlLabel
-								value="new"
-								control={<Radio size="small" />}
-								label="Save as new clip"
-							/>
-							<FormControlLabel
-								value="overwrite"
-								control={<Radio size="small" />}
-								label="Overwrite this combined clip"
-							/>
-						</RadioGroup>
-					</FormControl>
-				)}
-				<TextField
-					size="small"
-					fullWidth
-					label="Clip name"
-					value={props.name}
-					disabled={busy}
-					onChange={(event) => props.setName(event.currentTarget.value)}
-					helperText={
-						props.overwrite
-							? "Leave empty to keep the current clip's name."
-							: undefined
-					}
-					sx={{ mb: 2 }}
-				/>
-				{props.done ? (
-					<Typography variant="body2">
-						{props.overwrite
-							? "Updated — the combined clip now reflects this version."
-							: "Exported — the new clip is now in the bin."}
-					</Typography>
-				) : props.isRendering ? (
-					<Box>
-						<Typography variant="body2" sx={{ mb: 1 }}>
-							Rendering {props.segmentCount} segment
-							{props.segmentCount === 1 ? "" : "s"} on the server…
-						</Typography>
-						<LinearProgress variant="determinate" value={props.progress} />
-						<Typography
-							variant="caption"
-							color="text.secondary"
-							sx={{ fontVariantNumeric: "tabular-nums" }}
-						>
-							{props.progress}%
-						</Typography>
-					</Box>
-				) : (
-					<Typography variant="body2" color="text.secondary">
-						{props.overwrite
-							? `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} and replaces the combined clip with this version.`
-							: `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} into a single new clip.`}
-					</Typography>
-				)}
-			</Box>
-		</BaseDialog>
-	);
-}
-
-function Monitor(props: {
-	editor: ReturnType<typeof useClipEditor>;
-	duration: number;
-	sourceStatus: "idle" | "loading" | "ready" | "error";
-	sourceError: string | null;
-}) {
-	const { editor } = props;
-
-	return (
-		<Box
-			sx={{
-				display: "flex",
-				alignItems: "center",
-				gap: { xs: 1, sm: 2 },
-				px: { xs: 1, sm: 2 },
-				py: { xs: 0.5, sm: 1 },
-				borderBottom: 1,
-				borderColor: "divider",
-				flexWrap: "wrap",
-			}}
-		>
-			<Button
-				variant="contained"
-				startIcon={editor.playing ? <PauseIcon /> : <PlayArrowIcon />}
-				onClick={editor.togglePlay}
-				disabled={props.duration <= 0}
-			>
-				{editor.playing ? "Pause" : "Play"}
-			</Button>
-			<Tooltip title="Loop the edit while playing">
-				<IconButton
-					size="small"
-					color={editor.loop ? "secondary" : "default"}
-					aria-pressed={editor.loop}
-					onClick={() => editor.setLooping(!editor.loop)}
-				>
-					<RepeatIcon size={16} />
-				</IconButton>
-			</Tooltip>
-			<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-				{formatDuration(editor.positionSec)} / {formatDuration(props.duration)}
-			</Typography>
-			<Box sx={{ minWidth: 160, width: 200 }}>
-				<Typography variant="caption" color="text.secondary">
-					Master volume {editor.masterVolumeDb.toFixed(1)} dB
-				</Typography>
-				<Slider
-					size="small"
-					min={-40}
-					max={12}
-					step={0.5}
-					value={editor.masterVolumeDb}
-					onChange={(_event, value) => editor.setMasterVolume(Number(value))}
-					aria-label="Master volume"
-					sx={{ transition: "none" }}
-				/>
-			</Box>
-			<Chip
-				label={`${editor.edit.segments.length} segment${editor.edit.segments.length === 1 ? "" : "s"}`}
-				size="small"
-			/>
-			{props.sourceStatus === "loading" && (
-				<Chip label="Loading source…" size="small" color="warning" />
-			)}
-			{props.sourceStatus === "error" && (
-				<Alert severity="error" sx={{ py: 0 }}>
-					{props.sourceError ?? "Source clip could not be loaded."}
-				</Alert>
-			)}
-		</Box>
-	);
-}
-
-function useKeyboardShortcuts(
-	editor: ReturnType<typeof useClipEditor>,
-	openEffectSettingsJson: () => void,
-	openOptions: () => void,
-) {
-	const editorRef = useRef(editor);
-	const openEffectSettingsJsonRef = useRef(openEffectSettingsJson);
-	const openOptionsRef = useRef(openOptions);
-	useEffect(() => {
-		editorRef.current = editor;
-		openEffectSettingsJsonRef.current = openEffectSettingsJson;
-		openOptionsRef.current = openOptions;
-	}, [editor, openEffectSettingsJson, openOptions]);
-
-	useEffect(() => {
-		const handleShortcut = (event: KeyboardEvent) => {
-			const current = editorRef.current;
-			if (isEffectSettingsJsonShortcut(event)) {
-				event.preventDefault();
-				openEffectSettingsJsonRef.current();
-				return;
-			}
-			if (playbackShortcutTargetAcceptsText(event.target)) return;
-			const modifier = event.ctrlKey || event.metaKey;
-			if (modifier && event.key.toLowerCase() === "z") {
-				event.preventDefault();
-				if (event.shiftKey) current.redo();
-				else current.undo();
-				return;
-			}
-			if (modifier && event.key.toLowerCase() === "y") {
-				event.preventDefault();
-				current.redo();
-				return;
-			}
-			if (modifier && event.key.toLowerCase() === "c") {
-				if (current.selectedSegment) {
-					event.preventDefault();
-					current.copy();
-				}
-				return;
-			}
-			if (modifier && event.key.toLowerCase() === "x") {
-				if (current.selectedSegment) {
-					event.preventDefault();
-					current.cut();
-				}
-				return;
-			}
-			if (modifier && event.key.toLowerCase() === "v") {
-				event.preventDefault();
-				current.paste();
-				return;
-			}
-			if (modifier && event.key.toLowerCase() === "a") {
-				event.preventDefault();
-				current.selectMany(current.edit.segments.map((segment) => segment.id));
-				return;
-			}
-			if (modifier && event.key === ",") {
-				event.preventDefault();
-				openOptionsRef.current();
-				return;
-			}
-			if (modifier) return;
-			if (event.key === "Escape") {
-				if (current.selectedSegments.length > 0) {
-					event.preventDefault();
-					current.select(null);
-				}
-				return;
-			}
-			if (event.key === " " || event.code === "Space") {
-				if (event.repeat) return;
-				event.preventDefault();
-				current.togglePlay();
-				return;
-			}
-			const segment = current.selectedSegment;
-			if (event.key === "Delete" || event.key === "Backspace") {
-				if (segment) {
-					if (
-						isInspectorFeatureDisabled(
-							"delete",
-							current.selectedSegments.length,
-						)
-					)
-						return;
-					event.preventDefault();
-					current.removeSelected();
-				}
-				return;
-			}
-			if (segment) {
-				if (event.key === "s" || event.key === "S") {
-					if (
-						isInspectorFeatureDisabled("split", current.selectedSegments.length)
-					)
-						return;
-					event.preventDefault();
-					current.splitSelectedAtPlayhead();
-					return;
-				}
-				if (event.key === "r" || event.key === "R") {
-					if (
-						isInspectorFeatureDisabled(
-							"reverse",
-							current.selectedSegments.length,
-						)
-					)
-						return;
-					event.preventDefault();
-					current.toggleReverse();
-					return;
-				}
-				if (event.key === "m" || event.key === "M") {
-					event.preventDefault();
-					current.mergeSelected();
-					return;
-				}
-			}
-			if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-			if (playbackShortcutTargetOwnsArrows(event.target)) return;
-			const distance = event.shiftKey ? 1 : 0.1;
-			event.preventDefault();
-			current.setPosition(
-				Math.max(
-					0,
-					current.positionSec +
-						(event.key === "ArrowRight" ? distance : -distance),
-				),
-			);
-			return;
-		};
-		window.addEventListener("keydown", handleShortcut);
-		return () => window.removeEventListener("keydown", handleShortcut);
-	}, []);
 }

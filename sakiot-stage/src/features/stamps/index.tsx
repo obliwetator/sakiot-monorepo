@@ -11,6 +11,7 @@ import {
 	TableCell,
 	TableContainer,
 	TableHead,
+	TableHeader,
 	TableRow,
 	Typography,
 } from "../../shared/ui";
@@ -85,21 +86,21 @@ export function Stamps() {
 			) : (
 				<TableContainer component={Paper} variant="outlined">
 					<Table size="small">
-						<TableHead>
+						<TableHeader>
 							<TableRow>
-								<TableCell>ID</TableCell>
-								<TableCell>Absolute Time</TableCell>
-								<TableCell>Relative Time</TableCell>
-								<TableCell>Target</TableCell>
-								<TableCell>Stamper</TableCell>
-								<TableCell>Channel</TableCell>
-								<TableCell align="right">Offset (ms)</TableCell>
-								<TableCell>Session ID</TableCell>
-								<TableCell>Audio File ID</TableCell>
-								<TableCell>Note</TableCell>
-								<TableCell>Created</TableCell>
+								<TableHead>ID</TableHead>
+								<TableHead>Absolute Time</TableHead>
+								<TableHead>Relative Time</TableHead>
+								<TableHead>Target</TableHead>
+								<TableHead>Stamper</TableHead>
+								<TableHead>Channel</TableHead>
+								<TableHead align="right">Offset (ms)</TableHead>
+								<TableHead>Session ID</TableHead>
+								<TableHead>Audio File ID</TableHead>
+								<TableHead>Note</TableHead>
+								<TableHead>Created</TableHead>
 							</TableRow>
-						</TableHead>
+						</TableHeader>
 						<TableBody>
 							{rows.map((s) => {
 								const playbackTarget = buildStampPlaybackTarget(s, guildId);

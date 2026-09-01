@@ -25,10 +25,10 @@ const variantClasses: Record<ButtonVariant, string> = {
 	danger:
 		"border-red-400/60 bg-red-500/15 text-red-200 data-[hovered]:border-red-300 data-[hovered]:bg-red-500/25",
 	contained:
-		"border-primary bg-primary text-slate-950 data-[hovered]:border-cyan-300 data-[hovered]:bg-cyan-300",
+		"border-compat-primary bg-compat-primary text-slate-950 data-[hovered]:border-[#a6d4fa] data-[hovered]:bg-[#a6d4fa]",
 	outlined:
-		"border-ui-border bg-transparent text-slate-200 data-[hovered]:border-cyan-300 data-[hovered]:text-cyan-100",
-	text: "border-transparent bg-transparent text-cyan-200 data-[hovered]:bg-slate-800 data-[hovered]:text-cyan-100",
+		"border-compat-primary/50 bg-transparent text-compat-primary data-[hovered]:border-compat-primary data-[hovered]:bg-compat-primary/8",
+	text: "border-transparent bg-transparent text-compat-primary data-[hovered]:bg-compat-primary/8",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

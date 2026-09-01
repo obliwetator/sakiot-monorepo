@@ -21,9 +21,21 @@ message DrainRequest {
 	string reason = 1;
 }
 
+enum BotRole {
+	BOT_ROLE_UNSPECIFIED = 0;
+	BOT_ROLE_ACTIVE = 1;
+	BOT_ROLE_DRAIN = 2;
+}
+
+enum VoicePresence {
+	VOICE_PRESENCE_UNSPECIFIED = 0;
+	VOICE_PRESENCE_EMPTY = 1;
+	VOICE_PRESENCE_CONNECTED = 2;
+}
+
 message DrainStatus {
 	string instance_id = 1;
-	string role = 2;
+	string role = 2 [deprecated = true];
 	bool draining = 3;
 	bool shutdown_when_empty = 4;
 	uint64 drain_timeout_seconds = 5;
@@ -31,8 +43,10 @@ message DrainStatus {
 	string message = 7;
 	uint64 drain_age_seconds = 8;
 	bool force_shutdown = 9;
-	string voice_state = 10;
+	string voice_state = 10 [deprecated = true];
 	uint64 active_recordings = 11;
+	BotRole bot_role = 12;
+	VoicePresence voice_presence = 13;
 }
 
 message JamData {

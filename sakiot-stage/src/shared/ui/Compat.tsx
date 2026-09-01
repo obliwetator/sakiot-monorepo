@@ -489,7 +489,7 @@ export function LegacyTextField({
 					rows={minRows ?? 3}
 					aria-invalid={invalid || undefined}
 					aria-describedby={helperText ? descriptionId : undefined}
-					className="min-h-9 min-w-0 rounded-md border border-ui-border bg-slate-950/65 px-3 py-2 text-sm text-fg outline-hidden transition placeholder:text-slate-600 focus:border-primary focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50"
+					className="min-h-9 min-w-0 rounded-md border border-ui-border bg-slate-950/65 px-3 py-2 text-sm text-fg outline-hidden transition placeholder:text-slate-600 focus:border-compat-primary focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50"
 					style={controlStyle}
 				/>
 			) : (
@@ -504,7 +504,7 @@ export function LegacyTextField({
 						onChange={onChange}
 						aria-invalid={invalid || undefined}
 						aria-describedby={helperText ? descriptionId : undefined}
-						className="h-9 min-w-0 flex-1 rounded-md border border-ui-border bg-slate-950/65 px-3 text-sm text-fg outline-hidden transition placeholder:text-slate-600 focus:border-primary focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50"
+						className="h-9 min-w-0 flex-1 rounded-md border border-ui-border bg-slate-950/65 px-3 text-sm text-fg outline-hidden transition placeholder:text-slate-600 focus:border-compat-primary focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50"
 						style={controlStyle}
 					/>
 				</div>
@@ -776,7 +776,7 @@ export function Chip({
 		color === "error"
 			? "border-red-400/50 bg-red-500/15 text-red-200"
 			: color === "primary"
-				? "border-primary/50 bg-primary/15 text-primary"
+				? "border-compat-primary/50 bg-compat-primary/15 text-compat-primary"
 				: "border-ui-border bg-slate-800 text-slate-200";
 	return (
 		<span
@@ -856,7 +856,7 @@ export function LinearProgress({
 		>
 			<div
 				className={cn(
-					"h-full rounded-full bg-primary",
+					"h-full rounded-full bg-compat-primary",
 					variant !== "determinate" && "w-1/3 animate-pulse",
 				)}
 				style={
@@ -1335,7 +1335,7 @@ export function Select({
 					className={cn(
 						size === "small" ? "h-9" : "h-14",
 						size === "small" ? "text-sm" : "text-base",
-						"w-full appearance-none rounded border border-[rgba(255,255,255,0.23)] bg-header pl-[13px] pr-6 text-fg outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-focus",
+						"w-full appearance-none rounded border border-[rgba(255,255,255,0.23)] bg-header pl-[13px] pr-6 text-fg outline-hidden focus:border-compat-primary focus-visible:outline-2 focus-visible:outline-focus",
 						className,
 					)}
 					style={{
@@ -1438,7 +1438,7 @@ export function Radio({
 			checked={checked ?? context?.value === value}
 			onChange={onChange ?? context?.onChange}
 			disabled={disabled}
-			className={cn("size-4 accent-primary", className)}
+			className={cn("size-4 accent-compat-primary", className)}
 			style={sxToStyle(sx)}
 		/>
 	);
@@ -1485,7 +1485,7 @@ export function Switch({
 			/>
 			<span
 				aria-hidden="true"
-				className="absolute inset-0 rounded-full bg-slate-700 transition-colors peer-checked:bg-primary peer-focus-visible:outline-2 peer-focus-visible:outline-focus"
+				className="absolute inset-0 rounded-full bg-slate-700 transition-colors peer-checked:bg-compat-primary peer-focus-visible:outline-2 peer-focus-visible:outline-focus"
 			/>
 			<span
 				aria-hidden="true"
@@ -1680,7 +1680,7 @@ export function Slider({
 				/>
 				<span
 					aria-hidden="true"
-					className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary"
+					className="pointer-events-none absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-compat-primary"
 					style={{ left: `${lower}%`, width: `${Math.max(0, upper - lower)}%` }}
 				/>
 				{values.map((current, index) => (
@@ -1699,7 +1699,7 @@ export function Slider({
 						aria-valuetext={getAriaValueText?.(current)}
 						disabled={disabled}
 						className={cn(
-							"absolute top-1/2 z-10 h-[25px] w-[5px] -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-0 bg-primary p-0 shadow-[0_1px_3px_rgba(2,6,23,0.7)] outline-hidden focus-visible:outline-2 focus-visible:outline-focus",
+							"absolute top-1/2 z-10 h-[25px] w-[5px] -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-[1px] border-0 bg-compat-primary p-0 shadow-[0_1px_3px_rgba(2,6,23,0.7)] outline-hidden focus-visible:outline-2 focus-visible:outline-focus",
 							activeThumb === index && "z-20",
 						)}
 						style={{ left: `${toPercent(current)}%` }}
@@ -1758,7 +1758,7 @@ export function Slider({
 				target.blur();
 			}}
 			className={cn(
-				"h-1.5 w-full accent-primary",
+				"h-1.5 w-full accent-compat-primary",
 				range && "absolute inset-0",
 				orientation === "vertical" && "rotate-[-90deg]",
 				className,
@@ -1844,7 +1844,7 @@ export function Tab({
 			onClick={(event) => __tabsOnChange?.(event, value)}
 			className={cn(
 				"min-h-10 border-b-2 border-transparent px-3 py-2 text-sm text-muted transition-colors hover:text-fg",
-				selected && "border-primary text-primary",
+				selected && "border-compat-primary text-compat-primary",
 				__tabsFullWidth && "flex-1",
 				className,
 			)}
@@ -2165,8 +2165,9 @@ export function TreeItem({
 			)}
 			<div
 				className={cn(
-					"relative flex min-h-9 w-full cursor-pointer items-center rounded-md border border-transparent bg-surface-raised px-2 text-left text-sm text-fg transition-colors hover:bg-header focus-within:outline-2 focus-within:outline-primary focus-within:outline-offset-1",
-					selected && "border-primary/55 bg-ui-border text-fg shadow-panel",
+					"relative flex min-h-9 w-full cursor-pointer items-center rounded-md border border-transparent bg-surface-raised px-2 text-left text-sm text-fg transition-colors hover:bg-header focus-within:outline-2 focus-within:outline-compat-primary focus-within:outline-offset-1",
+					selected &&
+						"border-compat-primary/55 bg-ui-border text-fg shadow-panel",
 				)}
 				onClick={(event) => {
 					event.stopPropagation();

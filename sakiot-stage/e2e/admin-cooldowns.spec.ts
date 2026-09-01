@@ -393,7 +393,9 @@ test("navigates between admin screens without an update loop", async ({
 	).toBeVisible();
 });
 
-test("matches the cooldowns visual baseline", async ({ page }, testInfo) => {
+test("@visual matches the cooldowns visual baseline", async ({
+	page,
+}, testInfo) => {
 	await mockApi(page);
 	await openCooldowns(page);
 

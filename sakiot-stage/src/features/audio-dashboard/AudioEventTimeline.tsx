@@ -325,13 +325,13 @@ export function AudioEventTimeline(props: {
 					py: 0,
 					border: "1px solid rgba(148, 163, 184, 0.14)",
 					borderRadius: 0.75,
-					bgcolor: "rgba(148, 163, 184, 0.14)",
+					bgcolor: "rgba(148, 163, 184, 0.04)",
 					color: "text.secondary",
 					textTransform: "none",
 					justifyContent: "stretch",
 				}}
 				style={{
-					backgroundColor: "rgba(148, 163, 184, 0.14)",
+					backgroundColor: "rgba(148, 163, 184, 0.04)",
 					color: "var(--color-muted)",
 				}}
 			>

@@ -9,6 +9,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use sakiot_proto::fbi_agent::{BotRole, DrainStatus, VoicePresence};
 
 use crate::admin_api::AdminApi;
 use crate::config::{Config, Target};
@@ -181,10 +182,13 @@ fn print_bot_units(config: &Config, admin: &dyn AdminApi) -> Result<()> {
                 println!("    grpc: {address}");
                 println!(
                     "    role: {} | draining: {} | shutdown_when_empty: {}",
-                    status.role, status.draining, status.shutdown_when_empty
+                    bot_role_label(&status),
+                    status.draining,
+                    status.shutdown_when_empty
                 );
                 println!(
-                    "    voice connections: {} | recordings: {} | drain age: {}s",
+                    "    voice: {} | connections: {} | recordings: {} | drain age: {}s",
+                    voice_presence_label(&status),
                     status.active_voice_connections,
                     status.active_recordings,
                     status.drain_age_seconds
@@ -197,4 +201,45 @@ fn print_bot_units(config: &Config, admin: &dyn AdminApi) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[allow(deprecated)]
+fn bot_role_label(status: &DrainStatus) -> &str {
+    match status.bot_role() {
+        BotRole::Unspecified => &status.role,
+        BotRole::Active => "active",
+        BotRole::Drain => "drain",
+    }
+}
+
+#[allow(deprecated)]
+fn voice_presence_label(status: &DrainStatus) -> &str {
+    match status.voice_presence() {
+        VoicePresence::Unspecified => &status.voice_state,
+        VoicePresence::Empty => "empty",
+        VoicePresence::Connected => "connected",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bot_role_label, voice_presence_label};
+    use sakiot_proto::fbi_agent::{BotRole, DrainStatus, VoicePresence};
+
+    #[test]
+    #[allow(deprecated)]
+    fn typed_status_values_win_with_legacy_fallbacks() {
+        let mut status = DrainStatus {
+            role: "legacy-role".into(),
+            voice_state: "legacy-voice".into(),
+            ..DrainStatus::default()
+        };
+        assert_eq!(bot_role_label(&status), "legacy-role");
+        assert_eq!(voice_presence_label(&status), "legacy-voice");
+
+        status.bot_role = BotRole::Drain as i32;
+        status.voice_presence = VoicePresence::Connected as i32;
+        assert_eq!(bot_role_label(&status), "drain");
+        assert_eq!(voice_presence_label(&status), "connected");
+    }
 }

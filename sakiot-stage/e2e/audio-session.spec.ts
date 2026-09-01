@@ -305,7 +305,7 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 				(element) => getComputedStyle(element).backgroundColor,
 			),
 		)
-		.toBe("rgba(0, 0, 0, 0.87)");
+		.toBe("rgba(148, 163, 184, 0.04)");
 	await expect
 		.poll(() =>
 			eventTimeline.evaluate((element) => getComputedStyle(element).color),

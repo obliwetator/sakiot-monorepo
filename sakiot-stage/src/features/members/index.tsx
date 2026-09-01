@@ -29,6 +29,7 @@ import {
 	TableCell,
 	TableContainer,
 	TableHead,
+	TableHeader,
 	TableRow,
 	Typography,
 } from "../../shared/ui";
@@ -294,12 +295,12 @@ export function GuildMembers() {
 							</Typography>
 						) : (
 							<Table size="small">
-								<TableHead>
+								<TableHeader>
 									<TableRow>
-										<TableCell>Name</TableCell>
-										<TableCell>User ID</TableCell>
+										<TableHead>Name</TableHead>
+										<TableHead>User ID</TableHead>
 									</TableRow>
-								</TableHead>
+								</TableHeader>
 								<TableBody>
 									{(members ?? []).map((member) => (
 										<TableRow key={member.user_id}>
