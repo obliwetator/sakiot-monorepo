@@ -1,10 +1,5 @@
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import Typography from "@mui/material/Typography";
+import { Pause as PauseIcon, Play as PlayArrowIcon } from "lucide-react";
+import { Box, Button, Slider, Stack, Typography } from "../../shared/ui";
 
 export function PlaybackControls(props: {
 	playing: boolean;
@@ -16,19 +11,20 @@ export function PlaybackControls(props: {
 }) {
 	return (
 		<Stack
-			direction={{ xs: "column", md: "row" }}
-			spacing={2}
+			direction="row"
+			spacing={{ xs: 1, md: 2 }}
 			alignItems="center"
-			sx={{ mt: 1 }}
+			sx={{ mt: 1, minWidth: 0, overflowX: "auto" }}
 		>
 			<Button
 				variant="contained"
 				onClick={props.onTogglePlay}
 				startIcon={props.playing ? <PauseIcon /> : <PlayArrowIcon />}
+				className="shrink-0"
 			>
 				{props.playing ? "Pause" : "Play"}
 			</Button>
-			<Box sx={{ minWidth: 180, flex: 1 }}>
+			<Box sx={{ minWidth: { xs: 96, md: 180 }, flex: "1 1 0%" }}>
 				<Typography variant="caption">Volume</Typography>
 				<Slider
 					aria-label="Playback volume"
@@ -39,7 +35,7 @@ export function PlaybackControls(props: {
 					onChange={(_event, value) => props.onVolumeChange(Number(value))}
 				/>
 			</Box>
-			<Box sx={{ minWidth: 180, flex: 1 }}>
+			<Box sx={{ minWidth: { xs: 96, md: 180 }, flex: "1 1 0%" }}>
 				<Typography variant="caption">
 					Speed {props.playbackRate.toFixed(2)}×
 				</Typography>

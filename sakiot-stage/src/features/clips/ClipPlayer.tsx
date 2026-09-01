@@ -1,21 +1,10 @@
-import ContentCutIcon from "@mui/icons-material/ContentCut";
-import DownloadIcon from "@mui/icons-material/Download";
-import EditIcon from "@mui/icons-material/Edit";
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import DialogContentText from "@mui/material/DialogContentText";
-import IconButton from "@mui/material/IconButton";
-import Link from "@mui/material/Link";
-import Paper from "@mui/material/Paper";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import {
+	Scissors as ContentCutIcon,
+	Download as DownloadIcon,
+	Pencil as EditIcon,
+	Pause as PauseIcon,
+	Play as PlayArrowIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
@@ -31,6 +20,21 @@ import {
 } from "../../app/authedFetch";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
+import {
+	Alert,
+	Box,
+	Button,
+	Chip,
+	DialogContentText,
+	IconButton,
+	Link,
+	Paper,
+	Slider,
+	Stack,
+	LegacyTextField as TextField,
+	Tooltip,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	playbackShortcutTargetAcceptsText,
@@ -125,7 +129,7 @@ function RenameClipButton(props: { clip: ClipData }) {
 		<>
 			<Tooltip title="Rename clip">
 				<IconButton size="small" onClick={handleOpen} aria-label="Rename clip">
-					<EditIcon fontSize="small" />
+					<EditIcon size={16} />
 				</IconButton>
 			</Tooltip>
 			<BaseDialog
@@ -477,9 +481,7 @@ export function ClipPlayer(props: {
 				}}
 				valueLabelDisplay="auto"
 				valueLabelFormat={formatDuration}
-				sx={{
-					"& .MuiSlider-thumb, & .MuiSlider-track": { transition: "none" },
-				}}
+				sx={{ transition: "none" }}
 			/>
 
 			<Stack

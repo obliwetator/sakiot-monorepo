@@ -1,6 +1,4 @@
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
+import { Alert, Box, Typography } from "../../shared/ui";
 import { PlaybackControls } from "./PlaybackControls";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";

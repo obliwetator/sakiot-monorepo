@@ -1,10 +1,3 @@
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Paper from "@mui/material/Paper";
-import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -12,6 +5,15 @@ import {
 	useGetGuildVoiceSettingsQuery,
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
+import {
+	Alert,
+	Box,
+	Button,
+	Paper,
+	Stack,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 
 const MIN_PENDING_SECONDS = 60;
 

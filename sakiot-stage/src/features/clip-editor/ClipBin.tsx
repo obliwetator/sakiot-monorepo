@@ -1,15 +1,17 @@
-import SearchIcon from "@mui/icons-material/Search";
-import Box from "@mui/material/Box";
-import CircularProgress from "@mui/material/CircularProgress";
-import InputAdornment from "@mui/material/InputAdornment";
-import List from "@mui/material/List";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemText from "@mui/material/ListItemText";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
+import { Search as SearchIcon } from "lucide-react";
 import type { TouchEvent as ReactTouchEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { ClipData } from "../../app/apiSlice";
+import {
+	Box,
+	CircularProgress,
+	InputAdornment,
+	List,
+	ListItemButton,
+	ListItemText,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 
 export function ClipBin(props: {
@@ -60,7 +62,7 @@ export function ClipBin(props: {
 						input: {
 							startAdornment: (
 								<InputAdornment position="start">
-									<SearchIcon fontSize="small" />
+									<SearchIcon size={16} />
 								</InputAdornment>
 							),
 						},

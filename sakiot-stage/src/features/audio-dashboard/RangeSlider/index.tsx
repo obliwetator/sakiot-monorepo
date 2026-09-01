@@ -1,9 +1,8 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
 import type React from "react";
 import { useParams } from "react-router-dom";
 import type { VoiceEvent } from "../../../app/apiSlice";
 import type { AudioParams, UserGuilds } from "../../../Constants";
+import { Box, Button, Stack } from "../../../shared/ui";
 import WaveFormButton from "../Waveform";
 import { ClipDialog } from "./ClipDialog";
 import { DoubleSlider } from "./DoubleSlider";
@@ -67,22 +66,31 @@ export function RangeSlider(props: {
 				onPinEnd={range.pinEnd}
 				recordingStartedAtMs={props.recordingStartedAtMs}
 			/>
-			<DownloadButton
-				isClip={props.isClip}
-				isSilence={props.isSilence}
-				params={params}
-			/>
-			<ClipDialog
-				params={params}
-				startEnd={range.startEnd}
-				disabled={props.isClip}
-			/>
-			<SilenceButton
-				params={params}
-				isSilence={props.isSilence}
-				isLive={props.isLive}
-			/>
-			<JamIt visible={props.isClip} />
+			<Stack
+				direction="row"
+				spacing={1}
+				alignItems="center"
+				flexWrap="wrap"
+				useFlexGap
+				sx={{ mt: 1 }}
+			>
+				<DownloadButton
+					isClip={props.isClip}
+					isSilence={props.isSilence}
+					params={params}
+				/>
+				<ClipDialog
+					params={params}
+					startEnd={range.startEnd}
+					disabled={props.isClip}
+				/>
+				<SilenceButton
+					params={params}
+					isSilence={props.isSilence}
+					isLive={props.isLive}
+				/>
+				<JamIt visible={props.isClip} />
+			</Stack>
 		</Box>
 	);
 }

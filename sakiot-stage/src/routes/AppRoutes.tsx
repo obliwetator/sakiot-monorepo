@@ -1,8 +1,8 @@
-import Box from "@mui/material/Box";
 import React, { Suspense } from "react";
 import { Route } from "react-router-dom";
 import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
+import { Box } from "../shared/ui";
 
 const Clips = React.lazy(() => import("../features/clips"));
 const ClipEditor = React.lazy(() => import("../features/clip-editor"));

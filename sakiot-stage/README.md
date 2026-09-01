@@ -24,7 +24,7 @@ whole Sakiot application:
 ## What It Does
 
 - Runs a React 19 application through Vite.
-- Uses Material UI for application shell and interface components.
+- Uses React Aria wrappers and Tailwind for the application shell and interface components.
 - Talks to the backend through generated OpenAPI types and authenticated fetch
   helpers.
 - Provides protected routes behind the login/bootstrap flow.

@@ -1,9 +1,6 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import LinearProgress from "@mui/material/LinearProgress";
-import Typography from "@mui/material/Typography";
 import { useEffect, useMemo, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
+import { Box, Button, LinearProgress, Typography } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
 import {
 	decodeWaveformPeaks,

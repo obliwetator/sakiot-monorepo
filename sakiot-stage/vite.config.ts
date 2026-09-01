@@ -92,10 +92,6 @@ export default defineConfig(({ command, mode }) => {
 								name: "redux",
 								test: /node_modules\/(@reduxjs\/toolkit|react-redux|redux|reselect|immer)\//,
 							},
-							{
-								name: "mui",
-								test: /node_modules\/(@mui|@emotion)\//,
-							},
 						],
 					},
 				},

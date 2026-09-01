@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
 	useDeleteUserOverrideMutation,
@@ -59,13 +59,26 @@ export function GuildAdminCooldowns() {
 	const [initializedGuildId, setInitializedGuildId] = useState<string | null>(
 		null,
 	);
+	const guildInputDirtyRef = useRef(false);
 
 	useEffect(() => {
-		if (guildCooldown && initializedGuildId !== gid) {
+		if (
+			guildCooldown &&
+			initializedGuildId !== gid &&
+			!guildInputDirtyRef.current
+		) {
 			setGuildSeconds(String(guildCooldown.cooldown_seconds));
 			setInitializedGuildId(gid);
 		}
 	}, [gid, guildCooldown, initializedGuildId]);
+
+	// Reset the edit guard when navigation changes guilds; fetched data must not
+	// overwrite a value the user started entering while the request was pending.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: gid is the route-change trigger.
+	useEffect(() => {
+		guildInputDirtyRef.current = false;
+		setInitializedGuildId(null);
+	}, [gid]);
 
 	const handleSaveGuild = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -172,7 +185,13 @@ export function GuildAdminCooldowns() {
 							min={0}
 							step={1}
 							value={guildSeconds}
+							onFocus={() => {
+								if (initializedGuildId !== gid) {
+									guildInputDirtyRef.current = true;
+								}
+							}}
 							onChange={(value) => {
+								guildInputDirtyRef.current = true;
 								setGuildSeconds(value);
 								setGuildError(null);
 								setGuildState.reset();

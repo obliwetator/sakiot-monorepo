@@ -1,31 +1,15 @@
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import FitScreenIcon from "@mui/icons-material/FitScreen";
-import FolderOpenIcon from "@mui/icons-material/FolderOpen";
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import RedoIcon from "@mui/icons-material/Redo";
-import RepeatIcon from "@mui/icons-material/Repeat";
-import RestoreIcon from "@mui/icons-material/Restore";
-import SettingsIcon from "@mui/icons-material/Settings";
-import UndoIcon from "@mui/icons-material/Undo";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import Drawer from "@mui/material/Drawer";
-import FormControl from "@mui/material/FormControl";
-import FormControlLabel from "@mui/material/FormControlLabel";
-import IconButton from "@mui/material/IconButton";
-import LinearProgress from "@mui/material/LinearProgress";
-import Radio from "@mui/material/Radio";
-import RadioGroup from "@mui/material/RadioGroup";
-import Slider from "@mui/material/Slider";
-import Snackbar from "@mui/material/Snackbar";
-import { useTheme } from "@mui/material/styles";
-import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
-import useMediaQuery from "@mui/material/useMediaQuery";
+import {
+	Copy as ContentCopyIcon,
+	Maximize as FitScreenIcon,
+	FolderOpen as FolderOpenIcon,
+	Pause as PauseIcon,
+	Play as PlayArrowIcon,
+	Redo2 as RedoIcon,
+	Repeat as RepeatIcon,
+	History as RestoreIcon,
+	Settings as SettingsIcon,
+	Undo2 as UndoIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -38,6 +22,26 @@ import {
 import { useAppDispatch } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { BaseDialog } from "../../shared/BaseDialog";
+import {
+	Alert,
+	Box,
+	Button,
+	Chip,
+	Drawer,
+	FormControl,
+	FormControlLabel,
+	IconButton,
+	LinearProgress,
+	Radio,
+	RadioGroup,
+	Slider,
+	Snackbar,
+	LegacyTextField as TextField,
+	Tooltip,
+	Typography,
+	useMediaQuery,
+	useTheme,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	playbackShortcutTargetAcceptsText,
@@ -503,16 +507,7 @@ export function ClipEditor(props: { guildId: string }) {
 							}}
 							transitionDuration={{ enter: 225, exit: 0 }}
 							ModalProps={{ keepMounted: true }}
-							sx={
-								mobileTouchDragging
-									? {
-											"& .MuiBackdrop-root": {
-												opacity: "0 !important",
-											},
-											"& .MuiDrawer-paper": { opacity: 0 },
-										}
-									: undefined
-							}
+							className={mobileTouchDragging ? "opacity-0" : undefined}
 						>
 							<ClipBin
 								clips={pureClips}
@@ -682,7 +677,7 @@ function ToolbarRow(props: {
 						disabled={!editor.canUndo}
 						onClick={editor.undo}
 					>
-						<UndoIcon fontSize="small" />
+						<UndoIcon size={16} />
 					</IconButton>
 				</span>
 			</Tooltip>
@@ -693,7 +688,7 @@ function ToolbarRow(props: {
 						disabled={!editor.canRedo}
 						onClick={editor.redo}
 					>
-						<RedoIcon fontSize="small" />
+						<RedoIcon size={16} />
 					</IconButton>
 				</span>
 			</Tooltip>
@@ -701,7 +696,7 @@ function ToolbarRow(props: {
 				<Tooltip title="Restore the clip to its original version (can be undone)">
 					<span>
 						<IconButton size="small" onClick={props.onRestore}>
-							<RestoreIcon fontSize="small" />
+							<RestoreIcon size={16} />
 						</IconButton>
 					</span>
 				</Tooltip>
@@ -717,7 +712,7 @@ function ToolbarRow(props: {
 			</Tooltip>
 			<Tooltip title="Fit edit in view">
 				<IconButton size="small" onClick={editor.fitView}>
-					<FitScreenIcon fontSize="small" />
+					<FitScreenIcon size={16} />
 				</IconButton>
 			</Tooltip>
 			<Tooltip title="Export the composition as a new clip or overwrite the combined clip">
@@ -735,7 +730,7 @@ function ToolbarRow(props: {
 			</Tooltip>
 			<Tooltip title="Editor options (Ctrl+,)">
 				<IconButton size="small" onClick={props.onOpenOptions}>
-					<SettingsIcon fontSize="small" />
+					<SettingsIcon size={16} />
 				</IconButton>
 			</Tooltip>
 		</Box>
@@ -898,7 +893,7 @@ function Monitor(props: {
 					aria-pressed={editor.loop}
 					onClick={() => editor.setLooping(!editor.loop)}
 				>
-					<RepeatIcon fontSize="small" />
+					<RepeatIcon size={16} />
 				</IconButton>
 			</Tooltip>
 			<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
@@ -916,11 +911,7 @@ function Monitor(props: {
 					value={editor.masterVolumeDb}
 					onChange={(_event, value) => editor.setMasterVolume(Number(value))}
 					aria-label="Master volume"
-					sx={{
-						"& .MuiSlider-thumb, & .MuiSlider-track": {
-							transition: "none",
-						},
-					}}
+					sx={{ transition: "none" }}
 				/>
 			</Box>
 			<Chip

@@ -39,7 +39,6 @@ export function TreeViewYears(props: {
 
 	return (
 		<StyledTreeItem
-			className="bg-green-500 overflow-hidden"
 			label={
 				<span className="inline-flex items-center">
 					{props.el.year}
@@ -48,7 +47,7 @@ export function TreeViewYears(props: {
 			}
 			itemId={`${props.el.year}`}
 		>
-			<div>{result}</div>
+			{result}
 		</StyledTreeItem>
 	);
 }

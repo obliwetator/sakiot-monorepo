@@ -368,7 +368,7 @@ test("renders the empty table state", async ({ page }) => {
 	await expect(page.getByText("No per-user overrides.")).toBeVisible();
 });
 
-test("navigates between MUI screens without an update loop", async ({
+test("navigates between admin screens without an update loop", async ({
 	page,
 }, testInfo) => {
 	const navigateFromShell = async (name: "Admin" | "Voice Settings") => {
@@ -398,7 +398,7 @@ test("matches the cooldowns visual baseline", async ({ page }, testInfo) => {
 	await openCooldowns(page);
 
 	const appBar = page.locator("header").first();
-	const toolbar = appBar.locator(".MuiToolbar-root");
+	const toolbar = appBar.locator("div").first();
 	await expect(appBar).toBeVisible();
 	await expect(toolbar).toBeVisible();
 	const toolbarHeight = await toolbar.evaluate(

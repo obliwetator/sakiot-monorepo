@@ -1,17 +1,19 @@
-import Avatar from "@mui/material/Avatar";
-import Box from "@mui/material/Box";
-import Divider from "@mui/material/Divider";
-import List from "@mui/material/List";
-import ListItem from "@mui/material/ListItem";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemIcon from "@mui/material/ListItemIcon";
-import ListItemText from "@mui/material/ListItemText";
-import ListSubheader from "@mui/material/ListSubheader";
-import Typography from "@mui/material/Typography";
 import type * as React from "react";
 import type { UserGuilds } from "../Constants";
 import Login from "../login/login";
 import { BasicSelect } from "../shared/BasicSelect";
+import {
+	Avatar,
+	Box,
+	Divider,
+	List,
+	ListItem,
+	ListItemButton,
+	ListItemIcon,
+	ListItemText,
+	ListSubheader,
+	Typography,
+} from "../shared/ui";
 import { type PageName, pageIcons } from "./constants";
 
 export function MobileDrawer(props: {

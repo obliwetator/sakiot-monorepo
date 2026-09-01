@@ -1,8 +1,10 @@
-import Button from "@mui/material/Button";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
+import {
+	Button,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 import { parseEffectSettingsJson } from "./effectSettingsJson";
 import { DEFAULT_EFFECTS, resizeSelectedSegments } from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";

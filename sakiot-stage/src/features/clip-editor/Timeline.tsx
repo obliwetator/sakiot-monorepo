@@ -1,9 +1,4 @@
-import ZoomInIcon from "@mui/icons-material/ZoomIn";
-import ZoomOutIcon from "@mui/icons-material/ZoomOut";
-import Box from "@mui/material/Box";
-import IconButton from "@mui/material/IconButton";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import { ZoomIn as ZoomInIcon, ZoomOut as ZoomOutIcon } from "lucide-react";
 import type {
 	DragEvent as ReactDragEvent,
 	KeyboardEvent as ReactKeyboardEvent,
@@ -11,6 +6,7 @@ import type {
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePointerDrag } from "../../shared/pointerDrag";
+import { Box, IconButton, Tooltip, Typography } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import { pendingBinDrag } from "./ClipBin";
@@ -999,7 +995,7 @@ export function Timeline(props: {
 			<Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
 				<Tooltip title="Zoom out">
 					<IconButton size="small" onClick={() => editor.zoom(2)}>
-						<ZoomOutIcon fontSize="small" />
+						<ZoomOutIcon size={16} />
 					</IconButton>
 				</Tooltip>
 				<Tooltip title="Fit edit in view">
@@ -1011,7 +1007,7 @@ export function Timeline(props: {
 				</Tooltip>
 				<Tooltip title="Zoom in">
 					<IconButton size="small" onClick={() => editor.zoom(0.5)}>
-						<ZoomInIcon fontSize="small" />
+						<ZoomInIcon size={16} />
 					</IconButton>
 				</Tooltip>
 				<Typography

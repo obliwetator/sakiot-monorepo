@@ -1,25 +1,30 @@
-import CallSplitIcon from "@mui/icons-material/CallSplit";
-import ContentCutIcon from "@mui/icons-material/ContentCut";
-import DeleteIcon from "@mui/icons-material/Delete";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import MergeIcon from "@mui/icons-material/Merge";
-import ReplayIcon from "@mui/icons-material/Replay";
-import SettingsIcon from "@mui/icons-material/Settings";
-import Accordion from "@mui/material/Accordion";
-import AccordionDetails from "@mui/material/AccordionDetails";
-import AccordionSummary from "@mui/material/AccordionSummary";
-import Box from "@mui/material/Box";
-import MuiButton, { type ButtonProps } from "@mui/material/Button";
-import Divider from "@mui/material/Divider";
-import FormControlLabel from "@mui/material/FormControlLabel";
-import IconButton from "@mui/material/IconButton";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import Switch from "@mui/material/Switch";
-import TextField from "@mui/material/TextField";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import {
+	GitBranch as CallSplitIcon,
+	Scissors as ContentCutIcon,
+	Trash2 as DeleteIcon,
+	ChevronDown as ExpandMoreIcon,
+	GitMerge as MergeIcon,
+	RotateCcw as ReplayIcon,
+	Settings as SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
+import {
+	Accordion,
+	AccordionDetails,
+	AccordionSummary,
+	Box,
+	type ButtonProps,
+	Divider,
+	FormControlLabel,
+	IconButton,
+	Button as InspectorButton,
+	Slider,
+	Stack,
+	Switch,
+	LegacyTextField as TextField,
+	Tooltip,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { type EffectLimits, effectLimit } from "./effectLimits";
 import {
@@ -38,7 +43,7 @@ import type { UseClipEditorReturn } from "./useClipEditor";
 
 const SLIDER_PROPS = {
 	size: "small" as const,
-	sx: { "& .MuiSlider-thumb, & .MuiSlider-track": { transition: "none" } },
+	sx: { transition: "none" },
 };
 
 export function Inspector(props: {
@@ -170,7 +175,7 @@ function SegmentInspectorContent(props: {
 				</Typography>
 				<Tooltip title="Adjust the effect limits (volume, pitch, speed, EQ)">
 					<IconButton size="small" onClick={props.onOpenLimits}>
-						<SettingsIcon fontSize="small" />
+						<SettingsIcon size={16} />
 					</IconButton>
 				</Tooltip>
 			</Stack>
@@ -899,7 +904,7 @@ function InspectorActionButton(
 			title={gated ? MULTI_SELECTION_DISABLED_REASON : (disabledReason ?? "")}
 		>
 			<span>
-				<MuiButton {...buttonProps} disabled={disabled || gated} />
+				<InspectorButton {...buttonProps} disabled={disabled || gated} />
 			</span>
 		</Tooltip>
 	);

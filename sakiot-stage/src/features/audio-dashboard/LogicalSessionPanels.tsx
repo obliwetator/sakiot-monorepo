@@ -1,19 +1,21 @@
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import Accordion from "@mui/material/Accordion";
-import AccordionDetails from "@mui/material/AccordionDetails";
-import AccordionSummary from "@mui/material/AccordionSummary";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import FormControl from "@mui/material/FormControl";
-import InputLabel from "@mui/material/InputLabel";
-import MenuItem from "@mui/material/MenuItem";
-import Paper from "@mui/material/Paper";
-import Select from "@mui/material/Select";
-import Stack from "@mui/material/Stack";
-import Typography from "@mui/material/Typography";
+import { ChevronDown as ExpandMoreIcon } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
+import {
+	Accordion,
+	AccordionDetails,
+	AccordionSummary,
+	Alert,
+	Box,
+	Button,
+	Chip,
+	FormControl,
+	InputLabel,
+	MenuItem,
+	Paper,
+	Select,
+	Stack,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import type { PlaybackSegment } from "./logicalSessionTimeline";
 

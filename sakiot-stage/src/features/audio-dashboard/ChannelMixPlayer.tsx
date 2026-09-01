@@ -1,23 +1,3 @@
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
-import Divider from "@mui/material/Divider";
-import FormControl from "@mui/material/FormControl";
-import FormControlLabel from "@mui/material/FormControlLabel";
-import InputLabel from "@mui/material/InputLabel";
-import LinearProgress from "@mui/material/LinearProgress";
-import MenuItem from "@mui/material/MenuItem";
-import Paper from "@mui/material/Paper";
-import Select from "@mui/material/Select";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import Switch from "@mui/material/Switch";
-import Typography from "@mui/material/Typography";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	ChannelMixParticipantSettings,
@@ -26,6 +6,28 @@ import type {
 } from "../../app/apiSlice";
 import { BASE_API_URL } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
+import {
+	Alert,
+	Box,
+	Button,
+	Chip,
+	Dialog,
+	DialogActions,
+	DialogContent,
+	DialogTitle,
+	Divider,
+	FormControl,
+	FormControlLabel,
+	InputLabel,
+	LinearProgress,
+	MenuItem,
+	Paper,
+	Select,
+	Slider,
+	Stack,
+	Switch,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { ChannelMixTrackWaveforms } from "./ChannelMixWaveforms";
 import { channelMixRenderSettingsEqual } from "./channelMixDrafts";

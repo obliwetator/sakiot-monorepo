@@ -1,16 +1,18 @@
-import FolderOpenIcon from "@mui/icons-material/FolderOpen";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Drawer from "@mui/material/Drawer";
-import { useTheme } from "@mui/material/styles";
-import Tab from "@mui/material/Tab";
-import Tabs from "@mui/material/Tabs";
-import useMediaQuery from "@mui/material/useMediaQuery";
+import { FolderOpen as FolderOpenIcon } from "lucide-react";
 import React from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
+import {
+	Box,
+	Button,
+	Drawer,
+	Tab,
+	Tabs,
+	useMediaQuery,
+	useTheme,
+} from "../../shared/ui";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { AudioInterface } from "./AudioInterface";
 import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
@@ -19,29 +21,55 @@ import CustomizedTreeView from "./TreeView";
 export function YearSelection() {
 	const params = useParams();
 	const location = useLocation();
+	const theme = useTheme();
+	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
 
 	const hasSilence = useAppSelector((state) => state.hasSilence.value);
 	const [tab, setTab] = React.useState<"normal" | "silence">("normal");
 	// Silence tab only exists when a silence-free version is present; fall
 	// back to normal whenever it isn't (e.g. navigating to another file).
 	const activeTab = tab === "silence" && hasSilence ? "silence" : "normal";
+	const [treeOpen, setTreeOpen] = React.useState(false);
 	const { data: authData } = useGetAuthDetailsQuery(undefined, {
 		skip: !hasLoggedInCookie(),
 	});
 	const userGuilds = authData?.guilds || null;
 
-	const theme = useTheme();
-	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
-	const [treeOpen, setTreeOpen] = React.useState(false);
+	React.useEffect(() => {
+		// A recording selection changes the route. Closing here also covers
+		// selections initiated by keyboard or by a deep-link navigation.
+		if (location.pathname) setTreeOpen(false);
+	}, [location.pathname]);
 
 	React.useEffect(() => {
-		if (!isDesktop) setTreeOpen(false);
+		if (isDesktop) setTreeOpen(false);
 	}, [isDesktop]);
 
-	const tree = <CustomizedTreeView />;
+	const tree = (
+		<CustomizedTreeView onRecordingSelect={() => setTreeOpen(false)} />
+	);
 
 	return (
 		<Box sx={{ width: "100%", height: { md: "100%" }, overflow: "hidden" }}>
+			{!isDesktop && (
+				<Box sx={{ p: 1 }}>
+					<Button
+						variant="outlined"
+						fullWidth
+						startIcon={<FolderOpenIcon />}
+						onClick={() => setTreeOpen(true)}
+					>
+						Browse files
+					</Button>
+					<Drawer
+						anchor="left"
+						open={treeOpen}
+						onClose={() => setTreeOpen(false)}
+					>
+						<Box sx={{ width: 280, p: 1 }}>{tree}</Box>
+					</Drawer>
+				</Box>
+			)}
 			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0 }}>
 				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
 			</Box>
@@ -50,10 +78,11 @@ export function YearSelection() {
 					display: "flex",
 					flexDirection: { xs: "column", md: "row" },
 					width: "100%",
+					minWidth: 0,
 					height: { md: "100%" },
 				}}
 			>
-				{isDesktop ? (
+				{isDesktop && (
 					<Box
 						sx={{
 							flex: "0 0 20%",
@@ -61,6 +90,7 @@ export function YearSelection() {
 							maxWidth: 320,
 							height: "100%",
 							overflowY: "auto",
+							overflowX: "hidden",
 							// Hide scrollbar (Firefox / IE / WebKit)
 							scrollbarWidth: "none",
 							msOverflowStyle: "none",
@@ -69,30 +99,13 @@ export function YearSelection() {
 					>
 						{tree}
 					</Box>
-				) : (
-					<Box sx={{ p: 1 }}>
-						<Button
-							variant="outlined"
-							fullWidth
-							startIcon={<FolderOpenIcon />}
-							onClick={() => setTreeOpen(true)}
-						>
-							Browse files
-						</Button>
-						<Drawer
-							anchor="left"
-							open={treeOpen}
-							onClose={() => setTreeOpen(false)}
-						>
-							<Box sx={{ width: 280 }}>{tree}</Box>
-						</Drawer>
-					</Box>
 				)}
 
 				<Box
 					sx={{
 						flex: 1,
 						minWidth: 0,
+						width: { xs: "100%", md: "auto" },
 						px: { xs: 1, md: 2 },
 						height: { md: "100%" },
 						overflowY: { md: "auto" },

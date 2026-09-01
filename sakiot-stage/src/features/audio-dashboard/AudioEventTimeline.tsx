@@ -1,11 +1,13 @@
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Collapse from "@mui/material/Collapse";
-import Popover from "@mui/material/Popover";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import { ChevronDown as ExpandMoreIcon } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+	Box,
+	Button,
+	Collapse,
+	Popover,
+	Tooltip,
+	Typography,
+} from "../../shared/ui";
 import {
 	type AudioTimelineEvent,
 	buildEventTimelineModel,
@@ -323,10 +325,14 @@ export function AudioEventTimeline(props: {
 					py: 0,
 					border: "1px solid rgba(148, 163, 184, 0.14)",
 					borderRadius: 0.75,
-					bgcolor: "rgba(148, 163, 184, 0.04)",
+					bgcolor: "rgba(148, 163, 184, 0.14)",
 					color: "text.secondary",
 					textTransform: "none",
 					justifyContent: "stretch",
+				}}
+				style={{
+					backgroundColor: "rgba(148, 163, 184, 0.14)",
+					color: "var(--color-muted)",
 				}}
 			>
 				<Box
@@ -349,9 +355,9 @@ export function AudioEventTimeline(props: {
 								: ""}
 						</Typography>
 						<ExpandMoreIcon
-							sx={{
-								fontSize: 17,
-								ml: 0.25,
+							size={17}
+							style={{
+								marginLeft: 2,
 								transform: expanded ? "rotate(180deg)" : "none",
 								transition: "transform 150ms ease",
 							}}
@@ -361,7 +367,14 @@ export function AudioEventTimeline(props: {
 			</Button>
 
 			<Collapse in={expanded} unmountOnExit id={contentId}>
-				<Box sx={{ display: "flex", minWidth: 0, mt: 0.5 }}>
+				<Box
+					data-testid="event-timeline-content"
+					sx={{
+						display: "flex",
+						minWidth: 0,
+						mt: 0.5,
+					}}
+				>
 					<Box
 						aria-hidden="true"
 						sx={{ width: TIMELINE_GUTTER_WIDTH, flex: "0 0 auto" }}
@@ -391,6 +404,7 @@ export function AudioEventTimeline(props: {
 					</Box>
 
 					<Box
+						data-testid="event-timeline-plot"
 						ref={plotRef}
 						sx={{
 							position: "relative",

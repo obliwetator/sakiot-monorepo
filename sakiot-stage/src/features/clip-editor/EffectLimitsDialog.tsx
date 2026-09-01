@@ -1,10 +1,12 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
+import {
+	Box,
+	Button,
+	Stack,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 import {
 	DEFAULT_EFFECT_LIMITS,
 	EFFECT_LIMIT_KEYS,

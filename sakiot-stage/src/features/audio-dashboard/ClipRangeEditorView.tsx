@@ -1,16 +1,20 @@
-import LoopIcon from "@mui/icons-material/Loop";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import RestartAltIcon from "@mui/icons-material/RestartAlt";
-import StopIcon from "@mui/icons-material/Stop";
-import ZoomInIcon from "@mui/icons-material/ZoomIn";
-import ZoomOutIcon from "@mui/icons-material/ZoomOut";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import IconButton from "@mui/material/IconButton";
-import Stack from "@mui/material/Stack";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import {
+	Repeat2 as LoopIcon,
+	Play as PlayArrowIcon,
+	RotateCcw as RestartAltIcon,
+	Square as StopIcon,
+	ZoomIn as ZoomInIcon,
+	ZoomOut as ZoomOutIcon,
+} from "lucide-react";
+import {
+	Box,
+	Button,
+	Chip,
+	IconButton,
+	Stack,
+	Tooltip,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration, formatDurationPrecise } from "../../utils/formatTime";
 import { ClipRangePrecisionOverlay } from "./ClipRangePrecisionOverlay";
 import type { ClipRangeEditorProps } from "./clipRangeEditorTypes";
@@ -210,8 +214,9 @@ export function ClipRangeEditorView({
 									top: 0,
 									bottom: 0,
 									left: percent(stampFraction),
-									borderLeft: "1px dashed",
-									borderColor: "warning.light",
+									borderLeftStyle: "dashed",
+									borderLeftWidth: 1,
+									borderLeftColor: "warning.light",
 									pointerEvents: "none",
 									zIndex: 3,
 								}}
@@ -250,13 +255,23 @@ export function ClipRangeEditorView({
 								}%)`,
 								bgcolor:
 									valid && !dragInvalid
-										? "rgba(56, 189, 248, 0.22)"
-										: "rgba(248, 113, 113, 0.22)",
-								borderTop: selectionDrag.snapshot ? "2px dashed" : "2px solid",
-								borderBottom: selectionDrag.snapshot
-									? "2px dashed"
-									: "2px solid",
-								borderColor:
+										? "rgba(56, 189, 248, 0.28)"
+										: "rgba(248, 113, 113, 0.28)",
+								borderTopStyle: selectionDrag.snapshot ? "dashed" : "solid",
+								borderTopWidth: 2,
+								borderTopColor:
+									valid && !dragInvalid ? "info.light" : "error.light",
+								borderBottomStyle: selectionDrag.snapshot ? "dashed" : "solid",
+								borderBottomWidth: 2,
+								borderBottomColor:
+									valid && !dragInvalid ? "info.light" : "error.light",
+								borderLeftStyle: "solid",
+								borderLeftWidth: 2,
+								borderLeftColor:
+									valid && !dragInvalid ? "info.light" : "error.light",
+								borderRightStyle: "solid",
+								borderRightWidth: 2,
+								borderRightColor:
 									valid && !dragInvalid ? "info.light" : "error.light",
 								opacity: selectionDrag.snapshot ? 0.7 : 1,
 								cursor: "grab",
@@ -436,9 +451,12 @@ export function ClipRangeEditorView({
 										bgcolor: valid
 											? "rgba(56, 189, 248, 0.2)"
 											: "rgba(248, 113, 113, 0.2)",
-										borderTop: "2px solid",
-										borderBottom: "2px solid",
-										borderColor: valid ? "info.light" : "error.light",
+										borderTopStyle: "solid",
+										borderTopWidth: 2,
+										borderTopColor: valid ? "info.light" : "error.light",
+										borderBottomStyle: "solid",
+										borderBottomWidth: 2,
+										borderBottomColor: valid ? "info.light" : "error.light",
 										zIndex: 1,
 									}}
 								/>
@@ -470,8 +488,9 @@ export function ClipRangeEditorView({
 											top: 18,
 											bottom: 10,
 											left: percent(otherEdgeFraction),
-											borderLeft: "2px dashed",
-											borderColor: "warning.light",
+											borderLeftStyle: "dashed",
+											borderLeftWidth: 2,
+											borderLeftColor: "warning.light",
 											zIndex: 4,
 										}}
 									>
@@ -666,7 +685,7 @@ export function ClipRangeEditorView({
 					<Box sx={{ flex: 1 }} />
 					<Tooltip title="Zoom out (ctrl + scroll)">
 						<IconButton size="small" onClick={() => zoom(-1)}>
-							<ZoomOutIcon fontSize="small" />
+							<ZoomOutIcon size={16} />
 						</IconButton>
 					</Tooltip>
 					<Typography
@@ -678,7 +697,7 @@ export function ClipRangeEditorView({
 					</Typography>
 					<Tooltip title="Zoom in (ctrl + scroll)">
 						<IconButton size="small" onClick={() => zoom(1)}>
-							<ZoomInIcon fontSize="small" />
+							<ZoomInIcon size={16} />
 						</IconButton>
 					</Tooltip>
 				</Stack>

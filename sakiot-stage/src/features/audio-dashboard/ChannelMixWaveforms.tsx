@@ -1,13 +1,10 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Stack from "@mui/material/Stack";
-import Typography from "@mui/material/Typography";
 import { useMemo } from "react";
 import type {
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
 import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
+import { Box, Button, Stack, Typography } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { layoutChannelMixSegment } from "./channelMixWaveform";
 import { WaveformCanvas } from "./WaveformCanvas";

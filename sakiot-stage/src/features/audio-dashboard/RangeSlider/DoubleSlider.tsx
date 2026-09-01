@@ -1,9 +1,6 @@
-import Box from "@mui/material/Box";
-import Slider from "@mui/material/Slider";
-import { styled } from "@mui/material/styles";
-import Typography from "@mui/material/Typography";
 import type React from "react";
 import type { VoiceEvent } from "../../../app/apiSlice";
+import { Box, Slider, styled, Typography } from "../../../shared/ui";
 import { formatDuration } from "../../../utils/formatTime";
 import { AudioEventTimeline } from "../AudioEventTimeline";
 
@@ -30,13 +27,7 @@ export function DoubleSlider(props: {
 	return (
 		<>
 			<Slider
-				sx={{
-					"& .MuiSlider-thumb": {
-						height: 25,
-						width: 5,
-						borderRadius: "1px",
-					},
-				}}
+				className="range-slider-tall"
 				max={props.durationSec}
 				getAriaLabel={() => "Playback range"}
 				value={props.startEnd}

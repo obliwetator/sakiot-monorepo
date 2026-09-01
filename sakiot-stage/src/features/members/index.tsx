@@ -1,26 +1,4 @@
-import RemoveRedEyeIcon from "@mui/icons-material/RemoveRedEye";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
-import IconButton from "@mui/material/IconButton";
-import List from "@mui/material/List";
-import ListItem from "@mui/material/ListItem";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemText from "@mui/material/ListItemText";
-import Paper from "@mui/material/Paper";
-import Stack from "@mui/material/Stack";
-import Table from "@mui/material/Table";
-import TableBody from "@mui/material/TableBody";
-import TableCell from "@mui/material/TableCell";
-import TableContainer from "@mui/material/TableContainer";
-import TableHead from "@mui/material/TableHead";
-import TableRow from "@mui/material/TableRow";
-import Typography from "@mui/material/Typography";
+import { Eye as RemoveRedEyeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { GuildRole } from "../../app/apiSlice";
@@ -30,6 +8,30 @@ import {
 	useGetRoleViewQuery,
 } from "../../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
+import {
+	Alert,
+	Box,
+	Button,
+	Chip,
+	Dialog,
+	DialogActions,
+	DialogContent,
+	DialogTitle,
+	IconButton,
+	List,
+	ListItem,
+	ListItemButton,
+	ListItemText,
+	Paper,
+	Stack,
+	Table,
+	TableBody,
+	TableCell,
+	TableContainer,
+	TableHead,
+	TableRow,
+	Typography,
+} from "../../shared/ui";
 import { roleSwatchBackground, roleTextStyle } from "./roleColors";
 
 function RolePreviewDialog(props: {
@@ -232,7 +234,7 @@ export function GuildMembers() {
 											title="View server as this role"
 											onClick={() => setPreviewRole(role)}
 										>
-											<RemoveRedEyeIcon fontSize="small" />
+											<RemoveRedEyeIcon size={16} />
 										</IconButton>
 									}
 								>

@@ -1,4 +1,3 @@
-import { treeItemClasses } from "@mui/x-tree-view";
 import type { IndividualFile } from "../../../Constants";
 import { LivePill } from "./LiveDot";
 import { parseFileName } from "./parseFileName";
@@ -37,16 +36,13 @@ export function ItemsEl(props: {
 	return (
 		<StyledTreeItem
 			itemId={recordingTreeItemId(props.file, props.year, props.month_name)}
-			className={`bg-violet-600 overflow-hidden ${access === "hidden" ? "opacity-40" : access === "visible-only" ? "opacity-70" : ""}`}
-			sx={{
-				[`& > .${treeItemClasses.content}`]: {
-					borderBottom: "1px solid rgb(76 29 149)",
-					cursor: "pointer",
-				},
-				[`& > .${treeItemClasses.content}.${treeItemClasses.selected}`]: {
-					boxShadow: "inset 0 0 0 2px white",
-				},
-			}}
+			className={
+				access === "hidden"
+					? "opacity-40"
+					: access === "visible-only"
+						? "opacity-70"
+						: undefined
+			}
 			label={
 				<span
 					className="block w-full px-2 py-1 select-none text-sm"

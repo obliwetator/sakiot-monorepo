@@ -1,8 +1,6 @@
-import VolumeDown from "@mui/icons-material/VolumeDown";
-import VolumeMute from "@mui/icons-material/VolumeMute";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
+import { Volume1 as VolumeDown, VolumeX as VolumeMute } from "lucide-react";
 import { useState } from "react";
+import { Slider, Stack } from "../../../shared/ui";
 
 export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 	const [volume, setVolume] = useState(0.5);

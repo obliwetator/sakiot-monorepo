@@ -1,12 +1,14 @@
-import Button from "@mui/material/Button";
-import DialogContentText from "@mui/material/DialogContentText";
-import TextField from "@mui/material/TextField";
 import { useState } from "react";
 import type { Params } from "react-router-dom";
 import { useCreateClipMutation } from "../../../app/apiSlice";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
 import { BaseDialog } from "../../../shared/BaseDialog";
+import {
+	Button,
+	DialogContentText,
+	LegacyTextField as TextField,
+} from "../../../shared/ui";
 
 export function ClipDialog(props: {
 	params: Readonly<Params<AudioParams>>;

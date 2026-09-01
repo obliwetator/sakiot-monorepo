@@ -1,5 +1,4 @@
-import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
+import { Box, Typography } from "../../shared/ui";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import type { TimelineSegment } from "./model";
 import type { SegmentDragState } from "./timelineDrag";

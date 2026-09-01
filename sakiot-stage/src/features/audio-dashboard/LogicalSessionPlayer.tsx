@@ -1,15 +1,3 @@
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import LinearProgress from "@mui/material/LinearProgress";
-import Paper from "@mui/material/Paper";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import Tab from "@mui/material/Tab";
-import Tabs from "@mui/material/Tabs";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -18,6 +6,20 @@ import {
 	useGetSessionChannelMixQuery,
 	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
+import {
+	Alert,
+	Box,
+	Button,
+	Chip,
+	LinearProgress,
+	Paper,
+	Slider,
+	Stack,
+	Tab,
+	Tabs,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
 import { ChannelMixPlayer, ChannelMixProgress } from "./ChannelMixPlayer";
@@ -524,8 +526,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				)}
 
 				<Stack
-					direction={{ xs: "column", sm: "row" }}
+					direction="row"
 					spacing={1}
+					alignItems="center"
 					flexWrap="wrap"
 					useFlexGap
 					sx={{ mt: 1 }}
@@ -794,29 +797,25 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					/>
 				)}
 				<Stack
-					direction={{ xs: "column", sm: "row" }}
+					direction="row"
 					spacing={1}
-					flexWrap="wrap"
+					alignItems="flex-end"
+					flexWrap="nowrap"
+					sx={{ minWidth: 0 }}
 				>
 					<TextField
 						size="small"
 						label="Clip name"
 						value={clipName}
 						onChange={(event) => setClipName(event.target.value)}
-						sx={{
-							"& .MuiInputBase-root": { height: 40 },
-							"& input": {
-								boxSizing: "border-box",
-								height: "100%",
-								py: 0,
-							},
-						}}
+						inputProps={{ style: { height: 40 } }}
+						sx={{ height: 60, flex: "1 1 auto", minWidth: 0 }}
 					/>
 					<Button
 						variant="contained"
 						onClick={() => void createSelectedClip()}
 						disabled={clipState.isLoading}
-						sx={{ height: 40 }}
+						sx={{ height: 40, flex: "0 0 auto" }}
 					>
 						Create clip
 					</Button>

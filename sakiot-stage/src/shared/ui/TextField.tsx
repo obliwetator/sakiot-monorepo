@@ -1,4 +1,4 @@
-import type { HTMLInputTypeAttribute } from "react";
+import type { FocusEventHandler, HTMLInputTypeAttribute } from "react";
 import {
 	TextField as AriaTextField,
 	FieldError,
@@ -22,6 +22,7 @@ export interface TextFieldProps {
 	isDisabled?: boolean;
 	isRequired?: boolean;
 	autoComplete?: string;
+	onFocus?: FocusEventHandler<HTMLElement>;
 	className?: string;
 }
 
@@ -54,7 +55,7 @@ export function TextField({
 				min={min}
 				max={max}
 				step={step}
-				className="h-9 min-w-0 rounded-md border border-ui-border bg-slate-950/65 px-3 text-sm text-fg outline-hidden transition placeholder:text-slate-600 data-[hovered]:border-slate-500 data-[focus-visible]:border-primary data-[focus-visible]:outline-2 data-[focus-visible]:outline-solid data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-focus data-[invalid]:border-danger data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+				className="h-9 min-w-0 rounded-md border border-ui-border bg-slate-950/65 px-3 pb-px text-sm leading-6 text-fg outline-hidden transition placeholder:text-slate-600 max-[899px]:pb-0 data-[hovered]:border-slate-500 data-[focus-visible]:border-primary data-[focus-visible]:outline-2 data-[focus-visible]:outline-solid data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-focus data-[invalid]:border-danger data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
 			/>
 			{description && (
 				<Text slot="description" className="text-xs leading-5 text-muted">

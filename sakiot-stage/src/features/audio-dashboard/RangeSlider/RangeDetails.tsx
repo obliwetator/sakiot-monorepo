@@ -1,7 +1,6 @@
-import Box from "@mui/material/Box";
-import Stack from "@mui/material/Stack";
 import type { Dispatch, SetStateAction } from "react";
 import type { AudioParams } from "../../../Constants";
+import { Box, Stack } from "../../../shared/ui";
 import { formatDuration } from "../../../utils/formatTime";
 import { PlaybackSpeedSlider } from "./PlaybackSpeedSlider";
 import { TimeEditors } from "./TimeEditor";
@@ -24,14 +23,18 @@ export function RangeDetails(props: {
 	return (
 		<>
 			<Stack
-				spacing={{ xs: 2, md: 8 }}
-				direction={{ xs: "column", md: "row" }}
-				alignItems={{ xs: "stretch", md: "center" }}
+				spacing={{ xs: 1, md: 8 }}
+				direction="row"
+				alignItems="center"
 				justifyContent="space-around"
-				sx={{ my: 2 }}
+				sx={{ my: 2, minWidth: 0 }}
 			>
-				<VolumeSlider audioRef={props.audioRef} />
-				<PlaybackSpeedSlider audioRef={props.audioRef} />
+				<Box sx={{ minWidth: 0, flex: { xs: "1 1 0%", md: "0 1 200px" } }}>
+					<VolumeSlider audioRef={props.audioRef} />
+				</Box>
+				<Box sx={{ minWidth: 0, flex: { xs: "1 1 0%", md: "0 1 200px" } }}>
+					<PlaybackSpeedSlider audioRef={props.audioRef} />
+				</Box>
 			</Stack>
 			<Box
 				sx={{

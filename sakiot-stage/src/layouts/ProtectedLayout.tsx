@@ -1,11 +1,10 @@
-import Box from "@mui/material/Box";
-import Grid from "@mui/material/Grid";
 import { useDispatch } from "react-redux";
 import { Outlet, useNavigate } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../app/authedFetch";
 import { useAppSelector } from "../app/hooks";
 import { setGuildSelected } from "../reducers/appSlice";
+import { Box, Grid } from "../shared/ui";
 
 export const ProtectedLayout = () => {
 	const navigate = useNavigate();

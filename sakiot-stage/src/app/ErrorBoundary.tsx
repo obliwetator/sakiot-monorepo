@@ -7,7 +7,7 @@ interface ErrorBoundaryState {
 /**
  * Last-resort catch for render-time throws so a single broken component
  * cannot white-screen the whole SPA. Renders plain DOM with inline styles
- * on purpose: the MUI ThemeProvider lives inside this boundary and may be
+ * on purpose: the shared UI providers live inside this boundary and may be
  * part of what threw.
  */
 export class ErrorBoundary extends Component<

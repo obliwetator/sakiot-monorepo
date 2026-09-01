@@ -1,8 +1,7 @@
-import Button from "@mui/material/Button";
-import DialogContentText from "@mui/material/DialogContentText";
 import { useEffect } from "react";
 import { useBlocker } from "react-router-dom";
 import { BaseDialog } from "../../shared/BaseDialog";
+import { Button, DialogContentText } from "../../shared/ui";
 
 /**
  * Warns before the clip editor is left with unsaved work. In-app navigation

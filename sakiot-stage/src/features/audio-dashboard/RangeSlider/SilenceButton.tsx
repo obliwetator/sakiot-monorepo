@@ -1,4 +1,3 @@
-import Button from "@mui/material/Button";
 import { useState } from "react";
 import { useDispatch } from "react-redux";
 import type { Params } from "react-router-dom";
@@ -6,6 +5,7 @@ import { useRemoveSilenceMutation } from "../../../app/apiSlice";
 import { useAppSelector } from "../../../app/hooks";
 import type { AudioParams } from "../../../Constants";
 import { bumpSilenceVersion, setHasSilence } from "../../../reducers/silence";
+import { Button } from "../../../shared/ui";
 
 export function SilenceButton(props: {
 	params: Readonly<Params<AudioParams>>;

@@ -1,4 +1,3 @@
-import Button from "@mui/material/Button";
 import { useWavesurfer } from "@wavesurfer/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Params } from "react-router-dom";
@@ -8,6 +7,7 @@ import {
 	useGetWaveformQuery,
 } from "../../app/apiSlice";
 import type { AudioParams } from "../../Constants";
+import { Button } from "../../shared/ui";
 import { decodeWaveformPeaks } from "./waveformPeaks";
 
 function WaveFormButton(props: {

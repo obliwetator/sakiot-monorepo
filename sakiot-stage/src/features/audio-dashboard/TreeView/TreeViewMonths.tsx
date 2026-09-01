@@ -42,7 +42,6 @@ export function TreeViewMonths(props: {
 
 	return (
 		<StyledTreeItem
-			className="bg-blue-700"
 			label={
 				<span className="inline-flex items-center">
 					{getMonthName(props.month_name)}
@@ -51,12 +50,7 @@ export function TreeViewMonths(props: {
 			}
 			itemId={`${props.year}-${props.month_name}`}
 		>
-			<div
-				key={`${props.year}-${props.month_name}`}
-				className="bg-green-500 overflow-hidden"
-			>
-				{days}
-			</div>
+			{days}
 		</StyledTreeItem>
 	);
 }

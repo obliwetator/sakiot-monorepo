@@ -1,6 +1,5 @@
-import Box from "@mui/material/Box";
-import Typography from "@mui/material/Typography";
 import { useRef } from "react";
+import { Box, Typography } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	axisLabelTransform,

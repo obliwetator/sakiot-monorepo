@@ -1,9 +1,7 @@
-import RemoveRedEyeIcon from "@mui/icons-material/RemoveRedEye";
-import Alert from "@mui/material/Alert";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
+import { Eye as RemoveRedEyeIcon } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useGetGuildRolesQuery } from "../../app/apiSlice";
+import { Alert, Box, Button } from "../../shared/ui";
 
 export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	const [searchParams, setSearchParams] = useSearchParams();

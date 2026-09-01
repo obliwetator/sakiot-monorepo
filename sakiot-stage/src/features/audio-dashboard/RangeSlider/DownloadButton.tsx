@@ -1,7 +1,7 @@
-import Button from "@mui/material/Button";
 import type { Params } from "react-router-dom";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
+import { Button } from "../../../shared/ui";
 
 export function DownloadButton(props: {
 	isClip: boolean;

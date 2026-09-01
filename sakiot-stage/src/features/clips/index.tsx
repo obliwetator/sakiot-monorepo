@@ -1,23 +1,8 @@
-import ContentCutIcon from "@mui/icons-material/ContentCut";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import MovieIcon from "@mui/icons-material/Movie";
-import Accordion from "@mui/material/Accordion";
-import AccordionDetails from "@mui/material/AccordionDetails";
-import AccordionSummary from "@mui/material/AccordionSummary";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogContentText from "@mui/material/DialogContentText";
-import DialogTitle from "@mui/material/DialogTitle";
-import Drawer from "@mui/material/Drawer";
-import Stack from "@mui/material/Stack";
-import { useTheme } from "@mui/material/styles";
-import Tab from "@mui/material/Tab";
-import Tabs from "@mui/material/Tabs";
-import Typography from "@mui/material/Typography";
-import useMediaQuery from "@mui/material/useMediaQuery";
+import {
+	Scissors as ContentCutIcon,
+	ChevronDown as ExpandMoreIcon,
+	Film as MovieIcon,
+} from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -32,6 +17,25 @@ import { useAppSelector } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
 import { canDeleteClip } from "../../shared/permissions";
+import {
+	Accordion,
+	AccordionDetails,
+	AccordionSummary,
+	Box,
+	Button,
+	Dialog,
+	DialogActions,
+	DialogContent,
+	DialogContentText,
+	DialogTitle,
+	Drawer,
+	Stack,
+	Tab,
+	Tabs,
+	Typography,
+	useMediaQuery,
+	useTheme,
+} from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";

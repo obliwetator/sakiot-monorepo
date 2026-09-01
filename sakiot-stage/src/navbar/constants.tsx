@@ -1,10 +1,12 @@
-import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
-import AudiotrackIcon from "@mui/icons-material/Audiotrack";
-import BookmarkIcon from "@mui/icons-material/Bookmark";
-import ContentCutIcon from "@mui/icons-material/ContentCut";
-import GroupsIcon from "@mui/icons-material/Groups";
-import MovieIcon from "@mui/icons-material/Movie";
-import SettingsVoiceIcon from "@mui/icons-material/SettingsVoice";
+import {
+	ShieldCheck as AdminPanelSettingsIcon,
+	AudioLines as AudiotrackIcon,
+	Bookmark as BookmarkIcon,
+	Scissors as ContentCutIcon,
+	Users as GroupsIcon,
+	Film as MovieIcon,
+	Mic as SettingsVoiceIcon,
+} from "lucide-react";
 import type * as React from "react";
 
 export type PageName =

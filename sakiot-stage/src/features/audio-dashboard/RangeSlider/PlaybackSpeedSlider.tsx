@@ -1,6 +1,5 @@
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
 import { useState } from "react";
+import { Slider, Stack } from "../../../shared/ui";
 
 export function PlaybackSpeedSlider(props: { audioRef: HTMLAudioElement }) {
 	const [playbackSpeed, setPlaybackSpeed] = useState(1);

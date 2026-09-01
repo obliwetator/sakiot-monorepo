@@ -1,7 +1,6 @@
-import Box from "@mui/material/Box";
-import type { SxProps, Theme } from "@mui/material/styles";
-import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
+import type { SxProps, Theme } from "../../shared/ui";
+import { Box, Typography } from "../../shared/ui";
 
 // Every timeline row (waveform, scrubber, event lanes, axis) reserves the same
 // label gutter, so one millisecond lands on the same x in all of them.

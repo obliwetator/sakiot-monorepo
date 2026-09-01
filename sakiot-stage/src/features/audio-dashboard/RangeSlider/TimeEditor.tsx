@@ -1,7 +1,6 @@
-import Box from "@mui/material/Box";
-import TextField from "@mui/material/TextField";
 import type React from "react";
 import { useState } from "react";
+import { Box, LegacyTextField as TextField } from "../../../shared/ui";
 
 type Edge = "start" | "end";
 

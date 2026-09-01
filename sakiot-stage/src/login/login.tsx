@@ -1,8 +1,7 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
 import type React from "react";
 import { BASE_API_URL, useLogoutMutation } from "../app/apiSlice";
 import { captureCsrfToken, setCsrfToken } from "../app/authedFetch";
+import { Box, Button } from "../shared/ui";
 export default function Login(props: {
 	isLoggedIn: boolean;
 	setIsLoggedIn: React.Dispatch<React.SetStateAction<boolean>>;
@@ -56,29 +55,35 @@ export default function Login(props: {
 
 	return props.isLoggedIn ? (
 		<Button
+			variant="text"
+			size="small"
 			onClick={() => {
 				handleLogout();
 			}}
-			sx={{ my: 2, color: "white", display: "block" }}
+			className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
 		>
 			Log out
 		</Button>
 	) : (
 		<Box sx={{ display: "flex", gap: 2 }}>
 			<Button
+				variant="text"
+				size="small"
 				onClick={() => {
 					handleLogin();
 				}}
-				sx={{ my: 2, color: "white", display: "block" }}
+				className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
 			>
 				Login
 			</Button>
 			{isDevOrStaging && (
 				<Button
+					variant="text"
+					size="small"
 					onClick={() => {
 						handleDevLogin();
 					}}
-					sx={{ my: 2, color: "white", display: "block" }}
+					className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
 				>
 					Dev Login
 				</Button>

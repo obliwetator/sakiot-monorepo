@@ -1,10 +1,12 @@
-import Box from "@mui/material/Box";
-import Slider from "@mui/material/Slider";
-import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
-import Typography from "@mui/material/Typography";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import {
+	Box,
+	Slider,
+	Stack,
+	LegacyTextField as TextField,
+	Typography,
+} from "../../shared/ui";
 import {
 	formatSessionTimecode,
 	parseSessionTimecode,
@@ -109,7 +111,82 @@ export function SessionPlaybackTimeline(props: {
 	children?: ReactNode;
 }) {
 	const [hoverMs, setHoverMs] = useState<number | null>(null);
+	const [dragPositionMs, setDragPositionMs] = useState<number | null>(null);
+	const hoverMsRef = useRef<number | null>(null);
+	const hoverFrameRef = useRef<number | null>(null);
+	const dragPositionRef = useRef<number | null>(null);
+	const previewFrameRef = useRef<number | null>(null);
+	const draggingRef = useRef(false);
 	const durationSeconds = props.durationMs / 1_000;
+	const displayedPositionMs = dragPositionMs ?? props.positionMs;
+
+	useEffect(
+		() => () => {
+			if (hoverFrameRef.current !== null) {
+				cancelAnimationFrame(hoverFrameRef.current);
+			}
+			if (previewFrameRef.current !== null) {
+				cancelAnimationFrame(previewFrameRef.current);
+			}
+		},
+		[],
+	);
+
+	const clearHover = () => {
+		hoverMsRef.current = null;
+		if (hoverFrameRef.current !== null) {
+			cancelAnimationFrame(hoverFrameRef.current);
+			hoverFrameRef.current = null;
+		}
+		setHoverMs((current) => (current === null ? current : null));
+	};
+
+	const scheduleHover = (nextHoverMs: number) => {
+		if (draggingRef.current) return;
+		hoverMsRef.current = nextHoverMs;
+		if (hoverFrameRef.current !== null) return;
+		hoverFrameRef.current = requestAnimationFrame(() => {
+			hoverFrameRef.current = null;
+			if (draggingRef.current) return;
+			const next = hoverMsRef.current;
+			setHoverMs((current) => (current === next ? current : next));
+		});
+	};
+
+	const scheduleSeekPreview = (nextPositionMs: number) => {
+		const clamped = Math.min(props.durationMs, Math.max(0, nextPositionMs));
+		dragPositionRef.current = clamped;
+		if (previewFrameRef.current !== null) return;
+		previewFrameRef.current = requestAnimationFrame(() => {
+			previewFrameRef.current = null;
+			const next = dragPositionRef.current;
+			if (next === null) return;
+			setDragPositionMs((current) => (current === next ? current : next));
+			props.onSeekPreview(next);
+		});
+	};
+
+	const cancelSeek = () => {
+		if (previewFrameRef.current !== null) {
+			cancelAnimationFrame(previewFrameRef.current);
+			previewFrameRef.current = null;
+		}
+		dragPositionRef.current = null;
+		setDragPositionMs(null);
+		props.onSeekPreview(null);
+	};
+
+	const commitSeek = (value: number | number[]) => {
+		if (previewFrameRef.current !== null) {
+			cancelAnimationFrame(previewFrameRef.current);
+			previewFrameRef.current = null;
+		}
+		const nextPositionMs = dragPositionRef.current ?? Number(value) * 1_000;
+		dragPositionRef.current = null;
+		setDragPositionMs(null);
+		props.onSeekPreview(null);
+		props.onSeek(nextPositionMs);
+	};
 
 	return (
 		<>
@@ -120,7 +197,22 @@ export function SessionPlaybackTimeline(props: {
 			<TimelineRow label="Position">
 				<Box
 					sx={{ position: "relative" }}
+					onPointerDown={(event) => {
+						const target = event.target;
+						if (target instanceof HTMLInputElement && target.type === "range") {
+							draggingRef.current = true;
+							clearHover();
+						}
+					}}
+					onPointerUp={() => {
+						draggingRef.current = false;
+					}}
+					onPointerCancel={() => {
+						draggingRef.current = false;
+						cancelSeek();
+					}}
 					onPointerMove={(event) => {
+						if (draggingRef.current) return;
 						const bounds = event.currentTarget.getBoundingClientRect();
 						const fraction = Math.min(
 							1,
@@ -129,31 +221,41 @@ export function SessionPlaybackTimeline(props: {
 								(event.clientX - bounds.left) / Math.max(1, bounds.width),
 							),
 						);
-						setHoverMs(fraction * props.durationMs);
+						scheduleHover(fraction * props.durationMs);
 					}}
-					onPointerLeave={() => setHoverMs(null)}
+					onPointerLeave={() => {
+						if (!draggingRef.current) clearHover();
+					}}
 				>
 					<Slider
 						aria-label={props.positionAriaLabel}
 						min={0}
 						max={Math.max(0.001, durationSeconds)}
 						step={0.01}
-						value={Math.min(durationSeconds, props.positionMs / 1_000)}
+						value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
 						onChange={(_event, value) =>
-							props.onSeekPreview(Number(value) * 1_000)
+							scheduleSeekPreview(Number(value) * 1_000)
 						}
-						onChangeCommitted={(_event, value) => {
-							props.onSeekPreview(null);
-							props.onSeek(Number(value) * 1_000);
+						onChangeCommitted={(_event, value) => commitSeek(value)}
+						onKeyUp={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+							if (
+								[
+									"ArrowLeft",
+									"ArrowRight",
+									"ArrowUp",
+									"ArrowDown",
+									"Home",
+									"End",
+									"PageUp",
+									"PageDown",
+								].includes(event.key)
+							) {
+								commitSeek(Number(event.currentTarget.value));
+							}
 						}}
 						valueLabelDisplay="off"
-						sx={{
-							display: "block",
-							py: 1.5,
-							"& .MuiSlider-thumb, & .MuiSlider-track": {
-								transition: "none",
-							},
-						}}
+						style={{ accentColor: "#90caf9" }}
+						sx={{ display: "block", py: 1.5, transition: "none" }}
 					/>
 					{hoverMs !== null && (
 						<Typography
@@ -205,11 +307,14 @@ export function SessionPlaybackTimeline(props: {
 							sx={{ fontVariantNumeric: "tabular-nums" }}
 						>
 							Recording{" "}
-							{formatSessionTimecode(props.positionMs / 1_000, durationSeconds)}{" "}
+							{formatSessionTimecode(
+								displayedPositionMs / 1_000,
+								durationSeconds,
+							)}{" "}
 							/ {formatSessionTimecode(durationSeconds, durationSeconds)}
 						</Typography>
 						<SessionSeekInput
-							positionMs={props.positionMs}
+							positionMs={displayedPositionMs}
 							durationMs={props.durationMs}
 							onSeek={props.onSeek}
 						/>

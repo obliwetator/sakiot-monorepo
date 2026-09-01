@@ -1,7 +1,5 @@
-import Alert from "@mui/material/Alert";
-import Button from "@mui/material/Button";
-import Snackbar from "@mui/material/Snackbar";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Button, Snackbar } from "../shared/ui";
 
 const CURRENT_BUNDLE_VERSION = __BUNDLE_VERSION__;
 const VERSION_URL = "/version.json";

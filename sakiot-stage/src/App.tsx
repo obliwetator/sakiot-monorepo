@@ -1,7 +1,3 @@
-import Box from "@mui/material/Box";
-import CssBaseline from "@mui/material/CssBaseline";
-import GlobalStyles from "@mui/material/GlobalStyles";
-import { StyledEngineProvider, ThemeProvider } from "@mui/material/styles";
 import type { ReactNode } from "react";
 import {
 	BrowserRouter,
@@ -10,10 +6,10 @@ import {
 	RouterProvider,
 } from "react-router-dom";
 import { BundleUpdatePrompt } from "./app/BundleUpdatePrompt";
-import { darkTheme } from "./app/theme";
 import { useAuthBootstrap } from "./app/useAuthBootstrap";
 import { LayoutsWithNavbar } from "./layouts/LayoutsWithNavbar";
 import { appRoutesElement } from "./routes/AppRoutes";
+import { Box } from "./shared/ui";
 
 // A data router so route-level hooks (useBlocker and friends) work; the route
 // tree itself is the same declarative <Route> elements from AppRoutes.
@@ -64,15 +60,7 @@ function App() {
 		);
 	}
 
-	return (
-		<StyledEngineProvider enableCssLayer>
-			<GlobalStyles styles="@layer theme, base, mui, components, utilities;" />
-			<ThemeProvider theme={darkTheme}>
-				<CssBaseline />
-				{content}
-			</ThemeProvider>
-		</StyledEngineProvider>
-	);
+	return <>{content}</>;
 }
 
 export default App;

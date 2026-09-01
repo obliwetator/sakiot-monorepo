@@ -26,7 +26,6 @@ export function TreeViewDays(props: {
 
 	return (
 		<StyledTreeItem
-			className="bg-pink-700"
 			label={
 				<span className="inline-flex items-center">
 					{props.day}
@@ -35,12 +34,7 @@ export function TreeViewDays(props: {
 			}
 			itemId={`${props.year}-${props.month_name}-${props.day}`}
 		>
-			<div
-				key={`${props.year}-${props.month_name}-${props.day}`}
-				className="bg-violet-700 overflow-hidden rounded"
-			>
-				{itemsEl}
-			</div>
+			{itemsEl}
 		</StyledTreeItem>
 	);
 }

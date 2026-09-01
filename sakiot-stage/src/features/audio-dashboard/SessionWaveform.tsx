@@ -1,13 +1,10 @@
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import LinearProgress from "@mui/material/LinearProgress";
-import Typography from "@mui/material/Typography";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import {
 	useRebuildSessionWaveformMutation,
 	useRebuildSilenceFreeSessionWaveformMutation,
 } from "../../app/apiSlice";
+import { Box, Button, LinearProgress, Typography } from "../../shared/ui";
 import { formatSessionTimecode } from "../../utils/formatTime";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
 import { useSessionWaveformPeaks, WaveformCanvas } from "./WaveformCanvas";

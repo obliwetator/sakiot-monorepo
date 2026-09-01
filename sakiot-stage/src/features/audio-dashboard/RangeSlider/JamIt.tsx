@@ -1,10 +1,9 @@
-import MusicNoteIcon from "@mui/icons-material/MusicNote";
-import Alert from "@mui/material/Alert";
-import Button from "@mui/material/Button";
+import { Music as MusicNoteIcon } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useJamItMutation } from "../../../app/apiSlice";
 import { BaseDialog } from "../../../shared/BaseDialog";
+import { Alert, Button } from "../../../shared/ui";
 
 export enum JamItRespStatus {
 	OK,

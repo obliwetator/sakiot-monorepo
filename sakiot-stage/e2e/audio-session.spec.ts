@@ -86,7 +86,20 @@ async function mockAudioApi(page: Page) {
 				current_channel_id: "voice-123",
 				duration_ms: 30_000,
 				ended_at_ms: 1_786_460_430_000,
-				events: [],
+				events: [
+					{
+						details: { reason: "test" },
+						event_type: "server_mute",
+						offset_ms: 4_000,
+						source: "voice_state",
+					},
+					{
+						details: {},
+						event_type: "server_unmute",
+						offset_ms: 10_000,
+						source: "voice_state",
+					},
+				],
 				guild_id: GUILD_ID,
 				recording_session_id: SESSION_ID,
 				segments: [
@@ -138,14 +151,21 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	page,
 }) => {
 	const updateDepthErrors: string[] = [];
+	const styleWarnings: string[] = [];
 	page.on("console", (message) => {
 		if (message.text().includes("Maximum update depth exceeded")) {
 			updateDepthErrors.push(message.text());
+		}
+		if (message.text().includes("Updating a style property during rerender")) {
+			styleWarnings.push(message.text());
 		}
 	});
 	page.on("pageerror", (error) => {
 		if (error.message.includes("Maximum update depth exceeded")) {
 			updateDepthErrors.push(error.message);
+		}
+		if (error.message.includes("Updating a style property during rerender")) {
+			styleWarnings.push(error.message);
 		}
 	});
 	await mockAudioApi(page);
@@ -155,21 +175,192 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	if (isMobile) {
 		const browseButton = page.getByRole("button", { name: "Browse files" });
 		await expect(browseButton).toBeVisible();
+		const [headerBounds, browseBounds] = await Promise.all([
+			page.locator("header").first().boundingBox(),
+			browseButton.boundingBox(),
+		]);
+		expect(headerBounds).not.toBeNull();
+		expect(browseBounds).not.toBeNull();
+		if (headerBounds && browseBounds) {
+			expect(
+				browseBounds.y - (headerBounds.y + headerBounds.height),
+			).toBeLessThan(20);
+		}
+		await expect(page.getByRole("tree", { name: "customized" })).toHaveCount(0);
+		await expect(
+			page.getByRole("button", { name: "open navigation" }),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("button", { name: "Audio", exact: true }),
+		).toBeVisible();
 		await browseButton.click();
+		await expect(page.getByRole("tree", { name: "customized" })).toBeVisible();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() => document.documentElement.scrollWidth <= window.innerWidth + 1,
+				),
+			)
+			.toBe(true);
+	} else {
+		await expect(page.getByRole("tree", { name: "customized" })).toBeVisible();
 	}
+	await expect(
+		page.getByRole("textbox", { name: "Search recordings" }),
+	).toBeVisible();
+	const yearRow = page.getByText("2026", { exact: true }).first();
+	await yearRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
+	await yearRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
 	await page.getByTitle(RECORDING_FILE).click();
+	if (isMobile) {
+		await expect(page.getByRole("tree", { name: "customized" })).toHaveCount(0);
+	}
 
 	await expect(page).toHaveURL(
 		new RegExp(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}$`),
 	);
-	if (isMobile) await page.keyboard.press("Escape");
 	await expect(
 		page.getByText(`Session ${SESSION_ID}`, { exact: true }),
 	).toBeVisible();
+	const positionSlider = page.getByRole("slider", {
+		name: "Logical playback position",
+	});
+	await expect(positionSlider).toBeVisible();
+	await expect
+		.poll(() =>
+			positionSlider.evaluate(
+				(element) => getComputedStyle(element).accentColor,
+			),
+		)
+		.toContain("144, 202, 249");
+	const playButton = page.getByRole("button", { name: "Play" });
+	await expect
+		.poll(() =>
+			playButton.evaluate(
+				(element) => getComputedStyle(element).backgroundColor,
+			),
+		)
+		.toBe("rgb(144, 202, 249)");
+	const playbackVolumeSlider = page.getByRole("slider", {
+		name: "Playback volume",
+	});
+	await expect
+		.poll(() =>
+			playbackVolumeSlider.evaluate(
+				(element) => getComputedStyle(element).accentColor,
+			),
+		)
+		.toContain("144, 202, 249");
+	await positionSlider.scrollIntoViewIfNeeded();
+	const positionBounds = await positionSlider.boundingBox();
+	expect(positionBounds).not.toBeNull();
+	if (positionBounds) {
+		const y = positionBounds.y + positionBounds.height / 2;
+		await page.mouse.move(positionBounds.x + positionBounds.width * 0.05, y);
+		await page.mouse.down();
+		await page.mouse.move(positionBounds.x + positionBounds.width * 0.35, y);
+		await page.mouse.up();
+	}
+	await expect
+		.poll(async () => Number(await positionSlider.inputValue()))
+		.toBeGreaterThan(0);
+	await expect.poll(() => updateDepthErrors).toEqual([]);
+	if (isMobile) {
+		const speedSlider = page.getByRole("slider", {
+			name: "Playback speed",
+		});
+		const [volumeBounds, speedBounds] = await Promise.all([
+			playbackVolumeSlider.locator("..").boundingBox(),
+			speedSlider.locator("..").boundingBox(),
+		]);
+		expect(volumeBounds).not.toBeNull();
+		expect(speedBounds).not.toBeNull();
+		if (volumeBounds && speedBounds) {
+			expect(Math.abs(volumeBounds.y - speedBounds.y)).toBeLessThan(1);
+		}
+
+		const downloadSession = page.getByRole("button", {
+			name: "Download session",
+		});
+		const removeSilence = page.getByRole("button", {
+			name: "Remove silence",
+		});
+		const [downloadBounds, removeBounds] = await Promise.all([
+			downloadSession.boundingBox(),
+			removeSilence.boundingBox(),
+		]);
+		expect(downloadBounds).not.toBeNull();
+		expect(removeBounds).not.toBeNull();
+		if (downloadBounds && removeBounds) {
+			expect(Math.abs(downloadBounds.y - removeBounds.y)).toBeLessThan(1);
+		}
+	}
+	const eventTimeline = page.getByRole("button", { name: /Event timeline/ });
+	await eventTimeline.click();
+	await expect
+		.poll(() =>
+			eventTimeline.evaluate(
+				(element) => getComputedStyle(element).backgroundColor,
+			),
+		)
+		.toBe("rgba(0, 0, 0, 0.87)");
+	await expect
+		.poll(() =>
+			eventTimeline.evaluate((element) => getComputedStyle(element).color),
+		)
+		.toBe("rgb(148, 163, 184)");
+	const mutedInterval = page.getByRole("button", {
+		name: "Server muted, 00:00:04 to 00:00:10",
+	});
+	await expect(mutedInterval).toBeVisible();
+	await mutedInterval.hover();
+	await expect(page.getByRole("tooltip")).toContainText("Server muted");
 	const inPoint = page.getByRole("slider", { name: "Clip in point" });
 	const outPoint = page.getByRole("slider", { name: "Clip out point" });
 	await expect(inPoint).toHaveAttribute("aria-valuenow", "0");
 	await expect(outPoint).toHaveAttribute("aria-valuenow", "15000");
+	for (const handle of [inPoint, outPoint]) {
+		expect(
+			await handle.evaluate(
+				(element) => getComputedStyle(element).backgroundColor,
+			),
+		).not.toBe("rgba(0, 0, 0, 0)");
+	}
+
+	const actionThumbs = page.getByRole("slider", {
+		name: "Logical action range",
+	});
+	await expect(actionThumbs).toHaveCount(2);
+	const firstThumb = actionThumbs.nth(0);
+	await expect
+		.poll(() =>
+			firstThumb.evaluate(
+				(element) => getComputedStyle(element).backgroundColor,
+			),
+		)
+		.toBe("rgb(144, 202, 249)");
+	await firstThumb.scrollIntoViewIfNeeded();
+	const sliderRoot = firstThumb.locator("..");
+	const thumbBounds = await firstThumb.boundingBox();
+	const sliderBounds = await sliderRoot.boundingBox();
+	if (thumbBounds && sliderBounds) {
+		await page.mouse.move(
+			thumbBounds.x + thumbBounds.width / 2,
+			thumbBounds.y + thumbBounds.height / 2,
+		);
+		await page.mouse.down();
+		await page.mouse.move(
+			sliderBounds.x + sliderBounds.width * 0.2,
+			thumbBounds.y + thumbBounds.height / 2,
+		);
+		await page.mouse.up();
+	}
+	await expect(firstThumb).toHaveAttribute("aria-valuenow", "6000");
+	await page.keyboard.press("r");
+	await expect(inPoint).toHaveAttribute("aria-valuenow", "0");
+
 	const clipNameInput = page.getByLabel("Clip name");
 	const createClipButton = page.getByRole("button", { name: "Create clip" });
 	const [clipNameBounds, createClipBounds] = await Promise.all([
@@ -178,8 +369,12 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	]);
 	expect(clipNameBounds?.height).toBe(createClipBounds?.height);
 	expect(clipNameBounds?.height).toBe(40);
+	if (clipNameBounds && createClipBounds) {
+		expect(Math.abs(clipNameBounds.y - createClipBounds.y)).toBeLessThan(1);
+	}
 
 	const sessionWindow = page.getByTestId("clip-session-window");
+	await sessionWindow.scrollIntoViewIfNeeded();
 	const bounds = await sessionWindow.boundingBox();
 	expect(bounds).not.toBeNull();
 	if (bounds) {
@@ -202,6 +397,7 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 		})
 		.toBe(15_000);
 	await expect.poll(() => updateDepthErrors).toEqual([]);
+	await expect.poll(() => styleWarnings).toEqual([]);
 
 	await page.reload();
 	await expect(

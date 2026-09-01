@@ -1,15 +1,19 @@
-import CloseIcon from "@mui/icons-material/Close";
-import VolumeOffIcon from "@mui/icons-material/VolumeOff";
-import VolumeUpIcon from "@mui/icons-material/VolumeUp";
-import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import DialogContentText from "@mui/material/DialogContentText";
-import IconButton from "@mui/material/IconButton";
-import { keyframes } from "@mui/material/styles";
-import Tooltip from "@mui/material/Tooltip";
-import Typography from "@mui/material/Typography";
+import {
+	X as CloseIcon,
+	VolumeOff as VolumeOffIcon,
+	Volume2 as VolumeUpIcon,
+} from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
+import {
+	Box,
+	Button,
+	DialogContentText,
+	IconButton,
+	keyframes,
+	Tooltip,
+	Typography,
+} from "../../shared/ui";
 import {
 	TimelinePlayhead,
 	TimelineRow,
@@ -99,9 +103,9 @@ function TrackLabel(props: {
 							sx={{ p: 0.25, flex: "0 0 auto" }}
 						>
 							{props.muted ? (
-								<VolumeOffIcon fontSize="small" />
+								<VolumeOffIcon size={16} />
 							) : (
-								<VolumeUpIcon fontSize="small" />
+								<VolumeUpIcon size={16} />
 							)}
 						</IconButton>
 					</Tooltip>
@@ -122,7 +126,7 @@ function TrackLabel(props: {
 								onClick={requestRemove}
 								sx={{ p: 0.25, flex: "0 0 auto" }}
 							>
-								<CloseIcon fontSize="small" />
+								<CloseIcon size={16} />
 							</IconButton>
 						</span>
 					</Tooltip>

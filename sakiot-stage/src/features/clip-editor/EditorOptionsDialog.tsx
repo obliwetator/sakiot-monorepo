@@ -1,8 +1,5 @@
-import Button from "@mui/material/Button";
-import FormControlLabel from "@mui/material/FormControlLabel";
-import Switch from "@mui/material/Switch";
-import Typography from "@mui/material/Typography";
 import { BaseDialog } from "../../shared/BaseDialog";
+import { Button, FormControlLabel, Switch, Typography } from "../../shared/ui";
 import type { EditorOptions } from "./editorOptions";
 
 /**
