@@ -29,9 +29,11 @@ import {
 	DialogContentText,
 	DialogTitle,
 	Drawer,
+	Page,
 	Stack,
 	Tab,
 	Tabs,
+	Text,
 	Typography,
 	useMediaQuery,
 	useTheme,
@@ -171,9 +173,9 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 	return (
 		<div>
 			<Button
-				variant="contained"
-				color="error"
-				disabled={!props.canDelete}
+				variant="danger"
+				size="sm"
+				isDisabled={!props.canDelete}
 				onClick={handleClickOpen}
 			>
 				Delete
@@ -184,15 +186,17 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 				aria-labelledby="alert-dialog-title"
 				aria-describedby="alert-dialog-description"
 			>
-				<DialogTitle id="alert-dialog-title">{"Confirm deletion?"}</DialogTitle>
+				<DialogTitle id="alert-dialog-title">Confirm deletion?</DialogTitle>
 				<DialogContent>
 					<DialogContentText id="alert-dialog-description">
 						Are you sure you want to delete the clip?
 					</DialogContentText>
 				</DialogContent>
 				<DialogActions>
-					<Button onClick={handleClose}>No</Button>
-					<Button onClick={handleYes} autoFocus>
+					<Button variant="secondary" onClick={handleClose}>
+						No
+					</Button>
+					<Button variant="danger" onClick={handleYes} autoFocus>
 						YEP
 					</Button>
 				</DialogActions>
@@ -233,7 +237,7 @@ export default function Clips() {
 
 	if (isSuccess && data) {
 		return (
-			<Box sx={{ p: { xs: 1.5, md: 3 } }}>
+			<Page className="max-w-7xl space-y-4">
 				<ViewAsRoleBanner guildId={guildId} />
 				<ClipsLayout
 					data={data}
@@ -241,10 +245,14 @@ export default function Clips() {
 					currentUserId={authData?.user?.user_id ?? null}
 					guildSelected={guild}
 				/>
-			</Box>
+			</Page>
 		);
 	} else {
-		return <div>No clip data</div>;
+		return (
+			<Page>
+				<Text tone="muted">No clip data</Text>
+			</Page>
+		);
 	}
 }
 

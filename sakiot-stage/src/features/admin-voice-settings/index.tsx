@@ -6,13 +6,14 @@ import {
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
 import {
-	Alert,
-	Box,
 	Button,
-	Paper,
-	Stack,
-	LegacyTextField as TextField,
-	Typography,
+	Notice,
+	Page,
+	PageTitle,
+	Panel,
+	SectionTitle,
+	Text,
+	TextField,
 } from "../../shared/ui";
 
 const MIN_PENDING_SECONDS = 60;
@@ -54,66 +55,100 @@ export function GuildVoiceSettingsPage() {
 		setSeconds(String(restored.pending_cap_seconds));
 	};
 
-	if (!guildId) return <Box p={2}>Missing guild id.</Box>;
+	if (!guildId) {
+		return (
+			<Page>
+				<Notice tone="error">Missing guild id.</Notice>
+			</Page>
+		);
+	}
 
 	return (
-		<Box p={2} sx={{ maxWidth: 760 }}>
-			<Typography variant="h5" gutterBottom>
-				Voice Settings
-			</Typography>
-			<Paper sx={{ p: 3 }}>
-				<Typography variant="h6" gutterBottom>
-					Pending recording timeout
-				</Typography>
-				<Typography color="text.secondary" sx={{ mb: 2 }}>
-					Guilds without an AFK channel finalize users who do not follow the bot
-					after this cap. Disconnect and AFK events still use a 60-second grace.
-					Guilds with an AFK channel have no absolute cap.
-				</Typography>
+		<Page className="max-w-3xl space-y-5">
+			<header className="space-y-1">
+				<PageTitle>Voice Settings</PageTitle>
+				<Text tone="muted">
+					Manage voice recording rules and channel timeouts.
+				</Text>
+			</header>
 
-				{isLoading && <Typography>Loading voice settings…</Typography>}
+			<Panel aria-labelledby="pending-timeout-heading" className="space-y-4">
+				<div className="space-y-1">
+					<SectionTitle id="pending-timeout-heading">
+						Pending recording timeout
+					</SectionTitle>
+					<Text tone="muted">
+						Guilds without an AFK channel finalize users who do not follow the
+						bot after this cap. Disconnect and AFK events still use a 60-second
+						grace. Guilds with an AFK channel have no absolute cap.
+					</Text>
+				</div>
+
+				{isLoading && <Text aria-live="polite">Loading voice settings…</Text>}
 				{isError && (
-					<Alert severity="error">Could not load voice settings.</Alert>
+					<Notice tone="error" announce="alert">
+						Could not load voice settings.
+					</Notice>
 				)}
 				{data && (
-					<Stack spacing={2}>
+					<form
+						noValidate
+						onSubmit={(event) => {
+							event.preventDefault();
+							void handleSave();
+						}}
+						className="space-y-4"
+					>
 						<TextField
 							label="Pending cap (seconds)"
+							name="pending-cap"
 							type="number"
+							min={MIN_PENDING_SECONDS}
+							step={60}
 							value={seconds}
-							onChange={(event) => setSeconds(event.target.value)}
-							inputProps={{ min: MIN_PENDING_SECONDS, step: 60 }}
-							helperText={
+							onChange={(value) => {
+								setSeconds(value);
+								setValidation(null);
+								saveState.reset();
+							}}
+							description={
 								data.is_default
 									? "Using six-hour default."
 									: "Guild override active."
 							}
+							error={validation ?? undefined}
 						/>
-						<Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-							<Button
-								variant="contained"
-								onClick={handleSave}
-								disabled={saveState.isLoading}
-							>
+						<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+							<Button type="submit" isPending={saveState.isLoading}>
 								Save override
 							</Button>
 							<Button
-								variant="outlined"
+								type="button"
+								variant="secondary"
 								onClick={handleReset}
-								disabled={resetState.isLoading || data.is_default}
+								isDisabled={resetState.isLoading || data.is_default}
 							>
 								Restore six-hour default
 							</Button>
-						</Stack>
-						{validation && <Alert severity="warning">{validation}</Alert>}
-						{saveState.isSuccess && <Alert severity="success">Saved.</Alert>}
-						{saveState.isError && <Alert severity="error">Save failed.</Alert>}
-						{resetState.isSuccess && (
-							<Alert severity="success">Default restored.</Alert>
+						</div>
+						{saveState.isSuccess && (
+							<Notice tone="success" announce="status">
+								Saved.
+							</Notice>
 						)}
-					</Stack>
+						{saveState.isError && (
+							<Notice tone="error" announce="alert">
+								Save failed.
+							</Notice>
+						)}
+						{resetState.isSuccess && (
+							<Notice tone="success" announce="status">
+								Default restored.
+							</Notice>
+						)}
+					</form>
 				)}
-			</Paper>
-		</Box>
+			</Panel>
+		</Page>
 	);
 }

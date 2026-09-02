@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
 import {
-	Box,
 	Button,
-	Paper,
+	Notice,
+	Page,
+	PageTitle,
 	Table,
 	TableBody,
 	TableCell,
@@ -13,7 +14,7 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-	Typography,
+	Text,
 } from "../../shared/ui";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
@@ -41,51 +42,51 @@ export function Stamps() {
 
 	if (!guildId) {
 		return (
-			<Box p={3}>
-				<Typography color="text.secondary">
+			<Page>
+				<Notice tone="info">
 					Select a guild from the top navbar to view stamps.
-				</Typography>
-			</Box>
+				</Notice>
+			</Page>
 		);
 	}
 
 	if (isLoading) {
 		return (
-			<Box p={3}>
-				<Typography>Loading stamps…</Typography>
-			</Box>
+			<Page>
+				<Text aria-live="polite">Loading stamps…</Text>
+			</Page>
 		);
 	}
 
 	if (isError) {
 		return (
-			<Box p={3}>
-				<Typography color="error">
+			<Page>
+				<Notice tone="error" announce="alert">
 					Failed to load stamps: {JSON.stringify(error)}
-				</Typography>
-			</Box>
+				</Notice>
+			</Page>
 		);
 	}
 
 	const rows = data ?? [];
 
 	return (
-		<Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1400 }}>
+		<Page className="max-w-7xl space-y-5">
 			<ViewAsRoleBanner guildId={guildId} />
-			<Typography variant="h4" fontWeight={700} gutterBottom>
-				Stamps {guildName ? `— ${guildName}` : ""}
-			</Typography>
-			<Typography color="text.secondary" sx={{ mb: 2 }}>
-				{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max
-				500). Session links open the complete logical recording. Audio file IDs
-				identify the physical fragment containing each stamp.
-			</Typography>
+			<header className="space-y-1">
+				<PageTitle>Stamps {guildName ? `— ${guildName}` : ""}</PageTitle>
+				<Text tone="muted">
+					{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max
+					500). Session links open the complete logical recording. Audio file
+					IDs identify the physical fragment containing each stamp.
+				</Text>
+			</header>
 
 			{rows.length === 0 ? (
-				<Typography color="text.secondary">No stamps yet.</Typography>
+				<Notice tone="info">No stamps yet.</Notice>
 			) : (
-				<TableContainer component={Paper} variant="outlined">
-					<Table size="small">
+				<TableContainer className="rounded-lg border border-slate-800">
+					<Table>
 						<TableHeader>
 							<TableRow>
 								<TableHead>ID</TableHead>
@@ -116,7 +117,8 @@ export function Stamps() {
 										<TableCell>
 											{playbackTarget ? (
 												<Button
-													size="small"
+													variant="secondary"
+													size="sm"
 													onClick={() => navigate(playbackTarget.path)}
 													title={
 														playbackTarget.scope === "session"
@@ -127,13 +129,13 @@ export function Stamps() {
 													{formatDuration(playbackTarget.relativeSeconds)}
 												</Button>
 											) : (
-												<span style={{ opacity: 0.5 }}>—</span>
+												<span className="opacity-50">—</span>
 											)}
 										</TableCell>
 										<TableCell>
 											<div>{s.target_name ?? s.target_user_id}</div>
 											{s.target_name && (
-												<div style={{ fontSize: 11, opacity: 0.6 }}>
+												<div className="text-[11px] opacity-60">
 													{s.target_user_id}
 												</div>
 											)}
@@ -141,7 +143,7 @@ export function Stamps() {
 										<TableCell>
 											<div>{s.stamper_name ?? s.stamper_user_id}</div>
 											{s.stamper_name && (
-												<div style={{ fontSize: 11, opacity: 0.6 }}>
+												<div className="text-[11px] opacity-60">
 													{s.stamper_user_id}
 												</div>
 											)}
@@ -149,7 +151,7 @@ export function Stamps() {
 										<TableCell>
 											<div>{s.channel_name ?? s.channel_id}</div>
 											{s.channel_name && (
-												<div style={{ fontSize: 11, opacity: 0.6 }}>
+												<div className="text-[11px] opacity-60">
 													{s.channel_id}
 												</div>
 											)}
@@ -158,7 +160,8 @@ export function Stamps() {
 										<TableCell>
 											{sessionPath ? (
 												<Button
-													size="small"
+													variant="secondary"
+													size="sm"
 													onClick={() =>
 														navigate(
 															playbackTarget?.scope === "session"
@@ -170,20 +173,16 @@ export function Stamps() {
 													{s.recording_session_id}
 												</Button>
 											) : (
-												<span style={{ opacity: 0.5 }}>—</span>
+												<span className="opacity-50">—</span>
 											)}
 										</TableCell>
 										<TableCell>
 											{s.audio_file_id ? (
-												<Box>
-													<Typography variant="body2">
+												<div>
+													<div className="text-sm font-medium">
 														{s.audio_file_id}
-													</Typography>
-													<Typography
-														variant="caption"
-														color="text.secondary"
-														display="block"
-													>
+													</div>
+													<div className="text-xs text-muted">
 														{s.recording_session_id
 															? `Fragment ${fragmentNumber ?? "?"}${
 																	s.session_fragment_count
@@ -191,10 +190,10 @@ export function Stamps() {
 																		: ""
 																}`
 															: "Legacy physical file"}
-													</Typography>
-												</Box>
+													</div>
+												</div>
 											) : (
-												<span style={{ opacity: 0.5 }}>—</span>
+												<span className="opacity-50">—</span>
 											)}
 										</TableCell>
 										<TableCell>{s.note ?? ""}</TableCell>
@@ -208,6 +207,6 @@ export function Stamps() {
 					</Table>
 				</TableContainer>
 			)}
-		</Box>
+		</Page>
 	);
 }
