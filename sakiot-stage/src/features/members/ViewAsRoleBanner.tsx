@@ -1,7 +1,7 @@
 import { Eye as RemoveRedEyeIcon } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useGetGuildRolesQuery } from "../../app/apiSlice";
-import { Button, Notice } from "../../shared/ui";
+import { Alert, Box, Button } from "../../shared/ui";
 
 export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	const [searchParams, setSearchParams] = useSearchParams();
@@ -20,30 +20,22 @@ export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	};
 
 	return (
-		<div className="mb-4">
-			<Notice tone="info" className="flex items-center justify-between gap-3">
-				<div className="flex items-center gap-2">
-					<RemoveRedEyeIcon
-						aria-hidden="true"
-						className="size-4 shrink-0 text-sky-400"
-					/>
-					<span>
-						Viewing as <strong>{roleName ?? `role ${asRole}`}</strong> — every
-						session stays visible: <em>can't listen</em> marks channels this
-						role can see but not join, <em>hidden</em> marks channels it can't
-						see at all. Playing or downloading media still uses your own
-						permissions.
-					</span>
-				</div>
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={exitPreview}
-					className="shrink-0 text-sky-300 hover:text-sky-100"
-				>
-					Exit preview
-				</Button>
-			</Notice>
-		</div>
+		<Box sx={{ mb: 2 }}>
+			<Alert
+				severity="info"
+				variant="outlined"
+				icon={<RemoveRedEyeIcon />}
+				action={
+					<Button color="inherit" size="small" onClick={exitPreview}>
+						Exit preview
+					</Button>
+				}
+			>
+				Viewing as <strong>{roleName ?? `role ${asRole}`}</strong> — every
+				session stays visible: <em>can't listen</em> marks channels this role
+				can see but not join, <em>hidden</em> marks channels it can't see at
+				all. Playing or downloading media still uses your own permissions.
+			</Alert>
+		</Box>
 	);
 }

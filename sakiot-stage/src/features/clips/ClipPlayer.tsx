@@ -21,13 +21,13 @@ import {
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
 import {
+	Alert,
 	Box,
 	Button,
 	Chip,
 	DialogContentText,
 	IconButton,
 	Link,
-	Notice,
 	Paper,
 	Slider,
 	Stack,
@@ -140,20 +140,15 @@ function RenameClipButton(props: { clip: ClipData }) {
 				busy={isLoading}
 				actions={
 					<>
-						<Button
-							variant="secondary"
-							onClick={handleClose}
-							isDisabled={isLoading}
-						>
+						<Button onClick={handleClose} disabled={isLoading}>
 							Cancel
 						</Button>
 						<Button
-							variant="primary"
-							isPending={isLoading}
+							variant="contained"
 							onClick={() => void handleRename()}
-							isDisabled={!canSubmit}
+							disabled={isLoading || !canSubmit}
 						>
-							Save
+							{isLoading ? "Saving..." : "Save"}
 						</Button>
 					</>
 				}
@@ -517,9 +512,9 @@ export function ClipPlayer(props: {
 				alignItems="center"
 			>
 				<Button
-					variant="primary"
+					variant="contained"
 					onClick={togglePlay}
-					isDisabled={!ready}
+					disabled={!ready}
 					startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}
 				>
 					{playing ? "Pause" : "Play"}
@@ -558,15 +553,15 @@ export function ClipPlayer(props: {
 					flexWrap="wrap"
 				>
 					<Button
-						variant="secondary"
-						startIcon={<DownloadIcon className="size-4" />}
+						variant="outlined"
+						startIcon={<DownloadIcon />}
 						onClick={() => void download()}
 					>
 						Download clip
 					</Button>
 					<Button
-						variant="secondary"
-						startIcon={<ContentCutIcon className="size-4" />}
+						variant="outlined"
+						startIcon={<ContentCutIcon />}
 						onClick={() =>
 							navigate(
 								`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/clips/editor?source=${encodeURIComponent(props.clip.clip_id)}`,
@@ -575,7 +570,7 @@ export function ClipPlayer(props: {
 					>
 						Edit clip
 					</Button>
-					<Button variant="secondary" isDisabled>
+					<Button variant="outlined" disabled>
 						Create clip
 					</Button>
 					<JamIt visible={true} />
@@ -590,9 +585,9 @@ export function ClipPlayer(props: {
 			</Paper>
 
 			{error && (
-				<Notice tone="error" announce="alert" className="mt-4">
+				<Alert severity="error" sx={{ mt: 2 }}>
 					{error}
-				</Notice>
+				</Alert>
 			)}
 		</Box>
 	);
