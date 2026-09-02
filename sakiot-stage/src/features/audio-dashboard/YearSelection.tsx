@@ -50,9 +50,17 @@ export function YearSelection() {
 	);
 
 	return (
-		<Box sx={{ width: "100%", height: { md: "100%" }, overflow: "hidden" }}>
+		<Box
+			sx={{
+				display: "flex",
+				flexDirection: "column",
+				width: "100%",
+				height: { md: "100%" },
+				overflow: "hidden",
+			}}
+		>
 			{!isDesktop && (
-				<Box sx={{ p: 1 }}>
+				<Box sx={{ p: 1, flexShrink: 0 }}>
 					<Button
 						variant="outlined"
 						fullWidth
@@ -70,7 +78,7 @@ export function YearSelection() {
 					</Drawer>
 				</Box>
 			)}
-			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0 }}>
+			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0, flexShrink: 0 }}>
 				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
 			</Box>
 			<Box
@@ -79,6 +87,8 @@ export function YearSelection() {
 					flexDirection: { xs: "column", md: "row" },
 					width: "100%",
 					minWidth: 0,
+					flex: 1,
+					minHeight: 0,
 					height: { md: "100%" },
 				}}
 			>
@@ -107,6 +117,7 @@ export function YearSelection() {
 						minWidth: 0,
 						width: { xs: "100%", md: "auto" },
 						px: { xs: 1, md: 2 },
+						pb: 4,
 						height: { md: "100%" },
 						overflowY: { md: "auto" },
 						// Vertical scrolling must not implicitly turn this hidden-scrollbar
