@@ -74,6 +74,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          GH_FETCH_TOKEN: ${{ github.token }}
           STAGING_SHA: ${{ github.sha }}
           RELEASE_TAG: ${{ needs.release-candidate.outputs.tag }}
         run: |
@@ -89,22 +90,24 @@ jobs:
             command+=" prepare ${RELEASE_TAG}"
           fi
           set +e
-          ssh -i "${HOME}/.ssh/deploy_key" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "${command}"
-          status=$?
-          set -e
-          if [[ "${status}" -eq 126 ]]; then
-            echo "deploy engine predates CI attestation; using tested legacy path"
-            ssh -i "${HOME}/.ssh/deploy_key" \
+          printf '%s\n' "${GH_FETCH_TOKEN}" \
+            | ssh -i "${HOME}/.ssh/deploy_key" \
               -o BatchMode=yes \
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
               "${DEPLOY_USER}@${DEPLOY_HOST}" \
-              "staging ${STAGING_SHA}"
+              "${command}"
+          status=$?
+          set -e
+          if [[ "${status}" -eq 126 ]]; then
+            echo "deploy engine predates CI attestation; using tested legacy path"
+            printf '%s\n' "${GH_FETCH_TOKEN}" \
+              | ssh -i "${HOME}/.ssh/deploy_key" \
+                -o BatchMode=yes \
+                -o IdentitiesOnly=yes \
+                -o StrictHostKeyChecking=yes \
+                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                "staging ${STAGING_SHA}"
           elif [[ "${status}" -ne 0 ]]; then
             exit "${status}"
           fi

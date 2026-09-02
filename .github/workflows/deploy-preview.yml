@@ -145,6 +145,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          GH_FETCH_TOKEN: ${{ github.token }}
           PREVIEW_SLOT: ${{ needs.compute.outputs.slot }}
           PREVIEW_SHA: ${{ steps.sha.outputs.sha }}
         run: |
@@ -155,12 +156,13 @@ jobs:
           trap 'rm -f "${HOME}/.ssh/deploy_key"' EXIT
           printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" >"${HOME}/.ssh/known_hosts"
 
-          ssh -i "${HOME}/.ssh/deploy_key" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "preview-ci ${PREVIEW_SLOT} ${PREVIEW_SHA}"
+          printf '%s\n' "${GH_FETCH_TOKEN}" \
+            | ssh -i "${HOME}/.ssh/deploy_key" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "preview-ci ${PREVIEW_SLOT} ${PREVIEW_SHA}"
 
       - name: Verify public HTTPS deployment
         env:

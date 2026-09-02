@@ -5,10 +5,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 original="${SSH_ORIGINAL_COMMAND:-}"
 
 if [[ "${original}" =~ ^release-ci\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" release-ci "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
 if [[ "${original}" =~ ^release-promoted\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" release-promoted "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
@@ -17,10 +19,12 @@ if [[ "${original}" =~ ^release\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; th
 fi
 
 if [[ "${original}" =~ ^rollback\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" rollback "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 
 if [[ "${original}" =~ ^rollback\ (v[0-9][0-9A-Za-z._-]*)\ ([0-9a-f]{40})\ --allow-schema-mismatch$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" rollback "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
     --allow-schema-mismatch
 fi
@@ -30,15 +34,18 @@ if [[ "${original}" =~ ^staging\ ([0-9a-f]{40})$ ]]; then
 fi
 
 if [[ "${original}" =~ ^staging-ci\ ([0-9a-f]{40})$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" stage-ci "${BASH_REMATCH[1]}"
 fi
 
 if [[ "${original}" =~ ^staging-ci\ ([0-9a-f]{40})\ prepare\ (v[0-9][0-9A-Za-z._-]*)$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" stage-ci "${BASH_REMATCH[1]}" \
     --prepare-production "${BASH_REMATCH[2]}"
 fi
 
 if [[ "${original}" =~ ^preview-ci\ ([a-z0-9][a-z0-9-]*)\ ([0-9a-f]{40})$ ]]; then
+  export SAKIOT_GITHUB_TOKEN_STDIN=1
   exec "${script_dir}/deploy" preview-ci "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
 fi
 

@@ -1,8 +1,12 @@
 # Production deployment
 
 Production deploys run from GitHub-hosted Actions runners when a new `v*` tag
-is pushed. The runner has read-only repository permission and sends only the
-tag and commit SHA through a forced SSH command. CI runs tests once. A
+is pushed. The runner has read-only repository permission and sends the tag,
+commit SHA, and its short-lived repository token through a forced SSH command.
+The token travels on SSH stdin, authenticates Git protocol v2 through an
+ephemeral askpass file, and is deleted when the source fetch completes (or when
+the deploy exits after a fetch failure); it is never stored in a repository URL
+or persistent credential store. CI runs tests once. A
 version-bump staging deploy builds and hashes the production bundle on the
 Debian VPS; production promotes that exact bundle, then performs backups,
 migrations, service changes, and health checks.
@@ -75,9 +79,10 @@ builds `--package sakiot-deploy` from the checkout as the `sakiot` user and
 installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
 never built from the release worktree, so a broken commit cannot brick
 deploys. Engine tests run in CI (`cargo test --workspace`). Authenticated `*-ci`
-forced-command verbs are reachable only after the Actions test job succeeds,
-so they skip the duplicate VPS test pass. Legacy/local verbs still test on the
-VPS. The bash suites for the
+forced-command verbs are reachable only after the Actions test job succeeds.
+They receive that job's read-only `GITHUB_TOKEN` on stdin, force authenticated
+Git protocol v2 for the source fetch, and skip the duplicate VPS test pass.
+Legacy/local verbs still test on the VPS. The bash suites for the
 out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
 frontend publish) run in CI on every PR and on the VPS via
 `update-deploy-engine.sh`.
@@ -126,6 +131,11 @@ Create a `production` environment without required reviewers and add:
 Create a `staging` environment with the same four secrets (same VPS, same deploy
 user and key). The staging deploy reuses the restricted key; the forced command
 accepts a `staging <sha>` verb in addition to `release`/`rollback`.
+
+No separate GitHub PAT is installed on the VPS. Deploy workflows forward their
+automatic, job-scoped `GITHUB_TOKEN` over SSH stdin. Keep workflow
+`permissions.contents` at `read` (the staging auto-tag job has its separate,
+explicit write permission).
 
 Repository owner account should use a passkey or 2FA. Do not add deployment
 secrets to pull-request workflows or use `pull_request_target`.

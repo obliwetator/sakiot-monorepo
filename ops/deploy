@@ -14,4 +14,46 @@ binary="${script_dir}/bin/sakiot-deploy"
   exit 1
 }
 
-exec "${binary}" "$@"
+if [[ "${SAKIOT_GITHUB_TOKEN_STDIN:-0}" != "1" ]]; then
+  exec "${binary}" "$@"
+fi
+
+# CI sends its job-scoped GITHUB_TOKEN over the already authenticated SSH
+# connection. Keep it out of argv, URLs, logs, and persistent credential
+# stores; Git reads it through askpass only when github.com requests auth.
+umask 077
+github_token_file="$(mktemp "${TMPDIR:-/tmp}/sakiot-github-token.XXXXXX")"
+cleanup() {
+  rm -f -- "${github_token_file}"
+}
+trap cleanup EXIT HUP INT TERM
+
+github_token=""
+if ! IFS= read -r github_token; then
+  echo "error: missing GitHub fetch token on stdin" >&2
+  exit 1
+fi
+if [[ ! "${github_token}" =~ ^[A-Za-z0-9_]{20,512}$ ]]; then
+  echo "error: invalid GitHub fetch token on stdin" >&2
+  exit 1
+fi
+if IFS= read -r _; then
+  echo "error: unexpected extra GitHub token input" >&2
+  exit 1
+fi
+printf '%s' "${github_token}" >"${github_token_file}"
+unset github_token
+
+export GIT_ASKPASS="${script_dir}/git-askpass.sh"
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS_REQUIRE=force
+export SAKIOT_GITHUB_TOKEN_FILE="${github_token_file}"
+# Pin v2 deliberately and ignore any persistent credential helper configured
+# for the service account. Authentication must come from this job only.
+export GIT_CONFIG_COUNT=2
+export GIT_CONFIG_KEY_0=protocol.version
+export GIT_CONFIG_VALUE_0=2
+export GIT_CONFIG_KEY_1=credential.helper
+export GIT_CONFIG_VALUE_1=
+
+"${binary}" "$@"

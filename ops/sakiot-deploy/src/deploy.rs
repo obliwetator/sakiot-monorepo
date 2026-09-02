@@ -219,6 +219,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     } else {
         git::fetch_staging(deps.runner, &source_repo)?;
     }
+    git::discard_ephemeral_credentials()?;
     git::require_commit(deps.runner, &source_repo, sha)?;
     warn_if_engine_stale(deps, &source_repo, sha);
 

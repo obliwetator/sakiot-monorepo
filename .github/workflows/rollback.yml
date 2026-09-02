@@ -25,25 +25,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Resolve immutable tag commit
         id: release
         env:
           RELEASE_TAG: ${{ inputs.tag }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          refs="$(
-            git ls-remote "https://github.com/${REPOSITORY}.git" \
-              "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}"
-          )"
-          release_sha="$(
-            awk -v direct="refs/tags/${RELEASE_TAG}" '
-              $2 == direct { base = $1 }
-              $2 == direct "^{}" { peeled = $1 }
-              END { print peeled != "" ? peeled : base }
-            ' <<<"${refs}"
-          )"
+          git rev-parse --verify "refs/tags/${RELEASE_TAG}" >/dev/null
+          release_sha="$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
           [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]]
           printf 'tag=%s\nsha=%s\n' "${RELEASE_TAG}" "${release_sha}" \
             >>"${GITHUB_OUTPUT}"
@@ -54,6 +48,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          GH_FETCH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           RELEASE_SHA: ${{ steps.release.outputs.sha }}
           ALLOW_SCHEMA_MISMATCH: ${{ inputs.allow_schema_mismatch }}
@@ -68,8 +63,9 @@ jobs:
           if [[ "${ALLOW_SCHEMA_MISMATCH}" == "true" ]]; then
             command="${command} --allow-schema-mismatch"
           fi
-          ssh -i "${HOME}/.ssh/deploy_key" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "${DEPLOY_USER}@${DEPLOY_HOST}" "${command}"
+          printf '%s\n' "${GH_FETCH_TOKEN}" \
+            | ssh -i "${HOME}/.ssh/deploy_key" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "${DEPLOY_USER}@${DEPLOY_HOST}" "${command}"

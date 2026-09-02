@@ -166,6 +166,9 @@ other instances, as documented in `ops/README.md`.
 
 - The workflow reuses the `staging` environment's `DEPLOY_*` secrets; the
   forced command chooses the instance from the slot argument.
+- Preview deploys send their job-scoped, read-only `GITHUB_TOKEN` over SSH stdin
+  for the deployer's authenticated Git protocol v2 fetch; no persistent PAT is
+  stored on the VPS.
 - Deploys to different slots run in parallel (per-slot concurrency groups).
 - Dev login works on preview hosts (`sakiot-stage` shows the button on hosts
   containing `preview`), gated by `DEV_ACCOUNT_ID`/`DEV_LOGIN_SECRET` in the

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::log;
 use crate::runner::{Cmd, CommandRunner};
@@ -44,6 +44,25 @@ pub fn fetch_staging(runner: &dyn CommandRunner, source_repo: &Path) -> Result<(
         "origin",
         "+refs/heads/*:refs/remotes/origin/*",
     ]))
+}
+
+/// Delete the job-scoped credential as soon as the remote fetch is complete.
+/// The wrapper's EXIT trap remains the fallback for clone/fetch failures.
+pub fn discard_ephemeral_credentials() -> Result<()> {
+    let Some(path) = std::env::var_os("SAKIOT_GITHUB_TOKEN_FILE") else {
+        return Ok(());
+    };
+    let path = PathBuf::from(path);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to remove ephemeral GitHub credential {}",
+                path.display()
+            )
+        }),
+    }
 }
 
 pub fn resolve_tag(runner: &dyn CommandRunner, source_repo: &Path, tag: &str) -> Result<String> {
