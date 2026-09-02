@@ -56,7 +56,12 @@ export default function CustomizedTreeView(
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { asRoleArg } = useAsRole();
-	const { data: channelsData, isSuccess } = useGetCurrentGuildDirsQuery(
+	const {
+		data: channelsData,
+		isSuccess,
+		isError,
+		error: dirsError,
+	} = useGetCurrentGuildDirsQuery(
 		{ guild_id: params.guild_id ?? "", ...asRoleArg },
 		{
 			skip: !params.guild_id,
@@ -124,7 +129,22 @@ export default function CustomizedTreeView(
 		() => (data ? filterTree(data, searchQuery) : []),
 		[data, searchQuery],
 	);
-	if (!data) return <div className="w-full">Loading Tree</div>;
+	if (isError) {
+		const status =
+			typeof dirsError === "object" && dirsError && "status" in dirsError
+				? (dirsError as { status: number | string }).status
+				: null;
+		return (
+			<div className="w-full rounded-lg bg-surface p-3 text-sm text-red-300">
+				{status === 403 && asRoleArg
+					? "Role preview access denied. Viewing account must be a guild manager."
+					: "Failed to load recordings tree."}
+			</div>
+		);
+	}
+
+	if (!data)
+		return <div className="w-full p-2 text-sm text-muted">Loading Tree…</div>;
 
 	const years = visibleData.map((el, index) => (
 		<TreeViewYears el={el} index={index} liveSet={liveSet} key={el.year} />

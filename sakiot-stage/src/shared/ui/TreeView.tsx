@@ -160,7 +160,7 @@ export function TreeItem({
 						{expanded ? "▾" : "▸"}
 					</button>
 				)}
-				<div className="min-w-0 flex-1 truncate text-left">{label}</div>
+				<div className="min-w-0 flex-1 text-left">{label}</div>
 			</div>
 			{hasChildren && expanded && (
 				<div className="relative ml-3 space-y-1 pl-2 pt-1">

@@ -19,14 +19,14 @@ export function ItemsEl(props: {
 	const accessBadge =
 		access === "visible-only" ? (
 			<span
-				className="ml-2 text-xs font-semibold text-amber-300"
+				className="ml-1.5 shrink-0 text-xs font-semibold text-amber-300"
 				title="This role can see the channel but cannot join it — playback would be denied"
 			>
 				🔒 can't listen
 			</span>
 		) : access === "hidden" ? (
 			<span
-				className="ml-2 text-xs font-semibold text-red-400"
+				className="ml-1.5 shrink-0 text-xs font-semibold text-red-400"
 				title="This role cannot see the channel at all"
 			>
 				🚫 hidden
@@ -45,19 +45,23 @@ export function ItemsEl(props: {
 			}
 			label={
 				<span
-					className="block w-full px-2 py-1 select-none text-sm"
+					className="flex w-full min-w-0 items-center justify-between gap-1 px-1 py-0.5 select-none text-sm"
 					title={title}
 				>
-					<span className="font-mono">{time}</span>
-					{username && <span className="ml-2">{username}</span>}
-					{props.file.channel_journey &&
-						props.file.channel_journey.length > 1 && (
-							<span className="ml-2 text-xs opacity-75">
-								{props.file.channel_journey.join(" → ")}
-							</span>
-						)}
-					{props.isLive && <LivePill />}
-					{accessBadge}
+					<span className="min-w-0 truncate">
+						<span className="font-mono">{time}</span>
+						{username && <span className="ml-2">{username}</span>}
+						{props.file.channel_journey &&
+							props.file.channel_journey.length > 1 && (
+								<span className="ml-2 text-xs opacity-75">
+									{props.file.channel_journey.join(" → ")}
+								</span>
+							)}
+					</span>
+					<span className="flex shrink-0 items-center gap-1.5">
+						{props.isLive && <LivePill />}
+						{accessBadge}
+					</span>
 				</span>
 			}
 		/>
