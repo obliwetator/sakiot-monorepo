@@ -37,6 +37,7 @@ export function TextField({
 	max,
 	step,
 	className,
+	onFocus,
 	...props
 }: TextFieldProps) {
 	return (
@@ -51,6 +52,7 @@ export function TextField({
 				{label}
 			</Label>
 			<Input
+				onFocus={onFocus}
 				type={type}
 				min={min}
 				max={max}

@@ -72,12 +72,15 @@ export function GuildAdminCooldowns() {
 		}
 	}, [gid, guildCooldown, initializedGuildId]);
 
+	const prevGidRef = useRef(gid);
 	// Reset the edit guard when navigation changes guilds; fetched data must not
 	// overwrite a value the user started entering while the request was pending.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: gid is the route-change trigger.
 	useEffect(() => {
-		guildInputDirtyRef.current = false;
-		setInitializedGuildId(null);
+		if (prevGidRef.current !== gid) {
+			prevGidRef.current = gid;
+			guildInputDirtyRef.current = false;
+			setInitializedGuildId(null);
+		}
 	}, [gid]);
 
 	const handleSaveGuild = async (event: FormEvent<HTMLFormElement>) => {
@@ -172,38 +175,42 @@ export function GuildAdminCooldowns() {
 
 				{loadingGuild || (guildCooldown && initializedGuildId !== gid) ? (
 					<Text aria-live="polite">Loading guild cooldown…</Text>
-				) : (
-					<form
-						noValidate
-						onSubmit={handleSaveGuild}
-						className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end"
-					>
-						<TextField
-							label="Cooldown (seconds)"
-							name="guild-cooldown"
-							type="number"
-							min={0}
-							step={1}
-							value={guildSeconds}
-							onFocus={() => {
-								if (initializedGuildId !== gid) {
-									guildInputDirtyRef.current = true;
-								}
-							}}
-							onChange={(value) => {
+				) : null}
+
+				<form
+					noValidate
+					onSubmit={handleSaveGuild}
+					className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end"
+				>
+					<TextField
+						label="Cooldown (seconds)"
+						name="guild-cooldown"
+						type="number"
+						min={0}
+						step={1}
+						value={guildSeconds}
+						onFocus={() => {
+							if (initializedGuildId !== gid) {
 								guildInputDirtyRef.current = true;
-								setGuildSeconds(value);
-								setGuildError(null);
-								setGuildState.reset();
-							}}
-							error={guildError ?? undefined}
-							className="sm:w-64"
-						/>
-						<Button type="submit" isPending={setGuildState.isLoading}>
-							Save default
-						</Button>
-					</form>
-				)}
+							}
+						}}
+						onChange={(value) => {
+							guildInputDirtyRef.current = true;
+							setGuildSeconds(value);
+							setGuildError(null);
+							setGuildState.reset();
+						}}
+						error={guildError ?? undefined}
+						className="sm:w-64"
+					/>
+					<Button
+						type="submit"
+						variant="contained"
+						isPending={setGuildState.isLoading}
+					>
+						Save default
+					</Button>
+				</form>
 
 				{guildError && (
 					<Notice tone="warning" announce="alert">
@@ -268,7 +275,11 @@ export function GuildAdminCooldowns() {
 								: undefined
 						}
 					/>
-					<Button type="submit" isPending={setOverrideState.isLoading}>
+					<Button
+						type="submit"
+						variant="contained"
+						isPending={setOverrideState.isLoading}
+					>
 						Add / Update
 					</Button>
 				</form>
