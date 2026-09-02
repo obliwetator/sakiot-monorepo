@@ -3,7 +3,6 @@ import {
 	createContext,
 	type HTMLAttributes,
 	isValidElement,
-	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	type SyntheticEvent,
 	useContext,
@@ -94,29 +93,13 @@ export function TreeItem({
 		if (hasChildren) parent?.toggle(itemId);
 		else parent?.select(itemId);
 	};
-	const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-		if (event.key === "Enter" || event.key === " ") {
-			event.preventDefault();
-			handleRowClick();
-			return;
-		}
-		if (!hasChildren) return;
-		if (event.key === "ArrowRight" && !expanded) {
-			event.preventDefault();
-			parent?.toggle(itemId);
-		} else if (event.key === "ArrowLeft" && expanded) {
-			event.preventDefault();
-			parent?.toggle(itemId);
-		}
-	};
 	return (
 		<div
 			{...omitCompatProps(props)}
 			role="treeitem"
-			tabIndex={0}
+			tabIndex={-1}
 			aria-expanded={hasChildren ? expanded : undefined}
 			aria-selected={selected}
-			onKeyDown={handleKeyDown}
 			className={cn("relative", className)}
 			style={sxToStyle(sx)}
 		>
