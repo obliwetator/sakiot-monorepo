@@ -28,7 +28,7 @@ printf '%s\n' "$*"
 EOF
 chmod +x "${temporary}/ops/bin/sakiot-deploy"
 
-token="ghs_0123456789abcdefghijklmnopqrstuvwxyz"
+token="github-token.v2_0123456789-abcdefghijklmnopqrstuvwxyz="
 actual="$(
   printf '%s\n' "${token}" \
     | EXPECTED_TOKEN="${token}" \
