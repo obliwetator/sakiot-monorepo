@@ -17,7 +17,7 @@ export type ButtonSize = "sm" | "md" | "small" | "medium" | "large";
 
 const variantClasses: Record<ButtonVariant, string> = {
 	primary:
-		"border-primary bg-primary text-slate-950 data-[hovered]:border-cyan-300 data-[hovered]:bg-cyan-300",
+		"border-compat-primary bg-compat-primary text-slate-950 data-[hovered]:border-[#a6d4fa] data-[hovered]:bg-[#a6d4fa]",
 	secondary:
 		"border-ui-border bg-surface-raised text-fg data-[hovered]:border-creative data-[hovered]:text-violet-200",
 	ghost:

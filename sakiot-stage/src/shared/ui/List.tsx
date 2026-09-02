@@ -72,15 +72,17 @@ export function ListItem({
 		<div
 			{...omitCompatProps(props)}
 			className={cn(
-				"flex items-center",
+				"relative flex items-center",
 				!disablePadding && "px-4 py-1",
-				secondaryAction && "justify-between",
+				secondaryAction && "justify-between gap-2",
 				className,
 			)}
 			style={sxToStyle(sx)}
 		>
-			{children}
-			{secondaryAction}
+			<div className="min-w-0 flex-1">{children}</div>
+			{secondaryAction && (
+				<div className="shrink-0 pl-2">{secondaryAction}</div>
+			)}
 		</div>
 	);
 }
@@ -100,7 +102,7 @@ export function ListItemButton({
 	className,
 	onClick,
 	selected,
-	dense: _dense,
+	dense,
 	...props
 }: ListItemButtonProps) {
 	return (
@@ -110,6 +112,7 @@ export function ListItemButton({
 			onClick={onClick}
 			className={cn(
 				"flex w-full cursor-pointer items-center gap-3 rounded px-3 py-2 text-left transition-colors hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-focus",
+				dense && "py-1 text-sm",
 				selected && "bg-slate-800 font-medium text-fg",
 				className,
 			)}

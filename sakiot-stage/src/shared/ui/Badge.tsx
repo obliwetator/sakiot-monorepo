@@ -29,31 +29,47 @@ export function Chip({
 	className,
 	...props
 }: ChipProps) {
-	const tone =
-		color === "error"
-			? "border-red-400/50 bg-red-500/15 text-red-200"
-			: color === "primary"
-				? "border-compat-primary/50 bg-compat-primary/15 text-compat-primary"
-				: color === "secondary"
-					? "border-purple-400/50 bg-purple-500/15 text-purple-200"
-					: color === "warning"
-						? "border-amber-400/50 bg-amber-500/15 text-amber-200"
-						: color === "success"
-							? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200"
-							: "border-ui-border bg-slate-800 text-slate-200";
+	const isSmall = size === "small";
+	const isOutlined = variant === "outlined";
+
+	const colorClasses: Record<string, string> = {
+		default: isOutlined
+			? "border-white/20 bg-transparent text-slate-200"
+			: "border-transparent bg-white/10 text-slate-200",
+		primary: isOutlined
+			? "border-compat-primary/60 bg-transparent text-compat-primary"
+			: "border-transparent bg-compat-primary text-slate-950 font-medium",
+		secondary: isOutlined
+			? "border-[#a78bfa]/60 bg-transparent text-[#c4b5fd]"
+			: "border-transparent bg-[#a78bfa] text-slate-950 font-medium",
+		error: isOutlined
+			? "border-red-400/60 bg-transparent text-red-300"
+			: "border-transparent bg-red-500/20 text-red-200",
+		warning: isOutlined
+			? "border-amber-400/60 bg-transparent text-amber-300"
+			: "border-transparent bg-amber-500/20 text-amber-200",
+		success: isOutlined
+			? "border-emerald-400/60 bg-transparent text-emerald-300"
+			: "border-transparent bg-emerald-500/20 text-emerald-200",
+		info: isOutlined
+			? "border-sky-400/60 bg-transparent text-sky-300"
+			: "border-transparent bg-sky-500/20 text-sky-200",
+	};
+
 	return (
 		<span
 			{...omitCompatProps(props)}
 			className={cn(
-				"inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-				variant === "outlined" && "bg-transparent",
-				size === "small" && "text-[0.7rem]",
-				tone,
+				"inline-flex shrink-0 self-center items-center justify-center rounded-full border box-border whitespace-nowrap text-center font-normal transition-colors select-none",
+				isSmall
+					? "h-6 min-h-6 max-h-6 px-2 text-xs leading-none"
+					: "h-8 min-h-8 max-h-8 px-3 text-xs leading-none",
+				colorClasses[color] ?? colorClasses.default,
 				className,
 			)}
 			style={sxToStyle(sx)}
 		>
-			{label ?? children}
+			<span className="truncate">{label ?? children}</span>
 		</span>
 	);
 }

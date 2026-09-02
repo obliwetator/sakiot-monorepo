@@ -116,6 +116,7 @@ export function Stamps() {
 										<TableCell>
 											{playbackTarget ? (
 												<Button
+													variant="text"
 													size="small"
 													onClick={() => navigate(playbackTarget.path)}
 													title={
@@ -158,6 +159,7 @@ export function Stamps() {
 										<TableCell>
 											{sessionPath ? (
 												<Button
+													variant="text"
 													size="small"
 													onClick={() =>
 														navigate(
