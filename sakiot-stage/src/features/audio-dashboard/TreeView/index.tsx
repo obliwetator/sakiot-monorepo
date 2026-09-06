@@ -9,7 +9,7 @@ import {
 } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
 import { type Dirs, getMonthName } from "../../../Constants";
-import { SimpleTreeView } from "../../../shared/ui";
+import { Tree } from "../../../shared/ui";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
 import { audioTreeRouteState, recordingTreeRoutes } from "./treeNavigation";
@@ -46,7 +46,7 @@ function filterTree(data: Dirs[], query: string): Dirs[] {
 	});
 }
 
-export default function CustomizedTreeView(
+export default function RecordingTree(
 	props: { onRecordingSelect?: () => void } = {},
 ) {
 	const [data, setData] = useState<Dirs[] | null>(null);
@@ -160,7 +160,7 @@ export default function CustomizedTreeView(
 
 	return (
 		<div className="w-full rounded-lg bg-surface p-2">
-			<label className="relative block" htmlFor="audio-tree-search">
+			<label htmlFor="audio-tree-search" className="relative block">
 				<Search
 					aria-hidden="true"
 					className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
@@ -175,28 +175,25 @@ export default function CustomizedTreeView(
 				/>
 			</label>
 			{visibleData.length > 0 ? (
-				<SimpleTreeView
-					aria-label="customized"
-					expandedItems={expandedItems}
-					selectedItems={routeState.selectedItemId}
-					onExpandedItemsChange={(_event, itemIds) => {
-						setExpandedItems(itemIds);
+				<Tree
+					aria-label="Recordings"
+					selectionMode="single"
+					expandedKeys={expandedItems}
+					selectedKeys={
+						routeState.selectedItemId ? [routeState.selectedItemId] : []
+					}
+					onExpandedChange={(keys) => setExpandedItems([...keys].map(String))}
+					onSelectionChange={(keys) => {
+						if (keys !== "all") {
+							const key = [...keys][0];
+							if (key != null) selectRecording(String(key));
+						}
 					}}
-					onItemClick={(_event, itemId) => {
-						// Selecting an already-selected item does not emit a selection change.
-						// Still allow a physical URL mapped to a logical item to open its
-						// canonical session route when clicked.
-						if (itemId !== routeState.selectedItemId) return;
-						selectRecording(itemId);
-					}}
-					onSelectedItemsChange={(_event, itemId) => {
-						if (!itemId) return;
-						selectRecording(itemId);
-					}}
+					onAction={(key) => selectRecording(String(key))}
 					className="mt-3 w-full space-y-1"
 				>
 					{years}
-				</SimpleTreeView>
+				</Tree>
 			) : (
 				<p className="px-2 py-4 text-sm text-muted">No recordings found.</p>
 			)}

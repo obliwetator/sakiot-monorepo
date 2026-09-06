@@ -1,6 +1,6 @@
 import { getMonthName, type IndividualFileArray } from "../../../Constants";
+import { TreeItem, TreeItemContent } from "../../../shared/ui";
 import { LiveDot } from "./LiveDot";
-import { StyledTreeItem } from "./StyledTreeItem";
 import { TreeViewDays } from "./TreeViewDays";
 import { recordingFileDay } from "./treeNavigation";
 
@@ -41,16 +41,17 @@ export function TreeViewMonths(props: {
 	));
 
 	return (
-		<StyledTreeItem
-			label={
+		<TreeItem
+			id={`${props.year}-${props.month_name}`}
+			textValue={getMonthName(props.month_name)}
+		>
+			<TreeItemContent>
 				<span className="inline-flex items-center">
 					{getMonthName(props.month_name)}
 					{hasLive && <LiveDot />}
 				</span>
-			}
-			itemId={`${props.year}-${props.month_name}`}
-		>
+			</TreeItemContent>
 			{days}
-		</StyledTreeItem>
+		</TreeItem>
 	);
 }

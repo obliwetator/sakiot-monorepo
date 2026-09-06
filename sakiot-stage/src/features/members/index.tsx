@@ -9,29 +9,20 @@ import {
 } from "../../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import {
-	Alert,
-	Box,
+	Badge,
 	Button,
-	Chip,
-	Dialog,
-	DialogActions,
-	DialogContent,
-	DialogTitle,
+	DialogHeading,
 	IconButton,
-	List,
-	ListItem,
-	ListItemButton,
-	ListItemText,
-	Paper,
-	Stack,
+	Modal,
+	Notice,
 	Table,
 	TableBody,
 	TableCell,
-	TableContainer,
 	TableHead,
 	TableHeader,
 	TableRow,
-	Typography,
+	Tooltip,
+	TooltipTrigger,
 } from "../../shared/ui";
 import { roleSwatchBackground, roleTextStyle } from "./roleColors";
 
@@ -61,8 +52,13 @@ function RolePreviewDialog(props: {
 	};
 
 	return (
-		<Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-			<DialogTitle>
+		<Modal
+			isOpen={open}
+			onOpenChange={(isOpen) => {
+				if (!isOpen) onClose();
+			}}
+		>
+			<DialogHeading>
 				{role ? (
 					<>
 						View as <em>{role.name}</em>
@@ -70,105 +66,100 @@ function RolePreviewDialog(props: {
 				) : (
 					"View as role"
 				)}
-			</DialogTitle>
-			<DialogContent dividers>
+			</DialogHeading>
+			<div className="space-y-3 px-5 py-4 border-y border-ui-border">
 				{isLoading ? (
-					<Typography>Loading preview…</Typography>
+					<p className="leading-6">Loading preview…</p>
 				) : isError ? (
-					<Typography color="error">Failed to load preview.</Typography>
+					<p className="leading-6 text-danger">Failed to load preview.</p>
 				) : (
 					roleView && (
-						<Stack spacing={1.5}>
-							<Box>
-								<Typography variant="subtitle2" gutterBottom>
-									What this role can see
-								</Typography>
+						<div className="flex flex-col gap-3">
+							<div>
+								<h6 className="leading-6 mb-2">What this role can see</h6>
 								{roleView.can_manage_guild ? (
-									<Chip
-										size="small"
-										label="Can manage the guild (admin pages included)"
-										color="warning"
-									/>
+									<Badge tone={"warning"} size={"sm"}>
+										Can manage the guild (admin pages included)
+									</Badge>
 								) : (
-									<Chip
-										size="small"
-										label="Cannot manage the guild"
-										variant="outlined"
-									/>
+									<Badge appearance={"outline"} size={"sm"}>
+										Cannot manage the guild
+									</Badge>
 								)}
-							</Box>
+							</div>
 							{roleView.channels.length === 0 ? (
-								<Typography variant="body2" color="text.secondary">
+								<p className="text-muted text-sm">
 									No voice channels in this guild.
-								</Typography>
+								</p>
 							) : (
-								<Box>
-									<Typography variant="subtitle2" gutterBottom>
+								<div>
+									<h6 className="leading-6 mb-2">
 										Voice channels ({roleView.channels.length})
-									</Typography>
-									<List dense disablePadding>
+									</h6>
+									<div className="flex flex-col gap-1">
 										{roleView.channels.map((channel) => (
-											<ListItem
+											<div
 												key={channel.channel_id}
-												disablePadding
-												secondaryAction={
-													channel.can_join ? (
-														<Chip
-															size="small"
-															variant="outlined"
-															color="success"
-															label="Can join"
-														/>
-													) : channel.can_view ? (
-														<Chip
-															size="small"
-															variant="outlined"
-															label="Visible only"
-														/>
-													) : (
-														<Chip
-															size="small"
-															variant="outlined"
-															color="error"
-															label="Hidden"
-														/>
-													)
-												}
+												className="relative flex items-center"
 											>
-												<ListItemButton dense>
-													<ListItemText
-														primary={channel.name || channel.channel_id}
-														secondary={channel.channel_id}
-													/>
-												</ListItemButton>
-											</ListItem>
+												<Button
+													className="w-full justify-start text-left"
+													variant="ghost"
+												>
+													<div>
+														{channel.name || channel.channel_id}
+														<span className="block text-xs text-muted">
+															{channel.channel_id}
+														</span>
+													</div>
+												</Button>
+												<div className="shrink-0 px-2">
+													{channel.can_join ? (
+														<Badge
+															appearance={"outline"}
+															tone={"success"}
+															size={"sm"}
+														>
+															Can join
+														</Badge>
+													) : channel.can_view ? (
+														<Badge appearance={"outline"} size={"sm"}>
+															Visible only
+														</Badge>
+													) : (
+														<Badge
+															appearance={"outline"}
+															tone={"danger"}
+															size={"sm"}
+														>
+															Hidden
+														</Badge>
+													)}
+												</div>
+											</div>
 										))}
-									</List>
-								</Box>
+									</div>
+								</div>
 							)}
-							<Alert severity="info" variant="outlined">
+							<Notice tone={"info"} announce="status">
 								Open the audio preview to browse recordings, clips and stamps as
 								this role. Channels marked "Visible only" or "Hidden" won't
 								appear there — playback needs join permission, which the role
 								lacks. Sessions spanning a hidden channel are invisible
 								entirely.
-							</Alert>
-						</Stack>
+							</Notice>
+						</div>
 					)
 				)}
-			</DialogContent>
-			<DialogActions>
-				<Button onClick={onClose}>Close</Button>
-				<Button
-					variant="contained"
-					startIcon={<RemoveRedEyeIcon />}
-					onClick={openAudioPreview}
-					disabled={!role}
-				>
+			</div>
+			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
+				<Button onPress={onClose}>Close</Button>
+				<Button variant="primary" isDisabled={!role} onPress={openAudioPreview}>
+					<RemoveRedEyeIcon />
 					Open audio preview
 				</Button>
-			</DialogActions>
-		</Dialog>
+			</div>
+		</Modal>
 	);
 }
 
@@ -202,99 +193,88 @@ export function GuildMembers() {
 		{ skip: !gid || !selectedRole },
 	);
 
-	if (!gid) return <Box p={2}>Missing guild id.</Box>;
+	if (!gid) return <div className="p-4">Missing guild id.</div>;
 
 	return (
-		<Box p={2}>
-			<Typography variant="h5" gutterBottom>
+		<div className="p-4">
+			<h5 className="font-semibold tracking-tight text-2xl mb-2">
 				Members &amp; roles
-			</Typography>
+			</h5>
 
 			{loadingRoles ? (
-				<Typography>Loading roles…</Typography>
+				<p className="leading-6">Loading roles…</p>
 			) : rolesError ? (
-				<Typography color="error">
+				<p className="leading-6 text-danger">
 					Failed to load roles: {JSON.stringify(rolesErrorMessage)}
-				</Typography>
+				</p>
 			) : (
-				<Stack
-					direction={{ xs: "column", md: "row" }}
-					spacing={2}
-					alignItems="stretch"
-				>
-					<Paper variant="outlined" sx={{ minWidth: { md: 280 } }}>
-						<List dense disablePadding>
+				<div className="flex items-stretch flex-col min-[900px]:flex-row gap-4">
+					<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none min-[900px]:min-w-70">
+						<div className="flex flex-col gap-1">
 							{(roles ?? []).map((role) => (
-								<ListItem
-									key={role.role_id}
-									disablePadding
-									secondaryAction={
-										<IconButton
-											size="small"
-											aria-label={`View as ${role.name}`}
-											title="View server as this role"
-											onClick={() => setPreviewRole(role)}
-										>
-											<RemoveRedEyeIcon size={16} />
-										</IconButton>
-									}
-								>
-									<ListItemButton
-										selected={selectedRole?.role_id === role.role_id}
-										onClick={() => setSelectedRole(role)}
+								<div key={role.role_id} className="relative flex items-center">
+									<Button
+										aria-pressed={selectedRole?.role_id === role.role_id}
+										className="w-full justify-start text-left"
+										variant="ghost"
+										onPress={() => setSelectedRole(role)}
 									>
-										<Box
-											component="span"
+										<span
 											aria-hidden="true"
-											sx={{
-												width: 14,
-												height: 14,
-												borderRadius: "4px",
-												flexShrink: 0,
-												mr: 1.5,
-												background: roleSwatchBackground(role),
-											}}
+											className="w-3.5 h-3.5 [border-radius:4px] shrink-0 mr-3"
+											style={{ background: roleSwatchBackground(role) }}
 										/>
-										<ListItemText
-											primary={role.name}
-											secondary={
-												<Chip
-													size="small"
-													label={`${role.member_count} member${role.member_count === 1 ? "" : "s"}`}
-												/>
-											}
-										/>
-									</ListItemButton>
-								</ListItem>
+										<div>
+											{role.name}
+											<span className="block text-xs text-muted">
+												<Badge
+													size={"sm"}
+												>{`${role.member_count} member${role.member_count === 1 ? "" : "s"}`}</Badge>
+											</span>
+										</div>
+									</Button>
+									<div className="shrink-0 px-2">
+										<TooltipTrigger delay={400}>
+											<IconButton
+												aria-label={`View as ${role.name}`}
+												size="sm"
+												onPress={() => setPreviewRole(role)}
+											>
+												<RemoveRedEyeIcon size={16} />
+											</IconButton>
+											<Tooltip>View server as this role</Tooltip>
+										</TooltipTrigger>
+									</div>
+								</div>
 							))}
 							{(!roles || roles.length === 0) && (
-								<ListItemText sx={{ p: 2 }}>
-									<Typography variant="body2" color="text.secondary">
+								<div className="p-4">
+									<p className="text-muted text-sm">
 										No roles in this guild yet.
-									</Typography>
-								</ListItemText>
+									</p>
+								</div>
 							)}
-						</List>
-					</Paper>
+						</div>
+					</div>
 
-					<TableContainer component={Paper} variant="outlined" sx={{ flex: 1 }}>
+					<div className="w-full overflow-x-auto flex-1">
 						{selectedRole && (
-							<Typography variant="subtitle1" sx={{ p: 2 }}>
-								<span style={roleTextStyle(selectedRole)}>
+							<h6 className="text-base p-4">
+								<span style={{ ...roleTextStyle(selectedRole) }}>
 									{selectedRole.name}
 								</span>{" "}
 								— {members?.length ?? 0}{" "}
 								{members?.length === 1 ? "member" : "members"}
-							</Typography>
+							</h6>
 						)}
 						{loadingMembers ? (
-							<Typography sx={{ p: 2 }}>Loading members…</Typography>
+							<p className="leading-6 p-4">Loading members…</p>
 						) : membersError ? (
-							<Typography color="error" sx={{ p: 2 }}>
+							<p className="leading-6 text-danger p-4">
 								Failed to load members: {JSON.stringify(membersErrorMessage)}
-							</Typography>
+							</p>
 						) : (
-							<Table size="small">
+							<Table>
 								<TableHeader>
 									<TableRow>
 										<TableHead>Name</TableHead>
@@ -313,19 +293,19 @@ export function GuildMembers() {
 									{(!members || members.length === 0) && (
 										<TableRow>
 											<TableCell colSpan={2}>
-												<Typography variant="body2" color="text.secondary">
+												<p className="text-muted text-sm">
 													{selectedRole
 														? "No members hold this role."
 														: "Select a role to see its members."}
-												</Typography>
+												</p>
 											</TableCell>
 										</TableRow>
 									)}
 								</TableBody>
 							</Table>
 						)}
-					</TableContainer>
-				</Stack>
+					</div>
+				</div>
 			)}
 
 			<RolePreviewDialog
@@ -334,6 +314,6 @@ export function GuildMembers() {
 				role={previewRole}
 				onClose={() => setPreviewRole(null)}
 			/>
-		</Box>
+		</div>
 	);
 }

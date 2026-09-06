@@ -2,7 +2,6 @@ import React, { Suspense } from "react";
 import { Route } from "react-router-dom";
 import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
-import { Box } from "../shared/ui";
 
 const Clips = React.lazy(() => import("../features/clips"));
 const ClipEditor = React.lazy(() => import("../features/clip-editor"));
@@ -31,7 +30,9 @@ const GuildMembers = React.lazy(() =>
 );
 
 const lazyRoute = (node: React.ReactNode) => (
-	<Suspense fallback={<Box p={2}>Loading Route</Box>}>{node}</Suspense>
+	<Suspense fallback={<div className="p-4">Loading Route</div>}>
+		{node}
+	</Suspense>
 );
 
 // The route tree is a plain JSX element so the data router in App.tsx can
@@ -43,7 +44,7 @@ export const appRoutesElement = (
 			<Route path="/" element={<ProtectedLayout />} />
 			<Route
 				path=":guild_id"
-				element={<Box p={2}>select from top navbar</Box>}
+				element={<div className="p-4">select from top navbar</div>}
 			/>
 
 			<Route path="/stamps" element={lazyRoute(<Stamps />)} />
@@ -51,7 +52,10 @@ export const appRoutesElement = (
 
 			<Route path="/dashboard" element={<ProtectedLayout />}>
 				<Route path=":guild_id">
-					<Route path="" element={<Box p={2}>select from top navbar</Box>} />
+					<Route
+						path=""
+						element={<div className="p-4">select from top navbar</div>}
+					/>
 					<Route path="audio">
 						<Route path="" element={lazyRoute(<YearSelection />)} />
 						<Route

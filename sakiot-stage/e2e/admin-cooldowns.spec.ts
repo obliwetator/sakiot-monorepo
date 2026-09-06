@@ -218,7 +218,35 @@ async function openCooldowns(page: Page) {
 	await expect(
 		page.getByRole("heading", { level: 1, name: "Jam cooldowns" }),
 	).toBeVisible();
+	// The heading renders before the fetched default is initialized. Wait for
+	// that value so initialization cannot race Chromium's select-and-fill step.
+	await expect(page.getByLabel("Cooldown (seconds)").first()).toHaveValue("10");
 }
+
+test("account menu and server picker support keyboard dismissal and restore focus", async ({
+	page,
+	isMobile,
+}) => {
+	await mockApi(page);
+	await openCooldowns(page);
+	const trigger = page.getByRole("button", { name: "Open settings" });
+	await trigger.focus();
+	await trigger.press("Enter");
+	await expect(page.getByRole("menu", { name: "Open settings" })).toBeVisible();
+	await expect(page.getByRole("menuitem").first()).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("menu")).toHaveCount(0);
+	await expect(trigger).toBeFocused();
+	if (isMobile)
+		await page.getByRole("button", { name: "open navigation" }).click();
+	const picker = page.getByRole("button", { name: /Test Guild Server/ });
+	await picker.focus();
+	await picker.press("ArrowDown");
+	await expect(page.getByRole("listbox")).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("listbox")).toHaveCount(0);
+	await expect(picker).toBeFocused();
+});
 
 test("shows loading and populated states with accessible keyboard behavior", async ({
 	page,

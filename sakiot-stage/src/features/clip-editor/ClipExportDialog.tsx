@@ -1,14 +1,10 @@
 import { BaseDialog } from "../../shared/BaseDialog";
 import {
-	Box,
 	Button,
-	FormControl,
-	FormControlLabel,
-	LinearProgress,
+	ProgressBar,
 	Radio,
 	RadioGroup,
-	LegacyTextField as TextField,
-	Typography,
+	TextField,
 } from "../../shared/ui";
 
 export function ClipExportDialog(props: {
@@ -37,14 +33,14 @@ export function ClipExportDialog(props: {
 			busy={busy}
 			actions={
 				<>
-					<Button onClick={props.onClose} disabled={busy}>
+					<Button isDisabled={busy} onPress={props.onClose}>
 						{props.done ? "Done" : "Cancel"}
 					</Button>
 					{!props.done && (
 						<Button
-							variant="contained"
-							disabled={busy || props.segmentCount === 0}
-							onClick={props.onStart}
+							variant="primary"
+							isDisabled={busy || props.segmentCount === 0}
+							onPress={props.onStart}
 						>
 							{props.overwrite ? "Overwrite" : "Render"}
 						</Button>
@@ -55,78 +51,56 @@ export function ClipExportDialog(props: {
 			{/* Fixed footprint: the overwrite/new toggle and helper text change
 			    the content height, so pin the box size to keep the dialog from
 			    resizing while the choice changes. */}
-			<Box
-				sx={{
-					width: 440,
-					minHeight: 230,
-					display: "flex",
-					flexDirection: "column",
-				}}
-			>
+			<div className="w-110 min-h-57.5 flex flex-col">
 				{props.overwriteAvailable && (
-					<FormControl component="fieldset" disabled={busy} sx={{ mb: 2 }}>
+					<fieldset disabled={busy} className="relative flex min-w-0 mb-4">
 						<RadioGroup
+							aria-label="Export destination"
 							value={props.overwrite ? "overwrite" : "new"}
-							onChange={(event) =>
-								props.setOverwrite(event.currentTarget.value === "overwrite")
-							}
+							onChange={(value) => props.setOverwrite(value === "overwrite")}
 						>
-							<FormControlLabel
-								value="new"
-								control={<Radio size="small" />}
-								label="Save as new clip"
-							/>
-							<FormControlLabel
-								value="overwrite"
-								control={<Radio size="small" />}
-								label="Overwrite this combined clip"
-							/>
+							<Radio value={"new"}>Save as new clip</Radio>
+							<Radio value={"overwrite"}>Overwrite this combined clip</Radio>
 						</RadioGroup>
-					</FormControl>
+					</fieldset>
 				)}
 				<TextField
-					size="small"
-					fullWidth
 					label="Clip name"
 					value={props.name}
-					disabled={busy}
-					onChange={(event) => props.setName(event.currentTarget.value)}
-					helperText={
+					className="mb-4"
+					isDisabled={busy}
+					description={
 						props.overwrite
 							? "Leave empty to keep the current clip's name."
 							: undefined
 					}
-					sx={{ mb: 2 }}
+					onChange={(value) => props.setName(value)}
 				/>
 				{props.done ? (
-					<Typography variant="body2">
+					<p className="text-sm">
 						{props.overwrite
 							? "Updated — the combined clip now reflects this version."
 							: "Exported — the new clip is now in the bin."}
-					</Typography>
+					</p>
 				) : props.isRendering ? (
-					<Box>
-						<Typography variant="body2" sx={{ mb: 1 }}>
+					<div>
+						<p className="text-sm mb-2">
 							Rendering {props.segmentCount} segment
 							{props.segmentCount === 1 ? "" : "s"} on the server…
-						</Typography>
-						<LinearProgress variant="determinate" value={props.progress} />
-						<Typography
-							variant="caption"
-							color="text.secondary"
-							sx={{ fontVariantNumeric: "tabular-nums" }}
-						>
+						</p>
+						<ProgressBar value={props.progress} />
+						<span className="text-muted text-xs leading-5 tabular-nums">
 							{props.progress}%
-						</Typography>
-					</Box>
+						</span>
+					</div>
 				) : (
-					<Typography variant="body2" color="text.secondary">
+					<p className="text-muted text-sm">
 						{props.overwrite
 							? `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} and replaces the combined clip with this version.`
 							: `Renders ${props.segmentCount} segment${props.segmentCount === 1 ? "" : "s"} into a single new clip.`}
-					</Typography>
+					</p>
 				)}
-			</Box>
+			</div>
 		</BaseDialog>
 	);
 }

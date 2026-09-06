@@ -1,12 +1,5 @@
 import type { ReactNode } from "react";
-import {
-	Button,
-	Dialog,
-	DialogActions,
-	DialogContent,
-	DialogTitle,
-	Typography,
-} from "../ui";
+import { Button, DialogHeading, Modal } from "../ui";
 
 export function BaseDialog(props: {
 	open: boolean;
@@ -19,23 +12,28 @@ export function BaseDialog(props: {
 	closeLabel?: string;
 }) {
 	return (
-		<Dialog open={props.open} onClose={props.onClose}>
-			{props.title && <DialogTitle>{props.title}</DialogTitle>}
-			<DialogContent>
+		<Modal
+			isOpen={props.open}
+			isDismissable={!props.busy}
+			isKeyboardDismissDisabled={props.busy}
+			onOpenChange={(isOpen) => {
+				if (!isOpen) props.onClose();
+			}}
+		>
+			{props.title && <DialogHeading>{props.title}</DialogHeading>}
+			<div className="space-y-3 px-5 py-4">
 				{props.children}
 				{props.error && (
-					<Typography color="error" sx={{ mt: 1 }}>
-						{props.error}
-					</Typography>
+					<p className="leading-6 text-danger mt-2">{props.error}</p>
 				)}
-			</DialogContent>
-			<DialogActions>
+			</div>
+			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
 				{props.actions ?? (
-					<Button onClick={props.onClose} disabled={props.busy}>
+					<Button isDisabled={props.busy} onPress={props.onClose}>
 						{props.closeLabel ?? "Close"}
 					</Button>
 				)}
-			</DialogActions>
-		</Dialog>
+			</div>
+		</Modal>
 	);
 }

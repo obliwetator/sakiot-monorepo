@@ -171,9 +171,9 @@ function WaveFormButton(props: {
 			<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
 				{props.actionsSlot}
 				<Button
-					variant="contained"
-					onClick={handleClick}
-					disabled={progress !== null}
+					variant="primary"
+					isDisabled={progress !== null}
+					onPress={handleClick}
 				>
 					{progress !== null
 						? `Generating (${progress}%)`
@@ -208,7 +208,7 @@ function WaveFormButton(props: {
 					borderRadius: "4px",
 					paddingBottom: "10px",
 				}}
-			></div>
+			/>
 		</div>
 	);
 }

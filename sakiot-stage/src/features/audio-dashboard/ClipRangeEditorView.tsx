@@ -6,14 +6,14 @@ import {
 	ZoomIn as ZoomInIcon,
 	ZoomOut as ZoomOutIcon,
 } from "lucide-react";
+import type { CSSProperties } from "react";
 import {
-	Box,
+	Badge,
 	Button,
-	Chip,
+	cn,
 	IconButton,
-	Stack,
 	Tooltip,
-	Typography,
+	TooltipTrigger,
 } from "../../shared/ui";
 import { formatDuration, formatDurationPrecise } from "../../utils/formatTime";
 import { ClipRangePrecisionOverlay } from "./ClipRangePrecisionOverlay";
@@ -91,75 +91,48 @@ export function ClipRangeEditorView({
 	} = controller;
 	const { durationMs, onSelectionChange, selection } = props;
 	return (
-		<Box component="section" aria-label="Clip range editor" sx={{ mb: 2 }}>
+		<section aria-label="Clip range editor" className="mb-4">
 			<ClipRangePrecisionOverlay controller={controller} />
-			<TimelineRow label="Session" sx={{ mb: 0.5 }}>
-				<Box
+			<TimelineRow label="Session" className="mb-1">
+				<div
 					data-testid="clip-session-window"
 					{...viewDragHandlers("overview")}
-					sx={{
-						position: "relative",
-						height: OVERVIEW_HEIGHT_PX,
-						borderRadius: 0.5,
-						bgcolor: "rgba(148, 163, 184, 0.11)",
-						cursor: viewDragging === "overview" ? "grabbing" : "grab",
-						touchAction: "none",
-						userSelect: "none",
-						overflow: "hidden",
-					}}
+					className={cn(
+						"relative [border-radius:0.5px] [background-color:rgba(148,_163,_184,_0.11)] touch-none select-none overflow-hidden",
+						viewDragging === "overview" ? "[cursor:grabbing]" : "[cursor:grab]",
+					)}
+					style={{ height: OVERVIEW_HEIGHT_PX }}
 				>
-					<Box
+					<div
 						aria-hidden="true"
-						sx={{
-							position: "absolute",
-							top: 0,
-							bottom: 0,
+						className="absolute top-0 bottom-0 bg-accent [opacity:0.55] [border-radius:0.5px]"
+						style={{
 							left: percent(view.startMs / Math.max(1, durationMs)),
 							width: `max(3px, ${
 								((view.endMs - view.startMs) / Math.max(1, durationMs)) * 100
 							}%)`,
-							bgcolor: "primary.main",
-							opacity: 0.55,
-							borderRadius: 0.5,
 						}}
 					/>
-					<Box
+					<div
 						aria-hidden="true"
-						sx={{
-							position: "absolute",
-							top: 0,
-							bottom: 0,
+						className="absolute top-0 bottom-0 w-0.5 [transform:translateX(-1px)]"
+						style={{
 							left: percent(props.positionMs / Math.max(1, durationMs)),
-							width: 2,
-							transform: "translateX(-1px)",
-							bgcolor: TIMELINE_PLAYHEAD_COLOR,
+							backgroundColor: TIMELINE_PLAYHEAD_COLOR,
 							boxShadow: TIMELINE_PLAYHEAD_SHADOW,
 						}}
 					/>
-				</Box>
+				</div>
 			</TimelineRow>
 
 			<TimelineRow label="Clip window" labelAlign="flex-start">
-				<Box
+				<div
 					ref={plotRef}
 					{...viewDragHandlers("detail")}
-					sx={{
-						position: "relative",
-						height: DETAIL_HEIGHT_PX,
-						cursor: "ew-resize",
-						touchAction: "none",
-						userSelect: "none",
-					}}
+					className="relative [cursor:ew-resize] touch-none select-none"
+					style={{ height: DETAIL_HEIGHT_PX }}
 				>
-					<Box
-						sx={{
-							position: "absolute",
-							inset: 0,
-							borderRadius: 1,
-							overflow: "hidden",
-							bgcolor: "rgba(168, 85, 247, 0.18)",
-						}}
-					>
+					<div className="absolute inset-0 [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]">
 						<WaveformCanvas
 							peaks={peaks}
 							height={DETAIL_HEIGHT_PX}
@@ -171,35 +144,24 @@ export function ClipRangeEditorView({
 							{ key: "before", left: "0%", right: percent(1 - startFraction) },
 							{ key: "after", left: percent(endFraction), right: "0%" },
 						].map((mask) => (
-							<Box
+							<div
 								key={mask.key}
 								aria-hidden="true"
-								sx={{
-									position: "absolute",
-									top: 0,
-									bottom: 0,
-									left: mask.left,
-									right: mask.right,
-									bgcolor: "rgba(2, 6, 23, 0.6)",
-									pointerEvents: "none",
-								}}
+								className="absolute top-0 bottom-0 [background-color:rgba(2,_6,_23,_0.6)] pointer-events-none"
+								style={{ left: mask.left, right: mask.right }}
 							/>
 						))}
-					</Box>
+					</div>
 
 					{TIMELINE_AXIS_FRACTIONS.map((fraction) => (
-						<Box
+						<div
 							key={fraction}
 							aria-hidden="true"
-							sx={{
-								position: "absolute",
-								top: 0,
-								bottom: 0,
+							className="absolute top-0 bottom-0 w-[1px] pointer-events-none"
+							style={{
 								left: percent(fraction),
-								ml: gridLineOffset(fraction),
-								width: "1px",
-								bgcolor: TIMELINE_GRID_COLOR,
-								pointerEvents: "none",
+								marginLeft: gridLineOffset(fraction),
+								backgroundColor: TIMELINE_GRID_COLOR,
 							}}
 						/>
 					))}
@@ -207,76 +169,56 @@ export function ClipRangeEditorView({
 					{stampFraction !== null &&
 						stampFraction >= 0 &&
 						stampFraction <= 1 && (
-							<Box
+							<div
 								aria-hidden="true"
-								sx={{
-									position: "absolute",
-									top: 0,
-									bottom: 0,
-									left: percent(stampFraction),
-									borderLeftStyle: "dashed",
-									borderLeftWidth: 1,
-									borderLeftColor: "warning.light",
-									pointerEvents: "none",
-									zIndex: 3,
-								}}
+								className="absolute top-0 bottom-0 [border-left-style:dashed] [border-left-width:1px] [border-left-color:#fcd34d] pointer-events-none [z-index:3]"
+								style={{ left: percent(stampFraction) }}
 							>
-								<Typography
-									variant="caption"
-									sx={{
-										position: "absolute",
-										top: 2,
-										left: 4,
-										color: "warning.light",
-										textShadow: "0 1px 2px rgba(2, 6, 23, 0.9)",
-									}}
-								>
+								<span className="text-xs leading-5 absolute top-0.5 left-1 [color:#fcd34d] [text-shadow:0_1px_2px_rgba(2,_6,_23,_0.9)]">
 									Stamp
-								</Typography>
-							</Box>
+								</span>
+							</div>
 						)}
 
 					{selectionGeometry.overlaps && (
-						<Box
+						<button
 							{...dragHandlers({ type: "band" })}
-							role="button"
+							type="button"
 							tabIndex={-1}
 							aria-label="Move clip selection; click to set nearest edge"
 							title="Drag to move the selection, or click to set the nearest edge"
-							sx={{
-								position: "absolute",
-								top: 0,
-								bottom: 0,
+							className={cn(
+								"absolute top-0 bottom-0 [border-top-width:2px] [border-bottom-width:2px] [border-left-style:solid] [border-left-width:2px] [border-right-style:solid] [border-right-width:2px] [cursor:grab] touch-none active:[cursor:grabbing]",
+								valid && !dragInvalid
+									? "[background-color:rgba(56,_189,_248,_0.28)]"
+									: "[background-color:rgba(248,_113,_113,_0.28)]",
+								selectionDrag.snapshot
+									? "[border-top-style:dashed]"
+									: "[border-top-style:solid]",
+								valid && !dragInvalid
+									? "[border-top-color:#7dd3fc]"
+									: "[border-top-color:#fca5a5]",
+								selectionDrag.snapshot
+									? "[border-bottom-style:dashed]"
+									: "[border-bottom-style:solid]",
+								valid && !dragInvalid
+									? "[border-bottom-color:#7dd3fc]"
+									: "[border-bottom-color:#fca5a5]",
+								valid && !dragInvalid
+									? "[border-left-color:#7dd3fc]"
+									: "[border-left-color:#fca5a5]",
+								valid && !dragInvalid
+									? "[border-right-color:#7dd3fc]"
+									: "[border-right-color:#fca5a5]",
+								selectionDrag.snapshot ? "[opacity:0.7]" : "[opacity:1]",
+							)}
+							style={{
 								left: percent(selectionGeometry.startFraction),
 								width: `max(2px, ${
 									(selectionGeometry.endFraction -
 										selectionGeometry.startFraction) *
 									100
 								}%)`,
-								bgcolor:
-									valid && !dragInvalid
-										? "rgba(56, 189, 248, 0.28)"
-										: "rgba(248, 113, 113, 0.28)",
-								borderTopStyle: selectionDrag.snapshot ? "dashed" : "solid",
-								borderTopWidth: 2,
-								borderTopColor:
-									valid && !dragInvalid ? "info.light" : "error.light",
-								borderBottomStyle: selectionDrag.snapshot ? "dashed" : "solid",
-								borderBottomWidth: 2,
-								borderBottomColor:
-									valid && !dragInvalid ? "info.light" : "error.light",
-								borderLeftStyle: "solid",
-								borderLeftWidth: 2,
-								borderLeftColor:
-									valid && !dragInvalid ? "info.light" : "error.light",
-								borderRightStyle: "solid",
-								borderRightWidth: 2,
-								borderRightColor:
-									valid && !dragInvalid ? "info.light" : "error.light",
-								opacity: selectionDrag.snapshot ? 0.7 : 1,
-								cursor: "grab",
-								touchAction: "none",
-								"&:active": { cursor: "grabbing" },
 							}}
 						/>
 					)}
@@ -291,7 +233,7 @@ export function ClipRangeEditorView({
 								: selectionGeometry.endHandleVisible;
 						if (!handleVisible) return null;
 						return (
-							<Box
+							<div
 								key={edge}
 								{...dragHandlers({ type: "edge", edge })}
 								onKeyDown={(event) => onHandleKeyDown(event, edge)}
@@ -304,45 +246,26 @@ export function ClipRangeEditorView({
 								aria-valuemax={durationMs}
 								aria-valuenow={Math.round(valueMs)}
 								aria-valuetext={formatDurationPrecise(valueMs / 1_000)}
-								sx={{
-									position: "absolute",
-									top: -4,
-									bottom: -4,
+								className={cn(
+									'absolute [top:-4px] [bottom:-4px] [border-radius:1px] [box-shadow:0_1px_4px_rgba(2,6,23,0.7)] [cursor:ew-resize] [z-index:11] [outline-offset:2px] touch-none grid [place-items:center] after:[content:""] after:w-[3px] after:[height:40%] after:[border-radius:2px] after:[background-color:rgba(2,_6,_23,_0.55)] focus-visible:[outline:2px_solid] focus-visible:[outline-color:var(--color-focus)] focus-visible:[outline-offset:2px]',
+									valid && !dragInvalid
+										? "[background-color:#7dd3fc]"
+										: "[background-color:#fca5a5]",
+									edge === suggestedEdge
+										? "[outline:2px_solid_rgba(125,_211,_252,_0.72)]"
+										: "[outline:none]",
+								)}
+								style={{
 									left: percent(fraction),
 									width: HANDLE_WIDTH_PX,
-									ml: `${-HANDLE_WIDTH_PX / 2}px`,
-									borderRadius: 1,
-									bgcolor: valid && !dragInvalid ? "info.light" : "error.light",
-									boxShadow: "0 1px 4px rgba(2,6,23,0.7)",
-									cursor: "ew-resize",
-									zIndex: 11,
-									outline:
-										edge === suggestedEdge
-											? "2px solid rgba(125, 211, 252, 0.72)"
-											: "none",
-									outlineOffset: 2,
-									touchAction: "none",
-									display: "grid",
-									placeItems: "center",
-									"&::after": {
-										content: '""',
-										width: "3px",
-										height: "40%",
-										borderRadius: "2px",
-										bgcolor: "rgba(2, 6, 23, 0.55)",
-									},
-									"&:focus-visible": {
-										outline: "2px solid",
-										outlineColor: "primary.light",
-										outlineOffset: 2,
-									},
+									marginLeft: `${-HANDLE_WIDTH_PX / 2}px`,
 								}}
 							/>
 						);
 					})}
 
 					{playheadFraction >= 0 && playheadFraction <= 1 && (
-						<Box
+						<div
 							{...viewDragHandlers("detail")}
 							role="slider"
 							tabIndex={-1}
@@ -351,404 +274,278 @@ export function ClipRangeEditorView({
 							aria-valuemax={Math.round(view.endMs)}
 							aria-valuenow={Math.round(props.positionMs)}
 							aria-valuetext={formatDurationPrecise(props.positionMs / 1_000)}
-							sx={{
-								position: "absolute",
-								top: 0,
-								bottom: 0,
-								left: percent(playheadFraction),
-								width: HANDLE_WIDTH_PX,
-								ml: `${-HANDLE_WIDTH_PX / 2}px`,
-								zIndex: 10,
-								cursor: "ew-resize",
-								touchAction: "none",
-								"&::after": {
-									content: '""',
-									position: "absolute",
-									top: 0,
-									bottom: 0,
-									left: "50%",
-									width: 2,
-									transform: "translateX(-1px)",
-									bgcolor: TIMELINE_PLAYHEAD_COLOR,
-									boxShadow: TIMELINE_PLAYHEAD_SHADOW,
-								},
-							}}
+							className={
+								'absolute top-0 bottom-0 [z-index:10] [cursor:ew-resize] touch-none after:[content:""] after:absolute after:top-0 after:bottom-0 after:[left:50%] after:w-0.5 after:[transform:translateX(-1px)] after:[background-color:var(--after-background-color)] after:[box-shadow:var(--after-box-shadow)]'
+							}
+							style={
+								{
+									left: percent(playheadFraction),
+									width: HANDLE_WIDTH_PX,
+									marginLeft: `${-HANDLE_WIDTH_PX / 2}px`,
+									"--after-background-color": TIMELINE_PLAYHEAD_COLOR,
+									"--after-box-shadow": TIMELINE_PLAYHEAD_SHADOW,
+								} as CSSProperties
+							}
 						/>
 					)}
 
 					{fineWindow && fineLimitWindow && dragFeedback && (
-						<Box
+						<div
 							aria-hidden="true"
-							sx={{
-								position: "absolute",
-								top: 4,
-								height: DETAIL_HEIGHT_PX / 2,
-								left: 4,
-								right: 4,
-								zIndex: 12,
-								overflow: "hidden",
-								border: "1px solid",
-								borderColor: "primary.light",
-								borderRadius: 1,
-								bgcolor: "rgba(2, 6, 23, 0.94)",
-								boxShadow: "0 4px 14px rgba(2, 6, 23, 0.55)",
-								pointerEvents: "none",
-								"&::before, &::after": {
-									content: '""',
-									position: "absolute",
-									top: 0,
-									bottom: 0,
-									width: 56,
-									zIndex: 5,
-								},
-								"&::before": {
-									left: 0,
-									background:
-										"linear-gradient(90deg, rgba(2, 6, 23, 0.96), rgba(2, 6, 23, 0))",
-								},
-								"&::after": {
-									right: 0,
-									background:
-										"linear-gradient(270deg, rgba(2, 6, 23, 0.96), rgba(2, 6, 23, 0))",
-								},
-							}}
+							className={
+								'absolute top-1 left-1 right-1 [z-index:12] overflow-hidden border border-focus [border-radius:1px] [background-color:rgba(2,_6,_23,_0.94)] [box-shadow:0_4px_14px_rgba(2,_6,_23,_0.55)] pointer-events-none before:[content:""] before:absolute before:top-0 before:bottom-0 before:w-14 before:[z-index:5] after:[content:""] after:absolute after:top-0 after:bottom-0 after:w-14 after:[z-index:5] before:left-0 before:[background:linear-gradient(90deg,_rgba(2,_6,_23,_0.96),_rgba(2,_6,_23,_0))] after:right-0 after:[background:linear-gradient(270deg,_rgba(2,_6,_23,_0.96),_rgba(2,_6,_23,_0))]'
+							}
+							style={{ height: DETAIL_HEIGHT_PX / 2 } as CSSProperties}
 						>
 							{rollingStrength !== 0 && (
-								<Box
-									sx={{
-										position: "absolute",
-										top: 0,
-										bottom: 0,
-										left: rollingStrength < 0 ? 0 : "auto",
-										right: rollingStrength > 0 ? 0 : "auto",
-										width: ROLLING_EDGE_ZONE_PX,
-										zIndex: 6,
-										display: "grid",
-										placeItems: "center",
-										color: "primary.light",
-										opacity: 0.45 + Math.abs(rollingStrength) * 0.55,
-										background:
-											rollingStrength < 0
-												? "linear-gradient(90deg, rgba(56, 189, 248, 0.42), rgba(56, 189, 248, 0))"
-												: "linear-gradient(270deg, rgba(56, 189, 248, 0.42), rgba(56, 189, 248, 0))",
-									}}
+								<div
+									className={cn(
+										"absolute top-0 bottom-0 [z-index:6] grid [place-items:center] text-focus",
+										rollingStrength < 0 ? "left-0" : "left-auto",
+										rollingStrength > 0 ? "right-0" : "right-auto",
+										rollingStrength < 0
+											? "[background:linear-gradient(90deg,_rgba(56,_189,_248,_0.42),_rgba(56,_189,_248,_0))]"
+											: "[background:linear-gradient(270deg,_rgba(56,_189,_248,_0.42),_rgba(56,_189,_248,_0))]",
+									)}
+									style={
+										{
+											width: ROLLING_EDGE_ZONE_PX,
+											opacity: 0.45 + Math.abs(rollingStrength) * 0.55,
+										} as CSSProperties
+									}
 								>
 									{rollingStrength < 0 ? "←" : "→"}
-								</Box>
+								</div>
 							)}
 							{fineSelectionGeometry?.overlaps && (
-								<Box
-									sx={{
-										position: "absolute",
-										top: 0,
-										bottom: 0,
-										left: percent(fineSelectionGeometry.startFraction),
-										width: `${
-											(fineSelectionGeometry.endFraction -
-												fineSelectionGeometry.startFraction) *
-											100
-										}%`,
-										bgcolor: valid
-											? "rgba(56, 189, 248, 0.2)"
-											: "rgba(248, 113, 113, 0.2)",
-										borderTopStyle: "solid",
-										borderTopWidth: 2,
-										borderTopColor: valid ? "info.light" : "error.light",
-										borderBottomStyle: "solid",
-										borderBottomWidth: 2,
-										borderBottomColor: valid ? "info.light" : "error.light",
-										zIndex: 1,
-									}}
+								<div
+									className={cn(
+										"absolute top-0 bottom-0 [border-top-style:solid] [border-top-width:2px] [border-bottom-style:solid] [border-bottom-width:2px] [z-index:1]",
+										valid
+											? "[background-color:rgba(56,_189,_248,_0.2)]"
+											: "[background-color:rgba(248,_113,_113,_0.2)]",
+										valid
+											? "[border-top-color:#7dd3fc]"
+											: "[border-top-color:#fca5a5]",
+										valid
+											? "[border-bottom-color:#7dd3fc]"
+											: "[border-bottom-color:#fca5a5]",
+									)}
+									style={
+										{
+											left: percent(fineSelectionGeometry.startFraction),
+											width: `${
+												(fineSelectionGeometry.endFraction -
+													fineSelectionGeometry.startFraction) *
+												100
+											}%`,
+										} as CSSProperties
+									}
 								/>
 							)}
 							{FINE_AXIS_FRACTIONS.map((fraction) => (
-								<Box
+								<div
 									key={fraction}
-									sx={{
-										position: "absolute",
-										top:
-											fraction === 0 || fraction === 0.5 || fraction === 1
-												? 22
-												: 30,
-										bottom: 0,
-										left: percent(fraction),
-										ml: gridLineOffset(fraction),
-										width: "1px",
-										bgcolor: "rgba(226, 232, 240, 0.28)",
-										zIndex: 2,
-									}}
+									className={cn(
+										"absolute bottom-0 w-[1px] [background-color:rgba(226,_232,_240,_0.28)] [z-index:2]",
+										fraction === 0 || fraction === 0.5 || fraction === 1
+											? "top-5.5"
+											: "top-7.5",
+									)}
+									style={
+										{
+											left: percent(fraction),
+											marginLeft: gridLineOffset(fraction),
+										} as CSSProperties
+									}
 								/>
 							))}
 							{otherEdgeFraction !== null &&
 								otherEdgeFraction >= 0 &&
 								otherEdgeFraction <= 1 && (
-									<Box
-										sx={{
-											position: "absolute",
-											top: 18,
-											bottom: 10,
-											left: percent(otherEdgeFraction),
-											borderLeftStyle: "dashed",
-											borderLeftWidth: 2,
-											borderLeftColor: "warning.light",
-											zIndex: 4,
-										}}
+									<div
+										className="absolute top-4.5 bottom-2.5 [border-left-style:dashed] [border-left-width:2px] [border-left-color:#fcd34d] [z-index:4]"
+										style={
+											{ left: percent(otherEdgeFraction) } as CSSProperties
+										}
 									>
-										<Typography
-											variant="caption"
-											sx={{
-												position: "absolute",
-												top: -16,
-												left: 3,
-												color: "warning.light",
-											}}
-										>
+										<span className="text-xs leading-5 absolute [top:-16px] left-[3px] [color:#fcd34d]">
 											{dragFeedback.kind.type === "edge" &&
 											dragFeedback.kind.edge === "start"
 												? "Out"
 												: "In"}
-										</Typography>
-									</Box>
+										</span>
+									</div>
 								)}
-							<Box
-								sx={{
-									position: "absolute",
-									top: 18,
-									bottom: 10,
-									left: percent(fineValueFraction ?? 0),
-									width: 3,
-									transform: "translateX(-1px)",
-									bgcolor: "info.light",
-									boxShadow: TIMELINE_PLAYHEAD_SHADOW,
-									zIndex: 7,
-								}}
+							<div
+								className="absolute top-4.5 bottom-2.5 w-[3px] [transform:translateX(-1px)] [background-color:#7dd3fc] [z-index:7]"
+								style={
+									{
+										left: percent(fineValueFraction ?? 0),
+										boxShadow: TIMELINE_PLAYHEAD_SHADOW,
+									} as CSSProperties
+								}
 							/>
-							<Chip
-								size="small"
-								label={`${
-									fineLimitFraction !== null && fineLimitFraction <= 0
-										? "← limit · "
-										: fineLimitFraction !== null && fineLimitFraction >= 1
-											? "limit → · "
-											: ""
-								}${
-									dragFeedback.kind.type === "playhead"
-										? "Head"
-										: dragFeedback.kind.type === "band"
-											? "Move"
-											: dragFeedback.kind.edge === "start"
-												? "In"
-												: "Out"
-								} · ${formatDurationPrecise(
-									dragFeedback.valueMs / 1_000,
-								)} · ${signedSeconds(
-									dragFeedback.valueMs - dragFeedback.originMs,
-								)}`}
-								sx={{
-									position: "absolute",
-									top: 4,
-									left: "50%",
-									transform: "translateX(-50%)",
-									fontVariantNumeric: "tabular-nums",
-									zIndex: 8,
-								}}
-							/>
-							<Typography
-								variant="caption"
-								sx={{
-									position: "absolute",
-									top: 5,
-									left: 8,
-									fontWeight: 700,
-									color: "primary.light",
-									zIndex: 8,
-								}}
-							>
+							<Badge
+								className="absolute top-1 [left:50%] [transform:translateX(-50%)] tabular-nums [z-index:8]"
+								size={"sm"}
+							>{`${
+								fineLimitFraction !== null && fineLimitFraction <= 0
+									? "← limit · "
+									: fineLimitFraction !== null && fineLimitFraction >= 1
+										? "limit → · "
+										: ""
+							}${
+								dragFeedback.kind.type === "playhead"
+									? "Head"
+									: dragFeedback.kind.type === "band"
+										? "Move"
+										: dragFeedback.kind.edge === "start"
+											? "In"
+											: "Out"
+							} · ${formatDurationPrecise(
+								dragFeedback.valueMs / 1_000,
+							)} · ${signedSeconds(
+								dragFeedback.valueMs - dragFeedback.originMs,
+							)}`}</Badge>
+							<span className="text-xs leading-5 absolute top-[5px] left-2 [font-weight:700] text-focus [z-index:8]">
 								{dragFeedback.multiplier >= 100 ? "ULTRA ×100" : "FINE ×10"}
-							</Typography>
+							</span>
 							{dragFeedback.multiplier === 10 && (
-								<Typography
-									variant="caption"
-									sx={{
-										position: "absolute",
-										top: 5,
-										right: 8,
-										color: "text.secondary",
-										zIndex: 8,
-									}}
-								>
+								<span className="text-xs leading-5 absolute top-[5px] right-2 text-muted [z-index:8]">
 									↑{" "}
 									{Math.max(
 										0,
 										ULTRA_FINE_DRAG_START_PX - Math.max(0, -dragFeedback.dyPx),
 									).toFixed(0)}
 									px to ultra
-								</Typography>
+								</span>
 							)}
-							<Typography
-								variant="caption"
-								sx={{
-									position: "absolute",
-									left: 8,
-									bottom: 3,
-									fontVariantNumeric: "tabular-nums",
-									zIndex: 8,
-								}}
-							>
+							<span className="text-xs leading-5 absolute left-2 bottom-[3px] tabular-nums [z-index:8]">
 								Start {formatDurationPrecise(fineLimitWindow.startMs / 1_000)}
-							</Typography>
-							<Typography
-								variant="caption"
-								sx={{
-									position: "absolute",
-									right: 8,
-									bottom: 3,
-									fontVariantNumeric: "tabular-nums",
-									zIndex: 8,
-								}}
-							>
+							</span>
+							<span className="text-xs leading-5 absolute right-2 bottom-[3px] tabular-nums [z-index:8]">
 								End {formatDurationPrecise(fineLimitWindow.endMs / 1_000)}
-							</Typography>
-						</Box>
+							</span>
+						</div>
 					)}
-				</Box>
+				</div>
 			</TimelineRow>
 
-			<TimelineRow sx={{ mt: 0.5 }} labelAlign="flex-start">
-				<Box sx={{ position: "relative", height: 18 }}>
+			<TimelineRow labelAlign="flex-start" className="mt-1">
+				<div className="relative h-4.5">
 					{TIMELINE_AXIS_FRACTIONS.map((fraction, index) => {
 						const atMs = view.startMs + fraction * (view.endMs - view.startMs);
 						return (
-							<Box
+							<div
 								key={fraction}
-								sx={{
-									position: "absolute",
-									top: 0,
-									left: percent(fraction),
-									display:
-										index % 2 === 1 ? { xs: "none", sm: "block" } : "block",
-								}}
+								className={cn(
+									"absolute top-0",
+									index % 2 === 1 ? "hidden min-[600px]:block" : "block",
+								)}
+								style={{ left: percent(fraction) } as CSSProperties}
 							>
-								<Typography
-									variant="caption"
-									color="text.secondary"
-									sx={{
-										display: "block",
-										transform: axisLabelTransform(fraction),
-										whiteSpace: "nowrap",
-										fontVariantNumeric: "tabular-nums",
-										lineHeight: 1.2,
-									}}
+								<span
+									className="text-muted text-xs leading-5 block whitespace-nowrap tabular-nums [line-height:1.2]"
+									style={
+										{ transform: axisLabelTransform(fraction) } as CSSProperties
+									}
 								>
 									{preciseAxis
 										? formatDurationPrecise(atMs / 1_000)
 										: formatDuration(atMs / 1_000)}
-								</Typography>
-							</Box>
+								</span>
+							</div>
 						);
 					})}
-				</Box>
+				</div>
 			</TimelineRow>
 
-			<TimelineRow sx={{ mt: 1 }}>
-				<Stack
-					direction="row"
-					spacing={1}
-					alignItems="center"
-					flexWrap="wrap"
-					useFlexGap
-				>
-					<Typography
-						variant="body2"
-						sx={{ fontVariantNumeric: "tabular-nums" }}
-					>
+			<TimelineRow className="mt-2">
+				<div className="flex items-center flex-wrap flex-row gap-2">
+					<p className="text-sm tabular-nums">
 						In {formatDurationPrecise(selection[0] / 1_000)} · Out{" "}
 						{formatDurationPrecise(selection[1] / 1_000)} · Length{" "}
 						{(selectionMs / 1_000).toFixed(1)}s
-					</Typography>
-					<Chip
-						size="small"
-						color={valid ? "success" : "default"}
-						variant={valid ? "filled" : "outlined"}
-						label={
-							valid
-								? "Valid clip"
-								: `Clip needs ${MIN_CLIP_DURATION_MS / 1_000}–${
-										MAX_CLIP_DURATION_MS / 1_000
-									}s`
-						}
-					/>
-					<Typography variant="caption" color="text.secondary">
+					</p>
+					<Badge
+						appearance={valid ? "solid" : "outline"}
+						tone={valid ? "success" : "neutral"}
+						size={"sm"}
+					>
+						{valid
+							? "Valid clip"
+							: `Clip needs ${MIN_CLIP_DURATION_MS / 1_000}–${
+									MAX_CLIP_DURATION_MS / 1_000
+								}s`}
+					</Badge>
+					<span className="text-muted text-xs leading-5">
 						Pull a handle or playhead upward while dragging for a magnified
 						ruler. E sets the nearest edge · R resets the selection.
-					</Typography>
-					<Box sx={{ flex: 1 }} />
-					<Tooltip title="Zoom out (ctrl + scroll)">
-						<IconButton size="small" onClick={() => zoom(-1)}>
+					</span>
+					<div className="flex-1" />
+					<TooltipTrigger delay={400}>
+						<IconButton
+							aria-label={"Zoom out (ctrl + scroll)"}
+							size="sm"
+							onPress={() => zoom(-1)}
+						>
 							<ZoomOutIcon size={16} />
 						</IconButton>
-					</Tooltip>
-					<Typography
-						variant="caption"
-						color="text.secondary"
-						sx={{ fontVariantNumeric: "tabular-nums" }}
-					>
+						<Tooltip>{"Zoom out (ctrl + scroll)"}</Tooltip>
+					</TooltipTrigger>
+					<span className="text-muted text-xs leading-5 tabular-nums">
 						{formatDuration((view.endMs - view.startMs) / 1_000)}
-					</Typography>
-					<Tooltip title="Zoom in (ctrl + scroll)">
-						<IconButton size="small" onClick={() => zoom(1)}>
+					</span>
+					<TooltipTrigger delay={400}>
+						<IconButton
+							aria-label={"Zoom in (ctrl + scroll)"}
+							size="sm"
+							onPress={() => zoom(1)}
+						>
 							<ZoomInIcon size={16} />
 						</IconButton>
-					</Tooltip>
-				</Stack>
+						<Tooltip>{"Zoom in (ctrl + scroll)"}</Tooltip>
+					</TooltipTrigger>
+				</div>
 			</TimelineRow>
 
-			<TimelineRow sx={{ mt: 1 }}>
-				<Stack
-					direction="row"
-					spacing={1}
-					alignItems="center"
-					flexWrap="wrap"
-					useFlexGap
-				>
-					<Tooltip
-						title={`Set the ${suggestedEdge === "start" ? "left" : "right"} edge nearest the playhead (E)`}
-					>
+			<TimelineRow className="mt-2">
+				<div className="flex items-center flex-wrap flex-row gap-2">
+					<TooltipTrigger delay={400}>
 						<Button
-							size="small"
-							variant="contained"
-							onClick={props.onSetNearestEdgeFromPlayhead}
+							variant="primary"
+							size="sm"
+							onPress={props.onSetNearestEdgeFromPlayhead}
 						>
 							Set nearest: {suggestedEdge === "start" ? "left" : "right"} (E)
 						</Button>
-					</Tooltip>
+						<Tooltip>{`Set the ${suggestedEdge === "start" ? "left" : "right"} edge nearest the playhead (E)`}</Tooltip>
+					</TooltipTrigger>
 					{(["start", "end"] as const).map((edge) => (
-						<Stack key={edge} direction="row" spacing={0.5} alignItems="center">
-							<Tooltip
-								title={
-									(edge === "start" ? canSetStart : canSetEnd)
+						<div key={edge} className="flex items-center flex-row gap-1">
+							<TooltipTrigger delay={400}>
+								<Button
+									variant="outline"
+									size="sm"
+									isDisabled={edge === "start" ? !canSetStart : !canSetEnd}
+									onPress={() => props.onSetEdgeFromPlayhead(edge)}
+								>
+									Set {edge === "start" ? "left edge (I)" : "right edge (O)"}
+								</Button>
+								<Tooltip>
+									{(edge === "start" ? canSetStart : canSetEnd)
 										? `Set the ${edge === "start" ? "left" : "right"} edge to the playhead (${edge === "start" ? "I" : "O"})`
-										: `Move the playhead ${edge === "start" ? "left of the right" : "right of the left"} edge first`
-								}
-							>
-								<span>
-									<Button
-										size="small"
-										variant="outlined"
-										disabled={edge === "start" ? !canSetStart : !canSetEnd}
-										onClick={() => props.onSetEdgeFromPlayhead(edge)}
-									>
-										Set {edge === "start" ? "left edge (I)" : "right edge (O)"}
-									</Button>
-								</span>
-							</Tooltip>
+										: `Move the playhead ${edge === "start" ? "left of the right" : "right of the left"} edge first`}
+								</Tooltip>
+							</TooltipTrigger>
 							{[-1_000, -100, 100, 1_000].map((deltaMs) => (
 								<Button
 									key={deltaMs}
-									size="small"
-									variant="text"
-									sx={{ minWidth: 44, px: 0.5 }}
-									onClick={() =>
+									className="min-w-11 px-1"
+									variant="ghost"
+									size="sm"
+									onPress={() =>
 										onSelectionChange(
 											nudgeEdge(selection, edge, deltaMs, durationMs),
 										)
@@ -758,48 +555,36 @@ export function ClipRangeEditorView({
 									{Math.abs(deltaMs) / 1_000}s
 								</Button>
 							))}
-						</Stack>
+						</div>
 					))}
 					{props.edgeHint && (
-						<Typography
-							variant="caption"
-							color="warning.main"
-							sx={{ flexBasis: "100%" }}
-						>
+						<span className="text-warning text-xs leading-5 [flex-basis:100%]">
 							{props.edgeHint}
-						</Typography>
+						</span>
 					)}
-					<Box sx={{ flex: 1 }} />
-					<Tooltip title="Reset clip selection (R)">
-						<Button
-							size="small"
-							variant="outlined"
-							startIcon={<RestartAltIcon />}
-							onClick={props.onReset}
-						>
+					<div className="flex-1" />
+					<TooltipTrigger delay={400}>
+						<Button variant="outline" size="sm" onPress={props.onReset}>
+							<RestartAltIcon />
 							Reset
 						</Button>
-					</Tooltip>
-					<Button
-						size="small"
-						variant="contained"
-						startIcon={props.previewing ? <StopIcon /> : <PlayArrowIcon />}
-						onClick={props.onPreview}
-					>
+						<Tooltip>{"Reset clip selection (R)"}</Tooltip>
+					</TooltipTrigger>
+					<Button variant="primary" size="sm" onPress={props.onPreview}>
+						{props.previewing ? <StopIcon /> : <PlayArrowIcon />}
 						{props.previewing ? "Stop" : "Preview"}
 					</Button>
 					<Button
-						size="small"
-						variant={props.loop ? "contained" : "outlined"}
-						color={props.loop ? "secondary" : "primary"}
-						startIcon={<LoopIcon />}
+						variant={props.loop ? "primary" : "outline"}
 						aria-pressed={props.loop}
-						onClick={() => props.onLoopChange(!props.loop)}
+						size="sm"
+						onPress={() => props.onLoopChange(!props.loop)}
 					>
+						<LoopIcon />
 						Loop
 					</Button>
-				</Stack>
+				</div>
 			</TimelineRow>
-		</Box>
+		</section>
 	);
 }

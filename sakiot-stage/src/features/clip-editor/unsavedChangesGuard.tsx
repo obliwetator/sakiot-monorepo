@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useBlocker } from "react-router-dom";
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Button, DialogContentText } from "../../shared/ui";
+import { Button } from "../../shared/ui";
 
 /**
  * Warns before the clip editor is left with unsaved work. In-app navigation
@@ -30,23 +30,19 @@ export function useUnsavedChangesGuard(dirty: boolean) {
 			title="Discard clip editor work?"
 			actions={
 				<>
-					<Button onClick={() => blockedBlocker?.reset()} autoFocus>
+					<Button autoFocus onPress={() => blockedBlocker?.reset()}>
 						Stay
 					</Button>
-					<Button
-						variant="contained"
-						color="error"
-						onClick={() => blockedBlocker?.proceed()}
-					>
+					<Button variant="danger" onPress={() => blockedBlocker?.proceed()}>
 						Discard and leave
 					</Button>
 				</>
 			}
 		>
-			<DialogContentText>
+			<p className="text-sm leading-6 text-slate-200">
 				The clip editor still has unsaved changes. Leaving this page will
 				discard them.
-			</DialogContentText>
+			</p>
 		</BaseDialog>
 	);
 

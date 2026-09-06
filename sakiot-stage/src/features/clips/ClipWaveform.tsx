@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
-import { Box, Button, LinearProgress, Typography } from "../../shared/ui";
+import { Button, ProgressBar } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
 import {
 	decodeWaveformPeaks,
@@ -50,64 +50,28 @@ export function ClipWaveform(props: {
 			: 0;
 
 	return (
-		<Box
-			sx={{
-				position: "relative",
-				my: 2,
-				height: 140,
-				borderRadius: 1,
-				overflow: "hidden",
-				bgcolor: "rgba(168, 85, 247, 0.18)",
-			}}
-		>
+		<div className="relative my-4 h-35 [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]">
 			{generating && !waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						top: 0,
-						left: 0,
-						right: 0,
-						zIndex: 2,
-						px: 1,
-						py: 0.5,
-						bgcolor: "rgba(15, 23, 42, 0.78)",
-						pointerEvents: "none",
-					}}
-				>
-					<Typography variant="caption">
+				<div className="absolute top-0 left-0 right-0 [z-index:2] px-2 py-1 [background-color:rgba(15,_23,_42,_0.78)] pointer-events-none">
+					<span className="text-xs leading-5">
 						Building clip waveform ({progress}%)
-					</Typography>
-					<LinearProgress variant="determinate" value={progress} />
-				</Box>
+					</span>
+					<ProgressBar value={progress} />
+				</div>
 			)}
 			{!data?.data && !generating && !waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						inset: 0,
-						display: "grid",
-						placeItems: "center",
-						pointerEvents: "none",
-					}}
-				>
-					<Typography color="text.secondary" variant="caption">
+				<div className="absolute inset-0 grid [place-items:center] pointer-events-none">
+					<span className="text-muted text-xs leading-5">
 						Clip waveform has not been built.
-					</Typography>
-				</Box>
+					</span>
+				</div>
 			)}
 			{waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						inset: 0,
-						display: "grid",
-						placeItems: "center",
-					}}
-				>
-					<Typography color="error" variant="caption">
+				<div className="absolute inset-0 grid [place-items:center]">
+					<span className="text-danger text-xs leading-5">
 						Clip waveform unavailable.
-					</Typography>
-				</Box>
+					</span>
+				</div>
 			)}
 			<WaveformCanvas
 				peaks={peaks}
@@ -121,29 +85,22 @@ export function ClipWaveform(props: {
 			/>
 			{!data?.data && (
 				<Button
-					size="small"
-					variant="contained"
-					onClick={() => {
+					className="absolute right-2 bottom-2 [z-index:3]"
+					variant="primary"
+					size="sm"
+					isDisabled={generating}
+					onPress={() => {
 						setGenerating(true);
 						setRequestKey(Date.now());
 					}}
-					disabled={generating}
-					sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 3 }}
 				>
 					{waveformError ? "Retry waveform" : "Build waveform"}
 				</Button>
 			)}
-			<Box
-				sx={{
-					position: "absolute",
-					top: 0,
-					bottom: 0,
-					left: `${playhead}%`,
-					width: 2,
-					bgcolor: "white",
-					pointerEvents: "none",
-				}}
+			<div
+				className="absolute top-0 bottom-0 w-0.5 [background-color:white] pointer-events-none"
+				style={{ left: `${playhead}%` }}
 			/>
-		</Box>
+		</div>
 	);
 }

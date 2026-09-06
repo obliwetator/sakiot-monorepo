@@ -1,7 +1,6 @@
-import { Eye as RemoveRedEyeIcon } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useGetGuildRolesQuery } from "../../app/apiSlice";
-import { Alert, Box, Button } from "../../shared/ui";
+import { Button, Notice } from "../../shared/ui";
 
 export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	const [searchParams, setSearchParams] = useSearchParams();
@@ -20,22 +19,16 @@ export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	};
 
 	return (
-		<Box sx={{ mb: 2 }}>
-			<Alert
-				severity="info"
-				variant="outlined"
-				icon={<RemoveRedEyeIcon />}
-				action={
-					<Button color="inherit" size="small" onClick={exitPreview}>
-						Exit preview
-					</Button>
-				}
-			>
+		<div className="mb-4">
+			<Notice tone={"info"} announce="status">
 				Viewing as <strong>{roleName ?? `role ${asRole}`}</strong> — every
 				session stays visible: <em>can't listen</em> marks channels this role
 				can see but not join, <em>hidden</em> marks channels it can't see at
 				all. Playing or downloading media still uses your own permissions.
-			</Alert>
-		</Box>
+				<Button size="sm" onPress={exitPreview}>
+					Exit preview
+				</Button>
+			</Notice>
+		</div>
 	);
 }

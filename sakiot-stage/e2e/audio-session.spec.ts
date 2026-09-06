@@ -13,6 +13,78 @@ const corsHeaders = {
 	"Access-Control-Allow-Origin": "http://127.0.0.1:4173",
 };
 
+test("native controls keep focus styling, pseudo-elements, and responsive layouts", async ({
+	page,
+}) => {
+	await mockAudioApi(page);
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	const tab = page.getByRole("tab", { name: "Normal", exact: true });
+	await expect(tab).toHaveAttribute("aria-selected", "true");
+	const panel = page.getByRole("tabpanel", { name: "Normal", exact: true });
+	await expect(panel).toBeVisible();
+	expect(await tab.getAttribute("aria-controls")).toBe(
+		await panel.getAttribute("id"),
+	);
+	expect(await panel.getAttribute("aria-labelledby")).toBe(
+		await tab.getAttribute("id"),
+	);
+
+	const position = page.getByRole("slider", {
+		name: "Logical playback position",
+	});
+	await page.keyboard.press("Tab");
+	await position.focus();
+	await position.press("ArrowRight");
+	await expect
+		.poll(async () => Number(await position.inputValue()))
+		.toBeGreaterThan(0);
+	const thumb = position.locator(
+		'xpath=ancestor::*[@data-slot="slider-thumb"]',
+	);
+	await expect(thumb).toHaveAttribute("data-focus-visible", "true");
+	await expect
+		.poll(() => thumb.evaluate((el) => getComputedStyle(el).outlineWidth))
+		.toBe("2px");
+
+	const handle = page.getByRole("slider", { name: "Clip in point" });
+	await handle.focus();
+	await expect
+		.poll(() => handle.evaluate((el) => getComputedStyle(el).outlineStyle))
+		.toBe("solid");
+	await expect
+		.poll(() => handle.evaluate((el) => getComputedStyle(el, "::after").width))
+		.toBe("3px");
+	await expect
+		.poll(() =>
+			handle.evaluate((el) => getComputedStyle(el, "::after").content),
+		)
+		.toBe('""');
+
+	for (const width of [599, 600, 899, 900]) {
+		await page.setViewportSize({ width, height: 1000 });
+		await expect(
+			page.getByRole("treegrid", { name: "Recordings" }),
+		).toHaveCount(width >= 900 ? 1 : 0);
+		await expect(
+			page.getByRole("button", { name: "Browse files", exact: true }),
+		).toHaveCount(width < 900 ? 1 : 0);
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth + 1,
+				),
+			)
+			.toBe(true);
+	}
+	const tree = page.getByRole("treegrid", { name: "Recordings" });
+	const year = tree.getByRole("row", { name: "2026", exact: true });
+	await year.focus();
+	await year.press("ArrowLeft");
+	await expect(year).toHaveAttribute("aria-expanded", "false");
+	await year.press("ArrowRight");
+	await expect(year).toHaveAttribute("aria-expanded", "true");
+});
+
 async function mockAudioApi(page: Page) {
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
@@ -186,7 +258,9 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 				browseBounds.y - (headerBounds.y + headerBounds.height),
 			).toBeLessThan(20);
 		}
-		await expect(page.getByRole("tree", { name: "customized" })).toHaveCount(0);
+		await expect(
+			page.getByRole("treegrid", { name: "Recordings" }),
+		).toHaveCount(0);
 		await expect(
 			page.getByRole("button", { name: "open navigation" }),
 		).toHaveCount(0);
@@ -194,7 +268,9 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 			page.getByRole("button", { name: "Audio", exact: true }),
 		).toBeVisible();
 		await browseButton.click();
-		await expect(page.getByRole("tree", { name: "customized" })).toBeVisible();
+		await expect(
+			page.getByRole("treegrid", { name: "Recordings" }),
+		).toBeVisible();
 		await expect
 			.poll(() =>
 				page.evaluate(
@@ -203,19 +279,22 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 			)
 			.toBe(true);
 	} else {
-		await expect(page.getByRole("tree", { name: "customized" })).toBeVisible();
+		await expect(
+			page.getByRole("treegrid", { name: "Recordings" }),
+		).toBeVisible();
 	}
 	await expect(
 		page.getByRole("textbox", { name: "Search recordings" }),
 	).toBeVisible();
-	const yearRow = page.getByText("2026", { exact: true }).first();
-	await yearRow.click();
+	await page.getByRole("button", { name: "Collapse 2026" }).click();
 	await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
-	await yearRow.click();
+	await page.getByRole("button", { name: "Expand 2026" }).click();
 	await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
 	await page.getByTitle(RECORDING_FILE).click();
 	if (isMobile) {
-		await expect(page.getByRole("tree", { name: "customized" })).toHaveCount(0);
+		await expect(
+			page.getByRole("treegrid", { name: "Recordings" }),
+		).toHaveCount(0);
 	}
 
 	await expect(page).toHaveURL(
@@ -230,9 +309,9 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	await expect(positionSlider).toBeVisible();
 	await expect
 		.poll(() =>
-			positionSlider.evaluate(
-				(element) => getComputedStyle(element).accentColor,
-			),
+			positionSlider
+				.locator('xpath=ancestor::*[@data-slot="slider-thumb"]')
+				.evaluate((element) => getComputedStyle(element).backgroundColor),
 		)
 		.toContain("144, 202, 249");
 	const playButton = page.getByRole("button", { name: "Play" });
@@ -248,13 +327,15 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	});
 	await expect
 		.poll(() =>
-			playbackVolumeSlider.evaluate(
-				(element) => getComputedStyle(element).accentColor,
-			),
+			playbackVolumeSlider
+				.locator('xpath=ancestor::*[@data-slot="slider-thumb"]')
+				.evaluate((element) => getComputedStyle(element).backgroundColor),
 		)
 		.toContain("144, 202, 249");
 	await positionSlider.scrollIntoViewIfNeeded();
-	const positionBounds = await positionSlider.boundingBox();
+	const positionBounds = await positionSlider
+		.locator('xpath=ancestor::*[@data-slot="slider-track"]')
+		.boundingBox();
 	expect(positionBounds).not.toBeNull();
 	if (positionBounds) {
 		const y = positionBounds.y + positionBounds.height / 2;
@@ -272,8 +353,12 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 			name: "Playback speed",
 		});
 		const [volumeBounds, speedBounds] = await Promise.all([
-			playbackVolumeSlider.locator("..").boundingBox(),
-			speedSlider.locator("..").boundingBox(),
+			playbackVolumeSlider
+				.locator('xpath=ancestor::*[@data-slot="slider"]')
+				.boundingBox(),
+			speedSlider
+				.locator('xpath=ancestor::*[@data-slot="slider"]')
+				.boundingBox(),
 		]);
 		expect(volumeBounds).not.toBeNull();
 		expect(speedBounds).not.toBeNull();
@@ -336,14 +421,18 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	const firstThumb = actionThumbs.nth(0);
 	await expect
 		.poll(() =>
-			firstThumb.evaluate(
-				(element) => getComputedStyle(element).backgroundColor,
-			),
+			firstThumb
+				.locator('xpath=ancestor::*[@data-slot="slider-thumb"]')
+				.evaluate((element) => getComputedStyle(element).backgroundColor),
 		)
 		.toBe("rgb(144, 202, 249)");
 	await firstThumb.scrollIntoViewIfNeeded();
-	const sliderRoot = firstThumb.locator("..");
-	const thumbBounds = await firstThumb.boundingBox();
+	const sliderRoot = firstThumb.locator(
+		'xpath=ancestor::*[@data-slot="slider-track"]',
+	);
+	const thumbBounds = await firstThumb
+		.locator('xpath=ancestor::*[@data-slot="slider-thumb"]')
+		.boundingBox();
 	const sliderBounds = await sliderRoot.boundingBox();
 	if (thumbBounds && sliderBounds) {
 		await page.mouse.move(
@@ -357,7 +446,7 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 		);
 		await page.mouse.up();
 	}
-	await expect(firstThumb).toHaveAttribute("aria-valuenow", "6000");
+	await expect(firstThumb).toHaveValue("6000");
 	await page.keyboard.press("r");
 	await expect(inPoint).toHaveAttribute("aria-valuenow", "0");
 

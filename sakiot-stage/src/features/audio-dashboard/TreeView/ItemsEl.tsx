@@ -1,7 +1,7 @@
 import type { IndividualFile } from "../../../Constants";
+import { TreeItem, TreeItemContent } from "../../../shared/ui";
 import { LivePill } from "./LiveDot";
 import { parseFileName } from "./parseFileName";
-import { StyledTreeItem } from "./StyledTreeItem";
 import { recordingTreeItemId } from "./treeNavigation";
 
 export function ItemsEl(props: {
@@ -34,8 +34,8 @@ export function ItemsEl(props: {
 		) : null;
 
 	return (
-		<StyledTreeItem
-			itemId={recordingTreeItemId(props.file, props.year, props.month_name)}
+		<TreeItem
+			id={recordingTreeItemId(props.file, props.year, props.month_name)}
 			className={
 				access === "hidden"
 					? "opacity-40"
@@ -43,7 +43,9 @@ export function ItemsEl(props: {
 						? "opacity-70"
 						: undefined
 			}
-			label={
+			textValue={`${time} ${username ?? ""}`}
+		>
+			<TreeItemContent>
 				<span
 					className="flex w-full min-w-0 items-center justify-between gap-1 px-1 py-0.5 select-none text-sm"
 					title={title}
@@ -63,7 +65,7 @@ export function ItemsEl(props: {
 						{accessBadge}
 					</span>
 				</span>
-			}
-		/>
+			</TreeItemContent>
+		</TreeItem>
 	);
 }

@@ -1,4 +1,4 @@
-import { Box, Typography } from "../../shared/ui";
+import { cn } from "../../shared/ui";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import type { TimelineSegment } from "./model";
 import type { SegmentDragState } from "./timelineDrag";
@@ -13,43 +13,27 @@ export function DragGhost(props: {
 	invalid?: boolean;
 }) {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
 			data-testid="clip-drag-ghost"
+			className={cn(
+				"absolute top-2 bottom-2 [border-radius:1px] [border:2px_dashed] pointer-events-none [z-index:5]",
+				props.invalid ? "border-danger" : "border-focus",
+				props.invalid
+					? "[background-color:rgba(248,_113,_113,_0.12)]"
+					: "[background-color:rgba(56,_189,_248,_0.16)]",
+			)}
 			style={{
 				left: `${props.leftFraction}%`,
 				width: `max(2px, ${props.widthFraction}%)`,
 			}}
-			sx={{
-				position: "absolute",
-				top: 8,
-				bottom: 8,
-				borderRadius: 1,
-				border: "2px dashed",
-				borderColor: props.invalid ? "error.main" : "primary.light",
-				bgcolor: props.invalid
-					? "rgba(248, 113, 113, 0.12)"
-					: "rgba(56, 189, 248, 0.16)",
-				pointerEvents: "none",
-				zIndex: 5,
-			}}
 		>
 			{props.label && (
-				<Typography
-					variant="caption"
-					sx={{
-						px: 0.5,
-						whiteSpace: "nowrap",
-						overflow: "hidden",
-						textOverflow: "ellipsis",
-						display: "block",
-						lineHeight: 1.6,
-					}}
-				>
+				<span className="text-xs leading-5 px-1 whitespace-nowrap overflow-hidden [text-overflow:ellipsis] block [line-height:1.6]">
 					{props.label}
-				</Typography>
+				</span>
 			)}
-		</Box>
+		</div>
 	);
 }
 
@@ -65,16 +49,9 @@ export function PhantomTrackRow(props: {
 }) {
 	return (
 		<TimelineRow label={props.label}>
-			<Box
-				sx={{
-					position: "relative",
-					height: TRACK_HEIGHT_PX,
-					mb: 0.5,
-					borderRadius: 1,
-					border: "2px dashed",
-					borderColor: "primary.dark",
-					overflow: "hidden",
-				}}
+			<div
+				className="relative mb-1 [border-radius:1px] [border:2px_dashed] border-primary-strong overflow-hidden"
+				style={{ height: TRACK_HEIGHT_PX }}
 			>
 				{props.ghosts.map((ghost) => (
 					<DragGhost
@@ -85,14 +62,10 @@ export function PhantomTrackRow(props: {
 						invalid={ghost.invalid}
 					/>
 				))}
-				<Typography
-					variant="caption"
-					color="text.secondary"
-					sx={{ position: "absolute", top: 2, left: 4 }}
-				>
+				<span className="text-muted text-xs leading-5 absolute top-0.5 left-1">
 					New track
-				</Typography>
-			</Box>
+				</span>
+			</div>
 		</TimelineRow>
 	);
 }
@@ -112,85 +85,42 @@ export function FloatingDragChip(props: {
 	y: number;
 }) {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			sx={{
-				position: "fixed",
-				left: props.x,
-				top: props.y,
-				transform: "translate(-50%, 14px)",
-				pointerEvents: "none",
-				zIndex: 1400,
-				maxWidth: 240,
-				px: 1,
-				py: 0.5,
-				borderRadius: 1,
-				border: "1px dashed",
-				borderColor: "error.main",
-				bgcolor: "rgba(248, 113, 113, 0.14)",
-				backdropFilter: "blur(4px)",
-				overflow: "hidden",
-			}}
+			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-60 px-2 py-1 [border-radius:1px] [border:1px_dashed] border-danger [background-color:rgba(248,_113,_113,_0.14)] [backdrop-filter:blur(4px)] overflow-hidden"
+			style={{ left: props.x, top: props.y }}
 		>
-			<Typography variant="caption" noWrap>
+			<span className="text-xs leading-5 truncate">
 				{props.name || "Clip"} · release to cancel
-			</Typography>
-		</Box>
+			</span>
+		</div>
 	);
 }
 
 export function ClampedEdgeWarning(props: { x: number; y: number }) {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			sx={{
-				position: "fixed",
-				left: props.x,
-				top: props.y,
-				transform: "translate(-50%, 14px)",
-				pointerEvents: "none",
-				zIndex: 1400,
-				maxWidth: 260,
-				px: 1,
-				py: 0.5,
-				borderRadius: 1,
-				border: "1px solid",
-				borderColor: "warning.main",
-				bgcolor: "rgba(245, 158, 11, 0.14)",
-				backdropFilter: "blur(4px)",
-			}}
+			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-65 px-2 py-1 [border-radius:1px] border border-warning [background-color:rgba(245,_158,_11,_0.14)] [backdrop-filter:blur(4px)]"
+			style={{ left: props.x, top: props.y }}
 		>
-			<Typography variant="caption" noWrap>
+			<span className="text-xs leading-5 truncate">
 				Edge meets the next clip
-			</Typography>
-		</Box>
+			</span>
+		</div>
 	);
 }
 
 export function TrackCollisionWarning(props: { x: number; y: number }) {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			sx={{
-				position: "fixed",
-				left: props.x,
-				top: props.y,
-				transform: "translate(-50%, 14px)",
-				pointerEvents: "none",
-				zIndex: 1400,
-				maxWidth: 320,
-				px: 1,
-				py: 0.5,
-				borderRadius: 1,
-				border: "1px solid",
-				borderColor: "error.main",
-				bgcolor: "rgba(248, 113, 113, 0.14)",
-				backdropFilter: "blur(4px)",
-			}}
+			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-80 px-2 py-1 [border-radius:1px] border border-danger [background-color:rgba(248,_113,_113,_0.14)] [backdrop-filter:blur(4px)]"
+			style={{ left: props.x, top: props.y }}
 		>
-			<Typography variant="caption" noWrap>
+			<span className="text-xs leading-5 truncate">
 				Cannot move: segments would overlap on the same track
-			</Typography>
-		</Box>
+			</span>
+		</div>
 	);
 }

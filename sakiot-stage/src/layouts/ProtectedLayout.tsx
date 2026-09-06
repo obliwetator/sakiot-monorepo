@@ -4,7 +4,6 @@ import { useGetAuthDetailsQuery } from "../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../app/authedFetch";
 import { useAppSelector } from "../app/hooks";
 import { setGuildSelected } from "../reducers/appSlice";
-import { Box, Grid } from "../shared/ui";
 
 export const ProtectedLayout = () => {
 	const navigate = useNavigate();
@@ -31,7 +30,7 @@ export const ProtectedLayout = () => {
 
 	const guilds = userGuilds.map((value, index) => {
 		return (
-			<Grid size={{ xs: 1 }} key={value.id}>
+			<div key={value.id}>
 				<button
 					type="button"
 					onClick={() => handleGuildSelect(index)}
@@ -39,23 +38,18 @@ export const ProtectedLayout = () => {
 				>
 					{value.name}
 				</button>
-			</Grid>
+			</div>
 		);
 	});
 
 	if (!guildSelected) {
 		return (
-			<Box sx={{ flexGrow: 1 }}>
+			<div className="grow">
 				SELECT A SERVER
-				<Grid
-					container
-					justifyContent="center"
-					alignItems="center"
-					minHeight={300}
-				>
+				<div className="justify-center items-center min-h-75 grid [grid-template-columns:repeat(auto-fit,minmax(180px,1fr))]">
 					{guilds}
-				</Grid>
-			</Box>
+				</div>
+			</div>
 		);
 	}
 

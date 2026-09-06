@@ -1,12 +1,6 @@
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
-import {
-	Box,
-	Button,
-	Stack,
-	LegacyTextField as TextField,
-	Typography,
-} from "../../shared/ui";
+import { Button, TextField } from "../../shared/ui";
 import {
 	DEFAULT_EFFECT_LIMITS,
 	EFFECT_LIMIT_KEYS,
@@ -41,48 +35,46 @@ function PairFieldRow(props: {
 	const [minimum, maximum] = props.limits[props.param];
 	const caps = EFFECT_LIMIT_SAFETY_CAPS[props.param];
 	return (
-		<Box sx={{ mb: 1.5 }}>
-			<Typography variant="caption" color="text.secondary">
+		<div className="mb-3">
+			<span className="text-muted text-xs leading-5">
 				{label} ({unit})
-			</Typography>
-			<Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+			</span>
+			<div className="flex flex-row gap-2 mt-1">
 				<TextField
-					size="small"
 					label="Min"
 					type="number"
-					value={minimum}
-					error={props.error}
-					slotProps={{
-						htmlInput: { min: caps[0], max: caps[1], step },
-					}}
-					onChange={(event) => {
-						const parsed = Number(event.currentTarget.value);
+					value={String(minimum)}
+					isInvalid={props.error}
+					onChange={(value) => {
+						const parsed = Number(value);
 						if (!Number.isFinite(parsed)) return;
 						props.onDraft(props.param, clamp(parsed, caps), maximum);
 					}}
+					min={caps[0]}
+					max={caps[1]}
+					step={step}
 				/>
 				<TextField
-					size="small"
 					label="Max"
 					type="number"
-					value={maximum}
-					error={props.error}
-					slotProps={{
-						htmlInput: { min: caps[0], max: caps[1], step },
-					}}
-					onChange={(event) => {
-						const parsed = Number(event.currentTarget.value);
+					value={String(maximum)}
+					isInvalid={props.error}
+					onChange={(value) => {
+						const parsed = Number(value);
 						if (!Number.isFinite(parsed)) return;
 						props.onDraft(props.param, minimum, clamp(parsed, caps));
 					}}
+					min={caps[0]}
+					max={caps[1]}
+					step={step}
 				/>
-			</Stack>
+			</div>
 			{props.error && (
-				<Typography variant="caption" color="error">
+				<span className="text-danger text-xs leading-5">
 					Min must be below max.
-				</Typography>
+				</span>
 			)}
-		</Box>
+		</div>
 	);
 }
 
@@ -134,18 +126,18 @@ export function EffectLimitsDialog(props: {
 			title="Effect limits"
 			actions={
 				<>
-					<Button onClick={reset}>Reset to defaults</Button>
-					<Button variant="contained" onClick={props.onClose}>
+					<Button onPress={reset}>Reset to defaults</Button>
+					<Button variant="primary" onPress={props.onClose}>
 						Done
 					</Button>
 				</>
 			}
 		>
-			<Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+			<p className="text-muted text-sm mb-3">
 				Set the slider bounds for these effects. Changes apply immediately and
 				are saved for this browser. Hard limits: volume and EQ ±240 dB, pitch
 				±4800 ct, speed 0.1–10×.
-			</Typography>
+			</p>
 			{EFFECT_LIMIT_KEYS.map((param) => (
 				<PairFieldRow
 					key={param}
@@ -156,9 +148,9 @@ export function EffectLimitsDialog(props: {
 				/>
 			))}
 			{invalidPairs.length > 0 && (
-				<Typography variant="caption" color="text.secondary">
+				<span className="text-muted text-xs leading-5">
 					Fix the highlighted pairs to apply them.
-				</Typography>
+				</span>
 			)}
 		</BaseDialog>
 	);

@@ -21,19 +21,14 @@ import {
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
 import {
-	Alert,
-	Box,
+	Badge,
 	Button,
-	Chip,
-	DialogContentText,
 	IconButton,
-	Link,
-	Paper,
+	Notice,
 	Slider,
-	Stack,
-	LegacyTextField as TextField,
+	TextField,
 	Tooltip,
-	Typography,
+	TooltipTrigger,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
@@ -78,14 +73,10 @@ function saveBlob(blob: Blob, fileName: string) {
 
 function MetadataItem(props: { label: string; value: ReactNode }) {
 	return (
-		<Box sx={{ minWidth: 0 }}>
-			<Typography variant="caption" color="text.secondary">
-				{props.label}
-			</Typography>
-			<Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
-				{props.value}
-			</Typography>
-		</Box>
+		<div className="min-w-0">
+			<span className="text-muted text-xs leading-5">{props.label}</span>
+			<p className="text-sm [overflow-wrap:anywhere]">{props.value}</p>
+		</div>
 	);
 }
 
@@ -127,11 +118,12 @@ function RenameClipButton(props: { clip: ClipData }) {
 
 	return (
 		<>
-			<Tooltip title="Rename clip">
-				<IconButton size="small" onClick={handleOpen} aria-label="Rename clip">
+			<TooltipTrigger delay={400}>
+				<IconButton aria-label="Rename clip" size="sm" onPress={handleOpen}>
 					<EditIcon size={16} />
 				</IconButton>
-			</Tooltip>
+				<Tooltip>{"Rename clip"}</Tooltip>
+			</TooltipTrigger>
 			<BaseDialog
 				open={open}
 				onClose={handleClose}
@@ -140,23 +132,24 @@ function RenameClipButton(props: { clip: ClipData }) {
 				busy={isLoading}
 				actions={
 					<>
-						<Button onClick={handleClose} disabled={isLoading}>
+						<Button isDisabled={isLoading} onPress={handleClose}>
 							Cancel
 						</Button>
 						<Button
-							variant="contained"
-							onClick={() => void handleRename()}
-							disabled={isLoading || !canSubmit}
+							variant="primary"
+							isDisabled={isLoading || !canSubmit}
+							onPress={() => void handleRename()}
 						>
 							{isLoading ? "Saving..." : "Save"}
 						</Button>
 					</>
 				}
 			>
-				<DialogContentText>Enter a new name for this clip.</DialogContentText>
+				<p className="text-sm leading-6 text-slate-200">
+					Enter a new name for this clip.
+				</p>
 				<TextField
 					value={name}
-					onChange={(event) => setName(event.currentTarget.value)}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && canSubmit && !isLoading) {
 							event.preventDefault();
@@ -164,12 +157,11 @@ function RenameClipButton(props: { clip: ClipData }) {
 						}
 					}}
 					autoFocus
-					margin="dense"
 					label="Clip name"
-					fullWidth
 					autoComplete="off"
-					disabled={isLoading}
-					slotProps={{ htmlInput: { maxLength: 255 } }}
+					isDisabled={isLoading}
+					onChange={(value) => setName(value)}
+					maxLength={255}
 				/>
 			</BaseDialog>
 		</>
@@ -376,54 +368,26 @@ export function ClipPlayer(props: {
 		: null;
 
 	return (
-		<Box sx={{ px: { xs: 1, md: 3 }, pb: 4 }}>
-			<Paper
-				variant="outlined"
-				sx={{
-					p: { xs: 2, md: 3 },
-					mb: 2,
-					background:
-						"linear-gradient(135deg, rgba(168,85,247,0.14), rgba(217,70,239,0.04))",
-				}}
-			>
-				<Stack
-					direction={{ xs: "column", sm: "row" }}
-					justifyContent="space-between"
-					gap={1}
-				>
-					<Box sx={{ minWidth: 0 }}>
-						<Stack direction="row" alignItems="center" spacing={0.5}>
-							<Typography
-								variant="h5"
-								sx={{ minWidth: 0, overflowWrap: "anywhere" }}
-							>
+		<div className="px-2 min-[900px]:px-6 pb-8">
+			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none p-4 min-[900px]:p-6 mb-4 [background:linear-gradient(135deg,_rgba(168,85,247,0.14),_rgba(217,70,239,0.04))]">
+				<div className="flex justify-between gap-2 flex-col min-[600px]:flex-row">
+					<div className="min-w-0">
+						<div className="flex items-center flex-row gap-1">
+							<h5 className="font-semibold tracking-tight text-2xl min-w-0 [overflow-wrap:anywhere]">
 								{props.clip.name || "Unnamed clip"}
-							</Typography>
+							</h5>
 							{props.canRename && <RenameClipButton clip={props.clip} />}
-						</Stack>
-						<Typography variant="body2" color="text.secondary">
-							Clip {props.clip.clip_id}
-						</Typography>
-					</Box>
-					<Stack direction="row" spacing={1} flexWrap="wrap">
-						<Chip label="Clip" color="secondary" />
-						<Chip label={formatDuration(duration)} />
-						<Chip label={formatClipSize(props.clip.size)} />
-					</Stack>
-				</Stack>
+						</div>
+						<p className="text-muted text-sm">Clip {props.clip.clip_id}</p>
+					</div>
+					<div className="flex flex-wrap flex-row gap-2">
+						<Badge tone={"creative"}>Clip</Badge>
+						<Badge>{formatDuration(duration)}</Badge>
+						<Badge>{formatClipSize(props.clip.size)}</Badge>
+					</div>
+				</div>
 
-				<Box
-					sx={{
-						display: "grid",
-						gridTemplateColumns: {
-							xs: "1fr",
-							sm: "repeat(2, minmax(0, 1fr))",
-							lg: "repeat(3, minmax(0, 1fr))",
-						},
-						gap: 2,
-						mt: 3,
-					}}
-				>
+				<div className="grid [grid-template-columns:1fr] min-[600px]:[grid-template-columns:repeat(2,_minmax(0,_1fr))] min-[1200px]:[grid-template-columns:repeat(3,_minmax(0,_1fr))] gap-4 mt-6">
 					<MetadataItem label="Created by user" value={props.clip.user_id} />
 					<MetadataItem
 						label="Recorded channel"
@@ -441,10 +405,10 @@ export function ClipPlayer(props: {
 						label="Source recording"
 						value={
 							sourceSessionPath ? (
-								<Link component={RouterLink} to={sourceSessionPath}>
+								<RouterLink to={sourceSessionPath}>
 									Session {props.clip.recording_session_id} · open at{" "}
 									{formatDuration(props.clip.start_time)}
-								</Link>
+								</RouterLink>
 							) : isComposedClip(props.clip) ? (
 								"Composition"
 							) : (
@@ -457,8 +421,8 @@ export function ClipPlayer(props: {
 						value={props.clip.saved_file_name || "Unknown"}
 					/>
 					<MetadataItem label="Guild" value={props.clip.guild_id} />
-				</Box>
-			</Paper>
+				</div>
+			</div>
 
 			<ClipWaveform
 				guildId={props.clip.guild_id}
@@ -470,125 +434,95 @@ export function ClipPlayer(props: {
 
 			<Slider
 				aria-label="Clip playback position"
-				min={0}
-				max={Math.max(0.001, duration)}
 				step={0.01}
 				value={Math.min(duration, displayedPosition)}
-				onChange={(_event, value) => setSeekPreview(Number(value))}
-				onChangeCommitted={(_event, value) => {
+				className="transition-none"
+				minValue={0}
+				maxValue={Math.max(0.001, duration)}
+				onChangeEnd={(value) => {
 					setSeekPreview(null);
 					seek(Number(value));
 				}}
-				valueLabelDisplay="auto"
-				valueLabelFormat={formatDuration}
-				sx={{ transition: "none" }}
+				onChange={(value) => setSeekPreview(Number(value))}
 			/>
 
-			<Stack
-				direction={{ xs: "column", sm: "row" }}
-				justifyContent="space-between"
-				spacing={0.5}
-				sx={{ mt: -1, mb: 2 }}
-			>
-				<Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
+			<div className="flex justify-between flex-col min-[600px]:flex-row gap-1 [margin-top:-8px] mb-4">
+				<p className="text-sm tabular-nums">
 					Clip time {formatDuration(displayedPosition)} /{" "}
 					{formatDuration(duration)}
-				</Typography>
-				<Typography
-					variant="body2"
-					color="text.secondary"
-					sx={{ fontVariantNumeric: "tabular-nums" }}
-				>
+				</p>
+				<p className="text-muted text-sm tabular-nums">
 					Real time{" "}
 					{absoluteTime == null
 						? "Unknown"
 						: new Date(absoluteTime).toLocaleString()}
-				</Typography>
-			</Stack>
+				</p>
+			</div>
 
-			<Stack
-				direction={{ xs: "column", md: "row" }}
-				spacing={2}
-				alignItems="center"
-			>
-				<Button
-					variant="contained"
-					onClick={togglePlay}
-					disabled={!ready}
-					startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}
-				>
+			<div className="flex items-center flex-col min-[900px]:flex-row gap-4">
+				<Button variant="primary" isDisabled={!ready} onPress={togglePlay}>
+					{playing ? <PauseIcon /> : <PlayArrowIcon />}
 					{playing ? "Pause" : "Play"}
 				</Button>
-				<Box sx={{ minWidth: 180, flex: 1, width: "100%" }}>
-					<Typography variant="caption">Volume</Typography>
+				<div className="min-w-45 flex-1 w-full">
+					<span className="text-xs leading-5">Volume</span>
 					<Slider
-						min={0}
-						max={1}
 						step={0.05}
 						value={volume}
-						onChange={(_event, value) => setVolume(Number(value))}
+						minValue={0}
+						maxValue={1}
+						onChange={(value) => setVolume(Number(value))}
 					/>
-				</Box>
-				<Box sx={{ minWidth: 180, flex: 1, width: "100%" }}>
-					<Typography variant="caption">
+				</div>
+				<div className="min-w-45 flex-1 w-full">
+					<span className="text-xs leading-5">
 						Speed {playbackRate.toFixed(2)}×
-					</Typography>
+					</span>
 					<Slider
-						min={0.5}
-						max={2}
 						step={0.25}
 						value={playbackRate}
-						onChange={(_event, value) => setPlaybackRate(Number(value))}
+						minValue={0.5}
+						maxValue={2}
+						onChange={(value) => setPlaybackRate(Number(value))}
 					/>
-				</Box>
-			</Stack>
+				</div>
+			</div>
 
-			<Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
-				<Typography variant="h6" gutterBottom>
+			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none p-4 mt-4">
+				<h6 className="font-medium tracking-[0.001em] text-xl mb-2">
 					Clip actions
-				</Typography>
-				<Stack
-					direction={{ xs: "column", sm: "row" }}
-					spacing={1}
-					flexWrap="wrap"
-				>
-					<Button
-						variant="outlined"
-						startIcon={<DownloadIcon />}
-						onClick={() => void download()}
-					>
+				</h6>
+				<div className="flex flex-wrap flex-col min-[600px]:flex-row gap-2">
+					<Button variant="outline" onPress={() => void download()}>
+						<DownloadIcon />
 						Download clip
 					</Button>
 					<Button
-						variant="outlined"
-						startIcon={<ContentCutIcon />}
-						onClick={() =>
+						variant="outline"
+						onPress={() =>
 							navigate(
 								`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/clips/editor?source=${encodeURIComponent(props.clip.clip_id)}`,
 							)
 						}
 					>
+						<ContentCutIcon />
 						Edit clip
 					</Button>
-					<Button variant="outlined" disabled>
+					<Button variant="outline" isDisabled={true}>
 						Create clip
 					</Button>
 					<JamIt visible={true} />
-				</Stack>
-				<Typography
-					variant="caption"
-					color="text.secondary"
-					sx={{ display: "block", mt: 1 }}
-				>
+				</div>
+				<span className="text-muted text-xs leading-5 block mt-2">
 					Clip creation is disabled because this audio is already a clip.
-				</Typography>
-			</Paper>
+				</span>
+			</div>
 
 			{error && (
-				<Alert severity="error" sx={{ mt: 2 }}>
+				<Notice className="mt-4" tone={"error"} announce="alert">
 					{error}
-				</Alert>
+				</Notice>
 			)}
-		</Box>
+		</div>
 	);
 }

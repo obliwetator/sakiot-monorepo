@@ -1,7 +1,7 @@
 import type { IndividualFileArray } from "../../../Constants";
+import { TreeItem, TreeItemContent } from "../../../shared/ui";
 import { ItemsEl } from "./ItemsEl";
 import { LiveDot } from "./LiveDot";
-import { StyledTreeItem } from "./StyledTreeItem";
 
 export function TreeViewDays(props: {
 	index: number;
@@ -25,16 +25,17 @@ export function TreeViewDays(props: {
 	));
 
 	return (
-		<StyledTreeItem
-			label={
+		<TreeItem
+			id={`${props.year}-${props.month_name}-${props.day}`}
+			textValue={String(props.day)}
+		>
+			<TreeItemContent>
 				<span className="inline-flex items-center">
 					{props.day}
 					{hasLive && <LiveDot />}
 				</span>
-			}
-			itemId={`${props.year}-${props.month_name}-${props.day}`}
-		>
+			</TreeItemContent>
 			{itemsEl}
-		</StyledTreeItem>
+		</TreeItem>
 	);
 }

@@ -28,7 +28,7 @@ export function DownloadButton(props: {
 	};
 
 	return (
-		<Button variant="contained" onClick={handleDownload}>
+		<Button variant="primary" onPress={handleDownload}>
 			Download
 		</Button>
 	);

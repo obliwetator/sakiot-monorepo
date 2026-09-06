@@ -4,11 +4,7 @@ import { useCreateClipMutation } from "../../../app/apiSlice";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
 import { BaseDialog } from "../../../shared/BaseDialog";
-import {
-	Button,
-	DialogContentText,
-	LegacyTextField as TextField,
-} from "../../../shared/ui";
+import { Button, TextField } from "../../../shared/ui";
 
 export function ClipDialog(props: {
 	params: Readonly<Params<AudioParams>>;
@@ -71,9 +67,9 @@ export function ClipDialog(props: {
 	return (
 		<>
 			<Button
-				variant="contained"
-				onClick={handleClickOpen}
-				disabled={props.disabled}
+				variant="primary"
+				isDisabled={props.disabled}
+				onPress={handleClickOpen}
 			>
 				Clip
 			</Button>
@@ -84,31 +80,28 @@ export function ClipDialog(props: {
 				busy={isLoading}
 				actions={
 					<>
-						<Button onClick={handleClose} disabled={isLoading}>
+						<Button isDisabled={isLoading} onPress={handleClose}>
 							Cancel
 						</Button>
-						<Button onClick={handleClip} disabled={isLoading}>
+						<Button isDisabled={isLoading} onPress={handleClip}>
 							{isLoading ? "Creating..." : "Clip"}
 						</Button>
 					</>
 				}
 			>
-				<DialogContentText>
+				<p className="text-sm leading-6 text-slate-200">
 					Enter a name for this clip. Will return an error if name is a
 					duplicate. Leave blank for default name
-				</DialogContentText>
+				</p>
 				<TextField
 					value={text}
-					onChange={(e) => setText(e.currentTarget.value)}
 					autoFocus
-					margin="dense"
 					id="name"
 					label="Name"
 					type="text"
-					fullWidth
-					variant="standard"
 					autoComplete="off"
-					disabled={isLoading}
+					isDisabled={isLoading}
+					onChange={(value) => setText(value)}
 				/>
 			</BaseDialog>
 		</>

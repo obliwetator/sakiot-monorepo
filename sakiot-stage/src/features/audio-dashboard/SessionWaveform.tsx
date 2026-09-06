@@ -4,7 +4,7 @@ import {
 	useRebuildSessionWaveformMutation,
 	useRebuildSilenceFreeSessionWaveformMutation,
 } from "../../app/apiSlice";
-import { Box, Button, LinearProgress, Typography } from "../../shared/ui";
+import { Button, ProgressBar } from "../../shared/ui";
 import { formatSessionTimecode } from "../../utils/formatTime";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
 import { useSessionWaveformPeaks, WaveformCanvas } from "./WaveformCanvas";
@@ -100,65 +100,35 @@ export function SessionWaveform(props: {
 			label={`${waveformName} logical recording waveform`}
 		>
 			{buildInProgress && !waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						top: 0,
-						left: 0,
-						right: 0,
-						zIndex: 2,
-						px: 1,
-						py: 0.5,
-						bgcolor: "rgba(15, 23, 42, 0.78)",
-						pointerEvents: "none",
-					}}
-				>
-					<Typography variant="caption">
+				<div className="absolute top-0 left-0 right-0 [z-index:2] px-2 py-1 [background-color:rgba(15,_23,_42,_0.78)] pointer-events-none">
+					<span className="text-xs leading-5">
 						Building {waveformName.toLowerCase()} waveform ({rebuildProgress}%)
-					</Typography>
-					<LinearProgress variant="determinate" value={rebuildProgress} />
-				</Box>
+					</span>
+					<ProgressBar value={rebuildProgress} />
+				</div>
 			)}
 			{!data?.data && !buildInProgress && !waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						inset: 0,
-						display: "grid",
-						placeItems: "center",
-						zIndex: 1,
-						pointerEvents: "none",
-					}}
-				>
-					<Typography color="text.secondary" variant="caption">
+				<div className="absolute inset-0 grid [place-items:center] [z-index:1] pointer-events-none">
+					<span className="text-muted text-xs leading-5">
 						{waveformName} waveform has not been built.
 						{!props.silenceFree &&
 							" Channel Mix uses separate physical-source waveforms."}
-					</Typography>
-				</Box>
+					</span>
+				</div>
 			)}
 			{waveformError && (
-				<Box
-					sx={{
-						position: "absolute",
-						inset: 0,
-						display: "grid",
-						placeItems: "center",
-						zIndex: 2,
-						pointerEvents: "none",
-					}}
-				>
-					<Typography color="error" variant="caption">
+				<div className="absolute inset-0 grid [place-items:center] [z-index:2] pointer-events-none">
+					<span className="text-danger text-xs leading-5">
 						{waveformName} waveform unavailable.
-					</Typography>
-				</Box>
+					</span>
+				</div>
 			)}
 			<Button
-				size="small"
-				variant="contained"
-				onClick={() => void startRebuild()}
-				disabled={buildInProgress}
-				sx={{ position: "absolute", right: 8, bottom: 8, zIndex: 4 }}
+				className="absolute right-2 bottom-2 [z-index:4]"
+				variant="primary"
+				size="sm"
+				isDisabled={buildInProgress}
+				onPress={() => void startRebuild()}
 			>
 				{data?.data ? "Rebuild waveform" : "Build waveform"}
 			</Button>
@@ -181,14 +151,9 @@ export function SessionWaveformDisplay(props: {
 			: 0;
 
 	return (
-		<Box
-			sx={{
-				position: "relative",
-				height: WAVEFORM_HEIGHT_PX,
-				borderRadius: 1,
-				overflow: "hidden",
-				bgcolor: "rgba(168, 85, 247, 0.18)",
-			}}
+		<div
+			className="relative [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]"
+			style={{ height: WAVEFORM_HEIGHT_PX }}
 		>
 			<WaveformCanvas
 				peaks={props.peaks}
@@ -199,30 +164,14 @@ export function SessionWaveformDisplay(props: {
 			/>
 			<TimelineGrid />
 			{hoverFraction !== null && (
-				<Box
+				<div
 					aria-hidden="true"
-					sx={{
-						position: "absolute",
-						top: 0,
-						bottom: 0,
-						left: `${hoverFraction * 100}%`,
-						borderLeft: "1px solid rgba(125, 211, 252, 0.85)",
-						pointerEvents: "none",
-						zIndex: 3,
-					}}
+					className="absolute top-0 bottom-0 [border-left:1px_solid_rgba(125,_211,_252,_0.85)] pointer-events-none [z-index:3]"
+					style={{ left: `${hoverFraction * 100}%` }}
 				>
-					<Typography
-						variant="caption"
-						sx={{
-							position: "absolute",
-							top: 6,
-							px: 0.75,
-							py: 0.25,
-							borderRadius: 0.75,
-							bgcolor: "rgba(2, 6, 23, 0.9)",
-							color: "info.light",
-							fontVariantNumeric: "tabular-nums",
-							whiteSpace: "nowrap",
+					<span
+						className="text-xs leading-5 absolute top-1.5 px-1.5 py-0.5 [border-radius:0.75px] [background-color:rgba(2,_6,_23,_0.9)] [color:#7dd3fc] tabular-nums whitespace-nowrap"
+						style={{
 							transform:
 								hoverFraction < 0.1
 									? "translateX(4px)"
@@ -235,11 +184,11 @@ export function SessionWaveformDisplay(props: {
 							(hoverFraction * props.durationMs) / 1_000,
 							props.durationMs / 1_000,
 						)}
-					</Typography>
-				</Box>
+					</span>
+				</div>
 			)}
 			{props.children}
 			<TimelinePlayhead percent={playhead} />
-		</Box>
+		</div>
 	);
 }

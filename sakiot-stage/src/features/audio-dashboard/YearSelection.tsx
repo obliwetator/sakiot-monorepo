@@ -5,24 +5,23 @@ import { useGetAuthDetailsQuery } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import {
-	Box,
 	Button,
 	Drawer,
 	Tab,
+	TabList,
+	TabPanel,
 	Tabs,
 	useMediaQuery,
-	useTheme,
 } from "../../shared/ui";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { AudioInterface } from "./AudioInterface";
 import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
-import CustomizedTreeView from "./TreeView";
+import RecordingTree from "./TreeView";
 
 export function YearSelection() {
 	const params = useParams();
 	const location = useLocation();
-	const theme = useTheme();
-	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
+	const isDesktop = useMediaQuery("(min-width: 900px)");
 
 	const hasSilence = useAppSelector((state) => state.hasSilence.value);
 	const [tab, setTab] = React.useState<"normal" | "silence">("normal");
@@ -45,89 +44,49 @@ export function YearSelection() {
 		if (isDesktop) setTreeOpen(false);
 	}, [isDesktop]);
 
-	const tree = (
-		<CustomizedTreeView onRecordingSelect={() => setTreeOpen(false)} />
-	);
+	const tree = <RecordingTree onRecordingSelect={() => setTreeOpen(false)} />;
 
 	return (
-		<Box
-			sx={{
-				display: "flex",
-				flexDirection: "column",
-				width: "100%",
-				height: { md: "100%" },
-				overflow: "hidden",
-			}}
-		>
+		<div className="flex flex-col w-full min-[900px]:h-full overflow-hidden">
 			{!isDesktop && (
-				<Box sx={{ p: 1, flexShrink: 0 }}>
+				<div className="p-2 shrink-0">
 					<Button
-						variant="outlined"
-						fullWidth
-						startIcon={<FolderOpenIcon />}
-						onClick={() => setTreeOpen(true)}
+						className="w-full"
+						variant="outline"
+						onPress={() => setTreeOpen(true)}
 					>
+						<FolderOpenIcon />
 						Browse files
 					</Button>
 					<Drawer
-						anchor="left"
-						open={treeOpen}
-						onClose={() => setTreeOpen(false)}
-					>
-						<Box sx={{ width: 280, p: 1 }}>{tree}</Box>
-					</Drawer>
-				</Box>
-			)}
-			<Box sx={{ p: { xs: 1, md: 2 }, pb: 0, flexShrink: 0 }}>
-				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
-			</Box>
-			<Box
-				sx={{
-					display: "flex",
-					flexDirection: { xs: "column", md: "row" },
-					width: "100%",
-					minWidth: 0,
-					flex: 1,
-					minHeight: 0,
-					height: { md: "100%" },
-				}}
-			>
-				{isDesktop && (
-					<Box
-						sx={{
-							flex: "0 0 20%",
-							minWidth: 220,
-							maxWidth: 320,
-							height: "100%",
-							overflowY: "auto",
-							overflowX: "hidden",
-							// Hide scrollbar (Firefox / IE / WebKit)
-							scrollbarWidth: "none",
-							msOverflowStyle: "none",
-							"&::-webkit-scrollbar": { display: "none" },
+						isOpen={treeOpen}
+						side={"left"}
+						onOpenChange={(isOpen) => {
+							if (!isOpen) setTreeOpen(false);
 						}}
 					>
+						<div className="w-70 p-2">{tree}</div>
+					</Drawer>
+				</div>
+			)}
+			<div className="p-2 min-[900px]:p-4 pb-0 shrink-0">
+				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
+			</div>
+			<div className="flex flex-col min-[900px]:flex-row w-full min-w-0 flex-1 min-h-0 min-[900px]:h-full">
+				{isDesktop && (
+					<div
+						className={
+							"[flex:0_0_20%] min-w-55 max-w-80 h-full overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+						}
+					>
 						{tree}
-					</Box>
+					</div>
 				)}
 
-				<Box
-					sx={{
-						flex: 1,
-						minWidth: 0,
-						width: { xs: "100%", md: "auto" },
-						px: { xs: 1, md: 2 },
-						pb: 4,
-						height: { md: "100%" },
-						overflowY: { md: "auto" },
-						// Vertical scrolling must not implicitly turn this hidden-scrollbar
-						// container into a horizontally pannable one.
-						overflowX: "hidden",
-						// Hide scrollbar (Firefox / IE / WebKit)
-						scrollbarWidth: "none",
-						msOverflowStyle: "none",
-						"&::-webkit-scrollbar": { display: "none" },
-					}}
+				<div
+					className={
+						"flex-1 min-w-0 w-full min-[900px]:w-auto px-2 min-[900px]:px-4 pb-8 min-[900px]:h-full min-[900px]:overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+					}
 				>
 					{params.session_id ? (
 						<LogicalSessionPlayer
@@ -135,32 +94,41 @@ export function YearSelection() {
 							sessionId={params.session_id}
 						/>
 					) : params.year ? (
-						<>
-							<Tabs
-								value={activeTab}
-								onChange={(_e, v) => setTab(v)}
-								sx={{ mb: 1, minHeight: 36 }}
-							>
-								<Tab label="Normal" value="normal" sx={{ minHeight: 36 }} />
+						<Tabs
+							className="mb-2 min-h-9"
+							selectedKey={activeTab}
+							onSelectionChange={(value) => {
+								if (value === "normal" || value === "silence") setTab(value);
+							}}
+						>
+							<TabList aria-label="View">
+								<Tab className="min-h-9" id={"normal"}>
+									Normal
+								</Tab>
 								{hasSilence && (
-									<Tab
-										label="Silence-free"
-										value="silence"
-										sx={{ minHeight: 36 }}
-									/>
+									<Tab className="min-h-9" id={"silence"}>
+										Silence-free
+									</Tab>
 								)}
-							</Tabs>
-							<Box sx={{ display: activeTab === "normal" ? "block" : "none" }}>
+							</TabList>
+
+							<TabPanel
+								id="normal"
+								shouldForceMount
+								className="data-[inert]:hidden"
+							>
 								<AudioInterface
 									key={`${location.pathname}-nosilence`}
 									isClip={false}
 									userGuilds={userGuilds}
 									isSilence={false}
 								/>
-							</Box>
+							</TabPanel>
 							{hasSilence && (
-								<Box
-									sx={{ display: activeTab === "silence" ? "block" : "none" }}
+								<TabPanel
+									id="silence"
+									shouldForceMount
+									className="data-[inert]:hidden"
 								>
 									<AudioInterface
 										key={`${location.pathname}-silence`}
@@ -168,12 +136,12 @@ export function YearSelection() {
 										userGuilds={userGuilds}
 										isSilence={true}
 									/>
-								</Box>
+								</TabPanel>
 							)}
-						</>
+						</Tabs>
 					) : null}
-				</Box>
-			</Box>
-		</Box>
+				</div>
+			</div>
+		</div>
 	);
 }

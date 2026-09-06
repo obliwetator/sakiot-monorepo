@@ -5,15 +5,7 @@ import {
 	useGetGuildVoiceSettingsQuery,
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
-import {
-	Alert,
-	Box,
-	Button,
-	Paper,
-	Stack,
-	LegacyTextField as TextField,
-	Typography,
-} from "../../shared/ui";
+import { Button, Notice, TextField } from "../../shared/ui";
 
 const MIN_PENDING_SECONDS = 60;
 
@@ -54,66 +46,83 @@ export function GuildVoiceSettingsPage() {
 		setSeconds(String(restored.pending_cap_seconds));
 	};
 
-	if (!guildId) return <Box p={2}>Missing guild id.</Box>;
+	if (!guildId) return <div className="p-4">Missing guild id.</div>;
 
 	return (
-		<Box p={2} sx={{ maxWidth: 760 }}>
-			<Typography variant="h5" gutterBottom>
+		<div className="p-4 max-w-190">
+			<h5 className="font-semibold tracking-tight text-2xl mb-2">
 				Voice Settings
-			</Typography>
-			<Paper sx={{ p: 3 }}>
-				<Typography variant="h6" gutterBottom>
+			</h5>
+			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-6">
+				<h6 className="font-medium tracking-[0.001em] text-xl mb-2">
 					Pending recording timeout
-				</Typography>
-				<Typography color="text.secondary" sx={{ mb: 2 }}>
+				</h6>
+				<p className="leading-6 text-muted mb-4">
 					Guilds without an AFK channel finalize users who do not follow the bot
 					after this cap. Disconnect and AFK events still use a 60-second grace.
 					Guilds with an AFK channel have no absolute cap.
-				</Typography>
+				</p>
 
-				{isLoading && <Typography>Loading voice settings…</Typography>}
+				{isLoading && <p className="leading-6">Loading voice settings…</p>}
 				{isError && (
-					<Alert severity="error">Could not load voice settings.</Alert>
+					<Notice tone={"error"} announce="alert">
+						Could not load voice settings.
+					</Notice>
 				)}
 				{data && (
-					<Stack spacing={2}>
+					<div className="flex flex-col gap-4">
 						<TextField
 							label="Pending cap (seconds)"
 							type="number"
 							value={seconds}
-							onChange={(event) => setSeconds(event.target.value)}
-							inputProps={{ min: MIN_PENDING_SECONDS, step: 60 }}
-							helperText={
+							description={
 								data.is_default
 									? "Using six-hour default."
 									: "Guild override active."
 							}
+							onChange={(value) => setSeconds(value)}
+							min={MIN_PENDING_SECONDS}
+							step={60}
 						/>
-						<Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+						<div className="flex flex-col min-[600px]:flex-row gap-2">
 							<Button
-								variant="contained"
-								onClick={handleSave}
-								disabled={saveState.isLoading}
+								variant="primary"
+								isDisabled={saveState.isLoading}
+								onPress={handleSave}
 							>
 								Save override
 							</Button>
 							<Button
-								variant="outlined"
-								onClick={handleReset}
-								disabled={resetState.isLoading || data.is_default}
+								variant="outline"
+								isDisabled={resetState.isLoading || data.is_default}
+								onPress={handleReset}
 							>
 								Restore six-hour default
 							</Button>
-						</Stack>
-						{validation && <Alert severity="warning">{validation}</Alert>}
-						{saveState.isSuccess && <Alert severity="success">Saved.</Alert>}
-						{saveState.isError && <Alert severity="error">Save failed.</Alert>}
-						{resetState.isSuccess && (
-							<Alert severity="success">Default restored.</Alert>
+						</div>
+						{validation && (
+							<Notice tone={"warning"} announce="status">
+								{validation}
+							</Notice>
 						)}
-					</Stack>
+						{saveState.isSuccess && (
+							<Notice tone={"success"} announce="status">
+								Saved.
+							</Notice>
+						)}
+						{saveState.isError && (
+							<Notice tone={"error"} announce="alert">
+								Save failed.
+							</Notice>
+						)}
+						{resetState.isSuccess && (
+							<Notice tone={"success"} announce="status">
+								Default restored.
+							</Notice>
+						)}
+					</div>
 				)}
-			</Paper>
-		</Box>
+			</div>
+		</div>
 	);
 }

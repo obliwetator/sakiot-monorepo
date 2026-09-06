@@ -3,7 +3,6 @@ import {
 	ChevronDown as ExpandMoreIcon,
 	Film as MovieIcon,
 } from "lucide-react";
-import type React from "react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
@@ -18,30 +17,26 @@ import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
 import { canDeleteClip } from "../../shared/permissions";
 import {
-	Accordion,
-	AccordionDetails,
-	AccordionSummary,
-	Box,
 	Button,
-	Dialog,
-	DialogActions,
-	DialogContent,
-	DialogContentText,
-	DialogTitle,
+	cn,
+	DialogHeading,
+	Disclosure,
+	DisclosurePanel,
+	DisclosureTrigger,
 	Drawer,
-	Stack,
+	Modal,
 	Tab,
+	TabList,
+	TabPanel,
 	Tabs,
-	Typography,
 	useMediaQuery,
-	useTheme,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";
 import { isComposedClip } from "./composedClip";
 
-function SimpleAccordion(props: {
+function ClipList(props: {
 	data: ClipData[];
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
@@ -57,67 +52,51 @@ function SimpleAccordion(props: {
 		}
 	};
 
-	const handleChange =
-		(panel: string) => (_event: React.SyntheticEvent, isExpanded: boolean) => {
-			setExpanded(isExpanded ? panel : false);
-		};
+	const handleChange = (panel: string) => (isExpanded: boolean) => {
+		setExpanded(isExpanded ? panel : false);
+	};
 
 	const elements = props.data.map((el, index) => {
 		return (
-			<Accordion
+			<Disclosure
 				key={el.clip_id}
-				disableGutters
-				sx={{
-					mb: 1,
-					border: "1px solid",
-					borderColor: location.pathname.endsWith(
-						encodeURIComponent(el.clip_id),
-					)
-						? "secondary.main"
-						: "divider",
-					borderRadius: "8px !important",
-					boxShadow: "none",
-					"&:before": { display: "none" },
-				}}
 				onClick={() => {
 					handleClickAccordion(el.guild_id, el.clip_id);
 				}}
-				onChange={handleChange(`panel${index}`)}
-				expanded={expanded === `panel${index}`}
+				className={cn(
+					"mb-2 border [border-radius:8px_!important] [box-shadow:none] before:hidden",
+					location.pathname.endsWith(encodeURIComponent(el.clip_id))
+						? "border-creative"
+						: "border-ui-border",
+				)}
+				isExpanded={expanded === `panel${index}`}
+				onExpandedChange={handleChange(`panel${index}`)}
 			>
-				<AccordionSummary
-					expandIcon={<ExpandMoreIcon />}
-					aria-controls="panel1a-content"
-					id="panel1a-header"
-				>
-					<Box sx={{ minWidth: 0, flex: 1 }}>
-						<Typography sx={{ overflowWrap: "anywhere" }}>
+				<DisclosureTrigger icon={<ExpandMoreIcon />}>
+					<div className="min-w-0 flex-1">
+						<p className="leading-6 [overflow-wrap:anywhere]">
 							{el.name || "Unnamed clip"}
-						</Typography>
-						<Typography variant="caption" color="text.secondary">
+						</p>
+						<span className="text-muted text-xs leading-5">
 							{formatDuration(el.length ?? 0)} · User {el.user_id}
-						</Typography>
-					</Box>
-				</AccordionSummary>
-				<AccordionDetails>
-					<Stack spacing={0.5}>
+						</span>
+					</div>
+				</DisclosureTrigger>
+				<DisclosurePanel>
+					<div className="flex flex-col gap-1">
 						{isComposedClip(el) ? (
-							<Typography variant="caption" color="text.secondary">
+							<span className="text-muted text-xs leading-5">
 								Composed in the clip editor
-							</Typography>
+							</span>
 						) : (
 							<>
-								<Typography variant="body2">
+								<p className="text-sm">
 									Channel {el.channel_id} · source offset{" "}
 									{formatDuration(el.start_time)}
-								</Typography>
-								<Typography
-									variant="caption"
-									color="text.secondary"
-									sx={{ overflowWrap: "anywhere" }}
-								>
+								</p>
+								<span className="text-muted text-xs leading-5 [overflow-wrap:anywhere]">
 									{el.original_file_name || "Unknown source recording"}
-								</Typography>
+								</span>
 							</>
 						)}
 						<AlertDialog
@@ -128,9 +107,9 @@ function SimpleAccordion(props: {
 								el.user_id,
 							)}
 						/>
-					</Stack>
-				</AccordionDetails>
-			</Accordion>
+					</div>
+				</DisclosurePanel>
+			</Disclosure>
 		);
 	});
 	return <div>{elements}</div>;
@@ -171,32 +150,38 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 	return (
 		<div>
 			<Button
-				variant="contained"
-				color="error"
-				disabled={!props.canDelete}
-				onClick={handleClickOpen}
+				variant="danger"
+				isDisabled={!props.canDelete}
+				onPress={handleClickOpen}
 			>
 				Delete
 			</Button>
-			<Dialog
-				open={open}
-				onClose={handleClose}
+			<Modal
 				aria-labelledby="alert-dialog-title"
 				aria-describedby="alert-dialog-description"
+				isOpen={open}
+				onOpenChange={(isOpen) => {
+					if (!isOpen) handleClose();
+				}}
 			>
-				<DialogTitle id="alert-dialog-title">{"Confirm deletion?"}</DialogTitle>
-				<DialogContent>
-					<DialogContentText id="alert-dialog-description">
+				<DialogHeading id="alert-dialog-title">
+					{"Confirm deletion?"}
+				</DialogHeading>
+				<div className="space-y-3 px-5 py-4">
+					<p
+						id="alert-dialog-description"
+						className="text-sm leading-6 text-slate-200"
+					>
 						Are you sure you want to delete the clip?
-					</DialogContentText>
-				</DialogContent>
-				<DialogActions>
-					<Button onClick={handleClose}>No</Button>
-					<Button onClick={handleYes} autoFocus>
+					</p>
+				</div>
+				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
+					<Button onPress={handleClose}>No</Button>
+					<Button autoFocus onPress={handleYes}>
 						YEP
 					</Button>
-				</DialogActions>
-			</Dialog>
+				</div>
+			</Modal>
 		</div>
 	);
 }
@@ -233,7 +218,7 @@ export default function Clips() {
 
 	if (isSuccess && data) {
 		return (
-			<Box sx={{ p: { xs: 1.5, md: 3 } }}>
+			<div className="p-3 min-[900px]:p-6">
 				<ViewAsRoleBanner guildId={guildId} />
 				<ClipsLayout
 					data={data}
@@ -241,7 +226,7 @@ export default function Clips() {
 					currentUserId={authData?.user?.user_id ?? null}
 					guildSelected={guild}
 				/>
-			</Box>
+			</div>
 		);
 	} else {
 		return <div>No clip data</div>;
@@ -254,8 +239,7 @@ function ClipsLayout(props: {
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
 }) {
-	const theme = useTheme();
-	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
+	const isDesktop = useMediaQuery("(min-width: 900px)");
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const navigate = useNavigate();
 	const [clipTab, setClipTab] = useState<"clips" | "combined">(() => {
@@ -273,49 +257,57 @@ function ClipsLayout(props: {
 	}, [isDesktop]);
 
 	const composedClips = props.data.filter(isComposedClip);
-	const shownClips =
-		clipTab === "combined"
-			? composedClips
-			: props.data.filter((clip) => !isComposedClip(clip));
+	const pureClips = props.data.filter((clip) => !isComposedClip(clip));
 
 	const list = (
 		<>
-			<Box sx={{ p: 1 }}>
+			<div className="p-2">
 				<Button
-					variant="contained"
-					fullWidth
-					startIcon={<ContentCutIcon />}
-					onClick={() =>
+					className="w-full"
+					variant="primary"
+					onPress={() =>
 						navigate(
 							`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.params.guild_id}/clips/editor`,
 						)
 					}
 				>
+					<ContentCutIcon />
 					Clip editor
 				</Button>
-			</Box>
+			</div>
 			<Tabs
-				value={clipTab}
-				onChange={(_event, value: "clips" | "combined") => setClipTab(value)}
-				variant="fullWidth"
-				sx={{ borderBottom: 1, borderColor: "divider" }}
+				className="border-b border-ui-border"
+				selectedKey={clipTab}
+				onSelectionChange={(value) => {
+					if (value === "clips" || value === "combined") setClipTab(value);
+				}}
 			>
-				<Tab label="Clips" value="clips" />
-				<Tab
-					label={`Combined${composedClips.length > 0 ? ` (${composedClips.length})` : ""}`}
-					value="combined"
-				/>
+				<TabList aria-label="View">
+					<Tab id={"clips"}>Clips</Tab>
+					<Tab
+						id={"combined"}
+					>{`Combined${composedClips.length > 0 ? ` (${composedClips.length})` : ""}`}</Tab>
+				</TabList>
+				<TabPanel id="clips">
+					<ClipList
+						data={pureClips}
+						currentUserId={props.currentUserId}
+						guildSelected={props.guildSelected}
+					/>
+				</TabPanel>
+				<TabPanel id="combined">
+					{composedClips.length === 0 && (
+						<p className="text-muted text-sm p-4">
+							No combined clips yet. Export a composition from the clip editor.
+						</p>
+					)}
+					<ClipList
+						data={composedClips}
+						currentUserId={props.currentUserId}
+						guildSelected={props.guildSelected}
+					/>
+				</TabPanel>
 			</Tabs>
-			{clipTab === "combined" && composedClips.length === 0 && (
-				<Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-					No combined clips yet. Export a composition from the clip editor.
-				</Typography>
-			)}
-			<SimpleAccordion
-				data={shownClips}
-				currentUserId={props.currentUserId}
-				guildSelected={props.guildSelected}
-			/>
 		</>
 	);
 
@@ -328,55 +320,38 @@ function ClipsLayout(props: {
 	const absoluteStartMs = clipAbsoluteStartMs(selectedClip ?? null);
 
 	return (
-		<Box
-			sx={{
-				display: "flex",
-				flexDirection: { xs: "column", md: "row" },
-				width: "100%",
-				gap: 1,
-			}}
-		>
+		<div className="flex flex-col min-[900px]:flex-row w-full gap-2">
 			{isDesktop ? (
-				<Box
-					sx={{
-						flex: "0 0 34%",
-						maxWidth: 480,
-						width: "100%",
-						overflow: "auto",
-						p: 1,
-					}}
-				>
+				<div className="[flex:0_0_34%] max-w-120 w-full overflow-auto p-2">
 					{list}
-				</Box>
+				</div>
 			) : (
-				<Box sx={{ p: 1 }}>
+				<div className="p-2">
 					<Button
-						variant="outlined"
-						fullWidth
-						startIcon={<MovieIcon />}
-						onClick={() => setDrawerOpen(true)}
+						className="w-full"
+						variant="outline"
+						onPress={() => setDrawerOpen(true)}
 					>
+						<MovieIcon />
 						Browse clips
 					</Button>
-					<Typography
-						variant="body2"
-						color="text.secondary"
-						sx={{ mt: 1, px: 0.5, wordBreak: "break-word" }}
-					>
+					<p className="text-muted text-sm mt-2 px-1 [word-break:break-word]">
 						{selectedClip
 							? `Current: ${selectedClip.name}`
 							: "No clip selected"}
-					</Typography>
+					</p>
 					<Drawer
-						anchor="left"
-						open={drawerOpen}
-						onClose={() => setDrawerOpen(false)}
+						isOpen={drawerOpen}
+						side={"left"}
+						onOpenChange={(isOpen) => {
+							if (!isOpen) setDrawerOpen(false);
+						}}
 					>
-						<Box sx={{ width: 320 }}>{list}</Box>
+						<div className="w-80">{list}</div>
 					</Drawer>
-				</Box>
+				</div>
 			)}
-			<Box sx={{ flex: 1, minWidth: 0 }}>
+			<div className="flex-1 min-w-0">
 				{selectedClip && (
 					<ClipPlayer
 						key={selectedClip.clip_id}
@@ -389,7 +364,7 @@ function ClipsLayout(props: {
 						)}
 					/>
 				)}
-			</Box>
-		</Box>
+			</div>
+		</div>
 	);
 }

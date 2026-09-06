@@ -1,6 +1,6 @@
 import type { Dirs, IndividualFile, MonthNumber } from "../../../Constants";
+import { TreeItem, TreeItemContent } from "../../../shared/ui";
 import { LiveDot } from "./LiveDot";
-import { StyledTreeItem } from "./StyledTreeItem";
 import { TreeViewMonths } from "./TreeViewMonths";
 
 function anyLive(files: IndividualFile[], liveSet: Set<string>): boolean {
@@ -38,16 +38,14 @@ export function TreeViewYears(props: {
 	});
 
 	return (
-		<StyledTreeItem
-			label={
+		<TreeItem id={`${props.el.year}`} textValue={String(props.el.year)}>
+			<TreeItemContent>
 				<span className="inline-flex items-center">
 					{props.el.year}
 					{hasLive && <LiveDot />}
 				</span>
-			}
-			itemId={`${props.el.year}`}
-		>
+			</TreeItemContent>
 			{result}
-		</StyledTreeItem>
+		</TreeItem>
 	);
 }

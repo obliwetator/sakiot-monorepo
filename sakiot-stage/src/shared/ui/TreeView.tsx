@@ -1,179 +1,67 @@
+import type { ComponentProps, RefAttributes } from "react";
+import { composeRenderProps } from "react-aria-components";
 import {
-	Children,
-	createContext,
-	type HTMLAttributes,
-	isValidElement,
-	type ReactNode,
-	type SyntheticEvent,
-	useContext,
-} from "react";
+	Tree as AriaTree,
+	TreeItem as AriaTreeItem,
+	TreeItemContent as AriaTreeItemContent,
+	type TreeItemProps,
+	type TreeProps,
+} from "react-aria-components/Tree";
+import { Button } from "./Button";
 import { cn } from "./cn";
-import { omitCompatProps, type SxProps, sxToStyle } from "./theme";
-
-export interface SimpleTreeViewProps extends HTMLAttributes<HTMLDivElement> {
-	expandedItems?: string[];
-	selectedItems?: string | null;
-	onExpandedItemsChange?: (
-		event: SyntheticEvent | null,
-		itemIds: string[],
-	) => void;
-	onSelectedItemsChange?: (
-		event: SyntheticEvent | null,
-		itemId: string | null,
-	) => void;
-	onItemClick?: (event: SyntheticEvent | null, itemId: string) => void;
-	children?: ReactNode;
-	className?: string;
-	[key: string]: any;
-}
-
-interface TreeContextValue {
-	expanded: Set<string>;
-	selected: string | null;
-	toggle: (id: string) => void;
-	select: (id: string) => void;
-}
-const TreeContext = createContext<TreeContextValue | null>(null);
-const TreeLevelContext = createContext({ depth: 0, isLast: true });
-
-function toggleId(ids: string[], id: string) {
-	return ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id];
-}
-
-export function SimpleTreeView(props: SimpleTreeViewProps) {
-	const expanded = new Set<string>(props.expandedItems ?? []);
-	const context: TreeContextValue = {
-		expanded,
-		selected: props.selectedItems ?? null,
-		toggle: (id) =>
-			props.onExpandedItemsChange?.(null, toggleId([...expanded], id)),
-		select: (id) => {
-			props.onSelectedItemsChange?.(null, id);
-			props.onItemClick?.(null, id);
-		},
-	};
-	return (
-		<TreeContext.Provider value={context}>
-			<TreeLevelContext.Provider value={{ depth: 0, isLast: true }}>
-				<div
-					role="tree"
-					{...omitCompatProps(props)}
-					className={cn("w-full", props.className)}
-				>
-					{props.children}
-				</div>
-			</TreeLevelContext.Provider>
-		</TreeContext.Provider>
-	);
-}
-
-export interface TreeItemProps extends HTMLAttributes<HTMLDivElement> {
-	itemId: string;
-	label?: ReactNode;
-	sx?: SxProps;
-	children?: ReactNode;
-	[key: string]: any;
-}
-
-export function TreeItem({
-	itemId,
-	label,
-	children,
+export function Tree<T extends object>({
 	className,
-	sx,
 	...props
-}: TreeItemProps) {
-	const parent = useContext(TreeContext);
-	const { depth, isLast } = useContext(TreeLevelContext);
-	const expanded = parent?.expanded.has(itemId) ?? false;
-	const selected = parent?.selected === itemId;
-	const childItems = Children.toArray(children);
-	const hasChildren = childItems.length > 0;
-	const handleRowClick = () => {
-		if (hasChildren) parent?.toggle(itemId);
-		else parent?.select(itemId);
-	};
+}: TreeProps<T> & RefAttributes<HTMLDivElement>) {
 	return (
-		<div
-			{...omitCompatProps(props)}
-			role="treeitem"
-			tabIndex={-1}
-			aria-expanded={hasChildren ? expanded : undefined}
-			aria-selected={selected}
-			className={cn("relative", className)}
-			style={sxToStyle(sx)}
-		>
-			{depth > 0 && (
-				<>
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute -left-2 top-[18px] w-2 border-t-2 border-ui-border"
-					/>
-					{!isLast && (
-						<span
-							aria-hidden="true"
-							className="pointer-events-none absolute -bottom-[22px] -left-2 top-[18px] border-l-2 border-ui-border"
-						/>
-					)}
-				</>
+		<AriaTree
+			{...props}
+			className={composeRenderProps(className, (className) =>
+				cn("w-full space-y-1 outline-hidden", className),
 			)}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: the row handles mouse and keyboard selection */}
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: the row handles mouse and keyboard selection */}
-			<div
-				className={cn(
-					"relative flex min-h-9 w-full cursor-pointer items-center rounded-md border border-transparent bg-surface-raised px-2 text-left text-sm text-fg transition-colors hover:bg-header focus-within:outline-2 focus-within:outline-compat-primary focus-within:outline-offset-1",
-					selected &&
-						"border-compat-primary/55 bg-ui-border text-fg shadow-panel",
-				)}
-				onClick={(event) => {
-					event.stopPropagation();
-					handleRowClick();
-				}}
-			>
-				{hasChildren && (
-					<button
-						type="button"
-						aria-label={expanded ? "Collapse" : "Expand"}
-						onClick={(event) => {
-							event.stopPropagation();
-							parent?.toggle(itemId);
-						}}
-						className="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-fg hover:bg-ui-border"
-					>
-						{expanded ? "▾" : "▸"}
-					</button>
-				)}
-				<div className="min-w-0 flex-1 text-left">{label}</div>
-			</div>
-			{hasChildren && expanded && (
-				<div className="relative ml-3 space-y-1 pl-2 pt-1">
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute left-0 top-0 h-[22px] border-l-2 border-ui-border"
-					/>
-					{childItems.map((child, index) => {
-						const key =
-							isValidElement(child) && child.key != null ? child.key : index;
-						return (
-							<TreeLevelContext.Provider
-								key={key}
-								value={{
-									depth: depth + 1,
-									isLast: index === childItems.length - 1,
-								}}
-							>
-								{child}
-							</TreeLevelContext.Provider>
-						);
-					})}
-				</div>
-			)}
-		</div>
+		/>
 	);
 }
-
-export const treeItemClasses = {
-	content: "tree-item-content",
-	selected: "tree-item-selected",
-	iconContainer: "tree-item-icon",
-};
+export function TreeItem<T extends object>({
+	className,
+	...props
+}: TreeItemProps<T> & RefAttributes<HTMLDivElement>) {
+	return (
+		<AriaTreeItem
+			{...props}
+			className={composeRenderProps(className, (className) =>
+				cn(
+					"ml-[calc((var(--tree-item-level)-1)*20px)] relative flex min-h-9 cursor-default items-center rounded-md border border-transparent bg-surface-raised px-2 text-sm text-fg outline-hidden transition-colors data-[hovered]:bg-header data-[selected]:border-accent/55 data-[selected]:bg-ui-border data-[focus-visible]:outline-2 data-[focus-visible]:outline-accent",
+					className,
+				),
+			)}
+		/>
+	);
+}
+export function TreeItemContent({
+	children,
+	...props
+}: ComponentProps<typeof AriaTreeItemContent>) {
+	return (
+		<AriaTreeItemContent {...props}>
+			{composeRenderProps(
+				children,
+				(children, { hasChildItems, isExpanded }) => (
+					<>
+						{hasChildItems && (
+							<Button
+								slot="chevron"
+								aria-label={isExpanded ? "Collapse" : "Expand"}
+								variant="ghost"
+								className="mr-1 size-5 min-h-0 shrink-0 p-0 text-fg"
+							>
+								{isExpanded ? "▾" : "▸"}
+							</Button>
+						)}
+						<span className="min-w-0 flex-1">{children}</span>
+					</>
+				),
+			)}
+		</AriaTreeItemContent>
+	);
+}

@@ -1,4 +1,4 @@
-import { Alert, Box, Typography } from "../../shared/ui";
+import { Notice } from "../../shared/ui";
 import { PlaybackControls } from "./PlaybackControls";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
@@ -26,7 +26,7 @@ export function SilenceFreePlayer(props: {
 	const displayedPositionMs = props.seekPreviewMs ?? props.positionMs;
 
 	return (
-		<Box sx={{ py: 1 }}>
+		<div className="py-2">
 			<SessionPlaybackTimeline
 				positionMs={displayedPositionMs}
 				durationMs={props.durationMs}
@@ -44,14 +44,10 @@ export function SilenceFreePlayer(props: {
 				}
 			/>
 
-			<Typography
-				variant="caption"
-				color="text.secondary"
-				sx={{ display: "block", mt: 0.5 }}
-			>
+			<span className="text-muted text-xs leading-5 block mt-1">
 				Silence-free playback has compressed timestamps. The Clip window below
 				uses this same silence-free timeline while this tab is selected.
-			</Typography>
+			</span>
 
 			<PlaybackControls
 				playing={props.playing}
@@ -62,10 +58,10 @@ export function SilenceFreePlayer(props: {
 				onPlaybackRateChange={props.onPlaybackRateChange}
 			/>
 			{props.playbackError && (
-				<Alert severity="error" sx={{ mt: 1 }}>
+				<Notice className="mt-2" tone={"error"} announce="alert">
 					{props.playbackError}
-				</Alert>
+				</Notice>
 			)}
-		</Box>
+		</div>
 	);
 }

@@ -1,20 +1,14 @@
 import { ChevronDown as ExpandMoreIcon } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import {
-	Accordion,
-	AccordionDetails,
-	AccordionSummary,
-	Alert,
-	Box,
+	Badge,
 	Button,
-	Chip,
-	FormControl,
-	InputLabel,
-	MenuItem,
-	Paper,
+	Disclosure,
+	DisclosurePanel,
+	DisclosureTrigger,
+	Notice,
 	Select,
-	Stack,
-	Typography,
+	SelectItem,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import type { PlaybackSegment } from "./logicalSessionTimeline";
@@ -31,51 +25,46 @@ export function LogicalSessionSummary(props: {
 	const current = props.currentSegment;
 	return (
 		<>
-			<Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 2 }}>
-				<Chip label={`Session ${props.sessionId}`} />
-				<Chip
-					label={props.state}
-					color={props.state === "active" ? "error" : "default"}
-				/>
-				<Chip label={`User ${props.userId}`} />
-				<Chip
-					label={`${props.physicalCount} physical ${
-						props.physicalCount === 1 ? "file" : "files"
-					}`}
-					variant="outlined"
-				/>
+			<div className="flex flex-wrap flex-row gap-2 mb-4">
+				<Badge>{`Session ${props.sessionId}`}</Badge>
+				<Badge tone={props.state === "active" ? "danger" : "neutral"}>
+					{props.state}
+				</Badge>
+				<Badge>{`User ${props.userId}`}</Badge>
+				<Badge appearance={"outline"}>{`${props.physicalCount} physical ${
+					props.physicalCount === 1 ? "file" : "files"
+				}`}</Badge>
 				{current && (
-					<Chip
-						label={
+					<Badge
+						tone={
 							current.reason === "channel_filtered"
-								? `Channel ${current.channel_id ?? "?"} muted`
-								: current.kind === "silence"
-									? `Silence · ${current.reason ?? "gap"}`
-									: `Channel ${current.channel_id ?? "?"}`
-						}
-						color={
-							current.reason === "channel_filtered"
-								? "default"
+								? "neutral"
 								: current.kind === "silence"
 									? "warning"
-									: "primary"
+									: "accent"
 						}
-					/>
+					>
+						{current.reason === "channel_filtered"
+							? `Channel ${current.channel_id ?? "?"} muted`
+							: current.kind === "silence"
+								? `Silence · ${current.reason ?? "gap"}`
+								: `Channel ${current.channel_id ?? "?"}`}
+					</Badge>
 				)}
-			</Stack>
-			<Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+			</div>
+			<p className="text-muted text-sm mb-2">
 				Started {new Date(props.startedAtMs).toLocaleString()} · duration{" "}
 				{formatDuration(props.durationMs / 1_000)}
-			</Typography>
+			</p>
 		</>
 	);
 }
 
 export function PlaybackActionsPanel(props: { children: ReactNode }) {
 	return (
-		<Paper variant="outlined" sx={{ p: 2, my: 2 }}>
+		<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none p-4 my-4">
 			{props.children}
-		</Paper>
+		</div>
 	);
 }
 
@@ -84,9 +73,12 @@ export function SessionClipEditorPanel(props: {
 	panelRef: RefObject<HTMLDivElement | null>;
 }) {
 	return (
-		<Paper ref={props.panelRef} sx={{ p: 2, my: 2 }}>
+		<div
+			ref={props.panelRef}
+			className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-4 my-4"
+		>
 			{props.children}
-		</Paper>
+		</div>
 	);
 }
 
@@ -100,107 +92,90 @@ export function PhysicalRecordingsPanel(props: {
 	onSeek: (positionMs: number) => void;
 }) {
 	return (
-		<Accordion variant="outlined" disableGutters sx={{ my: 2 }}>
-			<AccordionSummary
-				expandIcon={<ExpandMoreIcon />}
-				aria-controls={`session-${props.sessionId}-physical-content`}
-				id={`session-${props.sessionId}-physical-header`}
-			>
-				<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-					<Typography>Physical recordings</Typography>
-					<Chip
-						size="small"
-						variant="outlined"
-						label={`${props.fragments.length} ${
-							props.fragments.length === 1 ? "file" : "files"
-						}`}
-					/>
+		<Disclosure className="my-4">
+			<DisclosureTrigger icon={<ExpandMoreIcon />}>
+				<div className="flex items-center flex-wrap flex-row gap-2">
+					<p className="leading-6">Physical recordings</p>
+					<Badge
+						appearance={"outline"}
+						size={"sm"}
+					>{`${props.fragments.length} ${
+						props.fragments.length === 1 ? "file" : "files"
+					}`}</Badge>
 					{props.effectiveChannelId && (
-						<Chip
-							size="small"
-							color="primary"
-							label={`Channel ${props.effectiveChannelId} only`}
-						/>
+						<Badge
+							tone={"accent"}
+							size={"sm"}
+						>{`Channel ${props.effectiveChannelId} only`}</Badge>
 					)}
-				</Stack>
-			</AccordionSummary>
-			<AccordionDetails id={`session-${props.sessionId}-physical-content`}>
-				<Stack
-					direction={{ xs: "column", md: "row" }}
-					spacing={2}
-					justifyContent="space-between"
-					alignItems={{ xs: "stretch", md: "flex-start" }}
-				>
-					<Typography variant="body2" color="text.secondary">
+				</div>
+			</DisclosureTrigger>
+			<DisclosurePanel>
+				<div className="flex justify-between items-stretch min-[900px]:items-start flex-col min-[900px]:flex-row gap-4">
+					<p className="text-muted text-sm">
 						Session combines channel-bound files into one timestamp-aligned
 						timeline.
-					</Typography>
+					</p>
 					{props.channelIds.length > 1 && (
-						<FormControl size="small" sx={{ minWidth: 260 }}>
-							<InputLabel id={`session-${props.sessionId}-channel-label`}>
-								Playback channel
-							</InputLabel>
+						<div className="relative flex min-w-65">
 							<Select
-								labelId={`session-${props.sessionId}-channel-label`}
 								label="Playback channel"
-								value={props.effectiveChannelId ?? ""}
-								onChange={(event) =>
-									props.onSelectChannel(event.target.value || null)
+								selectedKey={props.effectiveChannelId ?? ""}
+								onSelectionChange={(value) =>
+									props.onSelectChannel(
+										value === null || value === "" ? null : String(value),
+									)
 								}
 							>
-								<MenuItem value="">All channels</MenuItem>
+								<SelectItem id={""}>All channels</SelectItem>
 								{props.channelIds.map((channelId) => {
 									const count = props.allFragments.filter(
 										(fragment) => fragment.channel_id === channelId,
 									).length;
 									return (
-										<MenuItem key={channelId} value={channelId}>
+										<SelectItem key={channelId} id={channelId}>
 											Channel {channelId} · {count}{" "}
 											{count === 1 ? "file" : "files"}
-										</MenuItem>
+										</SelectItem>
 									);
 								})}
 							</Select>
-						</FormControl>
+						</div>
 					)}
-				</Stack>
-				<Stack spacing={0.75} sx={{ mt: 1.5 }}>
+				</div>
+				<div className="flex flex-col gap-1.5 mt-3">
 					{props.fragments.map((fragment, index) => (
 						<Button
 							key={
 								fragment.audio_file_id ??
 								`${fragment.start_ms}-${fragment.end_ms}`
 							}
-							variant="text"
-							onClick={() => props.onSeek(fragment.start_ms)}
-							sx={{
-								justifyContent: "flex-start",
-								textTransform: "none",
-								px: 1,
-							}}
+							className="justify-start [text-transform:none] px-2"
+							variant="ghost"
+							onPress={() => props.onSeek(fragment.start_ms)}
 						>
-							<Box sx={{ textAlign: "left" }}>
-								<Typography variant="body2">
+							<div className="text-left">
+								<p className="text-sm">
 									Fragment {(fragment.segment_index ?? index) + 1} · Channel{" "}
 									{fragment.channel_id ?? "?"} ·{" "}
 									{formatDuration(fragment.start_ms / 1_000)} –{" "}
 									{formatDuration(fragment.end_ms / 1_000)}
-								</Typography>
-								<Typography variant="caption" color="text.secondary">
+								</p>
+								<span className="text-muted text-xs leading-5">
 									{fragment.file_name ?? `File ${fragment.audio_file_id}`}
-								</Typography>
-							</Box>
+								</span>
+							</div>
 						</Button>
 					))}
-				</Stack>
+				</div>
 				{props.effectiveChannelId && (
-					<Alert severity="info" sx={{ mt: 1.5 }}>
+					<Notice className="mt-3" tone={"info"} announce="status">
 						Only Channel {props.effectiveChannelId} plays. Other channels stay
 						muted while timeline offsets remain unchanged. Downloads and clips
 						still use full session.
-					</Alert>
+					</Notice>
 				)}
-			</AccordionDetails>
-		</Accordion>
+			</DisclosurePanel>
+		</Disclosure>
 	);
 }

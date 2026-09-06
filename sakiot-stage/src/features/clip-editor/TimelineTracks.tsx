@@ -6,13 +6,11 @@ import {
 import { type PointerEvent as ReactPointerEvent, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
 import {
-	Box,
 	Button,
-	DialogContentText,
+	cn,
 	IconButton,
-	keyframes,
 	Tooltip,
-	Typography,
+	TooltipTrigger,
 } from "../../shared/ui";
 import {
 	TimelinePlayhead,
@@ -40,10 +38,6 @@ import { useProcessedSegmentWaveform } from "./useProcessedSegmentWaveform";
 const TRACK_HEIGHT_PX = 83;
 const HANDLE_WIDTH_PX = 7;
 const SEGMENT_INTERACTION_BAR_HEIGHT_PX = 12;
-const copiedDashes = keyframes`
-	from { stroke-dashoffset: 0; }
-	to { stroke-dashoffset: -18; }
-`;
 
 export interface DragPreviewState {
 	clipId: string;
@@ -75,32 +69,20 @@ function TrackLabel(props: {
 
 	return (
 		<>
-			<Box
-				sx={{
-					display: "flex",
-					flexDirection: "column",
-					alignItems: "flex-end",
-					gap: 0.25,
-					minWidth: 0,
-					maxWidth: "100%",
-				}}
-			>
-				<Typography
-					variant="caption"
-					noWrap
+			<div className="flex flex-col items-end gap-0.5 min-w-0 max-w-full">
+				<span
 					title={`Track ${props.track + 1}`}
-					sx={{ minWidth: 0, maxWidth: "100%" }}
+					className="text-xs leading-5 truncate min-w-0 max-w-full"
 				>
 					Track {props.track + 1}
-				</Typography>
-				<Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-					<Tooltip title={props.muted ? "Unmute track" : "Mute track"}>
+				</span>
+				<div className="flex items-center gap-0.5">
+					<TooltipTrigger delay={400}>
 						<IconButton
-							size="small"
 							aria-label={props.muted ? "Unmute track" : "Mute track"}
-							color={props.muted ? "warning" : "default"}
-							onClick={props.onToggleMute}
-							sx={{ p: 0.25, flex: "0 0 auto" }}
+							className="p-0.5 flex-none"
+							size="sm"
+							onPress={props.onToggleMute}
 						>
 							{props.muted ? (
 								<VolumeOffIcon size={16} />
@@ -108,48 +90,46 @@ function TrackLabel(props: {
 								<VolumeUpIcon size={16} />
 							)}
 						</IconButton>
-					</Tooltip>
-					<Tooltip
-						title={
-							props.canRemove
+						<Tooltip>{props.muted ? "Unmute track" : "Mute track"}</Tooltip>
+					</TooltipTrigger>
+					<TooltipTrigger delay={400}>
+						<IconButton
+							aria-label="Remove track"
+							className="p-0.5 flex-none"
+							size="sm"
+							isDisabled={!props.canRemove}
+							onPress={requestRemove}
+						>
+							<CloseIcon size={16} />
+						</IconButton>
+						<Tooltip>
+							{props.canRemove
 								? props.clipCount > 0
 									? "Remove track and confirm clip deletion"
 									: "Remove track"
-								: "At least one track is required"
-						}
-					>
-						<span>
-							<IconButton
-								size="small"
-								aria-label="Remove track"
-								disabled={!props.canRemove}
-								onClick={requestRemove}
-								sx={{ p: 0.25, flex: "0 0 auto" }}
-							>
-								<CloseIcon size={16} />
-							</IconButton>
-						</span>
-					</Tooltip>
-				</Box>
-			</Box>
+								: "At least one track is required"}
+						</Tooltip>
+					</TooltipTrigger>
+				</div>
+			</div>
 			<BaseDialog
 				open={confirmOpen}
 				onClose={() => setConfirmOpen(false)}
 				title={`Remove Track ${props.track + 1}?`}
 				actions={
 					<>
-						<Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
-						<Button variant="contained" color="error" onClick={confirmRemove}>
+						<Button onPress={() => setConfirmOpen(false)}>Cancel</Button>
+						<Button variant="danger" onPress={confirmRemove}>
 							Remove track
 						</Button>
 					</>
 				}
 			>
-				<DialogContentText>
+				<p className="text-sm leading-6 text-slate-200">
 					This track contains {props.clipCount} clip
 					{props.clipCount === 1 ? "" : "s"}. Removing the track will also
 					delete those clips from the edit. Do you want to continue?
-				</DialogContentText>
+				</p>
 			</BaseDialog>
 		</>
 	);
@@ -229,24 +209,20 @@ export function TrackRow(props: {
 				/>
 			}
 		>
-			<Box
+			<div
 				ref={(element: HTMLDivElement | null) => props.onRowRef(element)}
 				onClick={props.onActivate}
 				onPointerDown={(event) => props.onBeginMarquee(event, track)}
-				sx={{
-					position: "relative",
-					height: TRACK_HEIGHT_PX,
-					mb: 0.5,
-					borderRadius: 1,
-					bgcolor: props.active
-						? "rgba(56, 189, 248, 0.09)"
-						: "rgba(148, 163, 184, 0.06)",
-					outline: props.active ? "1px solid rgba(56, 189, 248, 0.45)" : "none",
-					outlineOffset: 1,
-					cursor: "pointer",
-					overflow: "hidden",
-					touchAction: "none",
-				}}
+				className={cn(
+					"relative mb-1 [border-radius:1px] [outline-offset:1px] [cursor:pointer] overflow-hidden touch-none",
+					props.active
+						? "[background-color:rgba(56,_189,_248,_0.09)]"
+						: "[background-color:rgba(148,_163,_184,_0.06)]",
+					props.active
+						? "[outline:1px_solid_rgba(56,_189,_248,_0.45)]"
+						: "[outline:none]",
+				)}
+				style={{ height: TRACK_HEIGHT_PX }}
 			>
 				{elements.map((element) => {
 					if (element.kind === "group") {
@@ -348,7 +324,7 @@ export function TrackRow(props: {
 					/>
 				))}
 				<TimelinePlayhead percent={props.fraction(editor.positionSec)} />
-			</Box>
+			</div>
 		</TimelineRow>
 	);
 }
@@ -444,56 +420,38 @@ function TrackSegment(props: {
 
 	const resizeHandles = (
 		<>
-			<Box
+			<div
 				onPointerDown={(event) => beginGesture(event, "left")}
-				sx={{
-					position: "absolute",
-					top: 0,
-					bottom: 0,
-					left: 0,
-					width: HANDLE_WIDTH_PX,
-					cursor: "ew-resize",
-				}}
+				className="absolute top-0 bottom-0 left-0 [cursor:ew-resize]"
+				style={{ width: HANDLE_WIDTH_PX }}
 			/>
-			<Box
+			<div
 				onPointerDown={(event) => beginGesture(event, "right")}
-				sx={{
-					position: "absolute",
-					top: 0,
-					bottom: 0,
-					right: 0,
-					width: HANDLE_WIDTH_PX,
-					cursor: "ew-resize",
-				}}
+				className="absolute top-0 bottom-0 right-0 [cursor:ew-resize]"
+				style={{ width: HANDLE_WIDTH_PX }}
 			/>
 		</>
 	);
 	const topInteractionBar = props.audacityStyleInteraction ? (
-		<Box
+		<fieldset
 			data-testid="segment-interaction-bar"
 			aria-label={`Select or move ${props.name}`}
 			onPointerDown={(event) => beginGesture(event, "move")}
 			onDoubleClick={props.onSelect}
-			sx={{
-				position: "absolute",
-				top: 0,
-				left: 0,
-				right: 0,
-				height: SEGMENT_INTERACTION_BAR_HEIGHT_PX,
-				bgcolor: props.selected
-					? "rgba(217, 70, 239, 0.22)"
-					: "rgba(15, 23, 42, 0.3)",
-				borderBottom: "1px solid rgba(255, 255, 255, 0.3)",
-				cursor: "grab",
-				zIndex: 6,
-			}}
+			className={cn(
+				"absolute top-0 left-0 right-0 [border-bottom:1px_solid_rgba(255,_255,_255,_0.3)] [cursor:grab] [z-index:6]",
+				props.selected
+					? "[background-color:rgba(217,_70,_239,_0.22)]"
+					: "[background-color:rgba(15,_23,_42,_0.3)]",
+			)}
+			style={{ height: SEGMENT_INTERACTION_BAR_HEIGHT_PX }}
 		>
 			{resizeHandles}
-		</Box>
+		</fieldset>
 	) : null;
 
 	return (
-		<Box
+		<div
 			onPointerDown={
 				props.audacityStyleInteraction
 					? undefined
@@ -502,32 +460,29 @@ function TrackSegment(props: {
 			onDoubleClick={
 				props.audacityStyleInteraction ? undefined : props.onSelect
 			}
-			sx={{
-				position: "absolute",
-				top: 8,
-				bottom: 8,
+			className={cn(
+				"absolute top-2 bottom-2 [border-radius:1px] select-none overflow-hidden",
+				props.dragging ? "[opacity:0.45]" : "[opacity:1]",
+				props.selected
+					? "[background-color:rgba(168,_85,_247,_0.65)]"
+					: "[background-color:rgba(56,_189,_248,_0.35)]",
+				props.selected ? "[border:2px_solid]" : "border",
+				props.selected
+					? "border-creative"
+					: "[border-color:rgba(56,_189,_248,_0.55)]",
+				props.selected
+					? "[box-shadow:0_0_0_3px_rgba(217,_70,_239,_0.35),_0_2px_10px_rgba(2,_6,_23,_0.6)]"
+					: "[box-shadow:0_1px_3px_rgba(2,_6,_23,_0.4)]",
+				props.audacityStyleInteraction ? "[cursor:crosshair]" : "[cursor:grab]",
+				props.selected ? "[z-index:4]" : "[z-index:2]",
+			)}
+			style={{
 				left: `${props.leftFraction}%`,
 				width: `max(2px, ${props.widthFraction}%)`,
 				minWidth: HANDLE_WIDTH_PX * 2,
-				borderRadius: 1,
-				opacity: props.dragging ? 0.45 : 1,
-				bgcolor: props.selected
-					? "rgba(168, 85, 247, 0.65)"
-					: "rgba(56, 189, 248, 0.35)",
-				border: props.selected ? "2px solid" : "1px solid",
-				borderColor: props.selected
-					? "secondary.main"
-					: "rgba(56, 189, 248, 0.55)",
-				boxShadow: props.selected
-					? "0 0 0 3px rgba(217, 70, 239, 0.35), 0 2px 10px rgba(2, 6, 23, 0.6)"
-					: "0 1px 3px rgba(2, 6, 23, 0.4)",
-				cursor: props.audacityStyleInteraction ? "crosshair" : "grab",
-				userSelect: "none",
-				overflow: "hidden",
-				pt: props.audacityStyleInteraction
+				paddingTop: props.audacityStyleInteraction
 					? `${SEGMENT_INTERACTION_BAR_HEIGHT_PX}px`
 					: 0,
-				zIndex: props.selected ? 4 : 2,
 			}}
 		>
 			<SegmentWaveform
@@ -546,21 +501,9 @@ function TrackSegment(props: {
 				muted={props.muted}
 			/>
 			{props.copied && (
-				<Box
-					component="svg"
+				<svg
 					aria-hidden="true"
-					sx={{
-						position: "absolute",
-						inset: 0,
-						width: "100%",
-						height: "100%",
-						pointerEvents: "none",
-						zIndex: 5,
-						animation: `${copiedDashes} 1s linear infinite`,
-						"@media (prefers-reduced-motion: reduce)": {
-							animation: "none",
-						},
-					}}
+					className="absolute inset-0 w-full h-full pointer-events-none [z-index:5] animate-copied-dashes motion-reduce:animate-none"
 				>
 					<rect
 						x="2"
@@ -573,26 +516,13 @@ function TrackSegment(props: {
 						strokeWidth="2"
 						strokeDasharray="10 8"
 					/>
-				</Box>
+				</svg>
 			)}
 			{props.audacityStyleInteraction ? topInteractionBar : resizeHandles}
-			<Typography
-				variant="caption"
-				sx={{
-					px: 0.5,
-					whiteSpace: "nowrap",
-					overflow: "hidden",
-					textOverflow: "ellipsis",
-					display: "block",
-					lineHeight: 1.6,
-					position: "relative",
-					zIndex: 1,
-					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
-				}}
-			>
+			<span className="text-xs leading-5 px-1 whitespace-nowrap overflow-hidden [text-overflow:ellipsis] block [line-height:1.6] relative [z-index:1] [text-shadow:0_1px_3px_rgba(2,_6,_23,_0.9)]">
 				{props.name}
-			</Typography>
-		</Box>
+			</span>
+		</div>
 	);
 }
 
@@ -669,31 +599,25 @@ function MergedUnitBox(props: {
 		});
 	};
 	const topInteractionBar = props.audacityStyleInteraction ? (
-		<Box
+		<fieldset
 			data-testid="merged-interaction-bar"
 			aria-label="Select or move merged segment"
 			onPointerDown={beginGesture}
 			onDoubleClick={() =>
 				editor.selectMany(members.map((member) => member.id))
 			}
-			sx={{
-				position: "absolute",
-				top: 0,
-				left: 0,
-				right: 0,
-				height: SEGMENT_INTERACTION_BAR_HEIGHT_PX,
-				bgcolor: props.selected
-					? "rgba(217, 70, 239, 0.22)"
-					: "rgba(15, 23, 42, 0.3)",
-				borderBottom: "1px solid rgba(255, 255, 255, 0.3)",
-				cursor: "grab",
-				zIndex: 6,
-			}}
+			className={cn(
+				"absolute top-0 left-0 right-0 [border-bottom:1px_solid_rgba(255,_255,_255,_0.3)] [cursor:grab] [z-index:6]",
+				props.selected
+					? "[background-color:rgba(217,_70,_239,_0.22)]"
+					: "[background-color:rgba(15,_23,_42,_0.3)]",
+			)}
+			style={{ height: SEGMENT_INTERACTION_BAR_HEIGHT_PX }}
 		/>
 	) : null;
 
 	return (
-		<Box
+		<fieldset
 			onPointerDown={props.audacityStyleInteraction ? undefined : beginGesture}
 			onDoubleClick={
 				props.audacityStyleInteraction
@@ -701,31 +625,28 @@ function MergedUnitBox(props: {
 					: () => editor.selectMany(members.map((member) => member.id))
 			}
 			aria-label={`Merged unit of ${members.length} clips`}
-			sx={{
-				position: "absolute",
-				top: 8,
-				bottom: 8,
+			className={cn(
+				"absolute top-2 bottom-2 [border-radius:1px] select-none overflow-hidden",
+				props.dragging ? "[opacity:0.45]" : "[opacity:1]",
+				props.selected
+					? "[background-color:rgba(168,_85,_247,_0.65)]"
+					: "[background-color:rgba(45,_212,_191,_0.2)]",
+				props.selected ? "[border:2px_solid]" : "[border:1px_dashed]",
+				props.selected
+					? "border-creative"
+					: "[border-color:rgba(45,_212,_191,_0.55)]",
+				props.selected
+					? "[box-shadow:0_0_0_3px_rgba(217,_70,_239,_0.35),_0_2px_10px_rgba(2,_6,_23,_0.6)]"
+					: "[box-shadow:0_1px_3px_rgba(2,_6,_23,_0.4)]",
+				props.audacityStyleInteraction ? "[cursor:crosshair]" : "[cursor:grab]",
+				props.selected ? "[z-index:4]" : "[z-index:2]",
+			)}
+			style={{
 				left: `${props.leftFraction}%`,
 				width: `max(2px, ${props.widthFraction}%)`,
-				borderRadius: 1,
-				opacity: props.dragging ? 0.45 : 1,
-				bgcolor: props.selected
-					? "rgba(168, 85, 247, 0.65)"
-					: "rgba(45, 212, 191, 0.2)",
-				border: props.selected ? "2px solid" : "1px dashed",
-				borderColor: props.selected
-					? "secondary.main"
-					: "rgba(45, 212, 191, 0.55)",
-				boxShadow: props.selected
-					? "0 0 0 3px rgba(217, 70, 239, 0.35), 0 2px 10px rgba(2, 6, 23, 0.6)"
-					: "0 1px 3px rgba(2, 6, 23, 0.4)",
-				cursor: props.audacityStyleInteraction ? "crosshair" : "grab",
-				userSelect: "none",
-				overflow: "hidden",
-				pt: props.audacityStyleInteraction
+				paddingTop: props.audacityStyleInteraction
 					? `${SEGMENT_INTERACTION_BAR_HEIGHT_PX}px`
 					: 0,
-				zIndex: props.selected ? 4 : 2,
 			}}
 		>
 			{members.map((segment) => (
@@ -742,58 +663,22 @@ function MergedUnitBox(props: {
 			))}
 			{props.copied && <CopiedOutline />}
 			{topInteractionBar}
-			<Typography
-				variant="caption"
-				sx={{
-					px: 0.5,
-					whiteSpace: "nowrap",
-					overflow: "hidden",
-					textOverflow: "ellipsis",
-					display: "block",
-					lineHeight: 1.6,
-					position: "relative",
-					zIndex: 1,
-					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
-				}}
-			>
+			<span className="text-xs leading-5 px-1 whitespace-nowrap overflow-hidden [text-overflow:ellipsis] block [line-height:1.6] relative [z-index:1] [text-shadow:0_1px_3px_rgba(2,_6,_23,_0.9)]">
 				{props.name}
 				{members.length > 1 ? ` +${members.length - 1}` : ""}
-			</Typography>
-			<Typography
-				variant="caption"
-				color="text.secondary"
-				sx={{
-					position: "absolute",
-					top: 2,
-					right: 4,
-					fontSize: 10,
-					lineHeight: 1.4,
-					textShadow: "0 1px 3px rgba(2, 6, 23, 0.9)",
-				}}
-			>
+			</span>
+			<span className="text-muted text-xs leading-5 absolute top-0.5 right-1 [font-size:10px] [line-height:1.4] [text-shadow:0_1px_3px_rgba(2,_6,_23,_0.9)]">
 				merged
-			</Typography>
-		</Box>
+			</span>
+		</fieldset>
 	);
 }
 
 function CopiedOutline() {
 	return (
-		<Box
-			component="svg"
+		<svg
 			aria-hidden="true"
-			sx={{
-				position: "absolute",
-				inset: 0,
-				width: "100%",
-				height: "100%",
-				pointerEvents: "none",
-				zIndex: 5,
-				animation: `${copiedDashes} 1s linear infinite`,
-				"@media (prefers-reduced-motion: reduce)": {
-					animation: "none",
-				},
-			}}
+			className="absolute inset-0 w-full h-full pointer-events-none [z-index:5] animate-copied-dashes motion-reduce:animate-none"
 		>
 			<rect
 				x="2"
@@ -806,7 +691,7 @@ function CopiedOutline() {
 				strokeWidth="2"
 				strokeDasharray="10 8"
 			/>
-		</Box>
+		</svg>
 	);
 }
 
@@ -839,15 +724,12 @@ function MergedMemberWaveform(props: {
 	}
 
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			sx={{
-				position: "absolute",
-				top: 0,
-				bottom: 0,
+			className="absolute top-0 bottom-0 pointer-events-none"
+			style={{
 				left: `${leftFraction}%`,
 				width: `${Math.max(0, widthFraction)}%`,
-				pointerEvents: "none",
 			}}
 		>
 			<SegmentWaveform
@@ -865,7 +747,7 @@ function MergedMemberWaveform(props: {
 				selected={props.selected}
 				muted={props.muted}
 			/>
-		</Box>
+		</div>
 	);
 }
 
@@ -883,22 +765,20 @@ function EffectTailOverlay(props: {
 			? "rgba(255, 255, 255, 0.5)"
 			: "rgba(15, 23, 42, 0.5)";
 	return (
-		<Box
+		<div
 			aria-hidden="true"
 			data-testid="effect-tail-overlay"
-			sx={{
-				position: "absolute",
-				top: 0,
-				bottom: 0,
+			className={cn(
+				"absolute top-0 bottom-0 pointer-events-none [z-index:3]",
+				props.muted
+					? "[background-color:rgba(100,_116,_139,_0.16)]"
+					: "[background-color:rgba(15,_23,_42,_0.12)]",
+			)}
+			style={{
 				left: `${fractions.startFraction * 100}%`,
 				width: `${fractions.widthFraction * 100}%`,
-				backgroundColor: props.muted
-					? "rgba(100, 116, 139, 0.16)"
-					: "rgba(15, 23, 42, 0.12)",
 				backgroundImage: `repeating-linear-gradient(135deg, ${stripeColor} 0 2px, transparent 2px 8px)`,
-				borderLeft: `1px dashed ${stripeColor}`,
-				pointerEvents: "none",
-				zIndex: 3,
+				borderLeft: `${`1px dashed ${stripeColor}`}px solid`,
 			}}
 		/>
 	);

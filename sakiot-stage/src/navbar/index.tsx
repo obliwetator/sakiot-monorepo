@@ -2,19 +2,9 @@ import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../Constants";
 import Login from "../login/login";
-import { BasicSelect } from "../shared/BasicSelect";
+import { GuildSelect } from "../shared/GuildSelect";
 import { isGuildAdmin } from "../shared/permissions";
-import {
-	AppBar,
-	Box,
-	Button,
-	Container,
-	Drawer,
-	IconButton,
-	MenuItem,
-	Toolbar,
-	Typography,
-} from "../shared/ui";
+import { Button, cn, Drawer, IconButton } from "../shared/ui";
 import { type PageName, pages } from "./constants";
 import { MobileDrawer } from "./MobileDrawer";
 import { UserMenu } from "./UserMenu";
@@ -90,26 +80,27 @@ function ResponsiveAppBar(props: {
 		: pages;
 
 	return (
-		<AppBar position="static">
-			<Container maxWidth="xl" className="min-w-0">
-				<Toolbar
-					disableGutters
-					className={useInlineNavigation ? "flex-wrap gap-y-1 py-1" : undefined}
+		<header className="w-full border-b border-ui-border bg-header text-fg shadow-sm static">
+			<div
+				className={cn("mx-auto w-full px-4 sm:px-6 [max-width:xl]", "min-w-0")}
+			>
+				<div
+					className={cn(
+						"flex min-h-14 items-center justify-between gap-4 px-4 sm:min-h-16",
+						useInlineNavigation ? "flex-wrap gap-y-1 py-1" : undefined,
+					)}
 				>
-					<Box
-						sx={{
-							display: useInlineNavigation
-								? "none"
-								: { xs: "flex", md: "none" },
-							mr: 1,
-						}}
+					<div
+						className={cn(
+							"mr-2",
+							useInlineNavigation ? "hidden" : "flex min-[900px]:hidden",
+						)}
 					>
 						<IconButton
-							size="large"
 							aria-label="open navigation"
-							onClick={() => setDrawerOpen(true)}
-							color="inherit"
 							className="text-white"
+							size="lg"
+							onPress={() => setDrawerOpen(true)}
 						>
 							<span aria-hidden="true" className="relative block size-6">
 								<span className="absolute left-[2px] top-[6px] h-0.5 w-[18px] bg-current" />
@@ -117,87 +108,75 @@ function ResponsiveAppBar(props: {
 								<span className="absolute left-[2px] top-[16px] h-0.5 w-[18px] bg-current" />
 							</span>
 						</IconButton>
-					</Box>
+					</div>
 
-					<Typography
-						variant="h6"
-						noWrap
-						sx={{
-							flexGrow: 1,
-							display: useInlineNavigation
-								? "none"
-								: { xs: "flex", md: "none" },
-							color: "inherit",
-						}}
+					<h6
+						className={cn(
+							"font-medium tracking-[0.001em] text-xl truncate grow [color:inherit]",
+							useInlineNavigation ? "hidden" : "flex min-[900px]:hidden",
+						)}
 					>
 						{props.guildSelected?.name ?? "Sakiot"}
-					</Typography>
+					</h6>
 
-					<Box
-						sx={{
-							flexGrow: 1,
-							minWidth: 0,
-							display: useInlineNavigation
-								? "flex"
-								: { xs: "none", md: "flex" },
-							alignItems: "center",
-							flexWrap: useInlineNavigation ? "wrap" : "nowrap",
-							overflowX: "hidden",
-						}}
+					<div
+						className={cn(
+							"grow min-w-0 items-center overflow-x-hidden",
+							useInlineNavigation ? "flex" : "hidden min-[900px]:flex",
+							useInlineNavigation ? "flex-wrap" : "flex-nowrap",
+						)}
 					>
 						{visiblePages.map((page) => (
 							<Button
 								key={page}
-								variant="text"
-								size="small"
-								onClick={() => navigateTo(page)}
 								className="my-2 shrink-0 min-w-16 whitespace-nowrap rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
+								variant="ghost"
+								size="sm"
+								onPress={() => navigateTo(page)}
 							>
 								{page}
 							</Button>
 						))}
 						{props.guildSelected ? (
-							<MenuItem
-								className={useInlineNavigation ? "min-w-0 shrink" : undefined}
-							>
+							<div className="flex items-center px-4 py-1.5">
 								{useInlineNavigation ? (
 									<span className="max-[899px]:hidden">Select Server:</span>
 								) : (
 									"Select Server:"
 								)}
-								<BasicSelect
+								<GuildSelect
 									guildSelected={props.guildSelected}
 									setGuildSelected={props.setGuildSelected}
 									userGuilds={props.userGuilds}
 								/>
-							</MenuItem>
+							</div>
 						) : null}
-					</Box>
+					</div>
 
-					<Box
-						sx={{
-							display: useInlineNavigation
-								? "flex"
-								: { xs: "none", md: "flex" },
-							flexShrink: 0,
-						}}
+					<div
+						className={cn(
+							"shrink-0",
+							useInlineNavigation ? "flex" : "hidden min-[900px]:flex",
+						)}
 					>
 						<Login
 							isLoggedIn={props.isLoggedIn}
 							setIsLoggedIn={props.setIsLoggedIn}
 						/>
-					</Box>
+					</div>
 
 					<UserMenu />
-				</Toolbar>
-			</Container>
+				</div>
+			</div>
 
 			{!useInlineNavigation && (
 				<Drawer
-					anchor="left"
-					open={drawerOpen}
-					onClose={() => setDrawerOpen(false)}
-					sx={{ display: { xs: "block", md: "none" } }}
+					className="block min-[900px]:hidden"
+					isOpen={drawerOpen}
+					side={"left"}
+					onOpenChange={(isOpen) => {
+						if (!isOpen) setDrawerOpen(false);
+					}}
 				>
 					<MobileDrawer
 						isLoggedIn={props.isLoggedIn}
@@ -210,7 +189,7 @@ function ResponsiveAppBar(props: {
 					/>
 				</Drawer>
 			)}
-		</AppBar>
+		</header>
 	);
 }
 

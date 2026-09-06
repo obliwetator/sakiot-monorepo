@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Snackbar } from "../shared/ui";
+import { Button, Notice } from "../shared/ui";
 
 const CURRENT_BUNDLE_VERSION = __BUNDLE_VERSION__;
 const VERSION_URL = "/version.json";
@@ -75,26 +75,15 @@ export function BundleUpdatePrompt() {
 	const updateAvailable = useBundleUpdateAvailable();
 
 	return (
-		<Snackbar
-			open={updateAvailable}
-			anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-		>
-			<Alert
-				severity="info"
-				variant="filled"
-				action={
-					<Button
-						color="inherit"
-						size="small"
-						onClick={() => window.location.reload()}
-					>
+		updateAvailable && (
+			<div className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2">
+				<Notice className="items-center" tone={"info"} announce="status">
+					New version available
+					<Button size="sm" onPress={() => window.location.reload()}>
 						Reload
 					</Button>
-				}
-				sx={{ alignItems: "center" }}
-			>
-				New version available
-			</Alert>
-		</Snackbar>
+				</Notice>
+			</div>
+		)
 	);
 }

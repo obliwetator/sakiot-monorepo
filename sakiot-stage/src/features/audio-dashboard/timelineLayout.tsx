@@ -1,10 +1,8 @@
-import type { ReactNode } from "react";
-import type { SxProps, Theme } from "../../shared/ui";
-import { Box, Typography } from "../../shared/ui";
+import type { CSSProperties, ReactNode } from "react";
+import { cn } from "../../shared/ui";
 
 // Every timeline row (waveform, scrubber, event lanes, axis) reserves the same
 // label gutter, so one millisecond lands on the same x in all of them.
-export const TIMELINE_GUTTER_WIDTH = { xs: 76, sm: 104 };
 export const TIMELINE_AXIS_FRACTIONS = [0, 0.25, 0.5, 0.75, 1] as const;
 export const TIMELINE_GRID_COLOR = "rgba(148, 163, 184, 0.16)";
 export const TIMELINE_PLAYHEAD_COLOR = "#f8fafc";
@@ -26,21 +24,13 @@ export function gridLineOffset(fraction: number): string {
 
 export function TimelinePlayhead(props: { percent: number }) {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			// The position changes on every playback frame; inline style keeps
-			// emotion from injecting a new <style> tag per frame.
-			style={{ left: `${props.percent}%` }}
-			sx={{
-				position: "absolute",
-				top: 0,
-				bottom: 0,
-				width: 2,
-				transform: "translateX(-1px)",
-				bgcolor: TIMELINE_PLAYHEAD_COLOR,
+			className="absolute top-0 bottom-0 w-0.5 [transform:translateX(-1px)] pointer-events-none [z-index:6]"
+			style={{
+				backgroundColor: TIMELINE_PLAYHEAD_COLOR,
 				boxShadow: TIMELINE_PLAYHEAD_SHADOW,
-				pointerEvents: "none",
-				zIndex: 6,
+				...{ left: `${props.percent}%` },
 			}}
 		/>
 	);
@@ -49,30 +39,22 @@ export function TimelinePlayhead(props: { percent: number }) {
 /** Vertical guides at the same fractions the time axis is labelled with. */
 export function TimelineGrid() {
 	return (
-		<Box
+		<div
 			aria-hidden="true"
-			sx={{
-				position: "absolute",
-				inset: 0,
-				pointerEvents: "none",
-				zIndex: 0,
-			}}
+			className="absolute inset-0 pointer-events-none [z-index:0]"
 		>
 			{TIMELINE_AXIS_FRACTIONS.map((fraction) => (
-				<Box
+				<div
 					key={fraction}
-					sx={{
-						position: "absolute",
-						top: 0,
-						bottom: 0,
+					className="absolute top-0 bottom-0 w-[1px]"
+					style={{
 						left: `${fraction * 100}%`,
-						ml: gridLineOffset(fraction),
-						width: "1px",
-						bgcolor: TIMELINE_GRID_COLOR,
+						marginLeft: gridLineOffset(fraction),
+						backgroundColor: TIMELINE_GRID_COLOR,
 					}}
 				/>
 			))}
-		</Box>
+		</div>
 	);
 }
 
@@ -81,43 +63,30 @@ export function TimelineRow(props: {
 	label?: ReactNode;
 	labelAlign?: "center" | "flex-start";
 	children: ReactNode;
-	sx?: SxProps<Theme>;
+	style?: CSSProperties;
+	className?: string;
 }) {
 	const label =
 		typeof props.label === "string" ? (
-			<Typography
-				variant="caption"
-				color="text.secondary"
-				noWrap
+			<span
 				title={props.label}
+				className="text-muted text-xs leading-5 truncate"
 			>
 				{props.label}
-			</Typography>
+			</span>
 		) : (
 			props.label
 		);
 
 	return (
-		<Box sx={{ display: "flex", minWidth: 0, ...props.sx }}>
-			<Box
-				sx={{
-					width: TIMELINE_GUTTER_WIDTH,
-					flex: "0 0 auto",
-					// Wide enough that a slider thumb parked at 00:00 cannot touch the
-					// label it sits next to.
-					pr: 1.5,
-					display: "flex",
-					alignItems: props.labelAlign ?? "center",
-					justifyContent: "flex-end",
-					textAlign: "right",
-					minWidth: 0,
-				}}
+		<div className={cn("flex min-w-0", props.className)} style={props.style}>
+			<div
+				className="w-19 min-[600px]:w-26 flex-none pr-3 flex justify-end text-right min-w-0"
+				style={{ alignItems: props.labelAlign ?? "center" }}
 			>
 				{label}
-			</Box>
-			<Box sx={{ position: "relative", flex: 1, minWidth: 0 }}>
-				{props.children}
-			</Box>
-		</Box>
+			</div>
+			<div className="relative flex-1 min-w-0">{props.children}</div>
+		</div>
 	);
 }

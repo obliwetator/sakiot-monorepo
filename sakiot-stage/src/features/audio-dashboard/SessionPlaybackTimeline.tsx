@@ -1,12 +1,6 @@
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import {
-	Box,
-	Slider,
-	Stack,
-	LegacyTextField as TextField,
-	Typography,
-} from "../../shared/ui";
+import { Slider, TextField } from "../../shared/ui";
 import {
 	formatSessionTimecode,
 	parseSessionTimecode,
@@ -46,10 +40,8 @@ function SessionSeekInput(props: {
 
 	return (
 		<TextField
-			size="small"
 			label="Go to"
 			value={value}
-			error={invalid}
 			title={
 				invalid
 					? `Enter a time from ${formatSessionTimecode(0, durationSeconds)} to ${formatSessionTimecode(durationSeconds, durationSeconds)}`
@@ -58,11 +50,6 @@ function SessionSeekInput(props: {
 			onFocus={() => {
 				setEditing(true);
 				dirtyRef.current = false;
-			}}
-			onChange={(event) => {
-				dirtyRef.current = true;
-				setValue(event.target.value);
-				setInvalid(false);
 			}}
 			onBlur={() => {
 				setEditing(false);
@@ -85,17 +72,19 @@ function SessionSeekInput(props: {
 					if (event.target instanceof HTMLInputElement) event.target.blur();
 				}
 			}}
-			slotProps={{
-				htmlInput: {
-					"aria-label": "Seek to exact recording time",
-					spellCheck: false,
-					style: {
-						fontVariantNumeric: "tabular-nums",
-						textAlign: "center",
-					},
-				},
+			className={durationSeconds >= 3_600 ? "w-31.5" : "w-26.5"}
+			isInvalid={invalid}
+			onChange={(value) => {
+				dirtyRef.current = true;
+				setValue(value);
+				setInvalid(false);
 			}}
-			sx={{ width: durationSeconds >= 3_600 ? 126 : 106 }}
+			aria-label={"Seek to exact recording time"}
+			spellCheck={false}
+			inputStyle={{
+				fontVariantNumeric: "tabular-nums",
+				textAlign: "center",
+			}}
 		/>
 	);
 }
@@ -190,13 +179,12 @@ export function SessionPlaybackTimeline(props: {
 
 	return (
 		<>
-			<TimelineRow label="Waveform" labelAlign="flex-start" sx={{ mb: 1 }}>
+			<TimelineRow label="Waveform" labelAlign="flex-start" className="mb-2">
 				{props.waveform}
 			</TimelineRow>
 
 			<TimelineRow label="Position">
-				<Box
-					sx={{ position: "relative" }}
+				<div
 					onPointerDown={(event) => {
 						const target = event.target;
 						if (target instanceof HTMLInputElement && target.type === "range") {
@@ -226,54 +214,25 @@ export function SessionPlaybackTimeline(props: {
 					onPointerLeave={() => {
 						if (!draggingRef.current) clearHover();
 					}}
+					className="relative"
 				>
 					<Slider
 						aria-label={props.positionAriaLabel}
-						min={0}
-						max={Math.max(0.001, durationSeconds)}
 						step={0.01}
 						value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
-						onChange={(_event, value) =>
-							scheduleSeekPreview(Number(value) * 1_000)
-						}
-						onChangeCommitted={(_event, value) => commitSeek(value)}
-						onKeyUp={(event: ReactKeyboardEvent<HTMLInputElement>) => {
-							if (
-								[
-									"ArrowLeft",
-									"ArrowRight",
-									"ArrowUp",
-									"ArrowDown",
-									"Home",
-									"End",
-									"PageUp",
-									"PageDown",
-								].includes(event.key)
-							) {
-								commitSeek(Number(event.currentTarget.value));
-							}
-						}}
-						valueLabelDisplay="off"
+						className="block py-3 transition-none"
 						style={{ accentColor: "#90caf9" }}
-						sx={{ display: "block", py: 1.5, transition: "none" }}
+						minValue={0}
+						maxValue={Math.max(0.001, durationSeconds)}
+						onChangeEnd={(value) => commitSeek(value)}
+						onChange={(value) => scheduleSeekPreview(Number(value) * 1_000)}
 					/>
 					{hoverMs !== null && (
-						<Typography
+						<span
 							aria-hidden="true"
-							variant="caption"
-							sx={{
-								position: "absolute",
-								top: -13,
+							className="text-xs leading-5 absolute [top:-13px] px-1.5 py-0.5 [border-radius:0.75px] [background-color:rgba(2,_6,_23,_0.92)] [color:#7dd3fc] tabular-nums whitespace-nowrap pointer-events-none [z-index:4]"
+							style={{
 								left: `${(hoverMs / Math.max(1, props.durationMs)) * 100}%`,
-								px: 0.75,
-								py: 0.25,
-								borderRadius: 0.75,
-								bgcolor: "rgba(2, 6, 23, 0.92)",
-								color: "info.light",
-								fontVariantNumeric: "tabular-nums",
-								whiteSpace: "nowrap",
-								pointerEvents: "none",
-								zIndex: 4,
 								transform:
 									hoverMs < props.durationMs * 0.1
 										? "translateX(4px)"
@@ -283,44 +242,30 @@ export function SessionPlaybackTimeline(props: {
 							}}
 						>
 							{formatSessionTimecode(hoverMs / 1_000, durationSeconds)}
-						</Typography>
+						</span>
 					)}
-				</Box>
+				</div>
 			</TimelineRow>
 
-			<TimelineRow sx={{ mb: 1.5 }}>
-				<Stack
-					direction={{ xs: "column", sm: "row" }}
-					justifyContent="space-between"
-					spacing={1}
-					alignItems={{ xs: "stretch", sm: "center" }}
-				>
-					<Stack
-						direction="row"
-						spacing={1}
-						alignItems="center"
-						flexWrap="wrap"
-						useFlexGap
-					>
-						<Typography
-							variant="body2"
-							sx={{ fontVariantNumeric: "tabular-nums" }}
-						>
+			<TimelineRow className="mb-3">
+				<div className="flex justify-between items-stretch min-[600px]:items-center flex-col min-[600px]:flex-row gap-2">
+					<div className="flex items-center flex-wrap flex-row gap-2">
+						<p className="text-sm tabular-nums">
 							Recording{" "}
 							{formatSessionTimecode(
 								displayedPositionMs / 1_000,
 								durationSeconds,
 							)}{" "}
 							/ {formatSessionTimecode(durationSeconds, durationSeconds)}
-						</Typography>
+						</p>
 						<SessionSeekInput
 							positionMs={displayedPositionMs}
 							durationMs={props.durationMs}
 							onSeek={props.onSeek}
 						/>
-					</Stack>
+					</div>
 					{props.rightDetail}
-				</Stack>
+				</div>
 			</TimelineRow>
 
 			{props.children}

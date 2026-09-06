@@ -10,15 +10,7 @@ import {
 } from "../../app/apiSlice";
 import { useAppDispatch } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
-import {
-	Alert,
-	Box,
-	Button,
-	Drawer,
-	Snackbar,
-	useMediaQuery,
-	useTheme,
-} from "../../shared/ui";
+import { Button, Drawer, Notice, useMediaQuery } from "../../shared/ui";
 import { isComposedClip } from "../clips/composedClip";
 import { ClipBin } from "./ClipBin";
 import { ClipEditorMonitor, ClipEditorToolbar } from "./ClipEditorChrome";
@@ -51,15 +43,16 @@ import { useClipEditor } from "./useClipEditor";
 import { useClipEditorKeyboardShortcuts } from "./useClipEditorKeyboardShortcuts";
 
 export function ClipEditor(props: { guildId: string }) {
-	const theme = useTheme();
-	const isDesktop = useMediaQuery(theme.breakpoints.up("md"));
+	const isDesktop = useMediaQuery("(min-width: 900px)");
 	const isTouchInput = useMediaQuery("(hover: none), (pointer: coarse)");
 	const [clipBinOpen, setClipBinOpen] = useState(false);
 	const binDragStateRef = useRef<"idle" | "dragging" | "accepted">("idle");
+	// The source must survive the gesture, but the closed drawer must not
+	// keep the timeline inert or retain the modal focus trap.
+	const [binGestureActive, setBinGestureActive] = useState(false);
 	const mobileDropIdRef = useRef(0);
 	const [mobileBinDrop, setMobileBinDrop] =
 		useState<MobileBinDropRequest | null>(null);
-	const [mobileTouchDragging, setMobileTouchDragging] = useState(false);
 	const [mobileDragGhost, setMobileDragGhost] = useState<
 		| (MobileBinDragPreview & {
 				name: string;
@@ -89,7 +82,8 @@ export function ClipEditor(props: { guildId: string }) {
 		if (isDesktop) {
 			setClipBinOpen(false);
 			setMobileBinDrop(null);
-			setMobileTouchDragging(false);
+			setBinGestureActive(false);
+			binDragStateRef.current = "idle";
 			setMobileDragGhost(null);
 		}
 	}, [isDesktop]);
@@ -322,10 +316,12 @@ export function ClipEditor(props: { guildId: string }) {
 	const handleBinDragStart = useCallback(() => {
 		if (isDesktop) return;
 		binDragStateRef.current = "dragging";
+		setBinGestureActive(true);
 		setClipBinOpen(false);
 	}, [isDesktop]);
 
 	const handleBinDragEnd = useCallback(() => {
+		setBinGestureActive(false);
 		if (binDragStateRef.current !== "dragging") return;
 		binDragStateRef.current = "idle";
 		if (!isDesktop) setClipBinOpen(true);
@@ -334,7 +330,8 @@ export function ClipEditor(props: { guildId: string }) {
 	const handleTouchDragStart = useCallback(
 		(clip: ClipData, clientX: number, clientY: number) => {
 			binDragStateRef.current = "dragging";
-			if (!isDesktop) setMobileTouchDragging(true);
+			setBinGestureActive(true);
+			if (!isDesktop) setClipBinOpen(false);
 			setMobileDragGhost({
 				name: clip.name || "Unnamed clip",
 				clipId: clip.clip_id,
@@ -357,7 +354,7 @@ export function ClipEditor(props: { guildId: string }) {
 
 	const handleTouchDrop = useCallback(
 		(clip: ClipData, clientX: number, clientY: number) => {
-			setMobileTouchDragging(false);
+			setBinGestureActive(false);
 			setClipBinOpen(false);
 			mobileDropIdRef.current += 1;
 			setMobileBinDrop({
@@ -373,7 +370,7 @@ export function ClipEditor(props: { guildId: string }) {
 	);
 
 	const handleTouchDragCancel = useCallback(() => {
-		setMobileTouchDragging(false);
+		setBinGestureActive(false);
 		setMobileDragGhost(null);
 		handleBinDragEnd();
 	}, [handleBinDragEnd]);
@@ -409,14 +406,7 @@ export function ClipEditor(props: { guildId: string }) {
 	);
 
 	return (
-		<Box
-			sx={{
-				height: "100%",
-				minHeight: 0,
-				display: "flex",
-				flexDirection: "column",
-			}}
-		>
+		<div className="h-full min-h-0 flex flex-col">
 			<ClipEditorToolbar
 				editor={editor}
 				onExport={() => setComposeOpen(true)}
@@ -425,16 +415,7 @@ export function ClipEditor(props: { guildId: string }) {
 				onRestore={restoreOriginal}
 				onOpenOptions={() => setOptionsOpen(true)}
 			/>
-			<Box
-				sx={{
-					flex: 1,
-					minHeight: 0,
-					minWidth: 0,
-					display: "flex",
-					flexDirection: { xs: "column", md: "row" },
-					overflow: "hidden",
-				}}
-			>
+			<div className="flex-1 min-h-0 min-w-0 flex flex-col min-[900px]:flex-row overflow-hidden">
 				{isDesktop ? (
 					<ClipBin
 						clips={pureClips}
@@ -449,32 +430,24 @@ export function ClipEditor(props: { guildId: string }) {
 					/>
 				) : (
 					<>
-						<Box
-							sx={{
-								flex: "0 0 auto",
-								p: 1,
-								borderBottom: 1,
-								borderColor: "divider",
-							}}
-						>
+						<div className="flex-none p-2 border-b border-ui-border">
 							<Button
-								variant="outlined"
-								fullWidth
-								startIcon={<FolderOpenIcon />}
-								onClick={() => setClipBinOpen(true)}
+								className="w-full"
+								variant="outline"
+								onPress={() => setClipBinOpen(true)}
 							>
+								<FolderOpenIcon />
 								Browse files
 							</Button>
-						</Box>
+						</div>
 						<Drawer
-							anchor="left"
-							open={clipBinOpen}
-							onClose={() => {
-								if (binDragStateRef.current === "idle") setClipBinOpen(false);
+							isOpen={clipBinOpen}
+							isExiting={binGestureActive && !clipBinOpen}
+							aria-label="Browse files"
+							side={"left"}
+							onOpenChange={(isOpen) => {
+								if (binDragStateRef.current === "idle") setClipBinOpen(isOpen);
 							}}
-							transitionDuration={{ enter: 225, exit: 0 }}
-							ModalProps={{ keepMounted: true }}
-							className={mobileTouchDragging ? "opacity-0" : undefined}
 						>
 							<ClipBin
 								clips={pureClips}
@@ -492,23 +465,14 @@ export function ClipEditor(props: { guildId: string }) {
 						</Drawer>
 					</>
 				)}
-				<Box
-					sx={{
-						flex: 1,
-						minWidth: 0,
-						minHeight: 0,
-						width: "100%",
-						display: "flex",
-						flexDirection: "column",
-					}}
-				>
+				<div className="flex-1 min-w-0 min-h-0 w-full flex flex-col">
 					<ClipEditorMonitor
 						editor={editor}
 						duration={duration}
 						sourceStatus={sourceStatus}
 						sourceError={sourceError}
 					/>
-					<Box sx={{ flex: 1, minHeight: 0 }}>
+					<div className="flex-1 min-h-0">
 						<Timeline
 							guildId={props.guildId}
 							editor={editor}
@@ -520,43 +484,29 @@ export function ClipEditor(props: { guildId: string }) {
 							multiTrackMarquee={options.marqueeMultiTrack}
 							audacityStyleInteraction={options.audacityStyleInteraction}
 						/>
-					</Box>
-				</Box>
+					</div>
+				</div>
 				<Inspector
 					editor={editor}
 					clipName={clipName}
 					limits={effectLimits}
 					onOpenLimits={() => setEffectLimitsOpen(true)}
 				/>
-			</Box>
+			</div>
 			{mobileDragGhost && (
-				<Box
+				<div
 					aria-hidden="true"
+					className="fixed max-w-55 px-2.5 py-1.5 [border:1px_dashed] border-accent [border-radius:1px] bg-surface [box-shadow:4px] [font-size:0.75rem] [font-weight:600] whitespace-nowrap overflow-hidden [text-overflow:ellipsis] pointer-events-none"
 					style={{
-						left: mobileDragGhost.clientX + 12,
-						top: mobileDragGhost.clientY + 12,
-					}}
-					sx={{
-						position: "fixed",
-						zIndex: theme.zIndex.tooltip,
-						maxWidth: 220,
-						px: 1.25,
-						py: 0.75,
-						border: "1px dashed",
-						borderColor: "primary.main",
-						borderRadius: 1,
-						bgcolor: "background.paper",
-						boxShadow: 4,
-						fontSize: "0.75rem",
-						fontWeight: 600,
-						whiteSpace: "nowrap",
-						overflow: "hidden",
-						textOverflow: "ellipsis",
-						pointerEvents: "none",
+						zIndex: 70,
+						...{
+							left: mobileDragGhost.clientX + 12,
+							top: mobileDragGhost.clientY + 12,
+						},
 					}}
 				>
 					{mobileDragGhost.name}
-				</Box>
+				</div>
 			)}
 			<ClipExportDialog
 				open={composeOpen}
@@ -592,21 +542,20 @@ export function ClipEditor(props: { guildId: string }) {
 				onChange={updateOptions}
 			/>
 			{unsavedDialog}
-			<Snackbar
-				open={editor.mergeWarning !== null}
-				anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-				autoHideDuration={5000}
-				onClose={editor.dismissMergeWarning}
-			>
-				<Alert
-					severity="warning"
-					variant="filled"
-					onClose={editor.dismissMergeWarning}
-					sx={{ alignItems: "center" }}
-				>
-					{editor.mergeWarning}
-				</Alert>
-			</Snackbar>
-		</Box>
+			{editor.mergeWarning !== null && (
+				<div className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2">
+					<Notice className="items-center" tone={"warning"} announce="status">
+						{editor.mergeWarning}
+						<Button
+							variant="ghost"
+							size="sm"
+							onPress={editor.dismissMergeWarning}
+						>
+							Dismiss
+						</Button>
+					</Notice>
+				</div>
+			)}
+		</div>
 	);
 }

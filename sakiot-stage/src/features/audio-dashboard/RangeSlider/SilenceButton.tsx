@@ -55,7 +55,7 @@ export function SilenceButton(props: {
 	const label = hasSilence ? "Refresh silence-free" : "Remove Silence";
 
 	return (
-		<Button variant="contained" onClick={handleOnClick} disabled={isLoading}>
+		<Button variant="primary" isDisabled={isLoading} onPress={handleOnClick}>
 			{isLoading ? "Working..." : label}
 		</Button>
 	);

@@ -1,5 +1,5 @@
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Button, FormControlLabel, Switch, Typography } from "../../shared/ui";
+import { Button, Switch } from "../../shared/ui";
 import type { EditorOptions } from "./editorOptions";
 
 /**
@@ -19,70 +19,50 @@ export function EditorOptionsDialog(props: {
 			onClose={props.onClose}
 			title="Editor options"
 			actions={
-				<Button variant="contained" onClick={props.onClose}>
+				<Button variant="primary" onPress={props.onClose}>
 					Done
 				</Button>
 			}
 		>
-			<FormControlLabel
-				control={
-					<Switch
-						size="small"
-						checked={props.options.marqueeMultiTrack}
-						onChange={(_event, checked) =>
-							props.onChange({ ...props.options, marqueeMultiTrack: checked })
-						}
-					/>
+			<Switch
+				isSelected={props.options.marqueeMultiTrack}
+				onChange={(checked) =>
+					props.onChange({ ...props.options, marqueeMultiTrack: checked })
 				}
-				label={
-					<Typography variant="body2">Marquee selects across tracks</Typography>
-				}
-			/>
-			<Typography variant="caption" color="text.secondary" display="block">
+			>
+				<p className={"text-sm"}>Marquee selects across tracks</p>
+			</Switch>
+			<span className="text-muted block text-xs leading-5">
 				When dragging a selection box, select every segment the rectangle
 				touches on any track instead of only the track the drag started on.
-			</Typography>
-			<FormControlLabel
-				control={
-					<Switch
-						size="small"
-						checked={props.options.audacityStyleInteraction}
-						onChange={(_event, checked) =>
-							props.onChange({
-								...props.options,
-								audacityStyleInteraction: checked,
-							})
-						}
-					/>
+			</span>
+			<Switch
+				isSelected={props.options.audacityStyleInteraction}
+				onChange={(checked) =>
+					props.onChange({
+						...props.options,
+						audacityStyleInteraction: checked,
+					})
 				}
-				label={
-					<Typography variant="body2">
-						Audacity-style segment interaction
-					</Typography>
-				}
-			/>
-			<Typography variant="caption" color="text.secondary" display="block">
+			>
+				<p className={"text-sm"}>Audacity-style segment interaction</p>
+			</Switch>
+			<span className="text-muted block text-xs leading-5">
 				Only the narrow bar at the top of a segment selects or moves it.
 				Clicking elsewhere starts marquee selection.
-			</Typography>
-			<FormControlLabel
-				control={
-					<Switch
-						size="small"
-						checked={props.options.copyAllSelected}
-						onChange={(_event, checked) =>
-							props.onChange({ ...props.options, copyAllSelected: checked })
-						}
-					/>
+			</span>
+			<Switch
+				isSelected={props.options.copyAllSelected}
+				onChange={(checked) =>
+					props.onChange({ ...props.options, copyAllSelected: checked })
 				}
-				label={
-					<Typography variant="body2">Copy all selected elements</Typography>
-				}
-			/>
-			<Typography variant="caption" color="text.secondary" display="block">
+			>
+				<p className={"text-sm"}>Copy all selected elements</p>
+			</Switch>
+			<span className="text-muted block text-xs leading-5">
 				When enabled, Ctrl/Cmd+C copies every selected element. When disabled,
 				it copies only the earliest selected element in the timeline.
-			</Typography>
+			</span>
 		</BaseDialog>
 	);
 }

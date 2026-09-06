@@ -1,24 +1,21 @@
 import type React from "react";
 import type { VoiceEvent } from "../../../app/apiSlice";
-import { Box, Slider, styled, Typography } from "../../../shared/ui";
+import { Slider } from "../../../shared/ui";
 import { formatDuration } from "../../../utils/formatTime";
 import { AudioEventTimeline } from "../AudioEventTimeline";
 
-const TinyText = styled(Typography)({
-	fontSize: "0.75rem",
-	opacity: 0.38,
-	fontWeight: 500,
-	letterSpacing: 0.2,
-});
+function TinyText({ children }: { children: React.ReactNode }) {
+	return (
+		<span className="text-xs font-medium tracking-[0.2px] opacity-[0.38]">
+			{children}
+		</span>
+	);
+}
 
 export function DoubleSlider(props: {
 	startEnd: number[];
 	setStartEnd: React.Dispatch<React.SetStateAction<number[]>>;
-	handleChange: (
-		event: Event,
-		newValue: number | number[],
-		activeThumb: number,
-	) => void;
+	handleChange: (values: number[]) => void;
 	audioRef: HTMLAudioElement;
 	durationSec: number;
 	voiceEvents?: VoiceEvent[];
@@ -27,27 +24,17 @@ export function DoubleSlider(props: {
 	return (
 		<>
 			<Slider
-				className="range-slider-tall"
-				max={props.durationSec}
-				getAriaLabel={() => "Playback range"}
+				aria-label="Playback range"
 				value={props.startEnd}
+				className="range-slider-tall"
+				maxValue={props.durationSec}
+				thumbLabels={["Start", "End"]}
 				onChange={props.handleChange}
-				valueLabelDisplay="auto"
-				valueLabelFormat={(value) => <div>{formatDuration(value)}</div>}
-				getAriaValueText={(value) => formatDuration(value)}
-				disableSwap
 			/>
-			<Box
-				sx={{
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "space-between",
-					mt: -2,
-				}}
-			>
+			<div className="flex items-center justify-between [margin-top:-16px]">
 				<TinyText>{formatDuration(props.startEnd[0])} </TinyText>
 				<TinyText>{formatDuration(Math.round(props.durationSec))}</TinyText>
-			</Box>
+			</div>
 			{props.voiceEvents && props.voiceEvents.length > 0 && (
 				<AudioEventTimeline
 					events={props.voiceEvents}

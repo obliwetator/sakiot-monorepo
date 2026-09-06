@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle2, Info, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "./cn";
 
 export type NoticeTone = "info" | "success" | "warning" | "error";
@@ -24,7 +24,7 @@ const tones = {
 	},
 } satisfies Record<NoticeTone, { className: string; Icon: typeof Info }>;
 
-export interface NoticeProps {
+export interface NoticeProps extends ComponentProps<"div"> {
 	children: ReactNode;
 	tone?: NoticeTone;
 	announce?: NoticeAnnouncement;
@@ -36,10 +36,12 @@ export function Notice({
 	tone = "info",
 	announce,
 	className,
+	...props
 }: NoticeProps) {
 	const { Icon, className: toneClassName } = tones[tone];
 	return (
 		<div
+			{...props}
 			role={announce}
 			className={cn(
 				"flex min-h-9 items-center gap-2 rounded-md border px-3 py-2 text-sm",

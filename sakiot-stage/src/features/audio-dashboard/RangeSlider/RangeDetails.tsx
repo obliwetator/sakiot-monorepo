@@ -1,6 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { AudioParams } from "../../../Constants";
-import { Box, Stack } from "../../../shared/ui";
 import { formatDuration } from "../../../utils/formatTime";
 import { PlaybackSpeedSlider } from "./PlaybackSpeedSlider";
 import { TimeEditors } from "./TimeEditor";
@@ -22,49 +21,39 @@ export function RangeDetails(props: {
 
 	return (
 		<>
-			<Stack
-				spacing={{ xs: 1, md: 8 }}
-				direction="row"
-				alignItems="center"
-				justifyContent="space-around"
-				sx={{ my: 2, minWidth: 0 }}
-			>
-				<Box sx={{ minWidth: 0, flex: { xs: "1 1 0%", md: "0 1 200px" } }}>
+			<div className="flex items-center justify-around flex-row gap-2 min-[900px]:gap-16 my-4 min-w-0">
+				<div className="min-w-0 [flex:1_1_0%] min-[900px]:[flex:0_1_200px]">
 					<VolumeSlider audioRef={props.audioRef} />
-				</Box>
-				<Box sx={{ minWidth: 0, flex: { xs: "1 1 0%", md: "0 1 200px" } }}>
+				</div>
+				<div className="min-w-0 [flex:1_1_0%] min-[900px]:[flex:0_1_200px]">
 					<PlaybackSpeedSlider audioRef={props.audioRef} />
-				</Box>
-			</Stack>
-			<Box
-				sx={{
-					display: "flex",
-					flexDirection: { xs: "column", md: "row" },
-					gap: 1,
-				}}
-			>
-				<Box sx={{ flex: 1, minWidth: 0 }}>
+				</div>
+			</div>
+			<div className="flex flex-col min-[900px]:flex-row gap-2">
+				<div className="flex-1 min-w-0">
 					Playback time: {formatDuration(props.startEnd[0])}
-					<Box>
+					<div>
 						Absolute time:{" "}
 						{absoluteTimeMs == null
 							? "-"
 							: new Date(
 									Math.floor(absoluteTimeMs / 1000) * 1000,
 								).toLocaleString()}
-					</Box>
-				</Box>
-				<Box sx={{ flex: 1, minWidth: 0 }}>
+					</div>
+				</div>
+				<div className="flex-1 min-w-0">
 					Recorded in channel: {props.params.channel_id}
 					{(() => {
 						const parts = (props.params.file_name ?? "").split("-");
 						const userId = parts[1];
 						return userId ? (
-							<Box sx={{ fontSize: 12, opacity: 0.75 }}>User ID: {userId}</Box>
+							<div className="[font-size:12px] [opacity:0.75]">
+								User ID: {userId}
+							</div>
 						) : null;
 					})()}
-				</Box>
-				<Box>
+				</div>
+				<div>
 					<TimeEditors
 						startEnd={props.startEnd}
 						setStartEnd={props.setStartEnd}
@@ -72,8 +61,8 @@ export function RangeDetails(props: {
 						durationSec={props.durationSec}
 						onPinEnd={props.onPinEnd}
 					/>
-				</Box>
-			</Box>
+				</div>
+			</div>
 			<br />
 			value 2: {formatDuration(props.startEnd[1])}
 			<br />

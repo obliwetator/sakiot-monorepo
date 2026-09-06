@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useJamItMutation } from "../../../app/apiSlice";
 import { BaseDialog } from "../../../shared/BaseDialog";
-import { Alert, Button } from "../../../shared/ui";
+import { Button, Notice } from "../../../shared/ui";
 
 export enum JamItRespStatus {
 	OK,
@@ -80,22 +80,21 @@ export function JamIt(props: { visible: boolean }) {
 	return (
 		<>
 			<Button
-				onClick={() => void handleJamIt()}
-				variant="contained"
-				startIcon={<MusicNoteIcon />}
-				disabled={jamState.isLoading}
+				variant="primary"
+				isDisabled={jamState.isLoading}
+				onPress={() => void handleJamIt()}
 			>
+				<MusicNoteIcon />
 				Jam It
 			</Button>
 			{feedback && (
 				<BaseDialog open={open} onClose={handleClose} title={title}>
-					<Alert
-						severity={
-							feedback.type === JamItRespStatus.OK ? "success" : "warning"
-						}
+					<Notice
+						tone={feedback.type === JamItRespStatus.OK ? "success" : "warning"}
+						announce="status"
 					>
 						{message}
-					</Alert>
+					</Notice>
 				</BaseDialog>
 			)}
 		</>

@@ -177,6 +177,9 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 	const dropzone = page.getByTestId("clip-timeline-dropzone");
 	const dropBounds = await dropzone.boundingBox();
 	const sourceBounds = await workingSource.boundingBox();
+	// Touch events keep their original target even after it is hidden.
+	const touchSource = await workingSource.elementHandle();
+	if (!touchSource) throw new Error("The touch drag source is missing");
 	expect(dropBounds).not.toBeNull();
 	expect(sourceBounds).not.toBeNull();
 	const touchStart = {
@@ -187,7 +190,7 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 		x: (dropBounds?.x ?? 0) + (dropBounds?.width ?? 1) / 2,
 		y: (dropBounds?.y ?? 0) + 50,
 	};
-	await workingSource.evaluate((element, point) => {
+	await touchSource.evaluate((element, point) => {
 		const touch = new Touch({
 			identifier: 17,
 			target: element,
@@ -215,7 +218,7 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 				),
 		)
 		.toBe("0");
-	await workingSource.evaluate((element, point) => {
+	await touchSource.evaluate((element, point) => {
 		const touch = new Touch({
 			identifier: 17,
 			target: element,
@@ -233,7 +236,7 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 		);
 	}, touchEnd);
 	await expect(page.getByTestId("clip-drag-ghost")).toBeVisible();
-	await workingSource.evaluate((element, point) => {
+	await touchSource.evaluate((element, point) => {
 		const touch = new Touch({
 			identifier: 17,
 			target: element,
@@ -279,6 +282,37 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 	await brokenSource.click();
 	await expect(search).toBeHidden();
 	await expect(search).toBeVisible();
+});
+
+test("drawer restores focus and copied outlines respect reduced motion", async ({
+	page,
+}) => {
+	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
+	const browse = page.getByRole("button", { name: "Browse files" });
+	await browse.click();
+	await expect(
+		page.getByRole("dialog", { name: "Browse files" }),
+	).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+	await expect(browse).toBeFocused();
+	await browse.click();
+	await page.getByRole("button", { name: /Working source/ }).click();
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+	await page.getByText("Working source", { exact: true }).click();
+	await expect(
+		page.getByText("Selected segment", { exact: true }),
+	).toBeVisible();
+	await page.keyboard.press("ControlOrMeta+c");
+	const outline = page.locator("svg.animate-copied-dashes").first();
+	await expect(outline).toBeVisible();
+	await expect
+		.poll(() => outline.evaluate((el) => getComputedStyle(el).animationName))
+		.toBe("copied-dashes");
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await expect
+		.poll(() => outline.evaluate((el) => getComputedStyle(el).animationName))
+		.toBe("none");
 });
 
 test("a wide touch viewport does not enter a stuck native drag", async ({

@@ -10,6 +10,7 @@ import {
 } from "../../app/apiSlice";
 import {
 	Button,
+	cn,
 	IconButton,
 	Notice,
 	Page,
@@ -19,7 +20,6 @@ import {
 	Table,
 	TableBody,
 	TableCell,
-	TableContainer,
 	TableHead,
 	TableHeader,
 	TableRow,
@@ -205,8 +205,8 @@ export function GuildAdminCooldowns() {
 					/>
 					<Button
 						type="submit"
-						variant="contained"
 						isPending={setGuildState.isLoading}
+						variant="primary"
 					>
 						Save default
 					</Button>
@@ -277,8 +277,8 @@ export function GuildAdminCooldowns() {
 					/>
 					<Button
 						type="submit"
-						variant="contained"
 						isPending={setOverrideState.isLoading}
+						variant="primary"
 					>
 						Add / Update
 					</Button>
@@ -311,7 +311,12 @@ export function GuildAdminCooldowns() {
 				{loadingOverrides ? (
 					<Text aria-live="polite">Loading admin cooldowns…</Text>
 				) : (
-					<TableContainer className="rounded-lg border border-slate-800">
+					<div
+						className={cn(
+							"w-full overflow-x-auto",
+							"rounded-lg border border-slate-800",
+						)}
+					>
 						<Table>
 							<caption className="sr-only">Per-user cooldown overrides</caption>
 							<TableHeader>
@@ -344,8 +349,6 @@ export function GuildAdminCooldowns() {
 											</TableCell>
 											<TableCell className="text-right">
 												<IconButton
-													label={`Delete override for user ${userId}`}
-													variant="danger"
 													isPending={
 														deleteState.isLoading && deletingUserId === userId
 													}
@@ -353,6 +356,8 @@ export function GuildAdminCooldowns() {
 														deleteState.isLoading && deletingUserId !== userId
 													}
 													onPress={() => handleDelete(override.user_id)}
+													variant="danger"
+													aria-label={`Delete override for user ${userId}`}
 												>
 													<Trash2 aria-hidden="true" className="size-4" />
 												</IconButton>
@@ -372,7 +377,7 @@ export function GuildAdminCooldowns() {
 								)}
 							</TableBody>
 						</Table>
-					</TableContainer>
+					</div>
 				)}
 			</Panel>
 		</Page>

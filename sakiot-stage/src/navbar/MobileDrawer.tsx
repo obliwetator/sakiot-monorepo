@@ -1,19 +1,8 @@
 import type * as React from "react";
 import type { UserGuilds } from "../Constants";
 import Login from "../login/login";
-import { BasicSelect } from "../shared/BasicSelect";
-import {
-	Avatar,
-	Box,
-	Divider,
-	List,
-	ListItem,
-	ListItemButton,
-	ListItemIcon,
-	ListItemText,
-	ListSubheader,
-	Typography,
-} from "../shared/ui";
+import { GuildSelect } from "../shared/GuildSelect";
+import { Avatar, Button } from "../shared/ui";
 import { type PageName, pageIcons } from "./constants";
 
 export function MobileDrawer(props: {
@@ -26,45 +15,57 @@ export function MobileDrawer(props: {
 	onNavigate: (name: PageName) => void;
 }) {
 	return (
-		<Box sx={{ width: 280 }} role="presentation">
-			<Box sx={{ p: 2, display: "flex", alignItems: "center", gap: 2 }}>
+		<div role="presentation" className="w-70">
+			<div className="p-4 flex items-center gap-4">
 				<Avatar alt="user" src="/pepega.png" />
-				<Typography variant="subtitle1" noWrap>
+				<h6 className="text-base truncate">
 					{props.isLoggedIn ? "Account" : "Guest"}
-				</Typography>
-			</Box>
-			<Divider />
+				</h6>
+			</div>
+			<hr className="w-full border-t border-ui-border" />
 			{props.userGuilds && props.userGuilds.length > 0 ? (
-				<Box sx={{ p: 2 }}>
-					<BasicSelect
+				<div className="p-4">
+					<GuildSelect
 						guildSelected={props.guildSelected}
 						setGuildSelected={props.setGuildSelected}
 						userGuilds={props.userGuilds}
 					/>
-				</Box>
+				</div>
 			) : null}
-			<Divider />
-			<List subheader={<ListSubheader>Navigate</ListSubheader>}>
+			<hr className="w-full border-t border-ui-border" />
+			<div className="flex flex-col gap-1">
+				<div className={"px-4 py-2 text-xs font-semibold uppercase text-muted"}>
+					Navigate
+				</div>
 				{props.visiblePages.map((page) => (
-					<ListItem key={page} disablePadding>
-						<ListItemButton onClick={() => props.onNavigate(page)}>
-							<ListItemIcon>{pageIcons[page]}</ListItemIcon>
-							<ListItemText primary={page} />
-						</ListItemButton>
-					</ListItem>
+					<div key={page} className="relative flex items-center">
+						<Button
+							className="w-full justify-start text-left"
+							variant="ghost"
+							onPress={() => props.onNavigate(page)}
+						>
+							<span className="mr-2 inline-flex min-w-8 items-center text-muted">
+								{pageIcons[page]}
+							</span>
+							<div>{page}</div>
+						</Button>
+					</div>
 				))}
-			</List>
-			<Divider />
-			<List subheader={<ListSubheader>Account</ListSubheader>}>
-				<ListItem disablePadding>
-					<Box sx={{ px: 2, py: 1 }}>
+			</div>
+			<hr className="w-full border-t border-ui-border" />
+			<div className="flex flex-col gap-1">
+				<div className={"px-4 py-2 text-xs font-semibold uppercase text-muted"}>
+					Account
+				</div>
+				<div className="relative flex items-center">
+					<div className="px-4 py-2">
 						<Login
 							isLoggedIn={props.isLoggedIn}
 							setIsLoggedIn={props.setIsLoggedIn}
 						/>
-					</Box>
-				</ListItem>
-			</List>
-		</Box>
+					</div>
+				</div>
+			</div>
+		</div>
 	);
 }

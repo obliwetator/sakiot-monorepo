@@ -7,18 +7,18 @@ import {
 	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
 import {
-	Alert,
-	Box,
+	Badge,
 	Button,
-	Chip,
-	LinearProgress,
-	Paper,
+	Notice,
+	ProgressBar,
 	Slider,
-	Stack,
 	Tab,
+	TabList,
+	TabPanel,
 	Tabs,
-	LegacyTextField as TextField,
-	Typography,
+	TextField,
+	Tooltip,
+	TooltipTrigger,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { AudioEventTimeline } from "./AudioEventTimeline";
@@ -358,12 +358,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		}
 	};
 
-	if (isLoading) return <Typography>Loading logical recording…</Typography>;
+	if (isLoading) return <p className="leading-6">Loading logical recording…</p>;
 	if (isError || !manifest) {
 		return (
-			<Alert severity="error">
+			<Notice tone={"error"} announce="alert">
 				Logical recording unavailable or forbidden.
-			</Alert>
+			</Notice>
 		);
 	}
 
@@ -398,7 +398,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const mixProcessing = mixStatus === "processing";
 
 	return (
-		<Box sx={{ pb: 4 }}>
+		<div className="pb-8">
 			{silenceFreeUrl && (
 				// biome-ignore lint/a11y/useMediaCaption: user voice recordings do not have a caption track
 				<audio
@@ -435,317 +435,320 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 
 			<PlaybackActionsPanel>
 				<Tabs
-					value={activePlaybackTab}
-					onChange={(_event, value: "normal" | "silence" | "mix") =>
-						selectPlaybackTabFromTabs(value)
-					}
-					sx={{ minHeight: 32, mb: 1 }}
+					className="min-h-8 mb-2"
+					selectedKey={activePlaybackTab}
+					onSelectionChange={(value) => {
+						if (value === "normal" || value === "silence" || value === "mix")
+							selectPlaybackTabFromTabs(value);
+					}}
 				>
-					<Tab label="Normal" value="normal" sx={{ minHeight: 32, py: 0 }} />
-					{silenceFreeUrl && (
-						<Tab
-							label="Silence-free"
-							value="silence"
-							sx={{ minHeight: 32, py: 0 }}
-						/>
-					)}
-					{showChannelMixTab && (
-						<Tab
-							label="Channel mix"
-							value="mix"
-							sx={{ minHeight: 32, py: 0 }}
-						/>
-					)}
-				</Tabs>
+					<TabList aria-label="View">
+						<Tab className="min-h-8 py-0" id={"normal"}>
+							Normal
+						</Tab>
+						{silenceFreeUrl && (
+							<Tab className="min-h-8 py-0" id={"silence"}>
+								Silence-free
+							</Tab>
+						)}
+						{showChannelMixTab && (
+							<Tab className="min-h-8 py-0" id={"mix"}>
+								Channel mix
+							</Tab>
+						)}
+					</TabList>
 
-				<Box
-					sx={{ display: activePlaybackTab === "normal" ? "block" : "none" }}
-				>
-					<SessionPlaybackTimeline
-						waveform={
-							<SessionWaveform
-								key={props.sessionId}
-								sessionId={props.sessionId}
-								positionMs={displayedPositionMs}
+					<TabPanel
+						id="normal"
+						shouldForceMount
+						className="data-[inert]:hidden"
+					>
+						<SessionPlaybackTimeline
+							waveform={
+								<SessionWaveform
+									key={props.sessionId}
+									sessionId={props.sessionId}
+									positionMs={displayedPositionMs}
+									durationMs={manifest.duration_ms}
+									onSeek={seek}
+								/>
+							}
+							positionMs={displayedPositionMs}
+							durationMs={manifest.duration_ms}
+							onSeek={seek}
+							onSeekPreview={setSeekPreviewMs}
+							positionAriaLabel="Logical playback position"
+							rightDetail={
+								<p className="leading-6 [color:var(--color-muted)] text-sm [font-variant-numeric:tabular-nums]">
+									Real time{" "}
+									{new Date(
+										manifest.started_at_ms + displayedPositionMs,
+									).toLocaleString()}
+								</p>
+							}
+						>
+							<AudioEventTimeline
+								events={manifest.events}
 								durationMs={manifest.duration_ms}
+								positionMs={displayedPositionMs}
+								startedAtMs={manifest.started_at_ms}
 								onSeek={seek}
 							/>
-						}
-						positionMs={displayedPositionMs}
-						durationMs={manifest.duration_ms}
-						onSeek={seek}
-						onSeekPreview={setSeekPreviewMs}
-						positionAriaLabel="Logical playback position"
-						rightDetail={
-							<Typography
-								variant="body2"
-								color="text.secondary"
-								sx={{ fontVariantNumeric: "tabular-nums" }}
-							>
-								Real time{" "}
-								{new Date(
-									manifest.started_at_ms + displayedPositionMs,
-								).toLocaleString()}
-							</Typography>
-						}
-					>
-						<AudioEventTimeline
-							events={manifest.events}
-							durationMs={manifest.duration_ms}
-							positionMs={displayedPositionMs}
-							startedAtMs={manifest.started_at_ms}
-							onSeek={seek}
+						</SessionPlaybackTimeline>
+						<PlaybackControls
+							playing={playing}
+							onTogglePlay={togglePlay}
+							volume={volume}
+							onVolumeChange={setVolume}
+							playbackRate={playbackRate}
+							onPlaybackRateChange={setPlaybackRate}
 						/>
-					</SessionPlaybackTimeline>
-					<PlaybackControls
-						playing={playing}
-						onTogglePlay={togglePlay}
-						volume={volume}
-						onVolumeChange={setVolume}
-						playbackRate={playbackRate}
-						onPlaybackRateChange={setPlaybackRate}
-					/>
-				</Box>
+					</TabPanel>
 
-				{activePlaybackTab === "silence" && silenceFreeUrl && (
-					<SilenceFreePlayer
-						sessionId={props.sessionId}
-						durationMs={silenceDurationMs}
-						positionMs={silencePositionMs}
-						seekPreviewMs={silenceSeekPreviewMs}
-						playing={silencePlaying}
-						volume={volume}
-						playbackRate={playbackRate}
-						playbackError={silencePlaybackError}
-						onSeek={seekSilence}
-						onSeekPreview={setSilenceSeekPreviewMs}
-						onTogglePlay={toggleSilencePlay}
-						onVolumeChange={setVolume}
-						onPlaybackRateChange={setPlaybackRate}
-					/>
-				)}
-
-				<Stack
-					direction="row"
-					spacing={1}
-					alignItems="center"
-					flexWrap="wrap"
-					useFlexGap
-					sx={{ mt: 1 }}
-				>
-					<Button
-						variant="outlined"
-						onClick={() => void downloadSession()}
-						disabled={sessionAction !== null}
-					>
-						{sessionAction === "download" ? "Preparing…" : "Download session"}
-					</Button>
-					{!silenceFreeUrl && (
-						<Button
-							variant="contained"
-							onClick={() => void createSilenceFreeSession()}
-							disabled={
-								sessionAction !== null ||
-								silenceRemoval.status === "processing" ||
-								manifest.state !== "finalized"
-							}
-							title={
-								manifest.state === "finalized"
-									? undefined
-									: "Silence removal is available after the recording is finalized"
-							}
-						>
-							{sessionAction === "silence" ||
-							silenceRemoval.status === "processing"
-								? `Removing silence… ${silenceRemoval.progress}%`
-								: "Remove silence"}
-						</Button>
-					)}
 					{silenceFreeUrl && (
-						<Button
-							variant="outlined"
-							onClick={() => void createSilenceFreeSession(true)}
-							disabled={
-								sessionAction !== null || silenceRemoval.status === "processing"
-							}
-						>
-							{sessionAction === "silence"
-								? "Regenerating…"
-								: "Regenerate silence-free"}
-						</Button>
+						<TabPanel id="silence">
+							<SilenceFreePlayer
+								sessionId={props.sessionId}
+								durationMs={silenceDurationMs}
+								positionMs={silencePositionMs}
+								seekPreviewMs={silenceSeekPreviewMs}
+								playing={silencePlaying}
+								volume={volume}
+								playbackRate={playbackRate}
+								playbackError={silencePlaybackError}
+								onSeek={seekSilence}
+								onSeekPreview={setSilenceSeekPreviewMs}
+								onTogglePlay={toggleSilencePlay}
+								onVolumeChange={setVolume}
+								onPlaybackRateChange={setPlaybackRate}
+							/>
+						</TabPanel>
 					)}
-					{silenceFreeUrl && (
+
+					<div className="flex items-center flex-wrap flex-row gap-2 mt-2">
 						<Button
-							variant="outlined"
-							onClick={() => void downloadSilenceFreeSession()}
-							disabled={sessionAction !== null}
+							variant="outline"
+							isDisabled={sessionAction !== null}
+							onPress={() => void downloadSession()}
 						>
-							{sessionAction === "silence-download"
-								? "Preparing…"
-								: "Download silence-free"}
+							{sessionAction === "download" ? "Preparing…" : "Download session"}
 						</Button>
-					)}
-				</Stack>
-				{silenceRemoval.status === "processing" && (
-					<Box sx={{ mt: 1, maxWidth: 560 }}>
-						<Stack direction="row" justifyContent="space-between" mb={0.5}>
-							<Typography variant="body2">Removing silence</Typography>
-							<Typography variant="body2">
-								{silenceRemoval.progress}%
-							</Typography>
-						</Stack>
-						<LinearProgress
-							variant="determinate"
-							value={silenceRemoval.progress}
-							aria-label="Silence removal progress"
-						/>
-						<Typography variant="caption" color="text.secondary">
-							This can continue in the background; progress resumes if you
-							refresh the page.
-						</Typography>
-					</Box>
-				)}
-				{sessionMessage && (
-					<Alert severity="success" sx={{ mt: 1 }}>
-						{sessionMessage}
-					</Alert>
-				)}
-				{(sessionError || actionError) && (
-					<Alert severity="error" sx={{ mt: 1 }}>
-						{sessionError ?? actionError}
-					</Alert>
-				)}
-
-				<Box sx={{ display: activePlaybackTab === "mix" ? "block" : "none" }}>
-					<Paper variant="outlined" sx={{ p: 2, mt: 1.5 }}>
-						<Stack
-							direction={{ xs: "column", sm: "row" }}
-							justifyContent="space-between"
-							alignItems={{ xs: "flex-start", sm: "center" }}
-							spacing={1}
-						>
-							<Box>
-								<Typography variant="h6">Channel mix</Typography>
-								<Typography variant="body2" color="text.secondary">
-									{channelMixScope === "all_recordings"
-										? "All recordings while the bot was continuously connected to this channel are shown on one timeline."
-										: "Only recordings overlapping this selected session are shown on one timeline (anchor-style)."}
-								</Typography>
-							</Box>
-							<Button
-								variant="contained"
-								onClick={() => void createChannelMix()}
-								disabled={!mixCanGenerate || generateMixState.isLoading}
-								title={
-									channelMix?.reason?.message ??
-									(channelMix?.can_generate === false
-										? "Every recording in this mix must be finalized"
-										: undefined)
-								}
-							>
-								{generateMixState.isLoading
-									? "Starting…"
-									: mixRenderDirty || channelMix?.status === "ready"
-										? "Regenerate channel mix"
-										: channelMix?.status === "failed"
-											? "Retry mix"
-											: "Generate channel mix"}
-							</Button>
-						</Stack>
-
-						{channelMixError && !channelMix && (
-							<Alert severity="error" sx={{ mt: 1.5 }}>
-								Channel mix status is unavailable.{" "}
-								<Button size="small" onClick={() => void refetchChannelMix()}>
-									Retry status
+						{!silenceFreeUrl && (
+							<TooltipTrigger delay={400}>
+								<Button
+									variant="primary"
+									isDisabled={
+										sessionAction !== null ||
+										silenceRemoval.status === "processing" ||
+										manifest.state !== "finalized"
+									}
+									onPress={() => void createSilenceFreeSession()}
+								>
+									{sessionAction === "silence" ||
+									silenceRemoval.status === "processing"
+										? `Removing silence… ${silenceRemoval.progress}%`
+										: "Remove silence"}
 								</Button>
-							</Alert>
+								<Tooltip>
+									{manifest.state === "finalized"
+										? undefined
+										: "Silence removal is available after the recording is finalized"}
+								</Tooltip>
+							</TooltipTrigger>
 						)}
-						{channelMix && (
-							<>
-								{channelMix.reason && channelMix.status !== "ready" && (
-									<Alert
-										severity={channelMix.status === "failed" ? "error" : "info"}
-										sx={{ mt: 1.5 }}
+						{silenceFreeUrl && (
+							<Button
+								variant="outline"
+								isDisabled={
+									sessionAction !== null ||
+									silenceRemoval.status === "processing"
+								}
+								onPress={() => void createSilenceFreeSession(true)}
+							>
+								{sessionAction === "silence"
+									? "Regenerating…"
+									: "Regenerate silence-free"}
+							</Button>
+						)}
+						{silenceFreeUrl && (
+							<Button
+								variant="outline"
+								isDisabled={sessionAction !== null}
+								onPress={() => void downloadSilenceFreeSession()}
+							>
+								{sessionAction === "silence-download"
+									? "Preparing…"
+									: "Download silence-free"}
+							</Button>
+						)}
+					</div>
+					{silenceRemoval.status === "processing" && (
+						<div className="mt-2 max-w-140">
+							<div className="flex justify-between mb-1 flex-row">
+								<p className="text-sm">Removing silence</p>
+								<p className="text-sm">{silenceRemoval.progress}%</p>
+							</div>
+							<ProgressBar
+								value={silenceRemoval.progress}
+								aria-label="Silence removal progress"
+							/>
+							<span className="text-muted text-xs leading-5">
+								This can continue in the background; progress resumes if you
+								refresh the page.
+							</span>
+						</div>
+					)}
+					{sessionMessage && (
+						<Notice className="mt-2" tone={"success"} announce="status">
+							{sessionMessage}
+						</Notice>
+					)}
+					{(sessionError || actionError) && (
+						<Notice className="mt-2" tone={"error"} announce="alert">
+							{sessionError ?? actionError}
+						</Notice>
+					)}
+
+					<TabPanel id="mix" shouldForceMount className="data-[inert]:hidden">
+						<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm shadow-none [padding:16px] [margin-top:12px]">
+							<div className="flex flex-col justify-between items-start min-[600px]:items-center flex-col min-[600px]:flex-row [gap:8px]">
+								<div>
+									<h6 className="leading-6 font-semibold tracking-tight font-medium tracking-[0.001em] leading-[1.6] text-xl">
+										Channel mix
+									</h6>
+									<p className="leading-6 [color:var(--color-muted)] text-sm">
+										{channelMixScope === "all_recordings"
+											? "All recordings while the bot was continuously connected to this channel are shown on one timeline."
+											: "Only recordings overlapping this selected session are shown on one timeline (anchor-style)."}
+									</p>
+								</div>
+								<TooltipTrigger delay={400}>
+									<Button
+										variant="primary"
+										isDisabled={!mixCanGenerate || generateMixState.isLoading}
+										onPress={() => void createChannelMix()}
 									>
-										{channelMix.reason.message}
-									</Alert>
-								)}
-								{mixProcessing && (
-									<ChannelMixProgress progress={channelMix.progress} />
-								)}
-								{channelMix.status === "idle" && (
-									<Typography
-										variant="body2"
-										color="text.secondary"
-										sx={{ mt: 1 }}
-									>
-										{channelMix.source_count} source recordings found. The mix
-										is ready to generate.
-									</Typography>
-								)}
-								{channelMix.tracks.length > 0 && (
-									<ChannelMixPlayer
-										sessionId={props.sessionId}
-										mix={channelMix}
-										settings={mixDraft.settings}
-										onSettingsChange={mixDraft.setSettings}
-										options={channelMixPreferences.options}
-										onOptionsChange={channelMixPreferences.setOptions}
-										dialogOpen={channelMixPreferences.dialogOpen}
-										onDialogOpenChange={channelMixPreferences.setDialogOpen}
-										volume={volume}
-										playbackRate={playbackRate}
-										onVolumeChange={setVolume}
-										onPlaybackRateChange={setPlaybackRate}
-										onBeforePlay={() => {
-											normal.stop();
-											silence.stop();
-										}}
-										onRegisterStop={registerMixStop}
-										onPlaybackUse={rememberLastPlayback}
-										onPlaybackClear={clearLastPlayback}
-										onGenerate={
-											mixCanGenerate ? () => void createChannelMix() : undefined
-										}
-									/>
-								)}
-							</>
-						)}
-						{channelMixActionError && (
-							<Alert severity="error" sx={{ mt: 1 }}>
-								{channelMixActionError}
-							</Alert>
-						)}
-					</Paper>
-				</Box>
+										{generateMixState.isLoading
+											? "Starting…"
+											: mixRenderDirty || channelMix?.status === "ready"
+												? "Regenerate channel mix"
+												: channelMix?.status === "failed"
+													? "Retry mix"
+													: "Generate channel mix"}
+									</Button>
+									<Tooltip>
+										{channelMix?.reason?.message ??
+											(channelMix?.can_generate === false
+												? "Every recording in this mix must be finalized"
+												: undefined)}
+									</Tooltip>
+								</TooltipTrigger>
+							</div>
+
+							{channelMixError && !channelMix && (
+								<Notice
+									className="[margin-top:12px]"
+									tone={"error"}
+									announce="alert"
+								>
+									Channel mix status is unavailable.{" "}
+									<Button size="sm" onPress={() => void refetchChannelMix()}>
+										Retry status
+									</Button>
+								</Notice>
+							)}
+							{channelMix && (
+								<>
+									{channelMix.reason && channelMix.status !== "ready" && (
+										<Notice
+											className="[margin-top:12px]"
+											tone={channelMix.status === "failed" ? "error" : "info"}
+											announce={
+												(channelMix.status === "failed" ? "error" : "info") ===
+												"error"
+													? "alert"
+													: "status"
+											}
+										>
+											{channelMix.reason.message}
+										</Notice>
+									)}
+									{mixProcessing && (
+										<ChannelMixProgress progress={channelMix.progress} />
+									)}
+									{channelMix.status === "idle" && (
+										<p className="leading-6 [color:var(--color-muted)] text-sm [margin-top:8px]">
+											{channelMix.source_count} source recordings found. The mix
+											is ready to generate.
+										</p>
+									)}
+									{channelMix.tracks.length > 0 && (
+										<ChannelMixPlayer
+											sessionId={props.sessionId}
+											mix={channelMix}
+											settings={mixDraft.settings}
+											onSettingsChange={mixDraft.setSettings}
+											options={channelMixPreferences.options}
+											onOptionsChange={channelMixPreferences.setOptions}
+											dialogOpen={channelMixPreferences.dialogOpen}
+											onDialogOpenChange={channelMixPreferences.setDialogOpen}
+											volume={volume}
+											playbackRate={playbackRate}
+											onVolumeChange={setVolume}
+											onPlaybackRateChange={setPlaybackRate}
+											onBeforePlay={() => {
+												normal.stop();
+												silence.stop();
+											}}
+											onRegisterStop={registerMixStop}
+											onPlaybackUse={rememberLastPlayback}
+											onPlaybackClear={clearLastPlayback}
+											onGenerate={
+												mixCanGenerate
+													? () => void createChannelMix()
+													: undefined
+											}
+										/>
+									)}
+								</>
+							)}
+							{channelMixActionError && (
+								<Notice
+									className="[margin-top:8px]"
+									tone={"error"}
+									announce="alert"
+								>
+									{channelMixActionError}
+								</Notice>
+							)}
+						</div>
+					</TabPanel>
+				</Tabs>
 			</PlaybackActionsPanel>
 
 			<SessionClipEditorPanel panelRef={clipEditorRef}>
-				<Stack
-					direction="row"
-					spacing={1}
-					alignItems="center"
-					flexWrap="wrap"
-					sx={{ mb: 1.5 }}
-				>
-					<Typography>
+				<div className="flex items-center flex-wrap flex-row gap-2 mb-3">
+					<p className="leading-6">
 						{playbackTab === "silence" ? "Silence-free selected" : "Selected"}{" "}
 						range: {formatDuration(selection[0] / 1_000)} –{" "}
 						{formatDuration(selection[1] / 1_000)}
-					</Typography>
+					</p>
 					{clipSelectionIsValid && (
-						<Chip label="Valid clip duration" color="success" size="small" />
+						<Badge tone={"success"} size={"sm"}>
+							Valid clip duration
+						</Badge>
 					)}
 					{playbackTab === "normal" && stampClipRequested && (
-						<Chip label="Drafted from stamp" color="info" size="small" />
+						<Badge tone={"info"} size={"sm"}>
+							Drafted from stamp
+						</Badge>
 					)}
-				</Stack>
+				</div>
 				{playbackTab === "normal" && stampClipRequested && (
-					<Typography variant="caption" color="text.secondary">
+					<span className="text-muted text-xs leading-5">
 						Fine seek: Arrow 0.1s · Shift+Arrow 1s · Ctrl/⌘+Arrow 5s · I/O set
 						the left/right edges · E sets the nearest edge.
-					</Typography>
+					</span>
 				)}
 
 				<ClipRangeEditor
@@ -784,51 +787,41 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 								? "Silence-free action range"
 								: "Logical action range"
 						}
-						min={0}
-						max={Math.max(1, activeDurationMs)}
 						step={100}
 						value={selection}
-						onChange={(_event, value) => {
+						minValue={0}
+						maxValue={Math.max(1, activeDurationMs)}
+						onChange={(value) => {
 							if (Array.isArray(value)) changeSelection([value[0], value[1]]);
 						}}
-						valueLabelDisplay="auto"
-						valueLabelFormat={(value) => formatDuration(value / 1_000)}
-						disableSwap
 					/>
 				)}
-				<Stack
-					direction="row"
-					spacing={1}
-					alignItems="flex-end"
-					flexWrap="nowrap"
-					sx={{ minWidth: 0 }}
-				>
+				<div className="flex items-end flex-nowrap flex-row gap-2 min-w-0">
 					<TextField
-						size="small"
 						label="Clip name"
 						value={clipName}
-						onChange={(event) => setClipName(event.target.value)}
-						inputProps={{ style: { height: 40 } }}
-						sx={{ height: 60, flex: "1 1 auto", minWidth: 0 }}
+						className="flex-1 min-w-0"
+						onChange={(value) => setClipName(value)}
+						inputClassName="h-10 shrink-0"
 					/>
 					<Button
-						variant="contained"
-						onClick={() => void createSelectedClip()}
-						disabled={clipState.isLoading}
-						sx={{ height: 40, flex: "0 0 auto" }}
+						className="h-10 flex-none"
+						variant="primary"
+						isDisabled={clipState.isLoading}
+						onPress={() => void createSelectedClip()}
 					>
 						Create clip
 					</Button>
-				</Stack>
+				</div>
 				{clipMessage && (
-					<Alert severity="success" sx={{ mt: 2 }}>
+					<Notice className="mt-4" tone={"success"} announce="status">
 						{clipMessage}
-					</Alert>
+					</Notice>
 				)}
 				{clipError && (
-					<Alert severity="error" sx={{ mt: 2 }}>
+					<Notice className="mt-4" tone={"error"} announce="alert">
 						{clipError}
-					</Alert>
+					</Notice>
 				)}
 			</SessionClipEditorPanel>
 
@@ -843,11 +836,13 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 			/>
 
 			{hasChannelJourney && (
-				<Paper sx={{ p: 2 }}>
-					<Typography variant="h6">Channel journey</Typography>
-					<Typography>{manifest.channel_journey.join(" → ")}</Typography>
-				</Paper>
+				<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-4">
+					<h6 className="font-medium tracking-[0.001em] text-xl">
+						Channel journey
+					</h6>
+					<p className="leading-6">{manifest.channel_journey.join(" → ")}</p>
+				</div>
 			)}
-		</Box>
+		</div>
 	);
 }

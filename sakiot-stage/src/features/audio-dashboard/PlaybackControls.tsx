@@ -1,5 +1,5 @@
 import { Pause as PauseIcon, Play as PlayArrowIcon } from "lucide-react";
-import { Box, Button, Slider, Stack, Typography } from "../../shared/ui";
+import { Button, Slider } from "../../shared/ui";
 
 export function PlaybackControls(props: {
 	playing: boolean;
@@ -10,46 +10,39 @@ export function PlaybackControls(props: {
 	onPlaybackRateChange: (rate: number) => void;
 }) {
 	return (
-		<Stack
-			direction="row"
-			spacing={{ xs: 1, md: 2 }}
-			alignItems="center"
-			sx={{ mt: 1, minWidth: 0, overflowX: "auto" }}
-		>
+		<div className="flex items-center flex-row gap-2 min-[900px]:gap-4 mt-2 min-w-0 overflow-x-auto">
 			<Button
-				variant="contained"
-				onClick={props.onTogglePlay}
-				startIcon={props.playing ? <PauseIcon /> : <PlayArrowIcon />}
 				className="shrink-0"
+				variant="primary"
+				onPress={props.onTogglePlay}
 			>
+				{props.playing ? <PauseIcon /> : <PlayArrowIcon />}
 				{props.playing ? "Pause" : "Play"}
 			</Button>
-			<Box sx={{ minWidth: { xs: 96, md: 180 }, flex: "1 1 0%" }}>
-				<Typography variant="caption">Volume</Typography>
+			<div className="min-w-24 min-[900px]:min-w-45 [flex:1_1_0%]">
+				<span className="text-xs leading-5">Volume</span>
 				<Slider
 					aria-label="Playback volume"
-					min={0}
-					max={1}
 					step={0.05}
 					value={props.volume}
-					onChange={(_event, value) => props.onVolumeChange(Number(value))}
+					minValue={0}
+					maxValue={1}
+					onChange={(value) => props.onVolumeChange(Number(value))}
 				/>
-			</Box>
-			<Box sx={{ minWidth: { xs: 96, md: 180 }, flex: "1 1 0%" }}>
-				<Typography variant="caption">
+			</div>
+			<div className="min-w-24 min-[900px]:min-w-45 [flex:1_1_0%]">
+				<span className="text-xs leading-5">
 					Speed {props.playbackRate.toFixed(2)}×
-				</Typography>
+				</span>
 				<Slider
 					aria-label="Playback speed"
-					min={0.5}
-					max={2}
 					step={0.25}
 					value={props.playbackRate}
-					onChange={(_event, value) =>
-						props.onPlaybackRateChange(Number(value))
-					}
+					minValue={0.5}
+					maxValue={2}
+					onChange={(value) => props.onPlaybackRateChange(Number(value))}
 				/>
-			</Box>
-		</Stack>
+			</div>
+		</div>
 	);
 }

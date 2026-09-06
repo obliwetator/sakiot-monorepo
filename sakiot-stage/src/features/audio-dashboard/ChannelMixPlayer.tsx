@@ -7,26 +7,16 @@ import type {
 import { BASE_API_URL } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
 import {
-	Alert,
-	Box,
+	Badge,
 	Button,
-	Chip,
-	Dialog,
-	DialogActions,
-	DialogContent,
-	DialogTitle,
-	Divider,
-	FormControl,
-	FormControlLabel,
-	InputLabel,
-	LinearProgress,
-	MenuItem,
-	Paper,
+	DialogHeading,
+	Modal,
+	Notice,
+	ProgressBar,
 	Select,
+	SelectItem,
 	Slider,
-	Stack,
 	Switch,
-	Typography,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { ChannelMixTrackWaveforms } from "./ChannelMixWaveforms";
@@ -257,28 +247,25 @@ export function ChannelMixPlayer(props: {
 	};
 
 	return (
-		<Paper variant="outlined" sx={{ p: 2, mt: 1.5 }}>
-			<Stack
-				direction={{ xs: "column", sm: "row" }}
-				justifyContent="space-between"
-				alignItems={{ xs: "flex-start", sm: "center" }}
-				spacing={1}
-			>
-				<Box>
-					<Typography variant="h6">Channel mix preview</Typography>
-					<Typography variant="caption" color="text.secondary">
+		<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none p-4 mt-3">
+			<div className="flex justify-between items-start min-[600px]:items-center flex-col min-[600px]:flex-row gap-2">
+				<div>
+					<h6 className="font-medium tracking-[0.001em] text-xl">
+						Channel mix preview
+					</h6>
+					<span className="text-muted text-xs leading-5">
 						{formatDuration(props.mix.duration_ms / 1_000)} · common timeline ·
 						live sources stay preview-only
-					</Typography>
-				</Box>
+					</span>
+				</div>
 				{props.mix.status === "ready" && (
-					<Button variant="outlined" onClick={() => void download()}>
+					<Button variant="outline" onPress={() => void download()}>
 						Download rendered mix
 					</Button>
 				)}
-			</Stack>
+			</div>
 
-			<Stack spacing={1} sx={{ mt: 1.5 }}>
+			<div className="flex flex-col gap-2 mt-3">
 				{props.mix.tracks.map((track) => {
 					const setting = settingByUser.get(track.user_id) ?? {
 						user_id: track.user_id,
@@ -286,53 +273,46 @@ export function ChannelMixPlayer(props: {
 						muted: false,
 					};
 					return (
-						<Stack
+						<div
 							key={track.user_id}
-							direction={{ xs: "column", md: "row" }}
-							spacing={1}
-							alignItems={{ xs: "stretch", md: "center" }}
+							className="flex items-stretch min-[900px]:items-center flex-col min-[900px]:flex-row gap-2"
 						>
-							<Stack
-								direction="row"
-								spacing={0.75}
-								alignItems="center"
-								sx={{ minWidth: { md: 220 } }}
-							>
-								<Typography sx={{ minWidth: 90 }}>
+							<div className="flex items-center flex-row gap-1.5 min-[900px]:min-w-55">
+								<p className="leading-6 min-w-22.5">
 									{track.display_name ?? `User ${track.user_id}`}
-								</Typography>
-								{track.is_anchor && <Chip size="small" label="Anchor" />}
+								</p>
+								{track.is_anchor && <Badge size={"sm"}>Anchor</Badge>}
 								<Button
-									size="small"
-									variant={setting.muted ? "contained" : "outlined"}
-									onClick={() =>
+									variant={setting.muted ? "primary" : "outline"}
+									size="sm"
+									onPress={() =>
 										updateSetting(track.user_id, { muted: !setting.muted })
 									}
 								>
 									{setting.muted ? "Unmute" : "Mute"}
 								</Button>
-							</Stack>
-							<Box sx={{ flex: 1, minWidth: 180 }}>
-								<Typography variant="caption">
+							</div>
+							<div className="flex-1 min-w-45">
+								<span className="text-xs leading-5">
 									Gain {setting.gain_db.toFixed(1)} dB
-								</Typography>
+								</span>
 								<Slider
 									aria-label={`${track.display_name ?? `User ${track.user_id}`} gain`}
-									min={CHANNEL_MIX_MIN_GAIN_DB}
-									max={CHANNEL_MIX_MAX_GAIN_DB}
 									step={0.5}
 									value={setting.gain_db}
-									onChange={(_event, value) =>
+									minValue={CHANNEL_MIX_MIN_GAIN_DB}
+									maxValue={CHANNEL_MIX_MAX_GAIN_DB}
+									onChange={(value) =>
 										updateSetting(track.user_id, {
 											gain_db: clampChannelMixGain(Number(value)),
 										})
 									}
 								/>
-							</Box>
-						</Stack>
+							</div>
+						</div>
 					);
 				})}
-			</Stack>
+			</div>
 
 			<SessionPlaybackTimeline
 				waveform={
@@ -359,49 +339,52 @@ export function ChannelMixPlayer(props: {
 				onPlaybackRateChange={props.onPlaybackRateChange}
 			/>
 			{hasLiveSources && (
-				<Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
+				<div className="flex items-center flex-row gap-2 mt-2">
 					<Button
-						size="small"
-						variant={preview.followingLive ? "contained" : "outlined"}
-						onClick={goLive}
+						variant={preview.followingLive ? "primary" : "outline"}
+						size="sm"
+						onPress={goLive}
 					>
 						{preview.followingLive ? "Following live" : "Go live"}
 					</Button>
-					<Typography variant="caption" color="text.secondary">
+					<span className="text-muted text-xs leading-5">
 						Starts two seconds behind the newest common HLS edge. Seeking or
 						pausing exits live-follow.
-					</Typography>
-				</Stack>
+					</span>
+				</div>
 			)}
 			{Object.entries(preview.sourceErrors).map(([segmentId, message]) => (
-				<Alert key={segmentId} severity="error" sx={{ mt: 0.75 }}>
+				<Notice
+					key={segmentId}
+					className="mt-1.5"
+					tone={"error"}
+					announce="alert"
+				>
 					Source {segmentId}: {message}
-				</Alert>
+				</Notice>
 			))}
 
 			{renderedOutdated && (
-				<Alert severity="warning" sx={{ mt: 1.5 }}>
+				<Notice className="mt-3" tone={"warning"} announce="status">
 					The rendered version uses older participant settings.
 					{props.onGenerate && (
-						<Button size="small" onClick={props.onGenerate} sx={{ ml: 1 }}>
+						<Button className="ml-2" size="sm" onPress={props.onGenerate}>
 							Regenerate
 						</Button>
 					)}
-				</Alert>
+				</Notice>
 			)}
 
 			{generatedMediaUrl && props.mix.status === "ready" && (
 				<>
-					<Divider sx={{ my: 2 }} />
-					<Typography variant="subtitle1">Rendered version</Typography>
-					<Typography variant="caption" color="text.secondary">
+					<hr className="w-full border-t border-ui-border my-4" />
+					<h6 className="text-base">Rendered version</h6>
+					<span className="text-muted text-xs leading-5">
 						Server-rendered 48 kHz mono Ogg/Opus artifact
-					</Typography>
+					</span>
 					<SessionPlaybackTimeline
 						waveform={
-							<Typography variant="body2" color="text.secondary">
-								Final limiter output
-							</Typography>
+							<p className="text-muted text-sm">Final limiter output</p>
 						}
 						positionMs={generatedPosition}
 						durationMs={props.mix.duration_ms}
@@ -441,68 +424,65 @@ export function ChannelMixPlayer(props: {
 						style={{ display: "none" }}
 					/>
 					{generated.playbackError && (
-						<Alert severity="error" sx={{ mt: 1 }}>
+						<Notice className="mt-2" tone={"error"} announce="alert">
 							{generated.playbackError}
-						</Alert>
+						</Notice>
 					)}
 				</>
 			)}
 			{downloadError && (
-				<Alert severity="error" sx={{ mt: 1 }}>
+				<Notice className="mt-2" tone={"error"} announce="alert">
 					{downloadError}
-				</Alert>
+				</Notice>
 			)}
 
-			<Dialog
-				open={props.dialogOpen}
-				onClose={() => props.onDialogOpenChange(false)}
+			<Modal
+				isOpen={props.dialogOpen}
+				onOpenChange={(isOpen) => {
+					if (!isOpen) props.onDialogOpenChange(false);
+				}}
 			>
-				<DialogTitle>Channel mix options</DialogTitle>
-				<DialogContent>
-					<FormControlLabel
-						control={
-							<Switch
-								checked={props.options.showSourceRows}
-								onChange={(_event, checked) =>
-									props.onOptionsChange((current) => ({
-										...current,
-										showSourceRows: checked,
-									}))
-								}
-							/>
+				<DialogHeading>Channel mix options</DialogHeading>
+				<div className="space-y-3 px-5 py-4">
+					<Switch
+						isSelected={props.options.showSourceRows}
+						onChange={(checked) =>
+							props.onOptionsChange((current) => ({
+								...current,
+								showSourceRows: checked,
+							}))
 						}
-						label="Show physical source rows"
-					/>
-					<FormControl fullWidth size="small" sx={{ mt: 1.5 }}>
-						<InputLabel id="channel-mix-scope-label">Timeline scope</InputLabel>
+					>
+						Show physical source rows
+					</Switch>
+					<div className="relative flex min-w-0 w-full mt-3">
 						<Select
-							labelId="channel-mix-scope-label"
 							label="Timeline scope"
-							value={props.options.scope}
-							onChange={(event) =>
+							selectedKey={props.options.scope}
+							onSelectionChange={(value) =>
 								props.onOptionsChange((current) => ({
 									...current,
-									scope: event.target.value as ChannelMixScope,
+									scope: value as ChannelMixScope,
 								}))
 							}
 						>
-							<MenuItem value="all_recordings">
+							<SelectItem id={"all_recordings"}>
 								All recordings while connected
-							</MenuItem>
-							<MenuItem value="selected_session">
+							</SelectItem>
+							<SelectItem id={"selected_session"}>
 								Selected session only (anchor-style)
-							</MenuItem>
+							</SelectItem>
 						</Select>
-					</FormControl>
-					<Typography variant="caption" display="block" color="text.secondary">
+					</div>
+					<span className="block text-muted text-xs leading-5">
 						All recordings is the default. Open this dialog with Ctrl/Cmd+,.
-					</Typography>
-				</DialogContent>
-				<DialogActions>
-					<Button onClick={() => props.onDialogOpenChange(false)}>Close</Button>
-				</DialogActions>
-			</Dialog>
-		</Paper>
+					</span>
+				</div>
+				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
+					<Button onPress={() => props.onDialogOpenChange(false)}>Close</Button>
+				</div>
+			</Modal>
+		</div>
 	);
 }
 
@@ -511,37 +491,27 @@ export function ChannelMixParticipants(props: {
 }) {
 	if (props.participants.length === 0) return null;
 	return (
-		<Stack
-			direction="row"
-			spacing={0.75}
-			flexWrap="wrap"
-			useFlexGap
-			sx={{ mt: 1 }}
-		>
+		<div className="flex flex-wrap flex-row gap-1.5 mt-2">
 			{props.participants.map((participant) => (
-				<Chip
-					key={participant.user_id}
-					label={participant.display_name ?? `User ${participant.user_id}`}
-					variant="outlined"
-					size="small"
-				/>
+				<Badge key={participant.user_id} appearance={"outline"} size={"sm"}>
+					{participant.display_name ?? `User ${participant.user_id}`}
+				</Badge>
 			))}
-		</Stack>
+		</div>
 	);
 }
 
 export function ChannelMixProgress(props: { progress: number }) {
 	return (
-		<Box sx={{ mt: 1, maxWidth: 560 }}>
-			<Stack direction="row" justifyContent="space-between" mb={0.5}>
-				<Typography variant="body2">Generating channel mix</Typography>
-				<Typography variant="body2">{props.progress}%</Typography>
-			</Stack>
-			<LinearProgress
-				variant="determinate"
+		<div className="mt-2 max-w-140">
+			<div className="flex justify-between mb-1 flex-row">
+				<p className="text-sm">Generating channel mix</p>
+				<p className="text-sm">{props.progress}%</p>
+			</div>
+			<ProgressBar
 				value={Math.max(0, Math.min(99, props.progress))}
 				aria-label="Channel mix generation progress"
 			/>
-		</Box>
+		</div>
 	);
 }

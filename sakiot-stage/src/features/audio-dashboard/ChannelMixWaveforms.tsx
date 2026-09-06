@@ -4,7 +4,7 @@ import type {
 	ChannelMixTrack,
 } from "../../app/apiSlice";
 import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
-import { Box, Button, Stack, Typography } from "../../shared/ui";
+import { Button } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { layoutChannelMixSegment } from "./channelMixWaveform";
 import { WaveformCanvas } from "./WaveformCanvas";
@@ -64,16 +64,12 @@ function PlacedSourceWaveform(props: {
 	const layout = layoutChannelMixSegment(props.segment, props.durationMs);
 	if (!layout) return null;
 	return (
-		<Box
-			sx={{
-				position: "absolute",
+		<div
+			className="absolute top-0 [border-left:1px_solid_rgba(125,_211,_252,_0.35)] [border-right:1px_solid_rgba(125,_211,_252,_0.35)] overflow-hidden"
+			style={{
 				left: `${layout.leftFraction * 100}%`,
 				width: `${layout.widthFraction * 100}%`,
-				top: 0,
 				height: props.height,
-				borderLeft: "1px solid rgba(125, 211, 252, 0.35)",
-				borderRight: "1px solid rgba(125, 211, 252, 0.35)",
-				overflow: "hidden",
 			}}
 		>
 			{waveform.peaks.min.length > 0 && (
@@ -86,20 +82,19 @@ function PlacedSourceWaveform(props: {
 				/>
 			)}
 			{waveform.loading && waveform.peaks.min.length === 0 && (
-				<Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+				<span className="text-muted text-xs leading-5 px-2">
 					Loading waveform…
-				</Typography>
+				</span>
 			)}
 			{waveform.peaks.min.length === 0 && (
 				<Button
-					size="small"
-					variant="outlined"
-					disabled={waveform.loading || waveform.building}
-					onClick={(event) => {
-						event.stopPropagation();
+					className="absolute right-1 top-1 [z-index:1]"
+					variant="outline"
+					size="sm"
+					isDisabled={waveform.loading || waveform.building}
+					onPress={() => {
 						waveform.build();
 					}}
-					sx={{ position: "absolute", right: 4, top: 4, zIndex: 1 }}
 				>
 					{waveform.building
 						? `Building waveform (${waveform.progress}%)`
@@ -107,11 +102,11 @@ function PlacedSourceWaveform(props: {
 				</Button>
 			)}
 			{waveform.error && waveform.peaks.min.length === 0 && (
-				<Typography variant="caption" color="error" sx={{ px: 1 }}>
+				<span className="text-danger text-xs leading-5 px-2">
 					Waveform unavailable
-				</Typography>
+				</span>
 			)}
-		</Box>
+		</div>
 	);
 }
 
@@ -124,7 +119,7 @@ function TimelineWaveform(props: {
 	onSeek: (positionMs: number) => void;
 }) {
 	return (
-		<Box
+		<div
 			onClick={(event) => {
 				const bounds = event.currentTarget.getBoundingClientRect();
 				const fraction = Math.max(
@@ -136,14 +131,8 @@ function TimelineWaveform(props: {
 				);
 				props.onSeek(fraction * props.durationMs);
 			}}
-			sx={{
-				position: "relative",
-				height: props.height,
-				borderRadius: 1,
-				bgcolor: "rgba(168, 85, 247, 0.12)",
-				overflow: "hidden",
-				cursor: "pointer",
-			}}
+			className="relative [border-radius:1px] [background-color:rgba(168,_85,_247,_0.12)] overflow-hidden [cursor:pointer]"
+			style={{ height: props.height }}
 		>
 			{props.segments.map((segment) => (
 				<PlacedSourceWaveform
@@ -154,18 +143,14 @@ function TimelineWaveform(props: {
 					label={props.label}
 				/>
 			))}
-			<Box
+			<div
 				aria-hidden="true"
-				sx={{
-					position: "absolute",
-					top: 0,
-					bottom: 0,
+				className="absolute top-0 bottom-0 [border-left:2px_solid_#f8fafc] pointer-events-none"
+				style={{
 					left: `${Math.max(0, Math.min(1, props.positionMs / Math.max(1, props.durationMs))) * 100}%`,
-					borderLeft: "2px solid #f8fafc",
-					pointerEvents: "none",
 				}}
 			/>
-		</Box>
+		</div>
 	);
 }
 
@@ -177,9 +162,9 @@ export function ChannelMixTrackWaveforms(props: {
 	onSeek: (positionMs: number) => void;
 }) {
 	return (
-		<Stack spacing={0.75} sx={{ width: "100%" }}>
+		<div className="flex flex-col gap-1.5 w-full">
 			{props.tracks.map((track) => (
-				<Box key={track.user_id}>
+				<div key={track.user_id}>
 					<TimelineWaveform
 						segments={track.segments}
 						durationMs={props.durationMs}
@@ -189,15 +174,13 @@ export function ChannelMixTrackWaveforms(props: {
 						onSeek={props.onSeek}
 					/>
 					{props.showSourceRows && (
-						<Stack spacing={0.5} sx={{ mt: 0.5, pl: 1 }}>
+						<div className="flex flex-col gap-1 mt-1 pl-2">
 							{track.segments.map((segment) => (
-								<Stack
+								<div
 									key={segment.id}
-									direction="row"
-									spacing={1}
-									alignItems="center"
+									className="flex items-center flex-row gap-2"
 								>
-									<Box sx={{ flex: 1 }}>
+									<div className="flex-1">
 										<TimelineWaveform
 											segments={[segment]}
 											durationMs={props.durationMs}
@@ -206,21 +189,17 @@ export function ChannelMixTrackWaveforms(props: {
 											label={`Fragment ${segment.audio_file_id} waveform`}
 											onSeek={props.onSeek}
 										/>
-									</Box>
-									<Typography
-										variant="caption"
-										color="text.secondary"
-										sx={{ minWidth: 112, textAlign: "right" }}
-									>
+									</div>
+									<span className="text-muted text-xs leading-5 min-w-28 text-right">
 										{formatDuration(segment.start_ms / 1_000)} –{" "}
 										{formatDuration(segment.end_ms / 1_000)}
-									</Typography>
-								</Stack>
+									</span>
+								</div>
 							))}
-						</Stack>
+						</div>
 					)}
-				</Box>
+				</div>
 			))}
-		</Stack>
+		</div>
 	);
 }

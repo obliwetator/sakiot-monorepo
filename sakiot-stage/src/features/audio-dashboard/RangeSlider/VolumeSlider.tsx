@@ -1,23 +1,18 @@
 import { Volume1 as VolumeDown, VolumeX as VolumeMute } from "lucide-react";
 import { useState } from "react";
-import { Slider, Stack } from "../../../shared/ui";
+import { Slider } from "../../../shared/ui";
 
 export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 	const [volume, setVolume] = useState(0.5);
 	const [muted, setMuted] = useState(false);
 
-	const handleChangeVolume = (_event: Event, newValue: number | number[]) => {
-		setVolume(newValue as number);
-		props.audioRef.volume = newValue as number;
+	const handleChangeVolume = (newValue: number) => {
+		setVolume(newValue);
+		props.audioRef.volume = newValue;
 	};
 
 	return (
-		<Stack
-			spacing={2}
-			direction="row"
-			sx={{ mb: 1, width: { xs: "100%", md: 200 } }}
-			alignItems="center"
-		>
+		<div className="flex items-center flex-row gap-4 mb-2 w-full min-[900px]:w-50">
 			{muted ? (
 				<VolumeMute
 					onClick={() => {
@@ -34,14 +29,12 @@ export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 				/>
 			)}
 			<Slider
-				max={1}
+				aria-label="Volume"
 				step={0.01}
-				getAriaLabel={() => "Volume"}
 				value={volume}
+				maxValue={1}
 				onChange={handleChangeVolume}
-				valueLabelDisplay="auto"
-				getAriaValueText={(value) => `${Math.round(value * 100)}%`}
 			/>
-		</Stack>
+		</div>
 	);
 }

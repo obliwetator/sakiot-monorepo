@@ -1,68 +1,46 @@
-import type { HTMLAttributes } from "react";
+import {
+	ProgressBar as AriaProgressBar,
+	type ProgressBarProps,
+} from "react-aria-components/ProgressBar";
 import { cn } from "./cn";
-import { omitCompatProps, type SxProps, sxToStyle } from "./theme";
-
-export interface LinearProgressProps extends HTMLAttributes<HTMLDivElement> {
-	value?: number;
-	variant?: "determinate" | "indeterminate";
-	sx?: SxProps;
-	[key: string]: any;
-}
-
-export function LinearProgress({
-	value = 0,
-	variant = "indeterminate",
-	sx,
+export function ProgressBar({
 	className,
 	...props
-}: LinearProgressProps) {
+}: Omit<ProgressBarProps, "className" | "children"> & { className?: string }) {
 	return (
-		<div
-			{...omitCompatProps(props)}
-			role="progressbar"
-			aria-valuenow={variant === "determinate" ? value : undefined}
+		<AriaProgressBar
+			aria-label="Progress"
+			{...props}
 			className={cn(
 				"h-1.5 w-full overflow-hidden rounded-full bg-slate-800",
 				className,
 			)}
-			style={sxToStyle(sx)}
 		>
-			<div
-				className={cn(
-					"h-full rounded-full bg-compat-primary",
-					variant !== "determinate" && "w-1/3 animate-pulse",
-				)}
-				style={
-					variant === "determinate"
-						? { width: `${Math.max(0, Math.min(100, value))}%` }
-						: undefined
-				}
-			/>
-		</div>
+			{({ percentage, isIndeterminate }) => (
+				<div
+					className={cn(
+						"h-full rounded-full bg-accent",
+						isIndeterminate && "w-1/3 animate-pulse motion-reduce:animate-none",
+					)}
+					style={isIndeterminate ? undefined : { width: `${percentage}%` }}
+				/>
+			)}
+		</AriaProgressBar>
 	);
 }
-
-export interface CircularProgressProps extends HTMLAttributes<HTMLSpanElement> {
-	size?: number | string;
-	sx?: SxProps;
-	[key: string]: any;
-}
-
-export function CircularProgress({
-	size = 24,
-	sx,
+export function Spinner({
 	className,
 	...props
-}: CircularProgressProps) {
+}: Omit<ProgressBarProps, "className" | "children"> & { className?: string }) {
 	return (
-		<span
-			{...omitCompatProps(props)}
-			role="progressbar"
+		<AriaProgressBar
+			aria-label="Loading"
+			{...props}
+			isIndeterminate
 			className={cn(
-				"inline-block animate-spin rounded-full border-2 border-current border-r-transparent",
+				"inline-block size-6 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none",
 				className,
 			)}
-			style={{ width: size, height: size, ...sxToStyle(sx) }}
 		/>
 	);
 }

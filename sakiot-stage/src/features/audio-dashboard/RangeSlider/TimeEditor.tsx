@@ -1,6 +1,6 @@
 import type React from "react";
 import { useState } from "react";
-import { Box, LegacyTextField as TextField } from "../../../shared/ui";
+import { TextField } from "../../../shared/ui";
 
 type Edge = "start" | "end";
 
@@ -59,20 +59,18 @@ function TimeEditor(props: {
 	];
 
 	return (
-		<Box>
+		<div>
 			<div>{props.edge === "start" ? "Left Slider" : "Right Slider"}</div>
 			{fields.map((f) => (
 				<TextField
 					key={f.label}
-					error={isError}
 					label={f.label}
-					variant="standard"
 					type="number"
-					value={f.value}
-					helperText={isError ? "Out of range" : ""}
-					inputProps={{ inputMode: "numeric", pattern: "[0-9]*" }}
-					onChange={(e) => {
-						const raw = e.target.value;
+					value={String(f.value)}
+					isInvalid={isError}
+					description={isError ? "Out of range" : ""}
+					onChange={(value) => {
+						const raw = value;
 						if (
 							f.clampHour &&
 							(raw as unknown as number) * 3600 > props.durationSec
@@ -94,9 +92,11 @@ function TimeEditor(props: {
 						}
 						setNewTime(nextValue, f.value, f.multiplier);
 					}}
+					inputMode={"numeric"}
+					pattern={"[0-9]*"}
 				/>
 			))}
-		</Box>
+		</div>
 	);
 }
 

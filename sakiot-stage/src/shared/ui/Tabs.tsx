@@ -1,99 +1,42 @@
+import type { RefAttributes } from "react";
+import { composeRenderProps } from "react-aria-components";
 import {
-	type ButtonHTMLAttributes,
-	Children,
-	cloneElement,
-	type HTMLAttributes,
-	isValidElement,
-	type ReactElement,
-	type ReactNode,
-	type SyntheticEvent,
-} from "react";
+	Tab as AriaTab,
+	TabList as AriaTabList,
+	type TabListProps,
+	TabPanel,
+	type TabProps,
+	Tabs,
+} from "react-aria-components/Tabs";
 import { cn } from "./cn";
-import { omitCompatProps, type SxProps, sxToStyle } from "./theme";
 
-export interface TabsProps
-	extends Omit<HTMLAttributes<HTMLDivElement>, "onChange"> {
-	value?: unknown;
-	onChange?: (event: SyntheticEvent, value: any) => void;
-	children?: ReactNode;
-	variant?: string;
-	sx?: SxProps;
-	[key: string]: any;
-}
-
-export function Tabs({
-	value,
-	onChange,
-	children,
-	variant,
-	sx,
+export { TabPanel, Tabs };
+export function TabList<T extends object>({
 	className,
 	...props
-}: TabsProps) {
+}: TabListProps<T> & RefAttributes<HTMLDivElement>) {
 	return (
-		<div
-			{...omitCompatProps(props)}
-			role="tablist"
-			className={cn(
-				"flex min-h-10 border-b border-ui-border",
-				variant === "fullWidth" && "w-full",
-				className,
+		<AriaTabList
+			{...props}
+			className={composeRenderProps(className, (className) =>
+				cn("flex min-h-10 border-b border-ui-border", className),
 			)}
-			style={sxToStyle(sx)}
-		>
-			{Children.map(children, (child) =>
-				isValidElement(child)
-					? cloneElement(child as ReactElement<any>, {
-							__tabsValue: value,
-							__tabsOnChange: onChange,
-							__tabsFullWidth: variant === "fullWidth",
-						})
-					: child,
-			)}
-		</div>
+		/>
 	);
 }
-
-export interface TabProps
-	extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value"> {
-	label?: ReactNode;
-	value?: unknown;
-	__tabsValue?: unknown;
-	__tabsOnChange?: (event: SyntheticEvent, value: any) => void;
-	__tabsFullWidth?: boolean;
-	sx?: SxProps;
-	children?: ReactNode;
-	[key: string]: any;
-}
-
 export function Tab({
-	label,
-	value,
-	__tabsValue,
-	__tabsOnChange,
-	__tabsFullWidth,
-	children,
-	sx,
 	className,
 	...props
-}: TabProps) {
-	const selected = __tabsValue === value;
+}: TabProps & RefAttributes<HTMLDivElement>) {
 	return (
-		<button
-			type="button"
-			role="tab"
-			aria-selected={selected}
-			{...omitCompatProps(props)}
-			onClick={(event) => __tabsOnChange?.(event, value)}
-			className={cn(
-				"min-h-10 border-b-2 border-transparent px-3 py-2 text-sm text-muted transition-colors hover:text-fg",
-				selected && "border-compat-primary text-compat-primary",
-				__tabsFullWidth && "flex-1",
-				className,
+		<AriaTab
+			{...props}
+			className={composeRenderProps(className, (className) =>
+				cn(
+					"min-h-10 cursor-default border-b-2 border-transparent px-3 py-2 text-sm text-muted outline-hidden transition-colors data-[hovered]:text-fg data-[selected]:border-accent data-[selected]:text-accent data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus",
+					className,
+				),
 			)}
-			style={sxToStyle(sx)}
-		>
-			{label ?? children}
-		</button>
+		/>
 	);
 }

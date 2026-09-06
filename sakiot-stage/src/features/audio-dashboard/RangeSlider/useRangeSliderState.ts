@@ -14,11 +14,7 @@ export interface RangeSliderState {
 	startEnd: number[];
 	setStartEnd: Dispatch<SetStateAction<number[]>>;
 	durationSec: number;
-	handleChange: (
-		event: Event,
-		newValue: number | number[],
-		activeThumb: number,
-	) => void;
+	handleChange: (values: number[]) => void;
 	togglePlay: () => void;
 	pinEnd: () => void;
 }
@@ -194,24 +190,8 @@ export function useRangeSliderState(args: {
 		return () => window.removeEventListener("keydown", handleSpace);
 	}, [togglePlay]);
 
-	const handleChange = (
-		_event: Event,
-		newValue: number | number[],
-		activeThumb: number,
-	) => {
-		if (!Array.isArray(newValue)) {
-			if (startEnd[0] + newValue < 0) {
-				setStartEnd([0, startEnd[1]]);
-				return;
-			} else if (startEnd[0] + newValue + MinDistance > startEnd[1]) {
-				setStartEnd([startEnd[1] - MinDistance, startEnd[1]]);
-				args.audioRef.play();
-				return;
-			}
-			return;
-		}
-
-		if (activeThumb === 0) {
+	const handleChange = (newValue: number[]) => {
+		if (newValue[0] !== startEnd[0]) {
 			const newStart = Math.max(
 				0,
 				Math.min(newValue[0], startEnd[1] - MinDistance),

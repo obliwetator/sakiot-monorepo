@@ -3,17 +3,15 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
 import {
-	Box,
 	Button,
-	Paper,
 	Table,
 	TableBody,
 	TableCell,
-	TableContainer,
 	TableHead,
 	TableHeader,
 	TableRow,
-	Typography,
+	Tooltip,
+	TooltipTrigger,
 } from "../../shared/ui";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
@@ -41,51 +39,51 @@ export function Stamps() {
 
 	if (!guildId) {
 		return (
-			<Box p={3}>
-				<Typography color="text.secondary">
+			<div className="p-6">
+				<p className="leading-6 text-muted">
 					Select a guild from the top navbar to view stamps.
-				</Typography>
-			</Box>
+				</p>
+			</div>
 		);
 	}
 
 	if (isLoading) {
 		return (
-			<Box p={3}>
-				<Typography>Loading stamps…</Typography>
-			</Box>
+			<div className="p-6">
+				<p className="leading-6">Loading stamps…</p>
+			</div>
 		);
 	}
 
 	if (isError) {
 		return (
-			<Box p={3}>
-				<Typography color="error">
+			<div className="p-6">
+				<p className="leading-6 text-danger">
 					Failed to load stamps: {JSON.stringify(error)}
-				</Typography>
-			</Box>
+				</p>
+			</div>
 		);
 	}
 
 	const rows = data ?? [];
 
 	return (
-		<Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1400 }}>
+		<div className="p-3 min-[900px]:p-6 max-w-350">
 			<ViewAsRoleBanner guildId={guildId} />
-			<Typography variant="h4" fontWeight={700} gutterBottom>
+			<h4 className="leading-6 [font-weight:700] font-semibold tracking-tight mb-2">
 				Stamps {guildName ? `— ${guildName}` : ""}
-			</Typography>
-			<Typography color="text.secondary" sx={{ mb: 2 }}>
+			</h4>
+			<p className="leading-6 text-muted mb-4">
 				{rows.length} stamp{rows.length === 1 ? "" : "s"} (newest first, max
 				500). Session links open the complete logical recording. Audio file IDs
 				identify the physical fragment containing each stamp.
-			</Typography>
+			</p>
 
 			{rows.length === 0 ? (
-				<Typography color="text.secondary">No stamps yet.</Typography>
+				<p className="leading-6 text-muted">No stamps yet.</p>
 			) : (
-				<TableContainer component={Paper} variant="outlined">
-					<Table size="small">
+				<div className="w-full overflow-x-auto">
+					<Table>
 						<TableHeader>
 							<TableRow>
 								<TableHead>ID</TableHead>
@@ -110,23 +108,25 @@ export function Stamps() {
 									? `/dashboard/${encodeURIComponent(guildId)}/audio/session/${encodeURIComponent(s.recording_session_id)}`
 									: null;
 								return (
-									<TableRow key={s.id} hover>
+									<TableRow key={s.id}>
 										<TableCell>{s.id}</TableCell>
 										<TableCell>{formatTimestamp(s.stamp_ts)}</TableCell>
 										<TableCell>
 											{playbackTarget ? (
-												<Button
-													variant="text"
-													size="small"
-													onClick={() => navigate(playbackTarget.path)}
-													title={
-														playbackTarget.scope === "session"
+												<TooltipTrigger delay={400}>
+													<Button
+														variant="ghost"
+														size="sm"
+														onPress={() => navigate(playbackTarget.path)}
+													>
+														{formatDuration(playbackTarget.relativeSeconds)}
+													</Button>
+													<Tooltip>
+														{playbackTarget.scope === "session"
 															? "Open complete logical session"
-															: "Open legacy physical fragment"
-													}
-												>
-													{formatDuration(playbackTarget.relativeSeconds)}
-												</Button>
+															: "Open legacy physical fragment"}
+													</Tooltip>
+												</TooltipTrigger>
 											) : (
 												<span style={{ opacity: 0.5 }}>—</span>
 											)}
@@ -159,9 +159,9 @@ export function Stamps() {
 										<TableCell>
 											{sessionPath ? (
 												<Button
-													variant="text"
-													size="small"
-													onClick={() =>
+													variant="ghost"
+													size="sm"
+													onPress={() =>
 														navigate(
 															playbackTarget?.scope === "session"
 																? playbackTarget.path
@@ -177,15 +177,9 @@ export function Stamps() {
 										</TableCell>
 										<TableCell>
 											{s.audio_file_id ? (
-												<Box>
-													<Typography variant="body2">
-														{s.audio_file_id}
-													</Typography>
-													<Typography
-														variant="caption"
-														color="text.secondary"
-														display="block"
-													>
+												<div>
+													<p className="text-sm">{s.audio_file_id}</p>
+													<span className="text-muted block text-xs leading-5">
 														{s.recording_session_id
 															? `Fragment ${fragmentNumber ?? "?"}${
 																	s.session_fragment_count
@@ -193,8 +187,8 @@ export function Stamps() {
 																		: ""
 																}`
 															: "Legacy physical file"}
-													</Typography>
-												</Box>
+													</span>
+												</div>
 											) : (
 												<span style={{ opacity: 0.5 }}>—</span>
 											)}
@@ -208,8 +202,8 @@ export function Stamps() {
 							})}
 						</TableBody>
 					</Table>
-				</TableContainer>
+				</div>
 			)}
-		</Box>
+		</div>
 	);
 }

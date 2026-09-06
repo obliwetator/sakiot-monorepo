@@ -1,5 +1,4 @@
 import { useRef } from "react";
-import { Box, Typography } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	axisLabelTransform,
@@ -37,7 +36,7 @@ export function TimelineRuler(props: {
 
 	return (
 		<TimelineRow label="Timeline">
-			<Box
+			<div
 				role="slider"
 				aria-label="Timeline scrubber"
 				aria-valuemin={0}
@@ -81,49 +80,30 @@ export function TimelineRuler(props: {
 						),
 					);
 				}}
-				sx={{
-					position: "relative",
-					height: 32,
-					touchAction: "none",
-					userSelect: "none",
-					cursor: "ew-resize",
-					overflow: "hidden",
-				}}
+				className="relative h-8 touch-none select-none [cursor:ew-resize] overflow-hidden"
 			>
 				{TIMELINE_AXIS_FRACTIONS.map((fraction) => {
 					const sec = props.viewStartSec + fraction * props.viewWidthSec;
 					return (
-						<Box
+						<div
 							key={fraction}
-							sx={{
-								position: "absolute",
-								top: 0,
-								bottom: 0,
+							className="absolute top-0 bottom-0 border-l border-ui-border"
+							style={{
 								left: `${fraction * 100}%`,
-								ml: gridLineOffset(fraction),
-								borderLeft: "1px solid",
-								borderColor: "divider",
+								marginLeft: gridLineOffset(fraction),
 							}}
 						>
-							<Typography
-								variant="caption"
-								color="text.secondary"
-								sx={{
-									display: "block",
-									transform: axisLabelTransform(fraction),
-									whiteSpace: "nowrap",
-									pl: 0.5,
-									fontVariantNumeric: "tabular-nums",
-									lineHeight: 1.4,
-								}}
+							<span
+								className="text-muted text-xs leading-5 block whitespace-nowrap pl-1 tabular-nums [line-height:1.4]"
+								style={{ transform: axisLabelTransform(fraction) }}
 							>
 								{formatDuration(sec)}
-							</Typography>
-						</Box>
+							</span>
+						</div>
 					);
 				})}
 				<TimelinePlayhead percent={props.fraction(props.positionSec)} />
-			</Box>
+			</div>
 		</TimelineRow>
 	);
 }

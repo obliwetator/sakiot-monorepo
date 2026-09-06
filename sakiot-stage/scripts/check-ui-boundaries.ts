@@ -12,6 +12,11 @@ const forbiddenSourcePatterns: Array<[RegExp, string]> = [
 	[/(?:^|[^a-z])react-spring(?:[^a-z]|$)/, "React Spring reference"],
 	[/Material Icons|material-icons/, "Material Icons request"],
 	[/\.Mui[A-Z]|\bMui[A-Z]/, "MUI class or component reference"],
+	[/\bsx\s*=/, "legacy sx prop; use CSS or Tailwind classes"],
+	[
+		/\b(?:sxToStyle|SxProps|omitCompatProps|resolveTag|ThemeProvider|createTheme)\b/,
+		"legacy UI compatibility API",
+	],
 ];
 
 async function sourceFiles(directory: string): Promise<string[]> {

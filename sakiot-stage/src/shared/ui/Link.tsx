@@ -1,33 +1,20 @@
-import type { AnchorHTMLAttributes, ElementType, ReactNode } from "react";
+import type { RefAttributes } from "react";
+import { composeRenderProps } from "react-aria-components";
+import { Link as AriaLink, type LinkProps } from "react-aria-components/Link";
 import { cn } from "./cn";
-import { omitCompatProps, resolveTag, type SxProps, sxToStyle } from "./theme";
-
-export interface LinkProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
-	component?: ElementType;
-	to?: string;
-	sx?: SxProps;
-	children?: ReactNode;
-	[key: string]: any;
-}
-
 export function Link({
-	children,
-	component,
-	sx,
 	className,
 	...props
-}: LinkProps) {
-	const Component = resolveTag(component, "a");
+}: LinkProps & RefAttributes<HTMLAnchorElement>) {
 	return (
-		<Component
-			{...omitCompatProps(props)}
-			className={cn(
-				"text-cyan-300 underline-offset-2 hover:underline",
-				className,
+		<AriaLink
+			{...props}
+			className={composeRenderProps(className, (className) =>
+				cn(
+					"text-accent underline-offset-2 data-[hovered]:underline data-[focus-visible]:outline-2 data-[focus-visible]:outline-focus",
+					className,
+				),
 			)}
-			style={sxToStyle(sx)}
-		>
-			{children}
-		</Component>
+		/>
 	);
 }

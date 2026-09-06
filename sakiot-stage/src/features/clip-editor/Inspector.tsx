@@ -7,23 +7,20 @@ import {
 	RotateCcw as ReplayIcon,
 	Settings as SettingsIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import {
-	Accordion,
-	AccordionDetails,
-	AccordionSummary,
-	Box,
 	type ButtonProps,
-	Divider,
-	FormControlLabel,
+	cn,
+	Disclosure,
+	DisclosurePanel,
+	DisclosureTrigger,
 	IconButton,
 	Button as InspectorButton,
 	Slider,
-	Stack,
 	Switch,
-	LegacyTextField as TextField,
+	TextField,
 	Tooltip,
-	Typography,
+	TooltipTrigger,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { type EffectLimits, effectLimit } from "./effectLimits";
@@ -43,7 +40,7 @@ import type { UseClipEditorReturn } from "./useClipEditor";
 
 const SLIDER_PROPS = {
 	size: "small" as const,
-	sx: { transition: "none" },
+	className: "transition-none",
 };
 
 export function Inspector(props: {
@@ -56,26 +53,14 @@ export function Inspector(props: {
 	const segment = editor.selectedSegment;
 
 	return (
-		<Box
-			component="aside"
+		<aside
 			aria-label="Inspector"
 			data-testid="clip-inspector"
-			sx={{
-				width: { xs: "100%", md: 260 },
-				maxHeight: { xs: segment ? "33.333%" : "none", md: "none" },
-				flex: {
-					xs: segment ? "0 0 33.333%" : "0 0 auto",
-					md: "0 0 auto",
-				},
-				minHeight: 0,
-				minWidth: 0,
-				overflowY: "auto",
-				overflowX: "hidden",
-				borderLeft: { xs: 0, md: 1 },
-				borderTop: { xs: 1, md: 0 },
-				borderColor: "divider",
-				p: { xs: 1, md: 2 },
-			}}
+			className={cn(
+				"w-full min-[900px]:w-65 min-[900px]:[max-height:none] min-[900px]:flex-none min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [border-left:0px_solid] min-[900px]:border-l border-t min-[900px]:[border-top:0px_solid] border-ui-border p-2 min-[900px]:p-4",
+				segment ? "[max-height:33.333%]" : "[max-height:none]",
+				segment ? "[flex:0_0_33.333%]" : "flex-none",
+			)}
 		>
 			{segment ? (
 				<SegmentInspectorContent
@@ -87,23 +72,14 @@ export function Inspector(props: {
 				/>
 			) : (
 				<>
-					<Typography variant="overline" color="text.secondary">
-						Inspector
-					</Typography>
-					<Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-						No segment selected.
-					</Typography>
-					<Typography
-						variant="caption"
-						color="text.secondary"
-						display="block"
-						sx={{ mt: 0.5 }}
-					>
+					<p className="leading-6 text-muted">Inspector</p>
+					<p className="text-muted text-sm mt-2">No segment selected.</p>
+					<span className="text-muted block text-xs leading-5 mt-1">
 						Click a clip on the timeline to trim it and adjust its effects.
-					</Typography>
+					</span>
 				</>
 			)}
-		</Box>
+		</aside>
 	);
 }
 
@@ -169,53 +145,57 @@ function SegmentInspectorContent(props: {
 
 	return (
 		<>
-			<Stack direction="row" alignItems="center" justifyContent="space-between">
-				<Typography variant="overline" color="text.secondary">
+			<div className="flex items-center justify-between flex-row">
+				<p className="leading-6 text-muted">
 					{multi ? `${segments.length} segments selected` : "Selected segment"}
-				</Typography>
-				<Tooltip title="Adjust the effect limits (volume, pitch, speed, EQ)">
-					<IconButton size="small" onClick={props.onOpenLimits}>
+				</p>
+				<TooltipTrigger delay={400}>
+					<IconButton
+						aria-label={"Adjust the effect limits (volume, pitch, speed, EQ)"}
+						size="sm"
+						onPress={props.onOpenLimits}
+					>
 						<SettingsIcon size={16} />
 					</IconButton>
-				</Tooltip>
-			</Stack>
-			<Typography
-				variant="h6"
-				noWrap
+					<Tooltip>
+						{"Adjust the effect limits (volume, pitch, speed, EQ)"}
+					</Tooltip>
+				</TooltipTrigger>
+			</div>
+			<h6
 				title={
 					multi
 						? segments.map((s) => props.clipName(s.sourceId)).join(", ")
 						: props.clipName(segment.sourceId)
 				}
+				className="font-medium tracking-[0.001em] text-xl truncate"
 			>
 				{props.clipName(segment.sourceId)}
 				{multi ? ` +${segments.length - 1}` : ""}
-			</Typography>
-			<Typography variant="caption" color="text.secondary">
+			</h6>
+			<span className="text-muted text-xs leading-5">
 				{multi
 					? "Effect changes apply to all selected segments."
 					: `${formatDuration(duration)} · at ${formatDuration(segment.timelineStart)}`}
-			</Typography>
+			</span>
 			{mergedUnit && (
-				<Typography variant="caption" color="text.secondary" display="block">
+				<span className="text-muted block text-xs leading-5">
 					Merged unit: the clips act as one element. Ungroup to edit them
 					individually.
-				</Typography>
+				</span>
 			)}
 
-			<Divider sx={{ my: 2 }} />
+			<hr className="w-full border-t border-ui-border my-4" />
 
-			<Typography variant="overline" color="text.secondary">
-				Effects
-			</Typography>
+			<p className="leading-6 text-muted">Effects</p>
 
 			{multi && (
-				<Box sx={{ mt: 1 }}>
-					<Typography variant="body2" color="text.secondary">
+				<div className="mt-2">
+					<p className="text-muted text-sm">
 						Editing effects for several segments at once can shift their boxes
 						unexpectedly.
-					</Typography>
-				</Box>
+					</p>
+				</div>
 			)}
 			<EffectSlider
 				feature="volume"
@@ -647,10 +627,10 @@ function SegmentInspectorContent(props: {
 			</EffectGroup>
 
 			<EffectGroup title="Effect tail" active={segment.effects.tailSeconds > 0}>
-				<Typography variant="caption" color="text.secondary" display="block">
+				<span className="text-muted block text-xs leading-5">
 					Silence processed after the source ends so delay, reverb, and feedback
 					can ring out in playback and exports.
-				</Typography>
+				</span>
 				<EffectSlider
 					feature="tail"
 					selectionCount={segments.length}
@@ -667,69 +647,67 @@ function SegmentInspectorContent(props: {
 				/>
 			</EffectGroup>
 
-			<Divider sx={{ my: 2 }} />
+			<hr className="w-full border-t border-ui-border my-4" />
 
-			<Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 0.5 }}>
+			<div className="flex flex-row flex-wrap gap-1">
 				<InspectorActionButton
 					feature="split"
 					selectionCount={segments.length}
-					size="small"
-					variant="outlined"
-					startIcon={<ContentCutIcon />}
-					onClick={editor.splitSelectedAtPlayhead}
+					size="sm"
+					variant="outline"
+					onPress={editor.splitSelectedAtPlayhead}
 				>
+					<ContentCutIcon />
 					Split (S)
 				</InspectorActionButton>
 				<InspectorActionButton
 					feature="merge"
 					selectionCount={segments.length}
-					disabled={alreadyMerged}
 					disabledReason={
 						alreadyMerged ? "This unit is already merged." : undefined
 					}
-					size="small"
-					variant="outlined"
-					startIcon={<MergeIcon />}
-					onClick={editor.mergeSelected}
+					size="sm"
+					variant="outline"
+					onPress={editor.mergeSelected}
+					isDisabled={alreadyMerged}
 				>
+					<MergeIcon />
 					Merge (M)
 				</InspectorActionButton>
 				{mergedUnit && (
 					<InspectorActionButton
 						feature="unmerge"
 						selectionCount={segments.length}
-						size="small"
-						variant="outlined"
-						startIcon={<CallSplitIcon />}
-						onClick={editor.unmergeSelected}
+						size="sm"
+						variant="outline"
+						onPress={editor.unmergeSelected}
 					>
+						<CallSplitIcon />
 						Ungroup
 					</InspectorActionButton>
 				)}
 				<InspectorActionButton
 					feature="reverse"
 					selectionCount={segments.length}
-					size="small"
-					variant={segment.effects.reverse ? "contained" : "outlined"}
-					color={segment.effects.reverse ? "secondary" : "primary"}
+					size="sm"
+					variant={segment.effects.reverse ? "primary" : "outline"}
 					aria-pressed={segment.effects.reverse}
-					startIcon={<ReplayIcon />}
-					onClick={editor.toggleReverse}
+					onPress={editor.toggleReverse}
 				>
+					<ReplayIcon />
 					Reverse (R)
 				</InspectorActionButton>
 				<InspectorActionButton
 					feature="delete"
 					selectionCount={segments.length}
-					size="small"
-					variant="outlined"
-					color="error"
-					startIcon={<DeleteIcon />}
-					onClick={editor.removeSelected}
+					size="sm"
+					variant="danger"
+					onPress={editor.removeSelected}
 				>
+					<DeleteIcon />
 					Delete
 				</InspectorActionButton>
-			</Stack>
+			</div>
 		</>
 	);
 }
@@ -747,31 +725,38 @@ function EffectSlider(props: {
 	onCommitted: () => void;
 	disabled?: boolean;
 }) {
+	const helpId = useId();
 	const gated = isInspectorFeatureDisabled(props.feature, props.selectionCount);
 	const disabled = props.disabled || gated;
 
 	return (
-		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
-			<Box sx={{ mb: 1 }}>
-				<Typography
-					variant="caption"
-					color={disabled ? "text.disabled" : "text.secondary"}
+		<div className="min-w-0">
+			<div className="mb-2">
+				<span
+					className={cn(
+						"text-xs leading-5",
+						disabled ? "[color:#64748b]" : "text-muted",
+					)}
 				>
 					{props.label} · {props.format(props.value)}
-				</Typography>
+				</span>
 				<Slider
+					aria-describedby={helpId}
 					{...SLIDER_PROPS}
-					min={props.min}
-					max={props.max}
 					step={props.step}
 					value={props.value}
-					disabled={disabled}
-					onChange={(_event, value) => props.onChange(Number(value))}
-					onChangeCommitted={props.onCommitted}
 					aria-label={props.label}
+					minValue={props.min}
+					maxValue={props.max}
+					isDisabled={disabled}
+					onChangeEnd={props.onCommitted}
+					onChange={(value) => props.onChange(Number(value))}
 				/>
-			</Box>
-		</Tooltip>
+			</div>
+			<p id={helpId} className="mt-1 text-xs text-muted">
+				{gated ? MULTI_SELECTION_DISABLED_REASON : ""}
+			</p>
+		</div>
 	);
 }
 
@@ -781,30 +766,22 @@ function EffectGroup(props: {
 	children: ReactNode;
 }) {
 	return (
-		<Accordion
-			variant="outlined"
-			disableGutters
-			defaultExpanded={props.active}
-			sx={{ mt: 1, "&:before": { display: "none" } }}
-		>
-			<AccordionSummary expandIcon={<ExpandMoreIcon />}>
-				<Stack
-					direction="row"
-					alignItems="baseline"
-					justifyContent="space-between"
-					sx={{ width: "100%", pr: 1 }}
-				>
-					<Typography variant="body2">{props.title}</Typography>
-					<Typography
-						variant="caption"
-						color={props.active ? "secondary.main" : "text.disabled"}
+		<Disclosure className="mt-2 before:hidden" defaultExpanded={props.active}>
+			<DisclosureTrigger icon={<ExpandMoreIcon />}>
+				<div className="flex items-baseline justify-between flex-row w-full pr-2">
+					<p className="text-sm">{props.title}</p>
+					<span
+						className={cn(
+							"text-xs leading-5",
+							props.active ? "text-creative" : "[color:#64748b]",
+						)}
 					>
 						{props.active ? "On" : "Off"}
-					</Typography>
-				</Stack>
-			</AccordionSummary>
-			<AccordionDetails sx={{ pt: 0 }}>{props.children}</AccordionDetails>
-		</Accordion>
+					</span>
+				</div>
+			</DisclosureTrigger>
+			<DisclosurePanel className="pt-0">{props.children}</DisclosurePanel>
+		</Disclosure>
 	);
 }
 
@@ -815,21 +792,22 @@ function EffectSwitch(props: {
 	label: string;
 	onChange: (checked: boolean) => void;
 }) {
+	const helpId = useId();
 	const gated = isInspectorFeatureDisabled(props.feature, props.selectionCount);
 	return (
-		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
-			<FormControlLabel
-				control={
-					<Switch
-						size="small"
-						checked={props.checked}
-						disabled={gated}
-						onChange={(_event, checked) => props.onChange(checked)}
-					/>
-				}
-				label={<Typography variant="caption">{props.label}</Typography>}
-			/>
-		</Tooltip>
+		<div className="min-w-0">
+			<Switch
+				aria-describedby={helpId}
+				isSelected={props.checked}
+				isDisabled={gated}
+				onChange={(checked) => props.onChange(checked)}
+			>
+				<span className={"text-xs leading-5"}>{props.label}</span>
+			</Switch>
+			<p id={helpId} className="mt-1 text-xs text-muted">
+				{gated ? MULTI_SELECTION_DISABLED_REASON : ""}
+			</p>
+		</div>
 	);
 }
 
@@ -844,31 +822,34 @@ function EffectNumberField(props: {
 	onCommitted: () => void;
 	disabled?: boolean;
 }) {
+	const helpId = useId();
 	const gated = isInspectorFeatureDisabled(props.feature, props.selectionCount);
 	const disabled = props.disabled || gated;
 	return (
-		<Tooltip title={gated ? MULTI_SELECTION_DISABLED_REASON : ""}>
+		<div className="min-w-0">
 			<TextField
-				size="small"
-				fullWidth
+				aria-describedby={helpId}
 				type="number"
 				label={props.label}
-				value={props.value}
-				disabled={disabled}
-				onChange={(event) => {
-					const parsed = Number(event.target.value);
+				value={String(props.value)}
+				onBlur={props.onCommitted}
+				className="mt-2"
+				isDisabled={disabled}
+				onChange={(value) => {
+					const parsed = Number(value);
 					if (!Number.isFinite(parsed)) return;
 					props.onChange(
 						Math.min(props.max, Math.max(props.min, Math.round(parsed))),
 					);
 				}}
-				onBlur={props.onCommitted}
-				slotProps={{
-					htmlInput: { min: props.min, max: props.max, step: 1 },
-				}}
-				sx={{ mt: 1 }}
+				min={props.min}
+				max={props.max}
+				step={1}
 			/>
-		</Tooltip>
+			<p id={helpId} className="mt-1 text-xs text-muted">
+				{gated ? MULTI_SELECTION_DISABLED_REASON : ""}
+			</p>
+		</div>
 	);
 }
 
@@ -895,17 +876,26 @@ function InspectorActionButton(
 		disabledReason?: string;
 	},
 ) {
-	const { feature, selectionCount, disabled, disabledReason, ...buttonProps } =
-		props;
+	const {
+		feature,
+		selectionCount,
+		isDisabled,
+		disabledReason,
+		...buttonProps
+	} = props;
+	const helpId = useId();
 	const gated = isInspectorFeatureDisabled(feature, selectionCount);
 
 	return (
-		<Tooltip
-			title={gated ? MULTI_SELECTION_DISABLED_REASON : (disabledReason ?? "")}
-		>
-			<span>
-				<InspectorButton {...buttonProps} disabled={disabled || gated} />
-			</span>
-		</Tooltip>
+		<div className="min-w-0">
+			<InspectorButton
+				aria-describedby={helpId}
+				{...buttonProps}
+				isDisabled={isDisabled || gated}
+			/>
+			<p id={helpId} className="mt-1 text-xs text-muted">
+				{gated ? MULTI_SELECTION_DISABLED_REASON : (disabledReason ?? "")}
+			</p>
+		</div>
 	);
 }

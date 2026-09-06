@@ -1,17 +1,7 @@
-import { Search as SearchIcon } from "lucide-react";
 import type { TouchEvent as ReactTouchEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { ClipData } from "../../app/apiSlice";
-import {
-	Box,
-	CircularProgress,
-	InputAdornment,
-	List,
-	ListItemButton,
-	ListItemText,
-	LegacyTextField as TextField,
-	Typography,
-} from "../../shared/ui";
+import { cn, Spinner, TextField } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 
 export function ClipBin(props: {
@@ -36,53 +26,29 @@ export function ClipBin(props: {
 		: props.clips;
 
 	return (
-		<Box
-			component="aside"
+		<aside
 			aria-label="Source clips"
 			data-testid="clip-source-bin"
-			sx={{
-				width: 280,
-				height: props.tapToAdd ? "100%" : "auto",
-				flex: "0 0 auto",
-				display: "flex",
-				flexDirection: "column",
-				minHeight: 0,
-				borderRight: 1,
-				borderColor: "divider",
-			}}
+			className={cn(
+				"w-70 flex-none flex flex-col min-h-0 border-r border-ui-border",
+				props.tapToAdd ? "h-full" : "h-auto",
+			)}
 		>
-			<Box sx={{ p: 1.5, pb: 1 }}>
+			<div className="p-3 pb-2">
 				<TextField
-					size="small"
-					fullWidth
+					aria-label="Search clips"
 					placeholder="Search clips"
 					value={search}
-					onChange={(event) => setSearch(event.currentTarget.value)}
-					slotProps={{
-						input: {
-							startAdornment: (
-								<InputAdornment position="start">
-									<SearchIcon size={16} />
-								</InputAdornment>
-							),
-						},
-					}}
+					onChange={(value) => setSearch(value)}
 				/>
-				<Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+				<span className="text-muted text-xs leading-5 px-1">
 					{props.tapToAdd
 						? "Tap to append, or hold and drag onto a track"
 						: "Drag onto a track, or double-click to append"}
-				</Typography>
-			</Box>
-			<Box
-				sx={{
-					flex: 1,
-					minHeight: 0,
-					overflowY: "auto",
-					overflowX: "hidden",
-				}}
-			>
-				<List dense disablePadding sx={{ px: 1, pb: 1 }}>
+				</span>
+			</div>
+			<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+				<div className="flex flex-col gap-1 px-2 pb-2">
 					{filtered.map((clip) => (
 						<ClipBinItem
 							key={clip.clip_id}
@@ -100,13 +66,11 @@ export function ClipBin(props: {
 						/>
 					))}
 					{filtered.length === 0 && (
-						<Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-							No clips match.
-						</Typography>
+						<p className="text-muted text-sm p-4">No clips match.</p>
 					)}
-				</List>
-			</Box>
-		</Box>
+				</div>
+			</div>
+		</aside>
 	);
 }
 
@@ -270,18 +234,12 @@ function ClipBinItem(props: {
 	};
 
 	return (
-		<ListItemButton
+		<button
+			type="button"
 			draggable={!props.disableNativeDrag}
 			onTouchStart={beginTouchHold}
 			onContextMenu={(event) => {
 				if (props.tapToAdd) event.preventDefault();
-			}}
-			onClick={(event) => {
-				if (Date.now() < ignoreClickUntilRef.current) {
-					event.preventDefault();
-					return;
-				}
-				if (props.tapToAdd) props.onAdd(props.clip);
 			}}
 			onDragStart={(event) => {
 				pendingBinDrag.payload = {
@@ -316,38 +274,22 @@ function ClipBinItem(props: {
 			onDoubleClick={() => {
 				if (!props.tapToAdd) props.onAdd(props.clip);
 			}}
-			sx={{
-				px: 1.5,
-				py: 0.75,
-				mb: 0.75,
-				border: 1,
-				borderColor: "var(--color-ui-border)",
-				borderRadius: 1,
-				bgcolor: "var(--color-surface-raised)",
-				touchAction: "pan-y",
-				userSelect: "none",
-				"&:last-child": { mb: 0 },
-				"&:hover": {
-					bgcolor: "color-mix(in srgb, var(--color-surface-raised) 82%, white)",
-					borderColor: "var(--color-primary-strong)",
-				},
+			className="w-full justify-start text-left px-3 py-1.5 mb-1.5 border border-ui-border [border-radius:1px] bg-surface-raised [touch-action:pan-y] select-none last:mb-0 hover:[background-color:color-mix(in_srgb,_var(--color-surface-raised)_82%,_white)] hover:border-primary-strong"
+			onClick={(event) => {
+				if (Date.now() < ignoreClickUntilRef.current) {
+					event.preventDefault();
+					return;
+				}
+				if (props.tapToAdd) props.onAdd(props.clip);
 			}}
 		>
-			<ListItemText
-				primary={props.clip.name || "Unnamed clip"}
-				primaryTypographyProps={{
-					noWrap: true,
-					fontSize: "0.875rem",
-					fontWeight: 600,
-				}}
-				secondary={formatDuration(props.clip.length ?? 0)}
-				secondaryTypographyProps={{
-					variant: "caption",
-					color: "text.secondary",
-				}}
-				sx={{ my: 0 }}
-			/>
-			{props.loading && <CircularProgress size={14} />}
-		</ListItemButton>
+			<div className="my-0">
+				{props.clip.name || "Unnamed clip"}
+				<span className="block text-xs text-muted">
+					{formatDuration(props.clip.length ?? 0)}
+				</span>
+			</div>
+			{props.loading && <Spinner />}
+		</button>
 	);
 }

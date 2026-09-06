@@ -2,7 +2,7 @@ import type React from "react";
 import { useParams } from "react-router-dom";
 import type { VoiceEvent } from "../../../app/apiSlice";
 import type { AudioParams, UserGuilds } from "../../../Constants";
-import { Box, Button, Stack } from "../../../shared/ui";
+import { Button } from "../../../shared/ui";
 import WaveFormButton from "../Waveform";
 import { ClipDialog } from "./ClipDialog";
 import { DoubleSlider } from "./DoubleSlider";
@@ -36,14 +36,14 @@ export function RangeSlider(props: {
 	});
 
 	return (
-		<Box sx={{ mx: { xs: 1, md: 8 }, my: { xs: 1, md: 2 } }}>
+		<div className="mx-2 min-[900px]:mx-16 my-2 min-[900px]:my-4">
 			<WaveFormButton
 				params={params}
 				startEnd={range.startEnd}
 				isSilence={props.isSilence}
 				isClip={props.isClip}
 				actionsSlot={
-					<Button variant="contained" onClick={range.togglePlay}>
+					<Button variant="primary" onPress={range.togglePlay}>
 						{range.playing ? "Pause" : "Play"}
 					</Button>
 				}
@@ -66,14 +66,7 @@ export function RangeSlider(props: {
 				onPinEnd={range.pinEnd}
 				recordingStartedAtMs={props.recordingStartedAtMs}
 			/>
-			<Stack
-				direction="row"
-				spacing={1}
-				alignItems="center"
-				flexWrap="wrap"
-				useFlexGap
-				sx={{ mt: 1 }}
-			>
+			<div className="flex items-center flex-wrap flex-row gap-2 mt-2">
 				<DownloadButton
 					isClip={props.isClip}
 					isSilence={props.isSilence}
@@ -90,7 +83,7 @@ export function RangeSlider(props: {
 					isLive={props.isLive}
 				/>
 				<JamIt visible={props.isClip} />
-			</Stack>
-		</Box>
+			</div>
+		</div>
 	);
 }

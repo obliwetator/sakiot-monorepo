@@ -4,9 +4,9 @@ import type {
 	KeyboardEvent as ReactKeyboardEvent,
 	PointerEvent as ReactPointerEvent,
 } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { usePointerDrag } from "../../shared/pointerDrag";
-import { Box, IconButton, Tooltip, Typography } from "../../shared/ui";
+import { cn, IconButton, Tooltip, TooltipTrigger } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import { pendingBinDrag } from "./ClipBin";
@@ -50,6 +50,7 @@ export interface MobileBinDropRequest extends MobileBinDragPreview {
 }
 
 function TimelineViewportScrollbar(props: {
+	controls: string;
 	viewStartSec: number;
 	viewWidthSec: number;
 	totalDurationSec: number;
@@ -155,9 +156,10 @@ function TimelineViewportScrollbar(props: {
 	};
 
 	return (
-		<Box
+		<div
 			ref={trackRef}
 			role="scrollbar"
+			aria-controls={props.controls}
 			aria-label="Timeline horizontal scroll"
 			aria-orientation="horizontal"
 			aria-valuemin={0}
@@ -173,41 +175,24 @@ function TimelineViewportScrollbar(props: {
 			onLostPointerCapture={() => {
 				dragRef.current = null;
 			}}
-			sx={{
-				position: "relative",
-				height: 16,
-				my: 0.25,
-				borderRadius: 1,
-				bgcolor: "action.hover",
-				border: "1px solid",
-				borderColor: "divider",
-				cursor: maxStartSec > 0 ? "grab" : "default",
-				touchAction: "none",
-				userSelect: "none",
-				"&:focus-visible": {
-					outline: "2px solid",
-					outlineColor: "primary.main",
-					outlineOffset: 1,
-				},
-			}}
+			className={cn(
+				"relative h-4 my-0.5 [border-radius:1px] [background-color:action.hover] border border-ui-border touch-none select-none focus-visible:[outline:2px_solid] focus-visible:[outline-color:var(--color-accent)] focus-visible:[outline-offset:1px]",
+				maxStartSec > 0 ? "[cursor:grab]" : "[cursor:default]",
+			)}
 		>
-			<Box
+			<div
 				aria-hidden="true"
+				className={cn(
+					"top-[1px] bottom-[1px] min-w-2 [border-radius:1px] bg-muted",
+					maxStartSec > 0 ? "[opacity:0.8]" : "[opacity:0.45]",
+				)}
 				style={{
 					position: "absolute",
 					left: `${startFraction * 100}%`,
 					width: `${viewportFraction * 100}%`,
 				}}
-				sx={{
-					top: 1,
-					bottom: 1,
-					minWidth: 8,
-					borderRadius: 1,
-					bgcolor: "text.secondary",
-					opacity: maxStartSec > 0 ? 0.8 : 0.45,
-				}}
 			/>
-		</Box>
+		</div>
 	);
 }
 
@@ -256,6 +241,7 @@ export function Timeline(props: {
 	audacityStyleInteraction?: boolean;
 }) {
 	const { editor } = props;
+	const viewportId = useId();
 	const audacityStyleInteraction = props.audacityStyleInteraction ?? false;
 	const timelineRef = useRef<HTMLDivElement | null>(null);
 	const plotRef = useRef<HTMLDivElement | null>(null);
@@ -786,34 +772,16 @@ export function Timeline(props: {
 			: [];
 
 	return (
-		<Box
-			component="section"
+		<section
+			id={viewportId}
 			ref={timelineRef}
 			aria-label="Clip editor timeline"
-			sx={{
-				display: "flex",
-				flexDirection: "column",
-				minHeight: 0,
-				minWidth: 0,
-				height: "100%",
-				borderTop: 1,
-				borderColor: "divider",
-				p: 1,
-				overflow: "hidden",
-			}}
+			className="flex flex-col min-h-0 min-w-0 h-full border-t border-ui-border p-2 overflow-hidden"
 		>
-			<Box
-				ref={plotRef}
-				sx={{
-					display: "flex",
-					flexDirection: "column",
-					flex: 1,
-					minHeight: 0,
-					minWidth: 0,
-				}}
-			>
-				<TimelineRow label="Scroll" sx={{ mb: 0.5 }}>
+			<div ref={plotRef} className="flex flex-col flex-1 min-h-0 min-w-0">
+				<TimelineRow label="Scroll" className="mb-1">
 					<TimelineViewportScrollbar
+						controls={viewportId}
 						viewStartSec={editor.viewStartSec}
 						viewWidthSec={editor.viewWidthSec}
 						totalDurationSec={editor.timelineDurationSec}
@@ -828,7 +796,7 @@ export function Timeline(props: {
 					viewStartSec={editor.viewStartSec}
 					viewWidthSec={editor.viewWidthSec}
 				/>
-				<Box
+				<div
 					ref={tracksRef}
 					data-testid="clip-timeline-dropzone"
 					onPointerMove={handleTracksPointerMove}
@@ -837,14 +805,7 @@ export function Timeline(props: {
 					onDragOver={handleDragOver}
 					onDrop={handleDrop}
 					onDragLeave={handleDragLeave}
-					sx={{
-						flex: 1,
-						minHeight: 0,
-						overflowY: "auto",
-						display: "flex",
-						flexDirection: "column",
-						position: "relative",
-					}}
+					className="flex-1 min-h-0 overflow-y-auto flex flex-col relative"
 				>
 					{(() => {
 						const marqueeState = marquee.snapshot?.ghost;
@@ -861,24 +822,15 @@ export function Timeline(props: {
 							container.scrollTop,
 						);
 						return (
-							<Box
+							<div
 								aria-hidden="true"
-								// Per-frame geometry goes inline: emotion would
-								// otherwise inject a new <style> tag on every
-								// pointermove and never remove the old ones.
+								className="[border:1px_dashed] border-focus [background-color:rgba(56,_189,_248,_0.08)] pointer-events-none [z-index:20]"
 								style={{
 									position: "absolute",
 									left: offset.left,
 									top: offset.top,
 									width: Math.abs(marqueeState.currentX - marqueeState.startX),
 									height: Math.abs(marqueeState.currentY - marqueeState.startY),
-								}}
-								sx={{
-									border: "1px dashed",
-									borderColor: "primary.light",
-									bgcolor: "rgba(56, 189, 248, 0.08)",
-									pointerEvents: "none",
-									zIndex: 20,
 								}}
 							/>
 						);
@@ -971,8 +923,8 @@ export function Timeline(props: {
 							]}
 						/>
 					)}
-				</Box>
-			</Box>
+				</div>
+			</div>
 			{segmentDragGhost && !segmentDragGhost.valid && (
 				<FloatingDragChip
 					name={clipNameOfDragged(segmentDragGhost, editor, props.clipName)}
@@ -992,33 +944,42 @@ export function Timeline(props: {
 					y={segmentDragGhost.pointerY}
 				/>
 			)}
-			<Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
-				<Tooltip title="Zoom out">
-					<IconButton size="small" onClick={() => editor.zoom(2)}>
+			<div className="flex items-center gap-2 mt-2">
+				<TooltipTrigger delay={400}>
+					<IconButton
+						aria-label={"Zoom out"}
+						size="sm"
+						onPress={() => editor.zoom(2)}
+					>
 						<ZoomOutIcon size={16} />
 					</IconButton>
-				</Tooltip>
-				<Tooltip title="Fit edit in view">
-					<IconButton size="small" onClick={editor.fitView}>
-						<Typography variant="caption" sx={{ px: 0.5 }}>
-							Fit
-						</Typography>
+					<Tooltip>{"Zoom out"}</Tooltip>
+				</TooltipTrigger>
+				<TooltipTrigger delay={400}>
+					<IconButton
+						aria-label={"Fit edit in view"}
+						size="sm"
+						onPress={editor.fitView}
+					>
+						<span className="text-xs leading-5 px-1">Fit</span>
 					</IconButton>
-				</Tooltip>
-				<Tooltip title="Zoom in">
-					<IconButton size="small" onClick={() => editor.zoom(0.5)}>
+					<Tooltip>{"Fit edit in view"}</Tooltip>
+				</TooltipTrigger>
+				<TooltipTrigger delay={400}>
+					<IconButton
+						aria-label={"Zoom in"}
+						size="sm"
+						onPress={() => editor.zoom(0.5)}
+					>
 						<ZoomInIcon size={16} />
 					</IconButton>
-				</Tooltip>
-				<Typography
-					variant="caption"
-					color="text.secondary"
-					sx={{ fontVariantNumeric: "tabular-nums" }}
-				>
+					<Tooltip>{"Zoom in"}</Tooltip>
+				</TooltipTrigger>
+				<span className="text-muted text-xs leading-5 tabular-nums">
 					Window {formatDuration(editor.viewStartSec)} –{" "}
 					{formatDuration(editor.viewStartSec + editor.viewWidthSec)}
-				</Typography>
-			</Box>
-		</Box>
+				</span>
+			</div>
+		</section>
 	);
 }

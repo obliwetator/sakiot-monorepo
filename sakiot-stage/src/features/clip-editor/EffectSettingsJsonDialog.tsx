@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
-import {
-	Button,
-	LegacyTextField as TextField,
-	Typography,
-} from "../../shared/ui";
+import { Button, TextArea } from "../../shared/ui";
 import { parseEffectSettingsJson } from "./effectSettingsJson";
 import { DEFAULT_EFFECTS, resizeSelectedSegments } from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
@@ -57,33 +53,28 @@ export function EffectSettingsJsonDialog(props: {
 			error={error ?? undefined}
 			actions={
 				<>
-					<Button onClick={props.onClose}>Cancel</Button>
-					<Button variant="contained" onClick={apply}>
+					<Button onPress={props.onClose}>Cancel</Button>
+					<Button variant="primary" onPress={apply}>
 						Apply to selected
 					</Button>
 				</>
 			}
 		>
-			<Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+			<p className="text-muted text-sm mb-3">
 				Paste a complete or partial camelCase effect object. Values apply to all
 				selected segments; omitted settings stay unchanged.
-			</Typography>
-			<TextField
+			</p>
+			<TextArea
 				autoFocus
-				fullWidth
-				multiline
-				minRows={16}
-				maxRows={24}
 				label="Segment effects"
 				value={json}
-				onChange={(event) => {
-					setJson(event.currentTarget.value);
+				rows={16}
+				onChange={(value) => {
+					setJson(value);
 					setError(null);
 				}}
-				inputProps={{
-					spellCheck: false,
-					style: { fontFamily: "monospace", fontSize: "0.8rem" },
-				}}
+				spellCheck={false}
+				inputStyle={{ fontFamily: "monospace", fontSize: "0.8rem" }}
 			/>
 		</BaseDialog>
 	);
