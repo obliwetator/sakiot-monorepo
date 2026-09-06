@@ -30,7 +30,7 @@ fn segment_render() -> SegmentRender {
     }
 }
 
-fn body(segments: Vec<ComposeSegment>) -> ComposeClipBody {
+pub(super) fn body(segments: Vec<ComposeSegment>) -> ComposeClipBody {
     ComposeClipBody {
         name: None,
         master_volume_db: 0.0,
@@ -41,7 +41,7 @@ fn body(segments: Vec<ComposeSegment>) -> ComposeClipBody {
     }
 }
 
-fn segment() -> ComposeSegment {
+pub(super) fn segment() -> ComposeSegment {
     ComposeSegment {
         source: "clip".into(),
         source_id: "abc".into(),

@@ -102,6 +102,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "compose-worker")
+    {
+        let result = web_server::clip_editor::run_compose_worker_command(&arguments[1..]).await;
+        if let Err(error) = &result {
+            tracing::error!(?error, "composition child stopped");
+        }
+        // Do not let runtime shutdown wait for an abandoned spawn_blocking DSP
+        // task. The supervisor kills this child's entire process group on exit.
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
     let cfg = Config::from_env()?;
     let media_archive = MediaArchive::from_env().await?;
     init_telemetry(cfg.port);
@@ -120,6 +132,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .connect(&cfg.database_url)
         .await?;
 
+    let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     spawn_archive_worker(pool.clone(), media_archive.clone());
     spawn_local_cleanup(pool.clone(), media_archive.clone());
 
@@ -269,7 +282,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .bind((host.as_str(), port))?
     .run();
 
-    server.await?;
+    let result = server.await;
+    compose_worker.abort();
+    let _ = compose_worker.await;
+    result?;
     Ok(())
 }
 

@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn resolve_sources(
     pool: &web::Data<Pool<Postgres>>,
-    media: &MediaArchive,
+    media: Option<&MediaArchive>,
     guild_id: i64,
     user_id: i64,
     segments: &[ComposeSegment],
@@ -46,12 +46,17 @@ pub(super) async fn resolve_sources(
         let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
         let saved_file_name = saved_file_name.ok_or(AppError::ClipNotFound)?;
         let path = crate::media_archive::clip_local_path(&saved_file_name)?;
-        media
-            .ensure_clip_local(pool.get_ref(), &segment.source_id, &path)
-            .await?;
+        if let Some(media) = media {
+            media
+                .ensure_clip_local(pool.get_ref(), &segment.source_id, &path)
+                .await?;
+        }
         let length: Option<f32> = row.try_get("length")?;
         let length = match length {
             Some(length) if length.is_finite() && length > 0.0 => length,
+            // Metadata-only admission does not download or probe audio in the
+            // HTTP process. Unknown lengths are verified by the bounded worker.
+            _ if media.is_none() => segment.source_out,
             _ => probe_duration(&path).await? as f32,
         };
         let channel_id: i64 = row
@@ -61,6 +66,7 @@ pub(super) async fn resolve_sources(
             path,
             channel_id,
             length,
+            saved_file_name,
         });
     }
     Ok(resolved)
@@ -68,7 +74,7 @@ pub(super) async fn resolve_sources(
 
 pub(super) async fn resolve_composition(
     pool: &web::Data<Pool<Postgres>>,
-    media: &MediaArchive,
+    media: Option<&MediaArchive>,
     guild_id: i64,
     user_id: i64,
     validated: ValidatedComposition,

@@ -248,4 +248,7 @@ pub struct ComposeClipAccepted {
 pub struct ComposeClipStatus {
     pub status: String,
     pub progress: i16,
+    pub stage: String,
+    pub error: Option<String>,
+    pub result_clip_id: Option<String>,
 }

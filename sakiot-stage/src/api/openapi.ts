@@ -818,8 +818,11 @@ export interface components {
 			segments: components["schemas"]["ComposeSegment"][];
 		};
 		ComposeClipStatus: {
+			error?: string | null;
 			/** Format: int32 */
 			progress: number;
+			result_clip_id?: string | null;
+			stage: string;
 			status: string;
 		};
 		/**
@@ -1963,7 +1966,10 @@ export interface operations {
 	compose_clip: {
 		parameters: {
 			query?: never;
-			header?: never;
+			header?: {
+				/** @description Stable request key; reuse only with the same export body. Retained for 30 days after completion. */
+				"Idempotency-Key"?: string | null;
+			};
 			path: {
 				/** @description Discord guild id */
 				guild_id: number;
@@ -1976,7 +1982,7 @@ export interface operations {
 			};
 		};
 		responses: {
-			/** @description Clip composition started */
+			/** @description Clip composition durably queued */
 			202: {
 				headers: {
 					[name: string]: unknown;
@@ -2021,8 +2027,26 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
+			/** @description Request key already used for a different export */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Export queue unavailable or full */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -2046,7 +2070,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Composition status */
+			/** @description Stable owner-scoped composition status */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -2057,6 +2081,15 @@ export interface operations {
 			};
 			/** @description Missing or invalid access token */
 			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Job not found, expired, or owned by another user */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

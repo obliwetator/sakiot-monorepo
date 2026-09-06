@@ -247,12 +247,17 @@ export const apiSlice = createApi({
 		),
 		composeClip: builder.mutation<
 			ApiSchema["ComposeClipAccepted"],
-			{ guild_id: string; body: ApiSchema["ComposeClipBody"] }
+			{
+				guild_id: string;
+				body: ApiSchema["ComposeClipBody"];
+				idempotency_key: string;
+			}
 		>({
-			query: ({ guild_id, body }) => ({
+			query: ({ guild_id, body, idempotency_key }) => ({
 				url: `audio/clips/${guild_id}/compose`,
 				method: "POST",
 				headers: {
+					"Idempotency-Key": idempotency_key,
 					Accept: "application/json",
 					"Content-Type": "application/json",
 				},

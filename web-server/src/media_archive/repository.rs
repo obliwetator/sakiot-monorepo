@@ -107,6 +107,7 @@ pub(crate) async fn claim_batch(
          RETURNING object.id,
                    object.audio_file_id,
                    object.clip_id,
+                   object.clip_saved_file_name,
                    object.object_key,
                    object.bytes,
                    object.sha256,
@@ -131,7 +132,7 @@ pub(crate) async fn claim_batch(
                 continue;
             }
         };
-        let Some(path) = source_path(pool, &source).await? else {
+        let Some(path) = revision_path(pool, &source, &row).await? else {
             mark_missing(
                 pool,
                 id,
@@ -343,7 +344,7 @@ pub(crate) async fn available_object(
     let row =
         match source {
             SourceId::Recording(audio_file_id) => sqlx::query(
-                "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+                "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
                FROM media_objects
               WHERE audio_file_id = $1
                 AND state = 'available'
@@ -353,7 +354,7 @@ pub(crate) async fn available_object(
             .fetch_optional(pool)
             .await?,
             SourceId::Clip(clip_id) => sqlx::query(
-                "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+                "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
                FROM media_objects
               WHERE clip_id = $1
                 AND state = 'available'
@@ -413,6 +414,20 @@ pub(crate) async fn clip_source_path(
     source_path(pool, &SourceId::Clip(clip_id.to_owned())).await
 }
 
+async fn revision_path(
+    pool: &Pool<Postgres>,
+    source: &SourceId,
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<PathBuf>, AppError> {
+    match source {
+        SourceId::Recording(_) => source_path(pool, source).await,
+        SourceId::Clip(_) => row
+            .try_get::<Option<String>, _>("clip_saved_file_name")?
+            .map(|saved| super::clip_local_path(&saved))
+            .transpose(),
+    }
+}
+
 async fn available_from_row(
     pool: &Pool<Postgres>,
     row: sqlx::postgres::PgRow,
@@ -425,7 +440,7 @@ async fn available_from_row(
         (None, Some(id)) => SourceId::Clip(id),
         _ => return Err(AppError::InternalError),
     };
-    let path = source_path(pool, &source)
+    let path = revision_path(pool, &source, &row)
         .await?
         .ok_or(AppError::FileNotFound)?;
     Ok(AvailableObject {
@@ -442,7 +457,7 @@ pub(crate) async fn list_available(
     pool: &Pool<Postgres>,
 ) -> Result<Vec<AvailableObject>, AppError> {
     let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
            FROM media_objects
           WHERE state = 'available' AND verified_at IS NOT NULL
           ORDER BY id",
@@ -464,7 +479,7 @@ pub(crate) async fn list_available_recordings(
         return Ok(Vec::new());
     }
     let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
            FROM media_objects
           WHERE state = 'available'
             AND verified_at IS NOT NULL
@@ -489,7 +504,7 @@ pub(crate) async fn list_available_clips(
         return Ok(Vec::new());
     }
     let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, object_key, bytes, sha256, local_delete_after
+        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
            FROM media_objects
           WHERE state = 'available'
             AND verified_at IS NOT NULL
@@ -747,6 +762,25 @@ mod tests {
         )
         .execute(pool)
         .await?;
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn archive_snapshot_keeps_the_old_path_after_an_overwrite(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        seed_sources(&pool).await?;
+        reconcile(&pool).await?;
+        sqlx::query("UPDATE media_objects SET state = 'available', object_key = 'test', bytes = 1, sha256 = repeat('a',64), uploaded_at = now(), verified_at = now(), local_delete_after = now() WHERE clip_id = 'media-saved-clip'").execute(&pool).await?;
+        let row = sqlx::query("SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after FROM media_objects WHERE clip_id = 'media-saved-clip'").fetch_one(&pool).await?;
+        sqlx::query("UPDATE clips SET saved_file_name = 'replacement.ogg' WHERE clip_id = 'media-saved-clip'").execute(&pool).await?;
+        let stale_cleanup_snapshot = available_from_row(&pool, row).await?;
+        assert!(
+            stale_cleanup_snapshot
+                .path
+                .ends_with("2026/07/media-saved-clip.ogg")
+        );
+        assert!(!stale_cleanup_snapshot.path.ends_with("replacement.ogg"));
         Ok(())
     }
 

@@ -299,6 +299,15 @@ pub async fn get_waveform_data(
     Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
 }
 
+// Include the immutable file revision so an old generator cannot populate the
+// waveform of a newly overwritten clip. The existing cache reaper removes old keys.
+fn clip_waveform_key(clip_id: &str, input: &std::path::Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hash);
+    format!("clip-{clip_id}-{:016x}", hash.finish())
+}
+
 // A clip is its own trimmed, immutable .ogg — no live/end_ts logic. Generate
 // peaks straight from the clip file, keyed by clip_id, mirroring the simple
 // silence-free path. On-disk existence is the cache (the file never changes).
@@ -340,7 +349,7 @@ pub async fn get_clip_waveform_data(
 
     // Prefix the cache/progress key so it never collides with recording stems
     // ({ts}-{user_id}) or the silence-free (_no_silence_) key.
-    let cache_key = format!("clip-{}", clip_id);
+    let cache_key = clip_waveform_key(&clip_id, &input_path);
     let output = format!("{}{}.dat", waveform_path(), cache_key);
 
     if file_exists(&output).await {
@@ -398,7 +407,7 @@ pub fn spawn_clip_waveform(
     input_file: std::path::PathBuf,
     progress: web::Data<WaveformProgressContainer>,
 ) {
-    let cache_key = format!("clip-{clip_id}");
+    let cache_key = clip_waveform_key(&clip_id, &input_file);
     let output = format!("{}{}.dat", waveform_path(), cache_key);
     tokio::spawn(async move {
         if file_exists(&output).await {

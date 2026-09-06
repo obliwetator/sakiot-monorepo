@@ -16,146 +16,64 @@ pub(super) fn expected_duration_ms(segments: &[SegmentRender]) -> i64 {
     (max_end * 1_000.0).round() as i64
 }
 
-/// Timeline consumption rate of a segment. Pitch shifting preserves duration,
-/// so only the speed control changes the visible and exported extent.
 pub(super) fn effective_rate(segment: &SegmentRender) -> f64 {
     f64::from(segment.effects.rate)
 }
-
 pub(super) fn pitch_factor(pitch_cents: f32) -> f64 {
     2f64.powf(f64::from(pitch_cents) / 1200.0)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn run_compose_job(
-    pool: &web::Data<Pool<Postgres>>,
-    segments: &[SegmentRender],
-    master_volume_db: f32,
-    full_path: &Path,
-    expected_total_ms: i64,
-    progress: &web::Data<WaveformProgressContainer>,
-    cache_key: &str,
-    clip_id: &str,
-    guild_id: i64,
-    user_id: i64,
-    channel_id: i64,
-    name: &str,
+/// A complete immutable file exists before this transaction. A failed/ambiguous
+/// commit leaves it for reconciliation, never deletes a possibly committed file.
+pub(super) async fn publish(
+    pool: &Pool<Postgres>,
+    job: &queue::Job,
     saved_file_name: &str,
-    composition: &serde_json::Value,
-    overwrite: Option<ComposeOverwrite>,
+    duration: f32,
+    size: i64,
 ) -> Result<(), AppError> {
-    render_compose(
-        segments,
-        master_volume_db,
-        full_path,
-        expected_total_ms,
-        progress,
-        cache_key,
-    )
-    .await?;
-    let duration = probe_duration(full_path).await?;
-    let size = tokio::fs::metadata(full_path).await?.len() as i64;
-
-    match overwrite {
-        Some(target) => {
-            let result = sqlx::query(
-                "UPDATE clips
-                    SET saved_file_name = $3, length = $4, size = $5, name = $6,
-                        start_time = $7, composition = $8
-                  WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
-            )
-            .bind(guild_id)
-            .bind(&target.clip_id)
-            .bind(saved_file_name)
-            .bind(duration as f32)
-            .bind(size)
-            .bind(name)
-            .bind(0.0f32)
-            .bind(composition)
-            .execute(pool.get_ref())
-            .await;
-            if let Err(err) = result {
-                return Err(AppError::DbError(err));
-            }
-            // The archive ledger keeps at most one object per clip id; reset
-            // it so the worker re-uploads the fresh render instead of serving
-            // the stale version once the local file is pruned.
-            if let Err(error) = sqlx::query(
-                "UPDATE media_objects
-                    SET state = 'pending',
-                        retry_at = now(),
-                        lease_owner = NULL,
-                        lease_expires_at = NULL,
-                        object_key = NULL,
-                        bytes = NULL,
-                        sha256 = NULL,
-                        etag = NULL,
-                        attempts = 0,
-                        last_error = NULL,
-                        uploaded_at = NULL,
-                        verified_at = NULL,
-                        local_delete_after = NULL,
-                        updated_at = now()
-                  WHERE clip_id = $1
-                    AND state <> 'pending'",
-            )
-            .bind(&target.clip_id)
-            .execute(pool.get_ref())
-            .await
-            {
-                tracing::warn!(
-                    clip_id = %target.clip_id,
-                    ?error,
-                    "media archive ledger reset for overwritten clip failed"
-                );
-            }
-            // The replaced file and its waveform are stale; drop them so the
-            // fresh render (and its regenerated peaks) is the only version.
-            if let Ok(old_path) = crate::media_archive::clip_local_path(&target.old_saved_file_name)
-            {
-                let _ = tokio::fs::remove_file(&old_path).await;
-            }
-            let old_waveform = format!(
-                "{}clip-{}.dat",
-                crate::audio::waveform_path(),
-                target.clip_id
-            );
-            let _ = tokio::fs::remove_file(old_waveform).await;
-            crate::audio::spawn_clip_waveform(
-                target.clip_id.clone(),
-                full_path.to_path_buf(),
-                progress.clone(),
-            );
-        }
-        None => {
-            let insert = sqlx::query(
-                "INSERT INTO clips
-                    (clip_id, length, size, channel_id, guild_id, user_id,
-                     original_file_name, saved_file_name, name, start_time, composition)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-            )
-            .bind(clip_id)
-            .bind(duration as f32)
-            .bind(size)
-            .bind(channel_id)
-            .bind(guild_id)
-            .bind(user_id)
-            .bind("compose")
-            .bind(saved_file_name)
-            .bind(name)
-            .bind(0.0f32)
-            .bind(composition)
-            .execute(pool.get_ref())
-            .await;
-            if let Err(err) = insert {
-                return Err(AppError::DbError(err));
-            }
-            crate::audio::spawn_clip_waveform(
-                clip_id.to_string(),
-                full_path.to_path_buf(),
-                progress.clone(),
-            );
-        }
+    let mut tx = pool.begin().await?;
+    let owned: Option<String> = sqlx::query_scalar("SELECT id FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() FOR UPDATE")
+        .bind(&job.id).bind(&job.token).fetch_optional(&mut *tx).await?;
+    if owned.is_none() {
+        return Err(AppError::Conflict("Export lease lost".into()));
     }
+    let mut composition =
+        serde_json::to_value(&job.snapshot.body).map_err(|_| AppError::InternalError)?;
+    if let Some(object) = composition.as_object_mut() {
+        object.remove("overwrite_clip_id");
+        object.remove("limits");
+    }
+    if let Some(target) = &job.snapshot.overwrite {
+        let result = sqlx::query("UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'")
+            .bind(job.guild_id).bind(&target.clip_id).bind(saved_file_name).bind(duration).bind(size)
+            .bind(&job.snapshot.name).bind(&composition).bind(&target.old_saved_file_name).execute(&mut *tx).await?;
+        if result.rows_affected() != 1 {
+            return Err(AppError::Conflict("The destination clip changed or was deleted during export. Reopen it before overwriting.".into()));
+        }
+    } else {
+        sqlx::query("INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$6,'compose',$7,$8,0,$9)")
+            .bind(&job.result_clip_id).bind(duration).bind(size).bind(job.snapshot.channel_id)
+            .bind(job.guild_id).bind(job.user_id).bind(saved_file_name).bind(&job.snapshot.name).bind(&composition)
+            .execute(&mut *tx).await?;
+    }
+    // Invalidate an in-flight upload's lease, as well as previously verified
+    // bytes. Its old owner cannot mark this new media revision available.
+    sqlx::query(
+        "INSERT INTO media_objects (clip_id, clip_saved_file_name) VALUES ($1,$2)
+        ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO UPDATE SET
+        clip_saved_file_name = EXCLUDED.clip_saved_file_name, state = 'pending', retry_at = now(),
+        lease_owner = NULL, lease_expires_at = NULL, object_key = NULL, bytes = NULL, sha256 = NULL,
+        etag = NULL, attempts = 0, last_error = NULL, uploaded_at = NULL, verified_at = NULL,
+        local_delete_after = NULL, updated_at = now()",
+    )
+    .bind(&job.result_clip_id)
+    .bind(saved_file_name)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE composition_jobs SET state = 'ready', stage = 'ready', progress = 100, error = NULL, attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE id = $1")
+        .bind(&job.id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    tracing::info!(job_id = %job.id, clip_id = %job.result_clip_id, "composition published");
     Ok(())
 }

@@ -102,7 +102,8 @@ pub(super) async fn run_ffmpeg_with_progress(
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -197,6 +198,7 @@ pub(super) async fn decode_segment_f32(segment: &SegmentRender) -> Result<Vec<f3
             "pipe:1",
         ])
         .stdin(Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await
         .map_err(|error| {

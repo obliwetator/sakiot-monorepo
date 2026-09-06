@@ -88,6 +88,11 @@ impl MediaArchive {
         let object = repository::available_object(pool, &source)
             .await?
             .ok_or(AppError::FileNotFound)?;
+        if object.path != path {
+            return Err(AppError::Conflict(
+                "Media changed while it was being loaded; retry the request".into(),
+            ));
+        }
         let started = std::time::Instant::now();
         let result = archive
             .download_verified(

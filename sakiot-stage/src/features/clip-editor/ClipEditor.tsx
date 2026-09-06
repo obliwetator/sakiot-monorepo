@@ -1,14 +1,7 @@
 import { FolderOpen as FolderOpenIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-	apiSlice,
-	type ClipData,
-	useComposeClipMutation,
-	useGetClipsQuery,
-	useGetComposeClipStatusQuery,
-} from "../../app/apiSlice";
-import { useAppDispatch } from "../../app/hooks";
+import { type ClipData, useGetClipsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
 import { Button, Drawer, Notice, useMediaQuery } from "../../shared/ui";
 import { isComposedClip } from "../clips/composedClip";
@@ -41,6 +34,7 @@ import { useUnsavedChangesGuard } from "./unsavedChangesGuard";
 import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
 import { useClipEditorKeyboardShortcuts } from "./useClipEditorKeyboardShortcuts";
+import { useCompositionExport } from "./useCompositionExport";
 
 export function ClipEditor(props: { guildId: string }) {
 	const isDesktop = useMediaQuery("(min-width: 900px)");
@@ -60,7 +54,6 @@ export function ClipEditor(props: { guildId: string }) {
 		| null
 	>(null);
 	const { asRoleArg } = useAsRole();
-	const dispatch = useAppDispatch();
 	const { data: clips, isError: clipsError } = useGetClipsQuery(
 		{ guild_id: props.guildId, ...asRoleArg },
 		{ skip: !props.guildId },
@@ -95,59 +88,20 @@ export function ClipEditor(props: { guildId: string }) {
 		loadEffectLimits(),
 	);
 	const [composeName, setComposeName] = useState("");
-	const [composeError, setComposeError] = useState<string | null>(null);
-	const [composeDone, setComposeDone] = useState(false);
-	const [composeId, setComposeId] = useState<string | null>(null);
 	const [overwrite, setOverwrite] = useState(false);
-	const [composeClip, { isLoading: composeStarting }] =
-		useComposeClipMutation();
-	const { data: composeStatus } = useGetComposeClipStatusQuery(
-		{ guild_id: props.guildId, clip_id: composeId ?? "" },
-		{ skip: composeId === null, pollingInterval: 1000 },
-	);
-
-	useEffect(() => {
-		if (!composeId || !composeStatus) return;
-		if (composeStatus.status === "ready") {
-			dispatch(apiSlice.util.invalidateTags(["Clips"]));
-			setComposeDone(true);
-			setComposeId(null);
-		} else if (composeStatus.status === "failed") {
-			setComposeError(
-				"The render failed. Check the source clips and try again.",
-			);
-			setComposeId(null);
-		}
-	}, [composeId, composeStatus, dispatch]);
-
-	const handleCompose = useCallback(async () => {
+	const exportJob = useCompositionExport(props.guildId);
+	const handleCompose = () => {
 		if (editor.edit.segments.length === 0) return;
 		editor.flush();
-		setComposeError(null);
-		setComposeDone(false);
-		try {
-			const result = await composeClip({
-				guild_id: props.guildId,
-				body: serializeEdit(
-					editor.edit,
-					composeName.trim() || undefined,
-					overwrite ? (sourceClipId ?? undefined) : undefined,
-					effectLimits,
-				),
-			}).unwrap();
-			setComposeId(result.id);
-		} catch {
-			setComposeError("Could not start the render. Please try again.");
-		}
-	}, [
-		composeClip,
-		composeName,
-		editor,
-		effectLimits,
-		overwrite,
-		props.guildId,
-		sourceClipId,
-	]);
+		exportJob.begin(
+			serializeEdit(
+				editor.edit,
+				composeName.trim() || undefined,
+				overwrite ? (sourceClipId ?? undefined) : undefined,
+				effectLimits,
+			),
+		);
+	};
 
 	const updateEffectLimits = useCallback((limits: EffectLimits) => {
 		setEffectLimits(limits);
@@ -159,13 +113,10 @@ export function ClipEditor(props: { guildId: string }) {
 		saveEditorOptions(next);
 	}, []);
 
-	const closeCompose = useCallback(() => {
-		if (composeStarting || composeId !== null) return;
+	const closeCompose = () => {
 		setComposeOpen(false);
-		setComposeError(null);
-		setComposeDone(false);
-		setOverwrite(false);
-	}, [composeId, composeStarting]);
+		exportJob.resetMessage();
+	};
 
 	const clipName = useCallback(
 		(sourceId: string) => {
@@ -512,11 +463,12 @@ export function ClipEditor(props: { guildId: string }) {
 				open={composeOpen}
 				name={composeName}
 				setName={setComposeName}
-				error={composeError}
-				isStarting={composeStarting}
-				isRendering={composeId !== null}
-				progress={composeStatus?.progress ?? 0}
-				done={composeDone}
+				error={exportJob.error}
+				isStarting={exportJob.starting}
+				isRendering={exportJob.rendering}
+				progress={exportJob.progress}
+				stage={exportJob.stage}
+				done={exportJob.done}
 				segmentCount={editor.edit.segments.length}
 				overwriteAvailable={canOverwrite}
 				overwrite={overwrite}

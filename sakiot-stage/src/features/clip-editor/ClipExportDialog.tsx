@@ -15,6 +15,7 @@ export function ClipExportDialog(props: {
 	isStarting: boolean;
 	isRendering: boolean;
 	progress: number;
+	stage: string;
 	done: boolean;
 	segmentCount: number;
 	overwriteAvailable: boolean;
@@ -33,8 +34,8 @@ export function ClipExportDialog(props: {
 			busy={busy}
 			actions={
 				<>
-					<Button isDisabled={busy} onPress={props.onClose}>
-						{props.done ? "Done" : "Cancel"}
+					<Button onPress={props.onClose}>
+						{busy ? "Close" : props.done ? "Done" : "Cancel"}
 					</Button>
 					{!props.done && (
 						<Button
@@ -85,10 +86,20 @@ export function ClipExportDialog(props: {
 				) : props.isRendering ? (
 					<div>
 						<p className="text-sm mb-2">
-							Rendering {props.segmentCount} segment
-							{props.segmentCount === 1 ? "" : "s"} on the server…
+							{props.stage === "queued"
+								? "Waiting for an available export slot…"
+								: props.stage === "retrying"
+									? "Retrying the export after an interruption…"
+									: props.stage === "preparing"
+										? "Preparing source audio…"
+										: props.stage === "publishing"
+											? "Saving the finished clip…"
+											: "Rendering audio…"}
 						</p>
 						<ProgressBar value={props.progress} />
+						<p className="text-muted text-xs mt-2">
+							You can close this dialog. The export continues on the server.
+						</p>
 						<span className="text-muted text-xs leading-5 tabular-nums">
 							{props.progress}%
 						</span>

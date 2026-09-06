@@ -3,11 +3,9 @@ use std::process::Stdio;
 use std::{fs::File, io::BufWriter, io::Write};
 
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
-use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing::error;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -48,15 +46,18 @@ const OUTPUT_CHANNELS: usize = 2;
 mod contract;
 mod handlers;
 mod jobs;
+mod queue;
 mod render;
 mod repository;
 mod validation;
+mod worker;
 
 pub use contract::{
     AdvancedSegmentEffectsDto, ComposeClipAccepted, ComposeClipBody, ComposeClipStatus,
     ComposeLimitsDto, ComposeSegment, SegmentEffectsDto,
 };
 pub use handlers::*;
+pub use worker::{run_compose_worker_command, spawn_compose_worker};
 
 use jobs::*;
 use render::*;
@@ -67,8 +68,10 @@ struct ResolvedSource {
     path: PathBuf,
     channel_id: i64,
     length: f32,
+    saved_file_name: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct ComposeOverwrite {
     clip_id: String,
     old_saved_file_name: String,
@@ -106,3 +109,6 @@ struct ResolvedComposition {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod queue_tests;

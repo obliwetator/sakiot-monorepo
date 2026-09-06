@@ -79,3 +79,76 @@ cd ../sakiot-db
 sqlx migrate info --source migrations
 sqlx migrate run --source migrations
 ```
+
+## Durable composition exports
+
+Composition exports are stored in PostgreSQL before the API returns `202`.
+`POST /api/audio/clips/{guild_id}/compose` accepts an optional `Idempotency-Key`
+header (1–128 ASCII letters, digits, or hyphens). Repeating the same key and body
+for the same user/guild returns the existing job; changing the body returns
+`409`. Send a new key for an intentionally new export. The returned `id` is a
+job ID, separate from the destination clip ID.
+
+`GET /api/audio/clips/{guild_id}/compose/{job_id}` is owner-scoped and read-only.
+It returns `queued`, `running`, `ready`, or `failed`, plus `stage`, `progress`,
+`error`, and `result_clip_id` (populated on success). Unknown, expired, and other
+users' jobs return `404`. Terminal results and request keys remain available for
+30 days. The editor stores pending requests per user/guild, reconnects after a
+refresh, and safely retries a lost submission response with the original key.
+Closing the export dialog does not cancel the job.
+
+The web server supervises its own executable in an isolated Linux process
+group (`compose-worker` is an internal command). No extra service or queue
+broker is needed. PostgreSQL serializes claims across overlapping web releases.
+Each accepted job runs with these conservative limits:
+
+- One running composition per database; at most 100 queued/running jobs total
+  and three per user.
+- A 60-second lease, renewed every 15 seconds. Attempts that lose their lease
+  cannot publish. A crash is retried from the beginning, up to three attempts;
+  ordinary transient failures wait 10 seconds times the attempt number.
+- A 30-minute attempt deadline and 2 GiB process address-space limit. FFmpeg
+  inherits the child limits. A watchdog also stops the group if its supervisor
+  disappears.
+- An 8 GiB per-file limit and a total attempt-workspace budget checked every
+  two seconds. Sources are pinned with hard links on the media filesystem.
+  Budget failures fail the export instead of publishing partial output.
+
+Source authorization and metadata are checked before enqueueing; source
+hydration, unknown-duration probing, and rendering happen inside the bounded
+worker. Source access and immutable filenames are checked again on execution.
+Overwrite publication compares the destination's previous filename, so an
+intervening overwrite or deletion produces a conflict instead of replacing
+newer work. Output is flushed and renamed to an immutable filename before one
+transaction publishes the clip, its archive revision, and job completion.
+An ambiguous commit never causes immediate output deletion.
+
+Temporary attempts live under `clips/.composition-jobs/`; completed audio lives
+under `clips/compositions/`. The reconciler removes inactive attempt directories
+and unreferenced composition outputs after an hour. It also removes superseded
+local overwrite files after that grace period. It never deletes a filename
+still referenced by a clip, including a soft-deleted clip. Archive eviction and
+waveform caches use immutable file revisions, so stale work cannot target a
+replacement file. Waveforms remain regenerable caches and are generated on
+request after composition publication.
+
+Apply migration `20260906000000_composition_jobs.sql` before running this
+release. It is additive and protects archive revisions even while an older web
+release is still running. Queued jobs use renderer contract version 1; future
+renderer changes must retain compatibility or explicitly migrate pending jobs.
+A rollback to a release without the worker leaves accepted jobs queued until a
+compatible release runs again; do not drop the queue tables during rollback.
+
+Inspect the queue without modifying it:
+
+```sql
+SELECT state, stage, count(*), min(created_at) AS oldest
+FROM composition_jobs GROUP BY state, stage ORDER BY state, stage;
+
+SELECT id, state, attempts, lease_expires_at, error
+FROM composition_jobs WHERE state <> 'ready' ORDER BY created_at;
+```
+
+Tests use SQLx disposable databases and temporary media roots. The integration
+suite runs the actual worker binary and FFmpeg, including process termination
+and recovery. No test should use the runtime database.
