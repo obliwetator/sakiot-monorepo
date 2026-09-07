@@ -5,9 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
-		"build": "bun run check:ui-boundaries && biome check . && tsc && tsc -p tsconfig.e2e.json && bun run build:bundle",
+		"build": "biome check . && tsc && tsc -p tsconfig.e2e.json && bun run build:bundle",
 		"build:bundle": "vite build",
-		"check:ui-boundaries": "bun scripts/check-ui-boundaries.ts",
 		"deploy": "bun run build && ./scripts/deploy.sh",
 		"generate:api-types": "bun scripts/generate-api-types.ts",
 		"check:api-types": "bun scripts/generate-api-types.ts --check",

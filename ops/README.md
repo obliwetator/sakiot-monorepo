@@ -286,27 +286,3 @@ Release manifests are under `/srv/sakiot/releases/<release>/manifest.json`;
 `/var/lib/sakiot/deploy/current.manifest` points to the last successful one.
 Stopped releases are intentionally retained. Never remove a release directory
 while its `sakiot-fbi-agent@...` unit is active or draining.
-
-## Historical legacy data setup
-
-The owner confirmed the production data migration is complete on 2026-09-07;
-production uses `/var/lib/sakiot/data`. The following workaround is retained
-for historical reference and is not needed on the migrated host.
-
-Before migration, the legacy tree could be exposed at the canonical path with:
-
-```sh
-sudo ./ops/use-legacy-data.sh /home/tulipan/projects/sakiot/data
-```
-
-The script stops the production bot and web server, merges files created since
-cutover into the legacy tree, grants the `sakiot` account access with POSIX
-ACLs, adds an idempotent `/etc/fstab` bind entry, mounts the tree at
-`/var/lib/sakiot/data`, and restarts both services. It does not copy the full
-recording archive or change `DATABASE_URL`.
-
-Remove the bind entry only as part of the guarded migration while both
-services are stopped. The migration plan supports a rename on the same
-filesystem; cross-filesystem moves require a separately validated copy.
-
-Permanent migration procedure: [DATA_MIGRATION_PLAN.md](DATA_MIGRATION_PLAN.md).

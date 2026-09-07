@@ -1,5 +1,12 @@
 import { ChevronDown as ExpandMoreIcon } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+	type RefObject,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	Button,
 	cn,
@@ -169,7 +176,7 @@ function clusterColor(cluster: TimelinePointCluster): string {
 }
 
 function ClusterPicker(props: {
-	anchor: HTMLElement | null;
+	triggerRef: RefObject<HTMLElement | null>;
 	cluster: TimelinePointCluster | null;
 	startedAtMs?: number;
 	onClose: () => void;
@@ -177,11 +184,11 @@ function ClusterPicker(props: {
 }) {
 	return (
 		<Popover
-			isOpen={Boolean(props.anchor && props.cluster)}
+			isOpen={Boolean(props.cluster)}
 			onOpenChange={(isOpen) => {
 				if (!isOpen) props.onClose();
 			}}
-			triggerRef={{ current: props.anchor }}
+			triggerRef={props.triggerRef}
 			placement="bottom"
 		>
 			<div className="p-2 max-h-80 max-w-90 overflow-y-auto">
@@ -235,9 +242,9 @@ export function AudioEventTimeline(props: {
 	const [plotWidth, setPlotWidth] = useState(0);
 	const [expanded, setExpanded] = useState(false);
 	const [picker, setPicker] = useState<{
-		anchor: HTMLElement;
 		cluster: TimelinePointCluster;
 	} | null>(null);
+	const clusterTriggerRef = useRef<HTMLElement | null>(null);
 	const model = useMemo(
 		() => buildEventTimelineModel(props.events, props.durationMs),
 		[props.durationMs, props.events],
@@ -461,19 +468,16 @@ export function AudioEventTimeline(props: {
 															}
 															onClick={(event) => {
 																if (clustered) {
-																	setPicker({
-																		anchor: event.currentTarget,
-																		cluster,
-																	});
+																	clusterTriggerRef.current =
+																		event.currentTarget;
+																	setPicker({ cluster });
 																} else {
 																	props.onSeek(cluster.points[0].offsetMs);
 																}
 															}}
 															className={cn(
-																"absolute [transform:translate(-50%,_-50%)] p-0 [border:0px_solid] [color:white] [cursor:pointer] [font-size:9px] [font-weight:800] [box-shadow:0_0_0_1.25px_rgba(255,255,255,0.85),_0_1px_3px_rgba(2,6,23,0.7)] [z-index:3] hover:[transform:translate(-50%,_-50%)_scale(1.2)] hover:[z-index:5] focus-visible:[transform:translate(-50%,_-50%)_scale(1.2)] focus-visible:[z-index:5]",
-																clustered
-																	? "[border-radius:50%]"
-																	: "[border-radius:0px]",
+																"absolute -translate-x-1/2 -translate-y-1/2 p-0 border-0 text-white cursor-pointer text-[9px] font-extrabold shadow-[0_0_0_1.25px_rgba(255,255,255,0.85),0_1px_3px_rgba(2,6,23,0.7)] z-3 hover:scale-120 hover:z-5 focus-visible:scale-120 focus-visible:z-5",
+																clustered ? "rounded-full" : "rounded-none",
 															)}
 															style={{
 																left: `${percent(cluster.offsetMs, props.durationMs)}%`,
@@ -551,7 +555,7 @@ export function AudioEventTimeline(props: {
 					</TimelineRow>
 
 					<ClusterPicker
-						anchor={picker?.anchor ?? null}
+						triggerRef={clusterTriggerRef}
 						cluster={picker?.cluster ?? null}
 						startedAtMs={props.startedAtMs}
 						onClose={() => setPicker(null)}
