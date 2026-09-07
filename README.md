@@ -10,8 +10,11 @@ stores audio and metadata, and exposes recordings through a web application.
 - `sakiot-stage` - React frontend consuming the HTTP API.
 - `sakiot-paths` - Shared Rust crate for filesystem and URL conventions.
 - `sakiot-proto` - Shared gRPC contract and generated Rust types.
+- `sakiot-storage` - Shared Backblaze B2 archive configuration and S3 client.
+- `sakiot-DSP` - Shared native/WASM audio processing; a standalone Cargo workspace.
 - `sakiot-db` - Canonical PostgreSQL migrations and backup tooling.
 - `ops/sakiot-dev` - Typed `cargo dev` local-development orchestration.
+- `ops/sakiot-deploy` - Rust deployment engine.
 - `data` - Local runtime media. Ignored by Git.
 
 The Rust services share `sakiot-paths`, `sakiot-proto`, and one database schema.
@@ -72,10 +75,12 @@ bulk sync, targeted fetches, staging imports, identity rules, and remote overrid
 
 ## Environment
 
-Copy the root example once and fill in local credentials:
+`cargo dev` generates the local env files when absent; keep those generated
+values for the managed local environment. For manual configuration only, copy
+the example if `.env` does not already exist and fill in credentials:
 
 ```sh
-cp .env.example .env
+test -e .env || cp .env.example .env
 chmod 600 .env
 ```
 
@@ -109,14 +114,16 @@ cargo dev db up
 
 ## Rust Workspace
 
-The repository root is a Cargo workspace containing both services and both
-shared crates.
+The root Cargo workspace contains both services, three shared crates, and the
+two operations CLIs. `sakiot-DSP` is a separate workspace compiled as a path
+dependency of `web-server`; run its standalone tests separately:
 
 ```sh
 cargo build --workspace
 DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
+cargo test --manifest-path sakiot-DSP/Cargo.toml --locked
 ```
 
 SQLx query metadata is checked into `.sqlx` so rust-analyzer and offline builds
@@ -136,7 +143,7 @@ Service-specific commands remain available:
 
 ```sh
 cargo run -p fbi_agent
-cargo run -p web_server
+cargo run -p web_server --bin web_server
 ```
 
 ## Frontend
@@ -156,9 +163,11 @@ Enable the repository's checks once per clone:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook checks SQLx metadata when relevant migrations or Rust files
-change. The pre-push hook runs the same Rust and frontend formatting checks used
-by CI. To fix formatting before committing:
+The pre-commit hook formats Rust and frontend files, re-stages files already
+staged, and checks SQLx metadata when relevant migrations or Rust files change.
+The pre-push hook checks Rust formatting, workspace Clippy with warnings denied,
+frontend Biome checks, and generated OpenAPI types. To fix formatting before
+committing:
 
 ```sh
 cargo fmt --all
@@ -195,10 +204,14 @@ rust-analyzer, and offline builds validate queries against the current schema.
 
 ## Runtime Media
 
-Media defaults to the repository's `data` directory. Override this with
-`SAKIOT_DATA_DIR`, for example `/data` in containers with a shared volume.
+`cargo dev` sets `SAKIOT_DATA_DIR` to the repository's `data` directory.
+Manual service runs resolve this variable relative to their working directory;
+without it, the shared crate falls back to `../data`. Use an absolute path for
+consistent behavior, for example `/data` in containers with a shared volume.
 
-Each component has its own README with configuration and deployment details.
-Pushes to `main` auto-deploy to a staging instance; production ships on strict
-`vX.Y.Z` tags (use `ops/release`). Staging, tag deployment, and rollback are
-documented in `ops/README.md`.
+Component READMEs and the operations guides cover configuration and deployment.
+Pushes to `main` auto-deploy to staging, except Markdown/license-only changes.
+A workspace version bump triggers automatic tagging and production promotion
+after staging succeeds. Production accepts strict `vX.Y.Z` tags; `ops/release`
+is the manual fallback. See [deployment operations](ops/README.md),
+[staging](STAGING.md), and [branch previews](PREVIEW.md).

@@ -30,7 +30,26 @@ whole Sakiot application:
 - Provides protected routes behind the login/bootstrap flow.
 - Displays recording, live audio, waveform, clip, stamp, and guild-related
   workflows.
-- Includes tests for selected shared utilities and auth fetch behavior.
+- Includes unit tests and mocked Playwright browser tests for desktop/mobile
+  flows, including the clip editor and accessibility.
+
+## Local development and checks
+
+Start the API, database, and frontend from the repository root with
+`cargo dev up --fixtures skip`. For frontend commands, run from this directory:
+
+```sh
+bun install
+bun run test
+bun run test:e2e:ci
+bun run build
+```
+
+Playwright needs Chromium installed (`bunx playwright install --with-deps chromium`).
+The browser harness starts its own local Vite server with mocked API routes.
+`test:e2e:ci` excludes `@visual` tests; run `bunx playwright test` when visual
+review is intended. See [AGENTS.md](AGENTS.md) for screenshot review rules.
+The build requires `VITE_API_URL` in the environment or root Vite env files.
 
 ## API Types
 
@@ -58,8 +77,10 @@ This split is temporary. Check upstream periodically:
 npm view openapi-typescript peerDependencies
 ```
 
-As of 2026-07-25 the newest release is 7.13.0 and still requires
-`typescript: ^5.x`. Once the peer range admits TypeScript 7, delete
+Checked on 2026-09-07: the [upstream package manifest](https://github.com/openapi-ts/openapi-typescript/blob/main/packages/openapi-typescript/package.json)
+still reports 7.13.0 and requires `typescript: ^5.x`. Keep the isolated
+toolchain until an upstream release supports the compiler API needed with
+TypeScript 7. When that compatibility is verified, delete
 `scripts/codegen`, move `openapi-typescript` back into `devDependencies`, and
 revert `scripts/generate-api-types.ts` to invoking it directly.
 `bun run check:api-types` must stay byte-identical against `src/api/openapi.ts`.

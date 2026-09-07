@@ -1,6 +1,10 @@
 # Sakiot DSP prototype plan
 
-Last updated: 2026-08-09
+Last reviewed against the repository: 2026-09-07
+
+The status log and measurements below preserve prototype history. Current
+renderer behavior, version migration, and browser limits are documented in
+[STREAMING.md](STREAMING.md).
 
 ## Goal
 
@@ -13,9 +17,9 @@ It remains excluded as a root-workspace member. The validated core is consumed
 by the frontend and by the server as a path dependency, and now has a dedicated
 CI suite for standalone native/WASM validation and generated-artifact checks.
 
-## Current editor contract to mirror
+## Original editor contract inspected (2026-08-09)
 
-The existing clip editor applies these operations per segment:
+At the initial inspection, the clip editor applied these operations per segment:
 
 1. Trim and optional reverse.
 2. Playback rate and duration-preserving pitch shift.
@@ -26,7 +30,7 @@ The existing clip editor applies these operations per segment:
 7. 3 kHz high-shelf treble gain.
 8. Timeline placement, summing, and master volume.
 
-The browser and server now use the shared offline clip renderer for every
+The browser and server now use the shared incremental clip renderer for every
 implemented operation: reverse, independent rate, duration-preserving pitch,
 segment volume, three-band EQ, distortion, feedback delay, compression,
 chorus, and deterministic reverb. Browser playback caches the length-changing
@@ -173,15 +177,20 @@ and shared browser/server serialization and execution semantics.
   compressor, chorus, and reverb do not inherit the preceding segment history
   after a seek. Normal playback from the segment start shares the exact DSP
   time origin with the server renderer.
-- Streaming/chunked length-changing DSP. Server segments over 60 seconds still
-  take the legacy FFmpeg/Rubber Band path to cap temporary memory use.
-- A sample-accurate placement path; current FFmpeg `adelay` placement rounds
-  to milliseconds.
+- Fully streaming browser source decoding and playback. Incremental DSP is
+  implemented for all server segments and browser preprocessing, but the browser
+  still decodes whole sources and retains complete output buffers; see
+  [browser limits](STREAMING.md#browser-limits). Server placement now generates
+  leading silence using sample counts instead of `adelay`.
 - A visible browser error/retry state for WASM load failure. The emergency
   native fallback covers volume, EQ, rate, and reverse, but cannot reproduce
   independent pitch.
 
-## Decisions and findings
+## Prototype decisions and measurements (2026-08-09)
+
+Sizes and parity results in this section describe the initial prototype, not
+the current generated artifacts. See [STREAMING.md](STREAMING.md) for later
+measurements.
 
 - The package has its own `[workspace]` and is explicitly excluded from root
   workspace membership. It is a web-server path dependency, so root server
@@ -465,3 +474,9 @@ and shared browser/server serialization and execution semantics.
   first prefix and 0.73 seconds for the offline suffix versus 3.27 seconds
   monolithically. Once the prefix is cached, downstream edits are audible
   immediately while the waveform update finishes in the worker.
+- 2026-09-06: Renderer version 2 introduced incremental DSP for every server
+  segment and browser preprocessing, removed the 60-second advanced-effect cap
+  and legacy FFmpeg effects fallback, and replaced `adelay` placement with
+  sample-counted silence. Queued/expired version 1 jobs migrate explicitly;
+  active old leases are preserved. See [STREAMING.md](STREAMING.md) for measured
+  memory use, native/WASM verification, cache budgets, and browser preview limits.

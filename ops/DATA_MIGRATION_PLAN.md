@@ -1,9 +1,16 @@
 # Production data migration
 
-Move the production recording archive from its temporary legacy location into
-the canonical production directory.
+Status: **complete**, confirmed by the repository owner on 2026-09-07.
+The production archive has been migrated from its legacy location to
+`/var/lib/sakiot/data`. The completion date was not recorded here.
 
-## Current layout
+This document preserves the migration procedure for historical reference; it
+is no longer pending production work.
+
+## Historical planning layout (2026-06-08)
+
+The snapshot below describes the layout before the completed migration, not
+the current production layout.
 
 ```text
 Service path:  /var/lib/sakiot/data
@@ -14,9 +21,9 @@ Filesystem:    both paths are on /dev/vda3
 Free space:    about 137 GiB as of 2026-06-08
 ```
 
-`/var/lib/sakiot/data` is currently a bind mount. Files physically remain under
-the legacy project path. Because both locations use the same filesystem, the
-archive can be renamed into place without copying 61 GiB.
+At the planning snapshot, `/var/lib/sakiot/data` was a bind mount and files
+remained under the legacy project path. If both locations still use the same
+filesystem, the archive can be renamed into place without copying its contents.
 
 ## Preconditions
 
@@ -126,9 +133,9 @@ If validation or service startup fails:
 Do not delete either tree during rollback. Do not change `DATABASE_URL`; the
 database is already local and this migration changes filesystem placement only.
 
-## Execution
+## Original execution requirements
 
-Implement and run the migration as a guarded root script after
-`activeRecordings` reaches zero. The script must validate every precondition,
-hold the deployment lock, and automatically execute the rollback sequence on
-failure or interruption.
+The plan called for a guarded root script run after `activeRecordings` reached
+zero, validating every precondition, holding the deployment lock, and executing
+the rollback sequence on failure or interruption. Completion was confirmed by
+the owner; an execution transcript is not recorded in this document.

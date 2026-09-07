@@ -18,7 +18,7 @@ accident.
 
 `07_combined_chain.wav` is now reproducible through the editor: select the
 segment, press `Ctrl+Shift+O`, and paste the complete strict JSON object from
-`generation.txt`. It includes `tailSeconds: 2`. Tail duration is fixed after
+[`generation.txt`](../../generation.txt). It includes `tailSeconds: 2`. Tail duration is fixed after
 rate processing, so the 2 seconds are not stretched by the 0.85x rate.
 
 The deterministic reverb seed is `0x53414b49` (`1396788041`).

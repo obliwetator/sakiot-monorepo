@@ -147,7 +147,8 @@ cargo build --manifest-path sakiot-DSP/Cargo.toml --locked --release --example m
 node sakiot-DSP/web/verify-wasm.mjs
 ```
 
-Final verification: 335 workspace Rust tests (one existing manual-media test
+Recorded implementation verification (2026-09-06; not a current test count):
+335 workspace Rust tests (one existing manual-media test
 ignored), 26 DSP tests (one existing manual FFmpeg EQ measurement ignored),
 383 frontend tests, and 31 Playwright tests across desktop/mobile (three
 viewport-specific skips). Build, workspace/DSP Clippy, formatting, SQLx query

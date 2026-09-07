@@ -1,20 +1,22 @@
 # Staging
 
 Staging is live on the **same VPS** as production, as a fully separate instance
-under the shared `sakiot` user. Every push to `main` deploys it; production still
-ships only on strict `vX.Y.Z` tags.
+under the shared `sakiot` user. Pushes to `main` deploy it, except
+Markdown/license-only changes. Production ships only on strict `vX.Y.Z` tags.
 
-There is also a **preview** instance (`preview.patrykstyla.com`) for deploying
-feature branches without touching the main-tracking staging — see `PREVIEW.md`.
+Feature branches use separate **preview slots** at
+`<slot>.preview.patrykstyla.com`, with web + frontend and dev login only.
+See [preview instances](PREVIEW.md).
 
 ## Pipeline
 
 ```
-push main ──▶ .github/workflows/deploy-staging.yml ──▶ ssh "staging <sha>"
-          ──▶ ops/deploy stage <sha> ──▶ build (offline) ▸ migrate ▸ bot+web ▸ frontend
+push main ──▶ .github/workflows/deploy-staging.yml ──▶ ssh "staging-ci <sha> [prepare vX.Y.Z]"
+          ──▶ ops/deploy stage-ci <sha> [--prepare-production vX.Y.Z] ──▶ build (offline) ▸ migrate ▸ bot+web ▸ frontend
 ```
 
-Verify a commit on staging, then cut production:
+A workspace version bump automatically tags and promotes production after
+staging verification. For the manual release fallback:
 
 ```sh
 ops/release vX.Y.Z      # validates clean tree/branch/semver/no-dup + staging matches HEAD, then tags+pushes
@@ -29,7 +31,7 @@ ops/release vX.Y.Z      # validates clean tree/branch/semver/no-dup + staging ma
 | Discord bot      | RELEASE bot           | **DEBUG bot**                    |
 | web unit         | `sakiot-web.service`  | `sakiot-staging-web.service`     |
 | bot unit         | `sakiot-fbi-agent@<id>` | `sakiot-staging-fbi-agent@<id>` |
-| data dir         | `/var/lib/sakiot`     | `/var/lib/sakiot-staging`        |
+| data dir         | `/var/lib/sakiot/data` | `/var/lib/sakiot-staging/data`   |
 | releases         | `/srv/sakiot`         | `/srv/sakiot-staging`            |
 | cache            | `/var/cache/sakiot`   | `/var/cache/sakiot-staging`      |
 | env file         | `/etc/sakiot/production.env` | `/etc/sakiot/staging.env`  |
@@ -46,12 +48,13 @@ serves both targets, driven by the env file plus `SAKIOT_WEB_UNIT` /
   `.sqlx` metadata, so a build needs **no live DB**. Without it, sqlx's
   compile-time macros hit `DATABASE_URL` (the empty staging DB) and fail with
   `relation "..." does not exist`. After a `query!` change run
-  `cargo sqlx prepare` and commit `.sqlx`, or the offline build errors with
-  `no cached data for this query`.
+  `scripts/sqlx-prepare.sh` from the repository root and commit `.sqlx`, or the
+  offline build errors with `no cached data for this query`.
 - **DB backup skipped on staging.** `SAKIOT_SKIP_DB_BACKUP=1` in `staging.env`
   applies migrations without the encrypted pre-migrate backup (staging DB is
-  disposable; no `age` key needed). The migration phase still seeds the DB on
-  first deploy. Reset anytime: `dropdb sakiot_staging && createdb -O sakiot sakiot_staging`.
+  disposable; no `age` key needed). Deployment applies schema migrations; it
+  does not run the local development seed. Import fixtures explicitly when
+  needed; see [local fixtures](docs/local-fixtures.md).
 - **Discord bot token is selected at compile time** (`fbi-agent/src/config.rs`,
   `#[cfg(debug_assertions)]`). A `--release` build reads the `*_RELEASE*` slots,
   so `staging.env` puts the **DEBUG** bot's token/app-id in
@@ -102,7 +105,9 @@ location / {
   deployed and debug browser origins, with no trailing slash. Exact opener
   origins are also allowed credentialed CORS origins. OAuth cookies remain
   scoped to `debug.patrykstyla.com`, where the staging API is exposed.
-- **Dev login** (skip OAuth) is runtime-gated, works in the release build: set
+- **Dev login** (skip OAuth) requires the `dev-login` Cargo feature, which the
+  deployer enables for staging and preview release builds. It is also
+  runtime-gated: set
   `DEV_ACCOUNT_ID` + `DEV_LOGIN_SECRET` in `staging.env` and restart
   `sakiot-staging-web.service`. The frontend shows the button on hosts containing
   `debug`/`dev`/`staging` (`sakiot-stage/src/login/login.tsx`); leave
@@ -112,7 +117,8 @@ location / {
 ## GitHub
 
 - `staging` environment holds the same four `DEPLOY_*` secrets as `production`
-  (same VPS/user/key); the SSH forced command accepts a `staging <sha>` verb.
+  (same VPS/user/key); CI uses the `staging-ci <sha>` forced command, with
+  `staging <sha>` retained as the legacy fallback.
 - CI sends its job-scoped, read-only `GITHUB_TOKEN` over SSH stdin for the
   deployer's authenticated Git protocol v2 fetch. No persistent PAT lives on
   the VPS.

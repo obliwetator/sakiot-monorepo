@@ -13,6 +13,11 @@ made per-slot bots painful, and dropping them makes slots cheap.
 
 ## Automatic per-branch lifecycle (recommended)
 
+The owner confirmed this flow is working on 2026-09-07. Publish/push a feature
+branch to GitHub to use the automatic deployment path. The workflow listens to
+`push`, not a separate `create` event: creating a branch only locally does not
+deploy it. Markdown/license-only pushes are filtered out as described below.
+
 Every push to a non-`main` branch (docs-only pushes skipped) is deployed
 automatically: the `Deploy preview` workflow derives a **slot from the branch
 name**, provisions it on the VPS if missing, deploys the pushed commit after
@@ -22,6 +27,8 @@ merging a PR with auto-delete). Nothing per branch is needed:
 ```sh
 # One-time setup, as root on the VPS:
 ops/update-deploy-engine.sh
+# Configure /etc/sakiot/preview.env before the first automatic provision;
+# see the shared-env setup below.
 ```
 
 The workflow SSHes through the restricted forced command:
@@ -30,7 +37,7 @@ The workflow SSHes through the restricted forced command:
 - `preview-ci <slot> <sha>` — deploys the commit (existing verb)
 - `preview-remove <slot>` — runs `ops/preview-slot.sh <slot> --remove`
 
-Branch → slot mapping is deterministic and reversible: lowercase, every
+Branch → slot mapping is deterministic but not reversible: lowercase, every
 non-`[a-z0-9]` run becomes `-`, trimmed and truncated to 32 chars
 (`feature/Clip-Editor v2` → `feature-clip-editor-v2`). `main` is excluded —
 the staging instance already tracks it. Two branches can collide on one slot
@@ -61,12 +68,10 @@ subdomain from the slot name.
 # 1. Refresh the deploy framework so the preview-ci verb exists:
 ops/update-deploy-engine.sh
 
-# 2. Create a slot. The Cloudflare token and certbot email come from the
-#    shared env file, so nothing needs to be passed:
-ops/preview-slot.sh clip-editor
-#    (repeat for more slots: ops/preview-slot.sh other-branch)
-
-# 3. Set the shared credentials once in /etc/sakiot/preview.env:
+# 2. Create the shared env file only if absent, then configure it:
+test -e /etc/sakiot/preview.env || install -o root -g sakiot -m 0640 ops/preview.env.example /etc/sakiot/preview.env
+$EDITOR /etc/sakiot/preview.env
+#    Set the shared credentials once:
 #    CLOUDFLARE_API_TOKEN (DNS records), DEV_ACCOUNT_ID + DEV_LOGIN_SECRET
 #    (the only login is dev login), CERTBOT_EMAIL (slot HTTPS certs), and
 #    JWT/registry/DB secrets. DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are
@@ -74,6 +79,10 @@ ops/preview-slot.sh clip-editor
 #    used on preview hosts. API host variables (VITE_API_URL, COOKIE_DOMAIN,
 #    CORS/opener origins) are derived per slot automatically — nothing to
 #    edit for those.
+
+# 3. Provision the slot after credentials are configured:
+ops/preview-slot.sh clip-editor
+#    (repeat for more slots: ops/preview-slot.sh other-branch)
 
 # 4. Deploy: Actions -> Deploy preview -> slot=<slot>, branch=<branch>.
 
@@ -93,6 +102,10 @@ ops/preview-slot.sh clip-editor --remove
   under `/var/lib/sakiot-preview-<slot>`, releases/current under
   `/srv/sakiot-preview-<slot>`, the per-slot cache, and the frontend web
   root) — the deploy engine expects these to pre-exist.
+- On first database creation, copies the staging database and local media tree
+  when available. Re-provisioning preserves slot-local data. Staging must have
+  a migrated schema before this bootstrap; the script then seeds the configured
+  dev-login account on every run.
 - Installs the web systemd unit from the staging template (no bot unit —
   previews run no FBI Agent) and the nginx vhost from
   `ops/nginx/preview-slot.conf.example`; configures nginx's server-name hash
@@ -136,7 +149,7 @@ Two equivalent setups, pick one:
 
 - **Wildcard record (recommended, zero per-slot DNS):** create ONE record
   `*.preview.patrykstyla.com -> <VPS IP>` (Cloudflare console or API, once).
-  Every slot then resolves automatically and `ops/preview-slot.sh --no-dns`
+  Every slot then resolves automatically and `ops/preview-slot.sh <slot> --no-dns`
   skips DNS work. Certbot still issues per-slot certificates over HTTP-01
   (port 80 must be reachable), which works because each subdomain resolves
   through the wildcard.
@@ -153,7 +166,7 @@ Two equivalent setups, pick one:
 | database         | `sakiot_staging`                 | `sakiot_preview_<slot>`          |
 | Discord bot      | DEBUG bot                        | **none (web + frontend only)**   |
 | web unit         | `sakiot-staging-web.service`     | `sakiot-preview-<slot>-web.service` |
-| data dir         | `/var/lib/sakiot-staging`        | `/var/lib/sakiot-preview-<slot>` |
+| data dir         | `/var/lib/sakiot-staging/data`   | `/var/lib/sakiot-preview-<slot>/data` |
 | releases         | `/srv/sakiot-staging`            | `/srv/sakiot-preview-<slot>`     |
 | cache            | `/var/cache/sakiot-staging`      | `/var/cache/sakiot-preview-<slot>` |
 | env file         | `/etc/sakiot/staging.env`        | **`/etc/sakiot/preview.env` (shared)** |

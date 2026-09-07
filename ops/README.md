@@ -15,8 +15,9 @@ migrations, service changes, and health checks.
 
 Install required tools: Git, Rust, Bun, `protoc`, OpenSSL development headers,
 FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rsync`,
-and `sudo`. The bash deploy engine additionally needs `grpcurl`, `jq`,
-Python 3, and `flock`; the Rust engine does that work in-process.
+and `sudo`. Backup and provisioning scripts also use `flock`, `jq`, and
+Python 3. `grpcurl` is useful for manual bot diagnostics; the Rust deploy engine
+uses its own gRPC client.
 
 Create a dedicated SQLx test role and master database. Legacy/local deploy
 verbs retain deploy-time Rust tests as a safe fallback; those tests create and
@@ -71,7 +72,9 @@ deploy engine in `ops/sakiot-deploy/`. It originated as a behavior-identical
 port of a bash engine that has since been deleted: env vars, state files,
 `manifest.json` schema, and release layout are unchanged, so releases made
 by the old engine remain valid rollback targets. The engine takes an
-exclusive `deploy.lock`, so deploys can never interleave.
+exclusive `deploy.lock` per target/preview slot. Different instances can
+deploy concurrently; a separate lock serializes builds using the shared Cargo
+target directory.
 
 The binary is installed out-of-band like the rest of `ops/`:
 `install-production.sh` (and `update-deploy-engine.sh` for later refreshes)
@@ -142,8 +145,8 @@ secrets to pull-request workflows or use `pull_request_target`.
 
 ## Staging
 
-Every push to `main` deploys to the staging instance via the
-`Deploy staging` workflow (`staging <sha>` over the restricted SSH). Docs-only
+Eligible pushes to `main` deploy to the staging instance via the
+`Deploy staging` workflow (`staging-ci <sha>` over the restricted SSH). Docs-only
 pushes (`*.md`, `LICENSE`) skip CI and the staging deploy entirely via
 `paths-ignore` on the workflow trigger. Staging runs
 on the same VPS as a fully separate instance: the `sakiot_staging` database, port
@@ -196,11 +199,12 @@ single source of truth:
 
 1. Bump the version in a PR (e.g. `1.0.6` → `1.0.7`; remember `Cargo.lock`
    updates with it — run `cargo check`).
-2. Merge to `main`. CI deploys staging as usual.
-3. The `auto-tag` job in `deploy-staging.yml` then compares the workspace
-   version against the latest `v*` tag. If it is strictly higher (strict semver
-   only) and staging is verified to be serving this exact commit, it tags
-   `v<version>`, pushes the tag, and dispatches `deploy-release.yml` on it.
+2. Merge to `main`. The `release-candidate` job compares the workspace
+   version against the latest release tag before staging deployment. A higher
+   version selects a production bundle to prepare during the staging build.
+3. After staging succeeds, `auto-tag` verifies staging is serving this exact
+   commit, tags `v<version>`, pushes the tag, and dispatches
+   `deploy-release.yml` on it.
    The explicit dispatch is needed because a tag pushed with the workflow's
    own `GITHUB_TOKEN` does not trigger the tag-push event (GitHub's recursion
    guard); `workflow_dispatch` is exempt. No personal access token is
@@ -212,13 +216,15 @@ single source of truth:
    VPS when no promotion exists.
 
 Merges that do not bump the version deploy staging only; the `auto-tag` job is
-a no-op. A version lower than the latest release fails the job loudly.
+a no-op. A version lower than the latest release fails the `release-candidate` job
+before deployment.
 
 **Never `git revert` a commit that bumped the version** (watch for this when
 reverting a feature PR that included a bump). The workspace version would drop
-below the latest release tag, and the `auto-tag` job then fails on every merge
-to `main` until the version is raised again. Staging still deploys, but CI
-stays red. Always roll forward instead: new commit, higher version. To undo a
+below the latest release tag, and the `release-candidate` job then fails on
+every eligible merge to `main` until the version is raised again. Staging
+deployment depends on that job and is blocked too. Always roll forward instead:
+new commit, higher version. To undo a
 bad release in production, use the rollback workflow — not a revert of the
 version bump.
 
@@ -242,7 +248,8 @@ git push origin v1.2.3
 ```
 
 Production deploys only on **strict semver** tags `vX.Y.Z`; a typo like `v1.23`
-or a suffix like `v1.2.3-rc1` matches neither workflow and is a safe no-op.
+or a suffix like `v1.2.3-rc1` still triggers the broad `v*` workflow, but fails
+release-input validation before the SSH deployment step.
 
 The deployer rejects invalid, moved, or previously successful tags. It locks
 deployment state, verifies the tag commit, selects changed components, completes
@@ -280,10 +287,13 @@ Release manifests are under `/srv/sakiot/releases/<release>/manifest.json`;
 Stopped releases are intentionally retained. Never remove a release directory
 while its `sakiot-fbi-agent@...` unit is active or draining.
 
-## Temporary legacy data
+## Historical legacy data setup
 
-If production was cut over before the recording tree was migrated, keep the
-canonical production path while bind-mounting the existing tree:
+The owner confirmed the production data migration is complete on 2026-09-07;
+production uses `/var/lib/sakiot/data`. The following workaround is retained
+for historical reference and is not needed on the migrated host.
+
+Before migration, the legacy tree could be exposed at the canonical path with:
 
 ```sh
 sudo ./ops/use-legacy-data.sh /home/tulipan/projects/sakiot/data
@@ -295,7 +305,8 @@ ACLs, adds an idempotent `/etc/fstab` bind entry, mounts the tree at
 `/var/lib/sakiot/data`, and restarts both services. It does not copy the full
 recording archive or change `DATABASE_URL`.
 
-Remove the bind entry only after the legacy tree has been copied into an
-independent production filesystem while both services are stopped.
+Remove the bind entry only as part of the guarded migration while both
+services are stopped. The migration plan supports a rename on the same
+filesystem; cross-filesystem moves require a separately validated copy.
 
 Permanent migration procedure: [DATA_MIGRATION_PLAN.md](DATA_MIGRATION_PLAN.md).

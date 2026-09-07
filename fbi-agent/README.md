@@ -34,11 +34,11 @@ Sakiot application:
 - Supports drain-aware release deployment through the root `../ops/` pipeline.
 - Emits telemetry and process metrics for observability.
 
-Runtime media defaults to `../data` and can be moved by setting
-`SAKIOT_DATA_DIR`, for example `SAKIOT_DATA_DIR=/data` in containers.
-Existing local media should be moved into `../data/{voice_recordings,
-no_silence_voice_recordings,waveform_data,clips}` during a planned downtime
-window before deploying a build that uses the new default.
+Runtime media uses `SAKIOT_DATA_DIR`; without it, the fallback is `../data`
+relative to the process working directory. `cargo dev` configures the
+repository data directory explicitly. Use an absolute path for manual runs or
+containers, such as `SAKIOT_DATA_DIR=/data`. Production paths and legacy-media
+migration procedures are documented in [operations](../ops/README.md).
 
 ## Status
 

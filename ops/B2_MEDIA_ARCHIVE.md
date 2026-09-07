@@ -1,12 +1,21 @@
 # Backblaze B2 media archive runbook
 
-Planning baseline (remeasure at cutover): 294 recordings, 8.68 GB of audio,
-11 clips, with database rows and files fully matched. This is below B2's
-account-wide first 10 GB free allowance. Current paid storage is $6.95/TB/month
-and free egress is up to three times average monthly storage:
-<https://www.backblaze.com/cloud-storage/pricing>. Recheck API call allowances
-and overage rates before rollout:
-<https://www.backblaze.com/cloud-storage/transaction-pricing>.
+Status: **rollout complete**, confirmed by the repository owner on 2026-09-07.
+The completion date was not recorded here. Provisioning and rollout steps below
+remain as reference for new environments and recovery; they are not pending
+production work.
+
+Historical planning baseline (capture date not recorded; remeasure at cutover):
+294 recordings, 8.68 GB of audio, 11 clips, with database rows and files matched
+at that snapshot. This is not a current inventory; rollout completion is recorded above.
+
+Pricing checked on 2026-09-07: B2 lists the first 10 GB free, paid storage from
+$6.95/TB/month, and free egress up to three times average monthly storage.
+Account usage includes other buckets and retained versions. See
+[storage pricing](https://www.backblaze.com/cloud-storage/pricing).
+Class A/B/C API calls are free; Class D has a daily free allowance and usage
+charges. Recheck [transaction pricing](https://www.backblaze.com/cloud-storage/transaction-pricing)
+and egress overage rates before rollout.
 
 ## Provisioning
 

@@ -35,8 +35,8 @@ The root deployment framework and systemd template live under `../ops/`.
 Each release has its own immutable-ish binary and env file:
 
 ```text
-releases/<release_id>/fbi_agent
-releases/<release_id>/service.env
+/srv/sakiot/releases/<release_id>/fbi-agent/fbi_agent
+/srv/sakiot/releases/<release_id>/fbi-agent/service.env
 ```
 
 `service.env` contains:

@@ -37,8 +37,10 @@ values; fixture URLs, UUIDs, and remote numeric IDs remain free-form.
 
 The synthetic seed leaves the recordings list empty. To test the recordings
 UI with real audio, waveforms, and metadata, pull a sample from a deployed
-instance over your personal SSH access (read-only on the VPS side; nothing
-is committed to the repository). Set `SAKIOT_DEV_SSH` in the git-ignored `.env`
+instance over your personal SSH access. Source database export is read-only,
+but archive hydration can restore missing media on the VPS; a staging
+destination also writes imported rows and files. Nothing is committed to the
+repository. Set `SAKIOT_DEV_SSH` in the git-ignored `.env`
 to avoid entering the SSH target when the startup prompt requests recordings:
 
 ```sh
@@ -83,11 +85,10 @@ cargo dev fixtures sync --guild 362257054829641758 --recordings 20
 the global recent window, use `--days N` by itself.
 
 A positive `--recordings` count replaces the previously managed fixture
-recordings and media; it does not touch unrelated local data. It is the only
-selection that re-answers "which recordings do I want?", so it is the only one
-that replaces anything (and the same applies to the `all` default):
-`--recordings none` keeps the
-existing set even when the same run asks for clips or stamps, and
+recordings and media; it does not touch unrelated local data. Explicit
+`--recordings all`, startup `--fixtures full`, and `--days N` also replace that
+managed set. `--recordings none` keeps the existing set even when the same run
+asks for clips or stamps, and
 `--clips`/`--stamps` only ever add. Tracking rows in
 `media_objects` for a replaced recording are dropped with it — the FK is
 `ON DELETE RESTRICT`, and the local server re-reconciles what it still has on

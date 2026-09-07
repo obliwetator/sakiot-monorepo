@@ -11,7 +11,9 @@ No support is provided for running, deploying, configuring, or operating it. For
 now, you have to figure that out yourself from the code and from how the sibling
 projects use it.
 
-Local development defaults to `../data`. Container deployments should set
+The `../data` fallback is relative to the process working directory, not the
+crate directory. `cargo dev` explicitly sets the repository data directory.
+Container deployments should set
 `SAKIOT_DATA_DIR=/data` and mount the shared media volume there.
 
 ## Role In The System

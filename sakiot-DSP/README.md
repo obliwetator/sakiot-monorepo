@@ -106,11 +106,13 @@ both the browser WASM and native server renderers.
   the same Rust renderer, and leave placement, mixing, and Opus encoding to
   FFmpeg.
 - Advanced effects are grouped under `effects.advanced` in composition JSON.
-  Source windows using them are currently capped at 60 seconds to bound the
-  in-memory offline renderer.
+  Every server segment uses the incremental shared DSP renderer, including
+  source windows longer than 60 seconds. Decoded and processed PCM use
+  temporary files; processing retains bounded blocks.
 - Tone.js has been removed from `sakiot-stage` and its dependency lockfile.
-- Segments longer than 60 seconds still use the legacy FFmpeg/Rubber Band
-  renderer while a streaming/chunked offline DSP boundary is designed.
+- Browser preview has explicit PCM size limits; oversized compositions remain
+  exportable by the server. See [STREAMING.md](STREAMING.md) for these limits
+  and the server job time/disk budgets.
 
 ## Native checks
 
@@ -131,13 +133,19 @@ cargo run --manifest-path sakiot-DSP/Cargo.toml --example render_clip_raw -- \
   48000 2 700 1.35 true 2.0 <input.f32 >output.f32
 ```
 
-## WASM spike
+## WASM assets
 
-Install the `wasm32-unknown-unknown` Rust target and `wasm-pack`, then run:
+From the repository root, install the target and the pinned binding generator,
+then rebuild both the WASM bindings and the worklet bundle as CI does:
 
 ```sh
 cd sakiot-DSP
-wasm-pack build --target web --features wasm
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version "$(cat wasm-bindgen-cli-version)" --locked
+npm ci
+npm run wasm:build
+npm run browser:build-worklet
+node web/verify-wasm.mjs
 ```
 
 `sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
@@ -146,10 +154,10 @@ preprocessing and exact waveform rendering; the AudioWorklet is the production
 real-time boundary for the downstream chain.
 
 To verify the generated WASM processor against the native processor with the
-version-matched `wasm-bindgen` CLI and Node.js:
+version-matched `wasm-bindgen` CLI and Node.js (from `sakiot-DSP/`):
 
 ```sh
-cargo build --target wasm32-unknown-unknown --features wasm --release
+cargo build --locked --target wasm32-unknown-unknown --features wasm --release
 wasm-bindgen target/wasm32-unknown-unknown/release/sakiot_dsp.wasm \
   --out-dir pkg --target web
 node web/verify-wasm.mjs
@@ -202,7 +210,8 @@ a test convenience. Production passes an explicit absolute start frame to each
 worklet node and resets on that frame, including starts inside a render quantum.
 
 The Node verification also runs reverse with +700 cents at 1.35x through the
-offline WASM and native APIs. That fixture currently measures about -128 dB
-relative residual with identical output length.
+offline WASM and native APIs. The initial prototype measured about -128 dB
+relative residual with identical output length; renderer version 2 measurements
+and native/WASM tolerances are recorded in [STREAMING.md](STREAMING.md).
 
 See [incremental composition rendering](STREAMING.md) for the block API, server resource measurements, renderer-version migration and remaining browser memory limits.

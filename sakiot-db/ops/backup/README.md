@@ -5,7 +5,8 @@ Automated, encrypted logical backups of the `sakiot_rouvas` Postgres database.
 ## What this is (and isn't)
 
 - **Layer 1 — logical dumps only.** `pg_dump -Fc` on a schedule, encrypted with
-  `age`, kept on local disk. The db is ~12 MB; a compressed dump is ~200 KB.
+  `age`, kept on local disk and copied to B2. Measure current database and dump
+  sizes when planning retention; earlier size estimates are not live metrics.
 - **No WAL archiving / PITR.** For a near-idle, tiny db it produces gigabytes of
   mostly-empty 16 MB WAL segments per day and adds a halt-risk failure mode for
   no real benefit. See **[Future: PITR](#future-enabling-pitr)** for when to add it.
@@ -14,18 +15,25 @@ Automated, encrypted logical backups of the `sakiot_rouvas` Postgres database.
 
 ## Setup
 
+Production installation and timers are covered in [operations](../../../ops/README.md).
+The commands below run from the monorepo root.
+
 ```sh
 # 1. tools: pg_dump, age, flock, sqlx, rclone
 apt install age rclone
 
-# 2. encryption keypair (stores private key in the file, prints public key)
+# 2. On a fresh host only; retain the existing private key on an existing host.
+#    Create the service account/directories with ops/install-production.sh first.
+#    This stores the private key in the file and prints the public key.
 age-keygen -o /etc/sakiot/age-key.txt
+chown root:sakiot /etc/sakiot/age-key.txt
+chmod 0640 /etc/sakiot/age-key.txt
 #   -> copy the "Public key: age1..." into AGE_RECIPIENT
 #   -> back up /etc/sakiot/age-key.txt OFF this host
 #   -> perform one restore using that off-host copy before cutover
 
 # 3. config (from the monorepo root)
-cp .env.example .env
+test -e .env || cp .env.example .env
 $EDITOR .env      # fill DB, age, B2_BACKUP_REMOTE, and backup settings
 
 # Configure native B2 remote with bucket-restricted, non-delete credentials.
@@ -35,14 +43,17 @@ sudo chown root:sakiot /etc/sakiot/rclone.conf
 sudo chmod 0640 /etc/sakiot/rclone.conf
 
 # 4. smoke test
-ops/backup/backup.sh hourly        # writes one encrypted dump
-ops/backup/restore-test.sh         # restores it into a scratch db and checks it
+sakiot-db/ops/backup/backup.sh hourly # writes one encrypted dump
+sakiot-db/ops/backup/restore-test.sh # restores it into a scratch db and checks it
 ```
 
 ## Behavior
 
 ### `backup.sh [hourly|nightly|pre-migrate]`
-1. Sources the monorepo root `.env`; fails fast if required vars are unset.
+
+1. Sources `SAKIOT_ENV_FILE` (default: monorepo root `.env`); fails fast if
+   required vars are unset. Installed production units set it to
+   `/etc/sakiot/production.env`.
 2. Takes a `flock` so two runs never overlap.
 3. Streams `pg_dump -Fc "$BACKUP_DATABASE_URL" | age -r "$AGE_RECIPIENT"` to
    `BACKUP_DIR/sakiot_rouvas_<label>_<YYYY-MM-DD_HHMM>.dump.age`.
@@ -68,7 +79,8 @@ age -d -i /etc/sakiot/age-key.txt FILE.dump.age | pg_restore -t TABLE -d sakiot_
 ```
 
 ### `restore-test.sh`
-Downloads the newest B2 nightly, restores it into throwaway db
+Downloads the newest B2 nightly (falling back to another label when no nightly
+exists), restores it into throwaway db
 `sakiot_rouvas_restoretest`,
 asserts tables came back, warns on pending migrations (`sqlx migrate info`),
 prints row counts, drops the scratch db. **Untested backup = no backup.**
@@ -123,5 +135,6 @@ slow/lock-heavy enough that 1-hour RPO is unacceptable. Then:
   deliberately lacks delete capability. Never use account master key here.
 - Always use `rclone copy`, never `sync`; local retention must not delete remote
   backup history.
-- DB password lives in the root `.env` (gitignored). Lock down file
-  perms (`chmod 600`).
+- Standalone runs use the root `.env` (gitignored, `chmod 600`). Installed
+  production jobs use `/etc/sakiot/production.env` with owner `root:sakiot` and
+  mode `0640`; `SAKIOT_ENV_FILE` selects the configuration file.

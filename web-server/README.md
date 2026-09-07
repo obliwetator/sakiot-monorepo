@@ -20,7 +20,7 @@ under `cargo watch` with the `dev-login` cargo feature (Discord OAuth bypass via
 When running manually:
 
 ```sh
-cargo run -p web_server --features dev-login
+cargo run -p web_server --bin web_server --features dev-login
 ```
 
 ## Role In The System
@@ -56,11 +56,11 @@ the database:
 SQLX_OFFLINE=true cargo run --locked -p web_server --bin export_openapi
 ```
 
-Runtime media defaults to `../data` and can be moved by setting
-`SAKIOT_DATA_DIR`, for example `SAKIOT_DATA_DIR=/data` in containers.
-Existing local media should be moved into `../data/{voice_recordings,
-no_silence_voice_recordings,waveform_data,clips}` during a planned downtime
-window before deploying a build that uses the new default.
+Runtime media uses `SAKIOT_DATA_DIR`; without it, the fallback is `../data`
+relative to the process working directory. `cargo dev` configures the
+repository data directory explicitly. Use an absolute path for manual runs or
+containers, such as `SAKIOT_DATA_DIR=/data`. Production paths and legacy-media
+migration procedures are documented in [operations](../ops/README.md).
 
 ## Status
 
@@ -134,8 +134,12 @@ request after composition publication.
 
 Apply migration `20260906000000_composition_jobs.sql` before running this
 release. It is additive and protects archive revisions even while an older web
-release is still running. Queued jobs use renderer contract version 1; future
-renderer changes must retain compatibility or explicitly migrate pending jobs.
+release is still running. New jobs use renderer contract version 2. Before
+claiming work, the worker
+migrates queued version 1 jobs and expired version 1 attempts to version 2;
+active version 1 leases can finish unchanged. Terminal results and unknown
+versions are not rewritten. See [incremental rendering](../sakiot-DSP/STREAMING.md)
+for the shared DSP pipeline, resource limits, and version migration.
 A rollback to a release without the worker leaves accepted jobs queued until a
 compatible release runs again; do not drop the queue tables during rollback.
 
