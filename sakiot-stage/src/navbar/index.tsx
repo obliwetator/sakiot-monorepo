@@ -138,7 +138,7 @@ function ResponsiveAppBar(props: {
 							</Button>
 						))}
 						{props.guildSelected ? (
-							<div className="flex items-center px-4 py-1.5">
+							<div className="flex items-center gap-2 px-4 py-1.5">
 								{useInlineNavigation ? (
 									<span className="max-[899px]:hidden">Select Server:</span>
 								) : (

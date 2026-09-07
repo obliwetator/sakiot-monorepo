@@ -125,15 +125,6 @@ pub(super) fn validate_effects(
     Ok(())
 }
 
-pub(super) fn advanced_effects_active(effects: &SegmentEffectsDto) -> bool {
-    effects.advanced.tail_seconds > 0.0
-        || effects.advanced.distortion_wet > 0.0
-        || effects.advanced.delay_wet > 0.0
-        || effects.advanced.compressor_enabled
-        || effects.advanced.chorus_enabled
-        || effects.advanced.reverb_enabled
-}
-
 pub(super) fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
     if body.segments.is_empty() || body.segments.len() > MAX_SEGMENTS {
         return Err(AppError::BadRequest(format!(
@@ -197,13 +188,6 @@ pub(super) fn validate_edit(body: &ComposeClipBody) -> Result<(), AppError> {
             )));
         }
         validate_effects(&segment.effects, index, &limits)?;
-        if segment.source_out - segment.source_in > MAX_SHARED_DSP_SEGMENT_SECONDS
-            && advanced_effects_active(&segment.effects)
-        {
-            return Err(AppError::BadRequest(format!(
-                "Segment {index}: shared tail, distortion, delay, compressor, chorus, and reverb currently support source windows up to {MAX_SHARED_DSP_SEGMENT_SECONDS} seconds"
-            )));
-        }
     }
     let total_seconds = body
         .segments

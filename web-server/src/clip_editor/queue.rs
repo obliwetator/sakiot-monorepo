@@ -2,7 +2,7 @@
 //! final publication; polling is read-only and terminal results are retained.
 use super::*;
 
-pub(super) const RENDERER_VERSION: i32 = 1;
+pub const RENDERER_VERSION: i32 = 2;
 pub(super) const MAX_ATTEMPTS: i32 = 3;
 const QUEUE_LOCK: i64 = 0x53414b434f4d50;
 
@@ -104,6 +104,11 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<(String, Strin
         tx.commit().await?;
         return Ok(None);
     }
+    // Version 2 renders every segment in shared stereo DSP. Migrate only
+    // unleased v1 work under the queue lock; active old workers can finish.
+    // Expired attempts receive a new fencing token when claimed below.
+    sqlx::query("UPDATE composition_jobs SET renderer_version = $1, updated_at = now() WHERE renderer_version = 1 AND (state = 'queued' OR (state = 'running' AND lease_expires_at < now()))")
+        .bind(RENDERER_VERSION).execute(&mut *tx).await?;
     let token = uuid::Uuid::new_v4().to_string();
     let id: Option<String> = sqlx::query_scalar("WITH candidate AS (
         SELECT id FROM composition_jobs WHERE renderer_version = $2 AND attempts < $3

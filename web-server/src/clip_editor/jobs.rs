@@ -19,10 +19,6 @@ pub(super) fn expected_duration_ms(segments: &[SegmentRender]) -> i64 {
 pub(super) fn effective_rate(segment: &SegmentRender) -> f64 {
     f64::from(segment.effects.rate)
 }
-pub(super) fn pitch_factor(pitch_cents: f32) -> f64 {
-    2f64.powf(f64::from(pitch_cents) / 1200.0)
-}
-
 /// A complete immutable file exists before this transaction. A failed/ambiguous
 /// commit leaves it for reconciliation, never deletes a possibly committed file.
 pub(super) async fn publish(

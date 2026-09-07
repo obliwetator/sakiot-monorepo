@@ -204,3 +204,5 @@ worklet node and resets on that frame, including starts inside a render quantum.
 The Node verification also runs reverse with +700 cents at 1.35x through the
 offline WASM and native APIs. That fixture currently measures about -128 dB
 relative residual with identical output length.
+
+See [incremental composition rendering](STREAMING.md) for the block API, server resource measurements, renderer-version migration and remaining browser memory limits.

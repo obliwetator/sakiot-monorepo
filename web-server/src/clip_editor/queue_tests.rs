@@ -212,3 +212,58 @@ async fn deleted_overwrite_target_cannot_be_reported_ready(pool: PgPool) -> Test
     assert_ne!(status(&pool, 1, 100, &id).await?.status, "ready");
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn queued_v1_jobs_are_explicitly_migrated_to_shared_stereo_renderer(
+    pool: PgPool,
+) -> TestResult {
+    let id = submit(&pool, "v1-queued", &snapshot()).await?;
+    sqlx::query("UPDATE composition_jobs SET renderer_version = 1 WHERE id = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await?;
+    let job = claimed(&pool).await;
+    assert_eq!(job.id, id);
+    let version: i32 =
+        sqlx::query_scalar("SELECT renderer_version FROM composition_jobs WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(version, RENDERER_VERSION);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn active_v1_lease_is_preserved_then_expired_work_migrates_with_new_token(
+    pool: PgPool,
+) -> TestResult {
+    let id = submit(&pool, "v1-running", &snapshot()).await?;
+    let old = claimed(&pool).await;
+    sqlx::query("UPDATE composition_jobs SET renderer_version = 1 WHERE id = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await?;
+    assert!(claim(&pool).await?.is_none());
+    let version: i32 =
+        sqlx::query_scalar("SELECT renderer_version FROM composition_jobs WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(version, 1);
+    sqlx::query(
+        "UPDATE composition_jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(&pool)
+    .await?;
+    let recovered = claimed(&pool).await;
+    assert_eq!(recovered.id, id);
+    assert_ne!(old.token, recovered.token);
+    assert!(!renew(&pool, &id, &old.token).await?);
+    assert!(
+        publish(&pool, &old, "stale-v1.ogg", 1.0, 100)
+            .await
+            .is_err()
+    );
+    Ok(())
+}

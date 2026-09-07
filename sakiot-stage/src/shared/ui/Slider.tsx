@@ -36,7 +36,17 @@ export function Slider<T extends number | number[] = number>({
 				{({ state, orientation }) => (
 					<>
 						<div className="pointer-events-none absolute h-1.5 w-full rounded-full bg-slate-700 group-data-[orientation=vertical]:h-full group-data-[orientation=vertical]:w-1.5" />
-						<SliderFill className="pointer-events-none absolute h-1.5 rounded-full bg-accent group-data-[orientation=vertical]:w-1.5" />
+						<SliderFill
+							data-slot="slider-fill"
+							className="pointer-events-none absolute rounded-full bg-accent"
+							// SliderFill sets its cross-axis size to 100% inline.
+							// Override that size while preserving its value-based length.
+							style={
+								orientation === "horizontal"
+									? { height: "0.375rem" }
+									: { width: "0.375rem" }
+							}
+						/>
 						{state.values.map((_, index) => (
 							<SliderThumb
 								data-slot="slider-thumb"

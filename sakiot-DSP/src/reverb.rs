@@ -248,7 +248,7 @@ fn generate_impulse(
     let pre_delay_frames = (sample_rate * f64::from(pre_delay_seconds)).round() as usize;
     let decay_frames = (sample_rate * f64::from(decay_seconds)).ceil() as usize;
     let mut impulse = vec![0.0; pre_delay_frames + decay_frames.max(1)];
-    let time_constant = f64::from((decay_seconds + 1.0).ln()) / 200.0_f64.ln();
+    let time_constant = f64::from(libm::logf(decay_seconds + 1.0)) / libm::log(200.0);
     for frame in 0..decay_frames {
         state ^= state << 13;
         state ^= state >> 17;
@@ -259,7 +259,7 @@ fn generate_impulse(
         let envelope = if progress >= 0.9 {
             (1.0 - progress).max(0.0) / 0.1
         } else {
-            (-time / time_constant).exp()
+            libm::exp(-time / time_constant)
         };
         impulse[pre_delay_frames + frame] = (noise * envelope) as f32;
     }

@@ -1,6 +1,72 @@
 /* @ts-self-types="./sakiot_dsp.d.ts" */
 
 /**
+ * Block preprocessing; reverse is supplied by the caller's source traversal.
+ */
+export class WasmIncrementalRenderer {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WasmIncrementalRendererFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_wasmincrementalrenderer_free(ptr, 0);
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    finish() {
+        const ret = wasm.wasmincrementalrenderer_finish(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {number} sample_rate
+     * @param {number} channels
+     * @param {number} frames
+     * @param {any} config
+     */
+    constructor(sample_rate, channels, frames, config) {
+        const ret = wasm.wasmincrementalrenderer_new(sample_rate, channels, frames, config);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        WasmIncrementalRendererFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {number}
+     */
+    output_frames() {
+        const ret = wasm.wasmincrementalrenderer_output_frames(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {Float32Array} samples
+     * @returns {Float32Array}
+     */
+    push(samples) {
+        const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmincrementalrenderer_push(this.__wbg_ptr, ptr0, len0);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v2;
+    }
+}
+if (Symbol.dispose) WasmIncrementalRenderer.prototype[Symbol.dispose] = WasmIncrementalRenderer.prototype.free;
+
+/**
  * Copy-based prototype boundary. A production AudioWorklet may use the
  * WASM linear memory directly after profiling this simpler version.
  */
@@ -115,6 +181,9 @@ function __wbg_get_imports() {
     };
 }
 
+const WasmIncrementalRendererFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmincrementalrenderer_free(ptr, 1));
 const WasmSegmentProcessorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmsegmentprocessor_free(ptr, 1));
@@ -181,6 +250,12 @@ function passArrayF32ToWasm0(arg, malloc) {
     getFloat32ArrayMemory0().set(arg, ptr / 4);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
+}
+
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
 }
 
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });

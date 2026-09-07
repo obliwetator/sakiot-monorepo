@@ -15,7 +15,7 @@ const corsHeaders = {
 
 test("native controls keep focus styling, pseudo-elements, and responsive layouts", async ({
 	page,
-}) => {
+}, testInfo) => {
 	await mockAudioApi(page);
 	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
 	const tab = page.getByRole("tab", { name: "Normal", exact: true });
@@ -45,6 +45,27 @@ test("native controls keep focus styling, pseudo-elements, and responsive layout
 	await expect
 		.poll(() => thumb.evaluate((el) => getComputedStyle(el).outlineWidth))
 		.toBe("2px");
+
+	const volume = page.getByRole("slider", {
+		name: "Playback volume",
+		exact: true,
+	});
+	const volumeRoot = volume.locator('xpath=ancestor::*[@data-slot="slider"]');
+	const fill = volumeRoot.locator('[data-slot="slider-fill"]');
+	// The track's 24px hit area must not become the visible filled bar.
+	await expect(volumeRoot.locator('[data-slot="slider-track"]')).toHaveCSS(
+		"height",
+		"24px",
+	);
+	await expect(fill).toHaveCSS("height", "6px");
+	await volume.focus();
+	await volume.press("End");
+	await expect(volume).toHaveValue("1");
+	await volume.press("ArrowLeft");
+	await expect(volume).toHaveValue("0.95");
+	await volumeRoot
+		.locator("..")
+		.screenshot({ path: testInfo.outputPath("volume-slider.png") });
 
 	const handle = page.getByRole("slider", { name: "Clip in point" });
 	await handle.focus();

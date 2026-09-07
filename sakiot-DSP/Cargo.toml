@@ -12,6 +12,7 @@ default = []
 wasm = ["dep:js-sys", "dep:wasm-bindgen"]
 
 [dependencies]
+libm = "=0.2.16"
 js-sys = { version = "=0.3.99", optional = true }
 wasm-bindgen = { version = "=0.2.122", optional = true }
 

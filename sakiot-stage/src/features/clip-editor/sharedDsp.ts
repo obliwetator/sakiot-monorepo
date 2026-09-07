@@ -1,4 +1,10 @@
 import type { TimelineSegment } from "./model";
+import {
+	browserSegmentBytes,
+	MAX_BROWSER_RENDER_BYTES,
+	PcmBudget,
+	PROCESSED_CACHE_BYTES,
+} from "./pcmBudget";
 import { SHARED_DSP_EFFECT_CONFIG_VERSION } from "./sharedDspConfig";
 
 export {
@@ -21,6 +27,8 @@ interface CachedValue<T> {
 	audioBuffer: AudioBuffer | null;
 	lanes: Set<string>;
 }
+
+const pcmBudget = new PcmBudget<object>(PROCESSED_CACHE_BYTES);
 
 type WorkerOperation = SharedDspWorkerDspRequest extends infer Request
 	? Request extends SharedDspWorkerDspRequest
@@ -106,6 +114,12 @@ export function requestSharedSegmentPreprocessedPcm(
 	segment: TimelineSegment,
 ): Promise<SharedDspPcm | null> {
 	if (typeof source.getChannelData !== "function") return Promise.resolve(null);
+	const bytes = browserSegmentBytes(segment, source.sampleRate);
+	if (
+		bytes.source > MAX_BROWSER_RENDER_BYTES ||
+		bytes.output > MAX_BROWSER_RENDER_BYTES
+	)
+		return Promise.resolve(null);
 	const key = sharedDspPreprocessKey(segment);
 	const sourceCache =
 		preprocessCache.get(source) ?? new Map<string, CachedValue<SharedDspPcm>>();
@@ -113,6 +127,7 @@ export function requestSharedSegmentPreprocessedPcm(
 	releaseStaleLaneEntries(sourceCache, segment.id, key);
 	const existing = sourceCache.get(key);
 	if (existing) {
+		pcmBudget.touch(existing);
 		existing.lanes.add(segment.id);
 		if (existing.value) return Promise.resolve(existing.value);
 		if (existing.promise) return existing.promise;
@@ -145,8 +160,12 @@ export function requestSharedSegmentPreprocessedPcm(
 	}).then((result) => {
 		entry.promise = null;
 		const pcm = isPcm(result) ? result : null;
-		if (pcm) entry.value = pcm;
-		else sourceCache.delete(key);
+		if (pcm) {
+			entry.value = pcm;
+			pcmBudget.retain(entry, pcm.interleaved.byteLength, () => {
+				if (sourceCache.get(key) === entry) sourceCache.delete(key);
+			});
+		} else sourceCache.delete(key);
 		return pcm;
 	});
 	entry.promise = promise;
@@ -163,6 +182,12 @@ export function requestSharedSegmentRender(
 	segment: TimelineSegment,
 ): Promise<SharedDspRender | null> {
 	if (typeof source.getChannelData !== "function") return Promise.resolve(null);
+	const bytes = browserSegmentBytes(segment, source.sampleRate);
+	if (
+		bytes.source > MAX_BROWSER_RENDER_BYTES ||
+		bytes.output > MAX_BROWSER_RENDER_BYTES
+	)
+		return Promise.resolve(null);
 	const key = sharedDspRenderKey(segment);
 	const sourceCache =
 		renderCache.get(source) ?? new Map<string, CachedValue<SharedDspRender>>();
@@ -170,6 +195,7 @@ export function requestSharedSegmentRender(
 	releaseStaleLaneEntries(sourceCache, segment.id, key);
 	const existing = sourceCache.get(key);
 	if (existing) {
+		pcmBudget.touch(existing);
 		existing.lanes.add(segment.id);
 		if (existing.value) return Promise.resolve(existing.value);
 		if (existing.promise) return existing.promise;
@@ -193,8 +219,17 @@ export function requestSharedSegmentRender(
 		.then((result) => {
 			entry.promise = null;
 			const render = isRender(result) ? result : null;
-			if (render) entry.value = render;
-			else sourceCache.delete(key);
+			if (render) {
+				entry.value = render;
+				pcmBudget.retain(
+					entry,
+					render.pcm.interleaved.byteLength +
+						(render.peaks.min.length + render.peaks.max.length) * 8,
+					() => {
+						if (sourceCache.get(key) === entry) sourceCache.delete(key);
+					},
+				);
+			} else sourceCache.delete(key);
 			return render;
 		});
 	entry.promise = promise;
@@ -209,7 +244,10 @@ function releaseStaleLaneEntries<T>(
 ) {
 	for (const [key, entry] of sourceCache) {
 		if (key === requestedKey || !entry.lanes.delete(lane)) continue;
-		if (entry.lanes.size === 0) sourceCache.delete(key);
+		if (entry.lanes.size === 0) {
+			sourceCache.delete(key);
+			pcmBudget.delete(entry);
+		}
 	}
 }
 
@@ -241,7 +279,10 @@ export async function requestSharedSegment(
 		? sharedDspPreprocessKey(segment)
 		: sharedDspRenderKey(segment);
 	const entry = sourceCache?.get(key);
-	if (entry?.audioBuffer) return entry.audioBuffer;
+	if (entry?.audioBuffer) {
+		pcmBudget.touch(entry);
+		return entry.audioBuffer;
+	}
 	const output = context.createBuffer(pcm.channels, pcm.frames, pcm.sampleRate);
 	for (let channel = 0; channel < pcm.channels; channel += 1) {
 		const channelData = output.getChannelData(channel);
@@ -249,7 +290,17 @@ export async function requestSharedSegment(
 			channelData[frame] = pcm.interleaved[frame * pcm.channels + channel] ?? 0;
 		}
 	}
-	if (entry) entry.audioBuffer = output;
+	if (entry) {
+		entry.audioBuffer = output;
+		pcmBudget.retain(
+			entry,
+			pcm.interleaved.byteLength * 2 +
+				(preprocessOnly ? 0 : Math.min(2500, pcm.frames) * 16),
+			() => {
+				if (sourceCache?.get(key) === entry) sourceCache.delete(key);
+			},
+		);
+	}
 	return output;
 }
 

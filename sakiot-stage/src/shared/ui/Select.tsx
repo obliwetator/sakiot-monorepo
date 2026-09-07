@@ -17,10 +17,12 @@ export interface SelectProps<T extends object>
 	extends Omit<AriaSelectProps<T>, "children">,
 		RefAttributes<HTMLDivElement> {
 	label: string;
+	labelPlacement?: "above" | "floating";
 	children: ReactNode;
 }
 export function Select<T extends object>({
 	label,
+	labelPlacement = "above",
 	children,
 	className,
 	...props
@@ -29,11 +31,31 @@ export function Select<T extends object>({
 		<AriaSelect
 			{...props}
 			className={composeRenderProps(className, (className) =>
-				cn("flex min-w-0 flex-col gap-1.5", className),
+				cn(
+					labelPlacement === "floating"
+						? "relative min-w-0"
+						: "flex min-w-0 flex-col gap-1.5",
+					className,
+				),
 			)}
 		>
-			<Label className="text-xs font-semibold text-slate-200">{label}</Label>
-			<Button className="flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-ui-border bg-header px-3 text-sm text-fg outline-hidden data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-focus data-[disabled]:opacity-50">
+			<Label
+				data-slot="select-label"
+				className={cn(
+					"text-xs text-slate-200",
+					labelPlacement === "floating"
+						? "absolute left-3 top-0 z-10 -translate-y-1/2 bg-header px-1 font-normal"
+						: "font-semibold",
+				)}
+			>
+				{label}
+			</Label>
+			<Button
+				className={cn(
+					"flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-ui-border bg-header px-3 text-sm text-fg outline-hidden data-[focus-visible]:outline-2 data-[focus-visible]:outline-offset-2 data-[focus-visible]:outline-focus data-[disabled]:opacity-50",
+					labelPlacement === "floating" ? "h-14" : "h-9",
+				)}
+			>
 				<SelectValue className="truncate" />
 				<span aria-hidden="true">▾</span>
 			</Button>

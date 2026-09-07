@@ -1,6 +1,6 @@
-//! Length-changing clip transforms. These run before the streaming effect
-//! chain because playback rate changes the number of frames and reverse needs
-//! random access to the complete source.
+//! Whole-buffer numerical reference for length-changing clip transforms.
+//! Production server/worker preprocessing uses IncrementalRenderer; keep this
+//! implementation for comparisons, not for unbounded input.
 
 use crate::fft::{Complex, transform};
 use crate::{DspError, SegmentEffects, SegmentProcessor};
@@ -16,6 +16,7 @@ pub fn render_clip_interleaved(
     channels: usize,
     effects: SegmentEffects,
 ) -> Result<Vec<f32>, DspError> {
+    crate::validate_effects(effects)?;
     if !input.len().is_multiple_of(channels.max(1)) {
         return Err(DspError::MisalignedInterleavedBuffer);
     }
@@ -31,7 +32,7 @@ pub fn render_clip_interleaved(
         reverse_interleaved_frames(&mut transformed, channels);
     }
 
-    let pitch_ratio = 2.0_f32.powf(effects.pitch_cents / 1_200.0);
+    let pitch_ratio = libm::powf(2.0, effects.pitch_cents / 1_200.0);
     let stretch = pitch_ratio / effects.rate;
     if (stretch - 1.0).abs() > f32::EPSILON && transformed.len() >= channels * 2 {
         transformed = phase_vocoder_stretch(&transformed, channels, stretch);
@@ -62,13 +63,24 @@ fn phase_vocoder_stretch(input: &[f32], channels: usize, stretch: f32) -> Vec<f3
     let padding = VOCODER_FFT_FRAMES / 2;
     let padded_frames = input_frames + padding * 2;
     let analysis_hop = VOCODER_SYNTHESIS_HOP as f32 / stretch;
-    let frame_count =
-        (((padded_frames - VOCODER_FFT_FRAMES) as f32 / analysis_hop).ceil() as usize) + 1;
+    let crop_start = (padding as f32 * stretch).round() as usize;
+    let wanted_frames = (input_frames as f64 * f64::from(stretch)).round() as usize;
+    // Extreme stretch also stretches the leading padding. Synthesize enough
+    // overlap to cover the entire requested crop, including very short clips.
+    let frame_count = ((((padded_frames - VOCODER_FFT_FRAMES) as f64 / f64::from(analysis_hop))
+        .ceil() as usize)
+        + 1)
+    .max(
+        (crop_start + wanted_frames)
+            .saturating_sub(VOCODER_FFT_FRAMES)
+            .div_ceil(VOCODER_SYNTHESIS_HOP)
+            + 1,
+    );
     let synthesis_frames = (frame_count - 1) * VOCODER_SYNTHESIS_HOP + VOCODER_FFT_FRAMES;
     let mut output = vec![0.0; synthesis_frames * channels];
     let mut normalization = vec![0.0; synthesis_frames];
     let window: Vec<f32> = (0..VOCODER_FFT_FRAMES)
-        .map(|frame| 0.5 - 0.5 * (TAU * frame as f32 / VOCODER_FFT_FRAMES as f32).cos())
+        .map(|frame| 0.5 - 0.5 * libm::cosf(TAU * frame as f32 / VOCODER_FFT_FRAMES as f32))
         .collect();
 
     for channel in 0..channels {
@@ -76,10 +88,10 @@ fn phase_vocoder_stretch(input: &[f32], channels: usize, stretch: f32) -> Vec<f3
         let mut synthesis_phase = vec![0.0; VOCODER_FFT_FRAMES / 2 + 1];
         let mut spectrum = vec![Complex::default(); VOCODER_FFT_FRAMES];
         for analysis_frame in 0..frame_count {
-            let analysis_position = analysis_frame as f32 * analysis_hop;
+            let analysis_position = analysis_frame as f64 * f64::from(analysis_hop);
             for bin in 0..VOCODER_FFT_FRAMES {
-                let padded_position = analysis_position + bin as f32;
-                let source_position = padded_position - padding as f32;
+                let padded_position = analysis_position + bin as f64;
+                let source_position = padded_position - padding as f64;
                 spectrum[bin] = Complex {
                     re: sample_interleaved_linear(input, channels, channel, source_position)
                         * window[bin],
@@ -132,8 +144,6 @@ fn phase_vocoder_stretch(input: &[f32], channels: usize, stretch: f32) -> Vec<f3
         }
     }
 
-    let crop_start = (padding as f32 * stretch).round() as usize;
-    let wanted_frames = (input_frames as f32 * stretch).round() as usize;
     let crop_end = (crop_start + wanted_frames).min(synthesis_frames);
     output[crop_start * channels..crop_end * channels].to_vec()
 }
@@ -157,8 +167,8 @@ fn resample_interleaved(input: &[f32], channels: usize, speed: f32) -> Vec<f32> 
                 let distance = source_position - source_frame as f64;
                 let normalized = distance / RESAMPLER_RADIUS as f64;
                 let window = if normalized.abs() <= 1.0 {
-                    0.42 + 0.5 * (PI as f64 * normalized).cos()
-                        + 0.08 * (2.0 * PI as f64 * normalized).cos()
+                    0.42 + 0.5 * libm::cos(PI as f64 * normalized)
+                        + 0.08 * libm::cos(2.0 * PI as f64 * normalized)
                 } else {
                     0.0
                 };
@@ -166,7 +176,7 @@ fn resample_interleaved(input: &[f32], channels: usize, speed: f32) -> Vec<f32> 
                 let sinc = if sinc_position.abs() < 1e-12 {
                     1.0
                 } else {
-                    (PI as f64 * sinc_position).sin() / (PI as f64 * sinc_position)
+                    libm::sin(PI as f64 * sinc_position) / (PI as f64 * sinc_position)
                 };
                 let weight = window * sinc * f64::from(cutoff);
                 sum += f64::from(input[source_frame as usize * channels + channel]) * weight;
@@ -180,14 +190,14 @@ fn resample_interleaved(input: &[f32], channels: usize, speed: f32) -> Vec<f32> 
     output
 }
 
-fn sample_interleaved_linear(input: &[f32], channels: usize, channel: usize, position: f32) -> f32 {
+fn sample_interleaved_linear(input: &[f32], channels: usize, channel: usize, position: f64) -> f32 {
     let frames = input.len() / channels;
-    if position < 0.0 || position >= frames as f32 {
+    if position < 0.0 || position >= frames as f64 {
         return 0.0;
     }
     let lower = position.floor() as usize;
     let upper = (lower + 1).min(frames - 1);
-    let fraction = position - lower as f32;
+    let fraction = (position - lower as f64) as f32;
     let a = input[lower * channels + channel];
     let b = input[upper * channels + channel];
     a + (b - a) * fraction

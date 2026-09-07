@@ -37,6 +37,7 @@ import { ClipPlayer } from "./ClipPlayer";
 import { isComposedClip } from "./composedClip";
 
 function ClipList(props: {
+	onSelect: () => void;
 	data: ClipData[];
 	currentUserId: string | null;
 	guildSelected: UserGuilds | null;
@@ -50,6 +51,7 @@ function ClipList(props: {
 		if (location.pathname !== clipPath) {
 			navigate(clipPath);
 		}
+		props.onSelect();
 	};
 
 	const handleChange = (panel: string) => (isExpanded: boolean) => {
@@ -60,9 +62,6 @@ function ClipList(props: {
 		return (
 			<Disclosure
 				key={el.clip_id}
-				onClick={() => {
-					handleClickAccordion(el.guild_id, el.clip_id);
-				}}
 				className={cn(
 					"mb-2 border [border-radius:8px_!important] [box-shadow:none] before:hidden",
 					location.pathname.endsWith(encodeURIComponent(el.clip_id))
@@ -72,7 +71,10 @@ function ClipList(props: {
 				isExpanded={expanded === `panel${index}`}
 				onExpandedChange={handleChange(`panel${index}`)}
 			>
-				<DisclosureTrigger icon={<ExpandMoreIcon />}>
+				<DisclosureTrigger
+					icon={<ExpandMoreIcon />}
+					onPress={() => handleClickAccordion(el.guild_id, el.clip_id)}
+				>
 					<div className="min-w-0 flex-1">
 						<p className="leading-6 [overflow-wrap:anywhere]">
 							{el.name || "Unnamed clip"}
@@ -290,6 +292,7 @@ function ClipsLayout(props: {
 				</TabList>
 				<TabPanel id="clips">
 					<ClipList
+						onSelect={() => setDrawerOpen(false)}
 						data={pureClips}
 						currentUserId={props.currentUserId}
 						guildSelected={props.guildSelected}
@@ -302,6 +305,7 @@ function ClipsLayout(props: {
 						</p>
 					)}
 					<ClipList
+						onSelect={() => setDrawerOpen(false)}
 						data={composedClips}
 						currentUserId={props.currentUserId}
 						guildSelected={props.guildSelected}

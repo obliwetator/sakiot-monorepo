@@ -6,7 +6,9 @@
 
 mod compressor;
 mod fft;
+mod incremental;
 mod offline;
+pub use incremental::{IncrementalRenderer, StreamError};
 mod reverb;
 
 pub use offline::{render_clip_interleaved, reverse_interleaved_frames};
@@ -166,6 +168,9 @@ pub struct EffectCoverage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DspError {
+    StreamFinished,
+    StreamLengthMismatch,
+    ReverseRequiresOrderedInput,
     InvalidSampleRate,
     InvalidChannelCount,
     InvalidEffects,
@@ -178,6 +183,11 @@ pub enum DspError {
 impl Display for DspError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         let message = match self {
+            Self::StreamFinished => "segment has already been finalized",
+            Self::StreamLengthMismatch => "PCM frame count differs from the declared source length",
+            Self::ReverseRequiresOrderedInput => {
+                "reverse requires supplying source frames in reverse order"
+            }
             Self::InvalidSampleRate => "sample rate must be finite and greater than 6 kHz",
             Self::InvalidChannelCount => "channel count must be between 1 and 32",
             Self::InvalidEffects => "effect parameters are outside the supported editor ranges",
@@ -518,7 +528,7 @@ impl Chorus {
                 90.0 + f64::from(self.spread_degrees) / 2.0
             };
             let phase = phase_degrees * PI / 180.0;
-            let lfo = (2.0 * PI * f64::from(self.frequency_hz) * time - phase).sin();
+            let lfo = libm::sin(2.0 * PI * f64::from(self.frequency_hz) * time - phase);
             let delay_seconds =
                 f64::from(self.center_delay_seconds) * (1.0 + f64::from(self.depth) * lfo);
             let delay_samples =
@@ -792,7 +802,7 @@ impl SegmentProcessor {
 }
 
 pub fn db_to_gain(db: f32) -> f32 {
-    10.0_f32.powf(db / 20.0)
+    libm::powf(10.0, db / 20.0)
 }
 
 fn equal_power_gains(wet: f32) -> (f32, f32) {
@@ -802,7 +812,7 @@ fn equal_power_gains(wet: f32) -> (f32, f32) {
         (0.0, 1.0)
     } else {
         let angle = f64::from(wet) * PI / 2.0;
-        (angle.cos() as f32, angle.sin() as f32)
+        (libm::cos(angle) as f32, libm::sin(angle) as f32)
     }
 }
 
@@ -900,15 +910,15 @@ fn peaking(sample_rate: f64, frequency: f64, q: f64, gain_db: f64) -> Coefficien
     if gain_db == 0.0 {
         return Coefficients::IDENTITY;
     }
-    let a = 10.0_f64.powf(gain_db / 40.0);
+    let a = libm::pow(10.0, gain_db / 40.0);
     let omega = 2.0 * PI * frequency / sample_rate;
-    let alpha = omega.sin() / (2.0 * q);
+    let alpha = libm::sin(omega) / (2.0 * q);
     Coefficients::normalized(
         1.0 + alpha * a,
-        -2.0 * omega.cos(),
+        -2.0 * libm::cos(omega),
         1.0 - alpha * a,
         1.0 + alpha / a,
-        -2.0 * omega.cos(),
+        -2.0 * libm::cos(omega),
         1.0 - alpha / a,
     )
 }
@@ -917,11 +927,11 @@ fn low_shelf(sample_rate: f64, frequency: f64, gain_db: f64) -> Coefficients {
     if gain_db == 0.0 {
         return Coefficients::IDENTITY;
     }
-    let a = 10.0_f64.powf(gain_db / 40.0);
+    let a = libm::pow(10.0, gain_db / 40.0);
     let omega = 2.0 * PI * frequency / sample_rate;
-    let cosine = omega.cos();
-    let alpha = omega.sin() * 2.0_f64.sqrt() / 2.0;
-    let beta = 2.0 * a.sqrt() * alpha;
+    let cosine = libm::cos(omega);
+    let alpha = libm::sin(omega) * libm::sqrt(2.0) / 2.0;
+    let beta = 2.0 * libm::sqrt(a) * alpha;
     Coefficients::normalized(
         a * ((a + 1.0) - (a - 1.0) * cosine + beta),
         2.0 * a * ((a - 1.0) - (a + 1.0) * cosine),
@@ -936,11 +946,11 @@ fn high_shelf(sample_rate: f64, frequency: f64, gain_db: f64) -> Coefficients {
     if gain_db == 0.0 {
         return Coefficients::IDENTITY;
     }
-    let a = 10.0_f64.powf(gain_db / 40.0);
+    let a = libm::pow(10.0, gain_db / 40.0);
     let omega = 2.0 * PI * frequency / sample_rate;
-    let cosine = omega.cos();
-    let alpha = omega.sin() * 2.0_f64.sqrt() / 2.0;
-    let beta = 2.0 * a.sqrt() * alpha;
+    let cosine = libm::cos(omega);
+    let alpha = libm::sin(omega) * libm::sqrt(2.0) / 2.0;
+    let beta = 2.0 * libm::sqrt(a) * alpha;
     Coefficients::normalized(
         a * ((a + 1.0) + (a - 1.0) * cosine + beta),
         -2.0 * a * ((a - 1.0) + (a + 1.0) * cosine),
@@ -1021,6 +1031,55 @@ mod wasm {
             reverb_seed: reverb_seed as u32,
             reverse: boolean(&effects, "reverse")?,
         })
+    }
+
+    /// Block preprocessing; reverse is supplied by the caller's source traversal.
+    #[wasm_bindgen]
+    pub struct WasmIncrementalRenderer {
+        inner: super::IncrementalRenderer,
+    }
+
+    #[wasm_bindgen]
+    impl WasmIncrementalRenderer {
+        #[wasm_bindgen(constructor)]
+        pub fn new(
+            sample_rate: f64,
+            channels: usize,
+            frames: usize,
+            config: &JsValue,
+        ) -> Result<WasmIncrementalRenderer, JsValue> {
+            let effects = effect_config(config)
+                .ok_or_else(|| JsValue::from_str("Invalid effect configuration"))?;
+            let inner = super::IncrementalRenderer::new(sample_rate, channels, frames, effects)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(Self { inner })
+        }
+        pub fn output_frames(&self) -> usize {
+            self.inner.output_frames()
+        }
+        pub fn push(&mut self, samples: &[f32]) -> Result<Vec<f32>, JsValue> {
+            if samples.len() > 8192 {
+                return Err(JsValue::from_str("DSP input block exceeds 8192 samples"));
+            }
+            let mut output = Vec::new();
+            self.inner
+                .push(samples, |block: &[f32]| {
+                    output.extend_from_slice(block);
+                    Ok::<_, std::convert::Infallible>(())
+                })
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(output)
+        }
+        pub fn finish(&mut self) -> Result<Vec<f32>, JsValue> {
+            let mut output = Vec::new();
+            self.inner
+                .finish(|block: &[f32]| {
+                    output.extend_from_slice(block);
+                    Ok::<_, std::convert::Infallible>(())
+                })
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(output)
+        }
     }
 
     /// Copy-based prototype boundary. A production AudioWorklet may use the

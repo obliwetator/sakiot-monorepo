@@ -20,6 +20,10 @@ import {
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { addTrack } from "./model";
+import {
+	BROWSER_PREVIEW_LIMIT_MESSAGE,
+	browserPreviewLimited,
+} from "./pcmBudget";
 import type { UseClipEditorReturn } from "./useClipEditor";
 
 export function ClipEditorToolbar(props: {
@@ -134,7 +138,7 @@ export function ClipEditorMonitor(props: {
 		<div className="flex items-center gap-2 min-[600px]:gap-4 px-2 min-[600px]:px-4 py-1 min-[600px]:py-2 border-b border-ui-border flex-wrap">
 			<Button
 				variant="primary"
-				isDisabled={props.duration <= 0}
+				isDisabled={props.duration <= 0 || browserPreviewLimited(editor.edit)}
 				onPress={editor.togglePlay}
 			>
 				{editor.playing ? <PauseIcon /> : <PlayArrowIcon />}
@@ -171,6 +175,11 @@ export function ClipEditorMonitor(props: {
 			<Badge
 				size={"sm"}
 			>{`${editor.edit.segments.length} segment${editor.edit.segments.length === 1 ? "" : "s"}`}</Badge>
+			{browserPreviewLimited(editor.edit) && (
+				<Notice className="py-0" tone="warning" announce="status">
+					{BROWSER_PREVIEW_LIMIT_MESSAGE}
+				</Notice>
+			)}
 			{props.sourceStatus === "loading" && (
 				<Badge tone={"warning"} size={"sm"}>
 					Loading source…

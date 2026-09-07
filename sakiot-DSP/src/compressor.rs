@@ -83,7 +83,7 @@ impl Compressor {
     pub(crate) fn update(&mut self, parameters: CompressorParameters) {
         self.parameters = parameters;
         let knee = self.update_static_curve();
-        self.linear_post_gain = self.saturate(1.0, knee).recip().powf(0.6);
+        self.linear_post_gain = libm::powf(self.saturate(1.0, knee).recip(), 0.6);
     }
 
     pub(crate) fn process_frame(&mut self, frame: &mut [f32]) {
@@ -125,7 +125,7 @@ impl Compressor {
         } else {
             self.compressor_gain = (self.compressor_gain * self.envelope_rate).min(1.0);
         }
-        let warped_gain = (FRAC_PI_2 * self.compressor_gain).sin();
+        let warped_gain = libm::sinf(FRAC_PI_2 * self.compressor_gain);
         let total_gain = self.linear_post_gain * warped_gain;
 
         for (channel, sample) in frame.iter_mut().enumerate() {
@@ -158,7 +158,7 @@ impl Compressor {
             self.detector_average = 1.0;
         }
         let desired_gain = self.detector_average;
-        let scaled_desired_gain = desired_gain.asin() / FRAC_PI_2;
+        let scaled_desired_gain = libm::asinf(desired_gain) / FRAC_PI_2;
         self.scaled_desired_gain = scaled_desired_gain;
         let releasing = scaled_desired_gain > self.compressor_gain;
         let mut compression_diff_db = if scaled_desired_gain == 0.0 {
@@ -195,7 +195,7 @@ impl Compressor {
             }
             let effective_diff = self.max_attack_compression_diff_db.max(0.5);
             let attack_frames = self.parameters.attack_seconds.max(0.001) * self.sample_rate;
-            self.envelope_rate = 1.0 - (0.25 / effective_diff).powf(1.0 / attack_frames);
+            self.envelope_rate = 1.0 - libm::powf(0.25 / effective_diff, 1.0 / attack_frames);
         }
     }
 
@@ -204,7 +204,8 @@ impl Compressor {
             input
         } else {
             self.linear_threshold
-                + (1.0 - f64::from(-knee * (input - self.linear_threshold)).exp() as f32) / knee
+                + (1.0 - libm::exp(f64::from(-knee * (input - self.linear_threshold))) as f32)
+                    / knee
         }
     }
 
@@ -240,7 +241,7 @@ impl Compressor {
             } else {
                 min_k = knee;
             }
-            knee = (min_k * max_k).sqrt();
+            knee = libm::sqrtf(min_k * max_k);
         }
         knee
     }
@@ -265,11 +266,11 @@ impl Compressor {
 }
 
 fn db_to_linear(db: f32) -> f32 {
-    10.0_f32.powf(db / 20.0)
+    libm::powf(10.0, db / 20.0)
 }
 
 fn linear_to_db(linear: f32) -> f32 {
-    20.0 * linear.log10()
+    20.0 * libm::log10f(linear)
 }
 
 fn release_a_base() -> f32 {

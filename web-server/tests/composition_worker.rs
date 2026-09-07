@@ -42,8 +42,8 @@ async fn seed(
     let snapshot = json!({"body":body,"sources":["source.ogg"],"overwrite":null,"channel_id":10,"name":"Durable export"});
     let id = uuid::Uuid::new_v4().to_string();
     let token = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO composition_jobs (id,guild_id,user_id,idempotency_key,request,snapshot,result_clip_id,state,attempts,attempt_token,lease_expires_at) VALUES ($1,1,100,$1,$2,$3,'rendered','running',1,$4,now()+interval '60 seconds')")
-        .bind(&id).bind(body).bind(snapshot).bind(&token).execute(pool).await?;
+    sqlx::query("INSERT INTO composition_jobs (id,guild_id,user_id,idempotency_key,request,snapshot,result_clip_id,state,attempts,attempt_token,lease_expires_at,renderer_version) VALUES ($1,1,100,$1,$2,$3,'rendered','running',1,$4,now()+interval '60 seconds',$5)")
+        .bind(&id).bind(body).bind(snapshot).bind(&token).bind(web_server::clip_editor::RENDERER_VERSION).execute(pool).await?;
     Ok((id, token))
 }
 

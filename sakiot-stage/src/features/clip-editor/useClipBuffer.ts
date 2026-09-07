@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
 
+import { PcmBudget, SOURCE_CACHE_BYTES } from "./pcmBudget";
+
+const cacheBudget = new PcmBudget<string>(SOURCE_CACHE_BYTES);
+let decodeQueue: Promise<unknown> = Promise.resolve();
 const bufferCache = new Map<string, Promise<AudioBuffer>>();
 let decodeContext: AudioContext | null = null;
 const SHARED_DSP_SAMPLE_RATE = 48_000;
@@ -24,8 +28,11 @@ export function loadClipBuffer(
 ): Promise<AudioBuffer> {
 	const key = clipBufferKey(guildId, clipId);
 	const cached = bufferCache.get(key);
-	if (cached) return cached;
-	const promise = (async () => {
+	if (cached) {
+		cacheBudget.touch(key);
+		return cached;
+	}
+	const promise = decodeQueue.then(async () => {
 		const response = await authedFetch(
 			`audio/clips/${guildId}/${encodeURIComponent(clipId)}`,
 		);
@@ -40,9 +47,26 @@ export function loadClipBuffer(
 		}
 		const bytes = await response.arrayBuffer();
 		return contextForDecoding().decodeAudioData(bytes);
-	})();
+	});
+	decodeQueue = promise.then(
+		() => undefined,
+		() => undefined,
+	);
 	bufferCache.set(key, promise);
-	promise.catch(() => bufferCache.delete(key));
+	promise.then(
+		(buffer) => {
+			cacheBudget.retain(
+				key,
+				buffer.length * buffer.numberOfChannels * 4,
+				() => {
+					if (bufferCache.get(key) === promise) bufferCache.delete(key);
+				},
+			);
+		},
+		() => {
+			if (bufferCache.get(key) === promise) bufferCache.delete(key);
+		},
+	);
 	return promise;
 }
 

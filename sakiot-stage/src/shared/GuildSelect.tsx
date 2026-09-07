@@ -12,6 +12,7 @@ export function GuildSelect(props: {
 	return (
 		<Select
 			label="Server"
+			labelPlacement="floating"
 			className="min-w-[121px]"
 			selectedKey={props.guildSelected?.id ?? null}
 			onSelectionChange={(key) => {

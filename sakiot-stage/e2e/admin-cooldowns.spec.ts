@@ -226,7 +226,7 @@ async function openCooldowns(page: Page) {
 test("account menu and server picker support keyboard dismissal and restore focus", async ({
 	page,
 	isMobile,
-}) => {
+}, testInfo) => {
 	await mockApi(page);
 	await openCooldowns(page);
 	const trigger = page.getByRole("button", { name: "Open settings" });
@@ -240,6 +240,30 @@ test("account menu and server picker support keyboard dismissal and restore focu
 	if (isMobile)
 		await page.getByRole("button", { name: "open navigation" }).click();
 	const picker = page.getByRole("button", { name: /Test Guild Server/ });
+	await expect(picker).toHaveCSS("height", "56px");
+	const field = await picker.boundingBox();
+	const label = await picker
+		.locator("..")
+		.locator('[data-slot="select-label"]')
+		.boundingBox();
+	expect(field).not.toBeNull();
+	expect(label).not.toBeNull();
+	if (!field || !label) throw new Error("Server picker geometry is missing");
+	expect(Math.abs(label.y + label.height / 2 - field.y)).toBeLessThanOrEqual(1);
+	if (!isMobile) {
+		const audio = await page
+			.getByRole("button", { name: "Audio", exact: true })
+			.boundingBox();
+		expect(audio).not.toBeNull();
+		if (!audio) throw new Error("Audio navigation is missing");
+		expect(
+			Math.abs(field.y + field.height / 2 - audio.y - audio.height / 2),
+		).toBeLessThanOrEqual(1);
+	}
+	await picker
+		.locator("../..")
+		.screenshot({ path: testInfo.outputPath("server-picker.png") });
+
 	await picker.focus();
 	await picker.press("ArrowDown");
 	await expect(page.getByRole("listbox")).toBeVisible();

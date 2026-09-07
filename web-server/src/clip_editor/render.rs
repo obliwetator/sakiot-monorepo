@@ -1,16 +1,5 @@
 use super::*;
 
-/// The shared DSP keeps one segment in memory, so it only handles windows and
-/// pitch/rate stretches within its transient bounds; everything else renders
-/// through the FFmpeg/Rubber Band path.
-pub(super) fn shared_dsp_capable(segments: &[SegmentRender]) -> bool {
-    segments.iter().all(|segment| {
-        segment.source_out - segment.source_in <= MAX_SHARED_DSP_SEGMENT_SECONDS
-            && pitch_factor(segment.effects.pitch_cents) / f64::from(segment.effects.rate)
-                <= MAX_SHARED_DSP_STRETCH
-    })
-}
-
 pub(super) async fn render_compose(
     segments: &[SegmentRender],
     master_volume_db: f32,
@@ -19,18 +8,6 @@ pub(super) async fn render_compose(
     progress: &web::Data<WaveformProgressContainer>,
     cache_key: &str,
 ) -> Result<(), AppError> {
-    if !shared_dsp_capable(segments) {
-        return render_compose_legacy(
-            segments,
-            master_volume_db,
-            output,
-            expected_total_ms,
-            progress,
-            cache_key,
-        )
-        .await;
-    }
-
     render_compose_shared(
         segments,
         master_volume_db,
@@ -69,35 +46,18 @@ pub(super) async fn render_compose_shared(
     run_ffmpeg_with_progress(command, expected_total_ms, progress, cache_key).await
 }
 
-pub(super) async fn render_compose_legacy(
-    segments: &[SegmentRender],
-    master_volume_db: f32,
-    output: &Path,
+pub(super) async fn run_ffmpeg_with_progress(
+    command: tokio::process::Command,
     expected_total_ms: i64,
     progress: &web::Data<WaveformProgressContainer>,
     cache_key: &str,
 ) -> Result<(), AppError> {
-    let filter_graph = build_filter_graph(segments, master_volume_db);
-    let mut command = tokio::process::Command::new("ffmpeg");
-    command
-        .arg("-y")
-        .args(["-hide_banner", "-loglevel", "error"]);
-    for segment in segments {
-        command.arg("-i").arg(&segment.path);
-    }
-    command
-        .args(["-filter_complex", &filter_graph, "-map", "[out]"])
-        .args(["-c:a", "libopus", "-b:a", "96k"])
-        .args(["-progress", "pipe:2", "-nostats"])
-        .arg(output);
-    run_ffmpeg_with_progress(command, expected_total_ms, progress, cache_key).await
+    run_ffmpeg(command, Some((expected_total_ms, progress, cache_key))).await
 }
 
-pub(super) async fn run_ffmpeg_with_progress(
+async fn run_ffmpeg(
     mut command: tokio::process::Command,
-    expected_total_ms: i64,
-    progress: &web::Data<WaveformProgressContainer>,
-    cache_key: &str,
+    progress_info: Option<(i64, &web::Data<WaveformProgressContainer>, &str)>,
 ) -> Result<(), AppError> {
     command
         .stdin(Stdio::null())
@@ -121,7 +81,9 @@ pub(super) async fn run_ffmpeg_with_progress(
     let mut lines = BufReader::new(stderr).lines();
     let mut error_output = Vec::new();
     while let Some(line) = lines.next_line().await.map_err(AppError::IoError)? {
-        if let Some(value) = compose_progress_percent(&line, expected_total_ms) {
+        if let Some((expected_total_ms, progress, cache_key)) = progress_info
+            && let Some(value) = compose_progress_percent(&line, expected_total_ms)
+        {
             let mut values = progress.0.write().await;
             let current = values.entry(cache_key.to_owned()).or_insert(0);
             if *current >= 0 && value > *current {
@@ -151,36 +113,31 @@ pub(super) async fn prepare_shared_dsp_segments(
     for (index, segment) in segments.iter().enumerate() {
         let path = temporary_segment_path(output, index);
         files.paths.push(path.clone());
-        let input = decode_segment_f32(segment).await?;
-        let effects = shared_segment_effects(segment);
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let rendered =
-                sakiot_dsp::render_clip_interleaved(&input, SAMPLE_RATE, OUTPUT_CHANNELS, effects)
-                    .map_err(|error| error.to_string())?;
-            let file = File::create(&path).map_err(|error| error.to_string())?;
-            let mut writer = BufWriter::new(file);
-            for sample in rendered {
-                writer
-                    .write_all(&sample.to_le_bytes())
-                    .map_err(|error| error.to_string())?;
-            }
-            writer.flush().map_err(|error| error.to_string())
-        })
-        .await
-        .map_err(|_| AppError::InternalError)?
-        .map_err(|error| AppError::FfmpegError(format!("shared DSP failed: {error}")))?;
+        let decoded_path = path.with_extension("decoded.f32");
+        let decoded = TemporaryRawFiles {
+            paths: vec![decoded_path.clone()],
+        };
+        decode_segment_to_pcm(segment, &decoded_path).await?;
+        let effects = segment.effects;
+        tokio::task::spawn_blocking(move || render_pcm_file(&decoded_path, &path, effects))
+            .await
+            .map_err(|_| AppError::InternalError)?
+            .map_err(|error| AppError::FfmpegError(format!("shared DSP failed: {error}")))?;
+        drop(decoded);
     }
     Ok(files)
 }
 
-pub(super) async fn decode_segment_f32(segment: &SegmentRender) -> Result<Vec<f32>, AppError> {
+/// Decode directly to the attempt directory; neither stdout nor PCM is collected.
+async fn decode_segment_to_pcm(segment: &SegmentRender, path: &Path) -> Result<(), AppError> {
     let start_frame = (f64::from(segment.source_in) * SAMPLE_RATE).round() as u64;
     let end_frame = (f64::from(segment.source_out) * SAMPLE_RATE).round() as u64;
     let filter = format!(
         "aresample={SAMPLE_RATE:.0},atrim=start_sample={start_frame}:end_sample={end_frame},asetpts=PTS-STARTPTS,aformat=sample_fmts=flt:channel_layouts=stereo"
     );
-    let output = tokio::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-i"])
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
+        .args(["-y", "-hide_banner", "-loglevel", "error", "-i"])
         .arg(&segment.path)
         .args([
             "-map",
@@ -195,40 +152,65 @@ pub(super) async fn decode_segment_f32(segment: &SegmentRender) -> Result<Vec<f3
             "pcm_f32le",
             "-f",
             "f32le",
-            "pipe:1",
         ])
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::ServiceUnavailable(
-                    "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
-                )
-            } else {
-                AppError::IoError(error)
-            }
-        })?;
-    if !output.status.success() {
-        return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ));
+        .arg(path);
+    run_ffmpeg(command, None).await
+}
+
+/// Seekable PCM makes reverse bounded as well: read backwards by block and
+/// reverse complete stereo frames inside each block before feeding the DSP.
+pub(super) fn render_pcm_file(
+    input: &Path,
+    output: &Path,
+    mut effects: sakiot_dsp::SegmentEffects,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::io::{Read, Seek, SeekFrom};
+    const FRAME_BYTES: usize = OUTPUT_CHANNELS * size_of::<f32>();
+    const BLOCK_FRAMES: usize = 4096;
+    let mut source = File::open(input)?;
+    let bytes = source.metadata()?.len();
+    if !bytes.is_multiple_of(FRAME_BYTES as u64) {
+        return Err("decoded segment returned incomplete stereo f32 frames".into());
     }
-    if !output
-        .stdout
-        .len()
-        .is_multiple_of(size_of::<f32>() * OUTPUT_CHANNELS)
-    {
-        return Err(AppError::FfmpegError(
-            "decoded segment returned incomplete stereo f32 frames".into(),
-        ));
+    let frames = usize::try_from(bytes / FRAME_BYTES as u64)?;
+    let reverse = effects.reverse;
+    effects.reverse = false;
+    let mut renderer =
+        sakiot_dsp::IncrementalRenderer::new(SAMPLE_RATE, OUTPUT_CHANNELS, frames, effects)?;
+    let mut writer = BufWriter::new(File::create(output)?);
+    let mut sink = |samples: &[f32]| -> Result<(), std::io::Error> {
+        for sample in samples {
+            writer.write_all(&sample.to_le_bytes())?;
+        }
+        Ok(())
+    };
+    let mut raw = vec![0u8; BLOCK_FRAMES * FRAME_BYTES];
+    let mut pcm = vec![0.0f32; BLOCK_FRAMES * OUTPUT_CHANNELS];
+    let mut consumed = 0;
+    while consumed < frames {
+        let count = BLOCK_FRAMES.min(frames - consumed);
+        if reverse {
+            source.seek(SeekFrom::Start(
+                ((frames - consumed - count) * FRAME_BYTES) as u64,
+            ))?;
+        }
+        source.read_exact(&mut raw[..count * FRAME_BYTES])?;
+        for (sample, bytes) in pcm
+            .iter_mut()
+            .zip(raw[..count * FRAME_BYTES].chunks_exact(4))
+        {
+            *sample = f32::from_le_bytes(bytes.try_into()?);
+        }
+        let block = &mut pcm[..count * OUTPUT_CHANNELS];
+        if reverse {
+            sakiot_dsp::reverse_interleaved_frames(block, OUTPUT_CHANNELS);
+        }
+        renderer.push(block, &mut sink)?;
+        consumed += count;
     }
-    Ok(output
-        .stdout
-        .chunks_exact(size_of::<f32>())
-        .map(|sample| f32::from_le_bytes(sample.try_into().unwrap_or_default()))
-        .collect())
+    renderer.finish(&mut sink)?;
+    writer.flush()?;
+    Ok(())
 }
 
 pub(super) fn temporary_segment_path(output: &Path, index: usize) -> PathBuf {
@@ -237,10 +219,6 @@ pub(super) fn temporary_segment_path(output: &Path, index: usize) -> PathBuf {
         .and_then(|stem| stem.to_str())
         .unwrap_or("compose");
     output.with_file_name(format!(".{stem}.dsp-segment-{index}.f32"))
-}
-
-pub(super) fn shared_segment_effects(segment: &SegmentRender) -> sakiot_dsp::SegmentEffects {
-    segment.effects
 }
 
 pub(super) fn shared_effects_from_dto(effects: &SegmentEffectsDto) -> sakiot_dsp::SegmentEffects {
@@ -285,9 +263,16 @@ pub(super) fn build_shared_mix_graph(segments: &[SegmentRender], master_volume_d
     for (index, segment) in segments.iter().enumerate() {
         let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
         let mute = if segment.muted { "volume=0," } else { "" };
-        graph.push_str(&format!(
-            "[{index}:a]{mute}adelay={delay_ms}:all=1[s{index}];"
-        ));
+        if delay_ms > 0 {
+            // adelay allocates a ring proportional to timeline_start. Generate
+            // leading silence on demand instead, so late placement is bounded.
+            let silence_frames = delay_ms * 48;
+            graph.push_str(&format!(
+                "[{index}:a]{mute}asetpts=PTS-STARTPTS[a{index}];anullsrc=r=48000:cl=stereo,aformat=sample_fmts=flt,atrim=end_sample={silence_frames}[pad{index}];[pad{index}][a{index}]concat=n=2:v=0:a=1[s{index}];"
+            ));
+        } else {
+            graph.push_str(&format!("[{index}:a]{mute}asetpts=PTS-STARTPTS[s{index}];"));
+        }
     }
     for index in 0..segments.len() {
         graph.push_str(&format!("[s{index}]"));
@@ -302,48 +287,6 @@ pub(super) fn build_shared_mix_graph(segments: &[SegmentRender], master_volume_d
 
 pub(super) fn db_to_linear(db: f32) -> f64 {
     10f64.powf(f64::from(db) / 20.0)
-}
-
-pub(super) fn build_filter_graph(segments: &[SegmentRender], master_volume_db: f32) -> String {
-    let mut graph = String::new();
-    for (index, segment) in segments.iter().enumerate() {
-        let tempo = effective_rate(segment);
-        let pitch = pitch_factor(segment.effects.pitch_cents);
-        let time_pitch = if (tempo - 1.0).abs() < f64::EPSILON && (pitch - 1.0).abs() < f64::EPSILON
-        {
-            String::new()
-        } else {
-            format!(",rubberband=tempo={tempo:.6}:pitch={pitch:.6}")
-        };
-        let volume = db_to_linear(segment.effects.volume_db);
-        let delay_ms = (f64::from(segment.timeline_start) * 1_000.0).round() as i64;
-        let mute = if segment.muted { ",volume=0" } else { "" };
-        // Reversed segments trim the source window first, then flip it, so the
-        // audible content is exactly the [source_in, source_out] window played
-        // backwards - the same as the client's negative playbackRate preview.
-        let reverse = if segment.effects.reverse {
-            ",areverse"
-        } else {
-            ""
-        };
-        graph.push_str(&format!(
-            "[{index}:a]atrim=start={:.6}:end={:.6}{reverse},aresample={SAMPLE_RATE:.4}{time_pitch},volume={volume:.6},bass=g={:.3}:f=250:t=s:w=1,equalizer=g={:.3}:f={MID_FREQUENCY_HZ}:t=q:w=1,treble=g={:.3}:f=3000:t=s:w=1,aresample={SAMPLE_RATE:.4},aformat=sample_fmts=fltp:channel_layouts=mono{mute},adelay={delay_ms}:all=1[s{index}];",
-            segment.source_in,
-            segment.source_out,
-            segment.effects.bass_db,
-            segment.effects.mid_db,
-            segment.effects.treble_db,
-        ));
-    }
-    for index in 0..segments.len() {
-        graph.push_str(&format!("[s{index}]"));
-    }
-    graph.push_str(&format!(
-        "amix=inputs={}:duration=longest:normalize=0,volume={:.6}[out]",
-        segments.len(),
-        db_to_linear(master_volume_db),
-    ));
-    graph
 }
 
 pub(super) fn compose_progress_percent(line: &str, total_ms: i64) -> Option<i16> {

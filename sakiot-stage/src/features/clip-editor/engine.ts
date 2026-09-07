@@ -8,6 +8,7 @@ import {
 	segmentDuration,
 	sourcePositionAt,
 } from "./model";
+import { browserPreviewLimited } from "./pcmBudget";
 import { requestSharedSegment, warmSharedDsp } from "./sharedDsp";
 import {
 	createSharedDspAudioWorkletNode,
@@ -242,6 +243,7 @@ export class ClipEditorEngine {
 		loop: boolean,
 	) {
 		this.cancel();
+		if (browserPreviewLimited(edit)) return;
 		this.lastPlay = { edit, buffers, loop };
 		this.playheadSec = fromSec;
 		const ctx = this.ensureContext();

@@ -24,19 +24,11 @@ const VOLUME_MAX: f32 = 12.0;
 const NORMALIZED_MIN: f32 = 0.0;
 const NORMALIZED_MAX: f32 = 1.0;
 const DELAY_MAX_SECONDS: f32 = 5.0;
-const MID_FREQUENCY_HZ: u16 = 1_000;
 const SAMPLE_RATE: f64 = 48_000.0;
 const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
-// The offline phase-vocoder path keeps one segment in memory. Longer source
-// windows retain the existing FFmpeg/Rubber Band renderer until the shared DSP
-// gains a streaming length-changing API.
-const MAX_SHARED_DSP_SEGMENT_SECONDS: f32 = 60.0;
-// The phase-vocoder transient is proportional to pitch_ratio/rate; beyond 16x
-// a 60s segment holds ~370 MB in memory, so those renders use the FFmpeg path.
-const MAX_SHARED_DSP_STRETCH: f64 = 16.0;
 // Absolute safety caps the adjustable slider limits are clamped to. Above
 // these the renderers either overflow f32 to INF/NaN (gain past ~±770 dB) or
-// allocate hundreds of megabytes per segment (pitch beyond 16x resampling).
+// exceed the validated pitch/rate DSP parameter ranges.
 const LIMIT_GAIN_MAX_ABS_DB: f32 = 240.0;
 const LIMIT_PITCH_MAX_ABS_CENTS: f32 = 4_800.0;
 const LIMIT_RATE_MIN: f32 = 0.1;
@@ -57,6 +49,7 @@ pub use contract::{
     ComposeLimitsDto, ComposeSegment, SegmentEffectsDto,
 };
 pub use handlers::*;
+pub use queue::RENDERER_VERSION;
 pub use worker::{run_compose_worker_command, spawn_compose_worker};
 
 use jobs::*;

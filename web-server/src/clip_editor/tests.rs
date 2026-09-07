@@ -1,8 +1,7 @@
 use super::{
-    DELAY_MAX_SECONDS, MAX_SEGMENTS, MAX_SHARED_DSP_SEGMENT_SECONDS, MAX_TOTAL_SECONDS,
-    SegmentRender, build_filter_graph, build_shared_mix_graph, compose_progress_percent,
-    expected_duration_ms, is_valid_clip_id, probe_duration, render_compose_shared,
-    shared_dsp_capable, shared_effects_from_dto, validate_edit,
+    DELAY_MAX_SECONDS, MAX_SEGMENTS, MAX_TOTAL_SECONDS, SegmentRender, build_shared_mix_graph,
+    compose_progress_percent, expected_duration_ms, is_valid_clip_id, probe_duration,
+    render_compose_shared, shared_effects_from_dto, validate_edit,
 };
 use crate::audio::types::WaveformProgressContainer;
 use crate::clip_editor::{
@@ -64,72 +63,19 @@ pub(super) fn segment() -> ComposeSegment {
 }
 
 #[test]
-fn builds_filter_graph_with_pitch_and_rate() {
-    let graph = build_filter_graph(&[segment_render()], -6.0);
-    assert!(graph.contains("atrim=start=1.000000:end=5.000000"));
-    // Tempo and pitch are independent: 2x is half the duration while
-    // +1200 cents raises the result one octave without another resize.
-    assert!(graph.contains("rubberband=tempo=2.000000:pitch=2.000000"));
-    // 10^(6/20) = 1.995262
-    assert!(graph.contains("volume=1.995262"));
-    assert!(graph.contains("bass=g=-3.000:f=250:t=s:w=1"));
-    assert!(graph.contains("equalizer=g=2.000:f=1000:t=q:w=1"));
-    assert!(graph.contains("treble=g=3.000:f=3000:t=s:w=1"));
-    assert!(graph.contains("adelay=2500:all=1"));
-    assert!(graph.contains("amix=inputs=1:duration=longest:normalize=0"));
-    // master volume 10^(-6/20) = 0.501187
-    assert!(graph.ends_with("volume=0.501187[out]"));
-}
-
-#[test]
-fn builds_filter_graph_without_effects() {
-    let mut render = segment_render();
-    render.effects.rate = 1.0;
-    render.effects.pitch_cents = 0.0;
-    render.effects.volume_db = 0.0;
-    let graph = build_filter_graph(&[render], 0.0);
-    assert!(!graph.contains("rubberband"));
-    assert!(graph.contains("volume=1.000000"));
-}
-
-#[test]
-fn builds_filter_graph_with_reverse_after_the_trim() {
-    let mut render = segment_render();
-    render.effects.reverse = true;
-    let graph = build_filter_graph(&[render], 0.0);
-    // The window is trimmed first and then flipped, so the audible
-    // content is [source_in, source_out] played backwards.
-    assert!(graph.contains("atrim=start=1.000000:end=5.000000,areverse"));
-    assert!(graph.contains("adelay=2500:all=1"));
-}
-
-#[test]
-fn forward_segments_omit_the_reverse_filter() {
-    let graph = build_filter_graph(&[segment_render()], 0.0);
-    assert!(!graph.contains("areverse"));
-}
-
-#[test]
-fn muted_segments_are_silenced_in_both_render_graphs() {
+fn muted_segments_are_silenced_in_the_common_mix() {
     let mut render = segment_render();
     render.muted = true;
-    let legacy = build_filter_graph(std::slice::from_ref(&render), 0.0);
-    let shared = build_shared_mix_graph(std::slice::from_ref(&render), 0.0);
-    assert!(legacy.contains("aformat=sample_fmts=fltp:channel_layouts=mono,volume=0,adelay"));
-    assert!(shared.contains("[0:a]volume=0,adelay"));
-}
-
-#[test]
-fn mixes_two_segments_into_one_output() {
-    let graph = build_filter_graph(&[segment_render(), segment_render()], 0.0);
-    assert!(graph.contains("[s0][s1]amix=inputs=2:duration=longest:normalize=0"));
+    assert!(build_shared_mix_graph(&[render], 0.0).contains("[0:a]volume=0,asetpts"));
 }
 
 #[test]
 fn shared_mix_graph_only_places_and_sums_preprocessed_segments() {
     let graph = build_shared_mix_graph(&[segment_render(), segment_render()], -6.0);
-    assert!(graph.contains("[0:a]adelay=2500:all=1[s0]"));
-    assert!(graph.contains("[1:a]adelay=2500:all=1[s1]"));
+    assert!(graph.contains("atrim=end_sample=120000[pad0]"));
+    assert!(graph.contains("[pad0][a0]concat=n=2:v=0:a=1[s0]"));
+    assert!(graph.contains("[pad1][a1]concat=n=2:v=0:a=1[s1]"));
+    assert!(!graph.contains("adelay"));
     assert!(graph.contains("[s0][s1]amix=inputs=2:duration=longest:normalize=0"));
     assert!(graph.contains("channel_layouts=stereo"));
     assert!(graph.ends_with("volume=0.501187[out]"));
@@ -256,26 +202,6 @@ fn effect_tail_extends_the_expected_timeline_after_rate_processing() {
     // Four content seconds at 2x consume 2s; the fixed 2s tail is not
     // rate-scaled, and the segment starts at 2.5s.
     assert_eq!(expected_duration_ms(&[render]), 6_500);
-}
-
-#[test]
-fn routes_extreme_pitch_or_rate_stretches_off_the_shared_dsp() {
-    // Default segment: 2x pitch over 2x rate = 1x stretch, in bounds.
-    assert!(shared_dsp_capable(&[segment_render()]));
-    let mut render = segment_render();
-    render.effects.pitch_cents = 4_800.0; // 16x pitch, 2x rate = 8x stretch.
-    assert!(shared_dsp_capable(&[render.clone()]));
-    render.effects.rate = 0.25; // 16/0.25 = 64x stretch -> legacy path.
-    assert!(!shared_dsp_capable(&[render]));
-    let mut render = segment_render();
-    render.effects.pitch_cents = 0.0;
-    render.effects.rate = 0.1; // 1/0.1 = 10x stretch, still in bounds.
-    assert!(shared_dsp_capable(&[render.clone()]));
-    render.effects.pitch_cents = 2_400.0; // 4/0.1 = 40x -> legacy path.
-    assert!(!shared_dsp_capable(&[render]));
-    let mut render = segment_render();
-    render.source_out = MAX_SHARED_DSP_SEGMENT_SECONDS + 10.0;
-    assert!(!shared_dsp_capable(&[render]));
 }
 
 #[test]
@@ -494,11 +420,11 @@ fn rejects_compositions_longer_than_the_sanity_limit() {
 }
 
 #[test]
-fn rejects_advanced_effects_on_oversized_in_memory_segments() {
+fn accepts_advanced_effects_on_long_segments() {
     let mut seg = segment();
-    seg.source_out = MAX_SHARED_DSP_SEGMENT_SECONDS + 1.0;
+    seg.source_out = 61.0;
     seg.effects.advanced.distortion_wet = 0.5;
-    assert!(validate_edit(&body(vec![seg])).is_err());
+    assert!(validate_edit(&body(vec![seg])).is_ok());
 }
 
 #[test]
@@ -576,4 +502,238 @@ fn advanced_effects_default_to_shared_bypass_when_missing() {
     assert!(!advanced.chorus_enabled);
     assert!(!advanced.reverb_enabled);
     assert_eq!(advanced.reverb_seed, 0x5341_4b49);
+}
+
+#[test]
+fn accepts_mixed_long_basic_and_short_effected_segments() {
+    let mut short = segment();
+    short.effects.advanced.reverb_enabled = true;
+    let mut long = segment();
+    long.source_out = 61.0;
+    assert!(validate_edit(&body(vec![short, long])).is_ok());
+}
+
+#[test]
+fn accepts_advanced_effects_with_extreme_stretch() {
+    let mut stretched = segment();
+    stretched.effects.pitch_cents = 2400.0;
+    stretched.effects.rate = 0.1;
+    stretched.effects.advanced.delay_wet = 0.5;
+    let mut request = body(vec![stretched]);
+    request.limits = Some(ComposeLimitsDto {
+        rate_min: 0.1,
+        ..ComposeLimitsDto::default()
+    });
+    assert!(validate_edit(&request).is_ok());
+}
+
+#[test]
+fn seekable_reverse_preserves_stereo_frames_and_matches_reference() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().unwrap();
+    let input_path = temp.path().join("input.f32");
+    let output_path = temp.path().join("output.f32");
+    let input: Vec<f32> = (0..9001)
+        .flat_map(|i| [(i as f32 * 0.03).sin() * 0.2, (i as f32 * 0.07).cos() * 0.1])
+        .collect();
+    let mut file = std::fs::File::create(&input_path).unwrap();
+    for value in &input {
+        file.write_all(&value.to_le_bytes()).unwrap();
+    }
+    for reverse in [false, true] {
+        let effects = sakiot_dsp::SegmentEffects {
+            reverse,
+            pitch_cents: 700.0,
+            rate: 1.35,
+            delay_wet: 0.2,
+            delay_seconds: 0.01,
+            chorus_enabled: true,
+            compressor_enabled: true,
+            reverb_enabled: true,
+            reverb_decay_seconds: 0.02,
+            reverb_wet: 0.2,
+            tail_seconds: 0.05,
+            ..sakiot_dsp::SegmentEffects::default()
+        };
+        super::render_pcm_file(&input_path, &output_path, effects).unwrap();
+        let expected = sakiot_dsp::render_clip_interleaved(&input, 48000.0, 2, effects).unwrap();
+        let actual = std::fs::read(&output_path).unwrap();
+        assert_eq!(actual.len(), expected.len() * 4);
+        for (bytes, expected) in actual.chunks_exact(4).zip(expected) {
+            let actual = f32::from_le_bytes(bytes.try_into().unwrap());
+            assert!((actual - expected).abs() <= 2e-6);
+        }
+    }
+    std::fs::write(&input_path, [0u8; 7]).unwrap();
+    assert!(
+        super::render_pcm_file(
+            &input_path,
+            &output_path,
+            sakiot_dsp::SegmentEffects::default()
+        )
+        .is_err()
+    );
+}
+
+#[actix_rt::test]
+async fn long_segment_does_not_change_another_segments_effects_or_stereo() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.wav");
+    assert!(
+        std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "aevalsrc=0.2*sin(2*PI*173*t)|0.1*sin(2*PI*619*t):s=48000:d=61",
+                "-c:a",
+                "pcm_f32le"
+            ])
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut short = segment_render();
+    short.path = source.clone();
+    short.source_in = 0.0;
+    short.source_out = 0.1;
+    short.timeline_start = 0.0;
+    short.effects = sakiot_dsp::SegmentEffects {
+        delay_seconds: 0.01,
+        delay_wet: 0.5,
+        reverb_enabled: true,
+        reverb_decay_seconds: 0.02,
+        reverb_wet: 0.3,
+        tail_seconds: 0.1,
+        ..sakiot_dsp::SegmentEffects::default()
+    };
+    let alone =
+        super::prepare_shared_dsp_segments(&[short.clone()], &temp.path().join("alone.ogg"))
+            .await
+            .unwrap();
+    let expected = std::fs::read(&alone.paths[0]).unwrap();
+    let mut long = short.clone();
+    long.effects = sakiot_dsp::SegmentEffects::default();
+    long.timeline_start = 0.5;
+    for end in [59.99, 60.0, 60.01] {
+        long.source_out = end;
+        let mixed = super::prepare_shared_dsp_segments(
+            &[short.clone(), long.clone()],
+            &temp.path().join("mixed.ogg"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&mixed.paths[0]).unwrap(), expected);
+        assert_eq!(
+            std::fs::metadata(&mixed.paths[1]).unwrap().len(),
+            (f64::from(end) * 48000.0).round() as u64 * 8
+        );
+        let mut file = std::fs::File::open(&mixed.paths[1]).unwrap();
+        let mut block = [0u8; 4096];
+        std::io::Read::read_exact(&mut file, &mut block).unwrap();
+        assert!(block.chunks_exact(8).any(|frame| frame[..4] != frame[4..]));
+    }
+    let progress = web::Data::new(WaveformProgressContainer(tokio::sync::RwLock::new(
+        HashMap::new(),
+    )));
+    let output = temp.path().join("composition.ogg");
+    super::render_compose(&[short, long], 0.0, &output, 60510, &progress, "mixed")
+        .await
+        .unwrap();
+    assert!((probe_duration(&output).await.unwrap() - 60.51).abs() < 0.05);
+    let probe = std::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=channels,sample_rate",
+            "-of",
+            "json",
+        ])
+        .arg(&output)
+        .output()
+        .unwrap();
+    let data: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+    assert_eq!(data["streams"][0]["channels"], 2);
+    assert_eq!(data["streams"][0]["sample_rate"], "48000");
+}
+
+#[test]
+fn common_mixer_places_and_sums_float_pcm_without_quantizing_quiet_effect_tails() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().unwrap();
+    let raw = temp.path().join("quiet.f32");
+    let mut file = std::fs::File::create(&raw).unwrap();
+    let input: Vec<f32> = (0..1000)
+        .flat_map(|i| {
+            [
+                (i as f32 * 0.03).sin() * 1e-4,
+                (i as f32 * 0.07).cos() * 1e-5,
+            ]
+        })
+        .collect();
+    for value in &input {
+        file.write_all(&value.to_le_bytes()).unwrap();
+    }
+    let mut a = segment_render();
+    a.timeline_start = 0.0;
+    let mut b = a.clone();
+    b.timeline_start = 0.0061; // Existing placement rounds to 6 ms (288 frames).
+    let graph = build_shared_mix_graph(&[a, b], 0.0);
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-i",
+        ])
+        .arg(&raw)
+        .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i"])
+        .arg(&raw)
+        .args([
+            "-filter_complex",
+            &graph,
+            "-map",
+            "[out]",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual: Vec<_> = output
+        .stdout
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    assert_eq!(actual.len(), (1000 + 288) * 2);
+    for (index, value) in actual.iter().enumerate() {
+        let expected = input.get(index).copied().unwrap_or_default()
+            + index
+                .checked_sub(288 * 2)
+                .and_then(|i| input.get(i))
+                .copied()
+                .unwrap_or_default();
+        assert!(
+            (value - expected).abs() <= 1e-9,
+            "sample {index}: {value} != {expected}"
+        );
+    }
 }

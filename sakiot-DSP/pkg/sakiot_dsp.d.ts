@@ -2,6 +2,18 @@
 /* eslint-disable */
 
 /**
+ * Block preprocessing; reverse is supplied by the caller's source traversal.
+ */
+export class WasmIncrementalRenderer {
+    free(): void;
+    [Symbol.dispose](): void;
+    finish(): Float32Array;
+    constructor(sample_rate: number, channels: number, frames: number, config: any);
+    output_frames(): number;
+    push(samples: Float32Array): Float32Array;
+}
+
+/**
  * Copy-based prototype boundary. A production AudioWorklet may use the
  * WASM linear memory directly after profiling this simpler version.
  */
@@ -28,7 +40,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_wasmincrementalrenderer_free: (a: number, b: number) => void;
     readonly __wbg_wasmsegmentprocessor_free: (a: number, b: number) => void;
+    readonly wasmincrementalrenderer_finish: (a: number) => [number, number, number, number];
+    readonly wasmincrementalrenderer_new: (a: number, b: number, c: number, d: any) => [number, number, number];
+    readonly wasmincrementalrenderer_output_frames: (a: number) => number;
+    readonly wasmincrementalrenderer_push: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmsegmentprocessor_new: (a: number, b: number) => number;
     readonly wasmsegmentprocessor_process_interleaved: (a: number, b: number, c: number, d: any) => number;
     readonly wasmsegmentprocessor_render_clip_interleaved: (a: number, b: number, c: number) => [number, number];
@@ -37,8 +54,9 @@ export interface InitOutput {
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_start: () => void;
 }
 

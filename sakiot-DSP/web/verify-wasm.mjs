@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import init, { WasmSegmentProcessor } from "../pkg/sakiot_dsp.js";
+import init, { WasmSegmentProcessor, WasmIncrementalRenderer } from "../pkg/sakiot_dsp.js";
 
 const dspRoot = fileURLToPath(new URL("..", import.meta.url));
 const wasmBytes = await readFile(new URL("../pkg/sakiot_dsp_bg.wasm", import.meta.url));
@@ -251,4 +251,42 @@ console.log(
 );
 if (offlineResidualDb >= -90) {
 	throw new Error("offline native/WASM residual is above the prototype threshold");
+}
+
+// Compare the production block boundary directly with native incremental DSP.
+for (const [pitchCents, rate, sourceFrames = frames] of [[700, 1.35], [4800, 0.1], [-4800, 10], [700, 1.35, 61 * 48000]]) {
+    const source = new Float32Array(sourceFrames * channels);
+    for (let i = 0; i < source.length; i++) source[i] = input[i % input.length];
+    const effects = { pitchCents, rate, reverse: false, tailSeconds: 0.01,
+        distortionWet: 0.2, delaySeconds: 0.01, delayWet: 0.3, compressorEnabled: true,
+        chorusEnabled: true, reverbEnabled: true, reverbDecaySeconds: 0.02, reverbWet: 0.2 };
+    const streaming = new WasmIncrementalRenderer(48000, channels, sourceFrames, config(effects));
+    const actual = new Float32Array(streaming.output_frames() * channels);
+    const reversed = source.slice();
+    for (let i = 0; i < sourceFrames; i++) {
+        for (let c = 0; c < channels; c++) reversed[i * channels + c] = source[(sourceFrames - 1 - i) * channels + c];
+    }
+    let offset = 0;
+    for (let i = 0; i < reversed.length; i += 127 * channels) {
+        const block = streaming.push(reversed.subarray(i, i + 127 * channels));
+        actual.set(block, offset); offset += block.length;
+    }
+    const final = streaming.finish(); actual.set(final, offset); streaming.free();
+    if (offset + final.length !== actual.length) throw new Error("Incremental length mismatch");
+    const child = spawn("cargo", ["run", "--offline", "--quiet", "--release", "--example", "render_clip_raw", "--", "48000", "2", String(pitchCents), String(rate), "true", "0.01", "incremental", "effects"], { cwd: dspRoot });
+    const chunks = []; const errors = [];
+    child.stdout.on("data", chunk => chunks.push(chunk)); child.stderr.on("data", chunk => errors.push(chunk));
+    child.stdin.end(Buffer.from(source.buffer));
+    const status = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+    if (status !== 0) throw new Error(Buffer.concat(errors).toString());
+    const bytes = Buffer.concat(chunks);
+    const expected = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+    if (expected.length !== actual.length) throw new Error("Native/WASM incremental length mismatch");
+    let max = 0; let squared = 0;
+    for (let i = 0; i < actual.length; i++) {
+        const error = actual[i] - expected[i]; max = Math.max(max, Math.abs(error)); squared += error * error;
+    }
+    const rms = Math.sqrt(squared / actual.length);
+    console.log(`Incremental native/WASM frames=${sourceFrames} pitch=${pitchCents} rate=${rate}: max=${max} rms=${rms}`);
+    if (max > 2e-6 || rms > 2e-7) throw new Error("Native/WASM incremental numerical tolerance exceeded");
 }

@@ -1,6 +1,8 @@
-//! Small dependency-free radix-2 FFT used by the prototype's convolution and
+//! Small radix-2 FFT used by the shared convolution and
 //! phase-vocoder paths. Keeping it here makes the native and WASM builds run
-//! exactly the same transform code.
+//! exactly the same transform code. libm fixes the f32 transcendental rounding
+//! across native and WASM; tiny atan2/pitch differences otherwise accumulate
+//! into measurable phase errors under extreme stretch.
 
 use std::f32::consts::TAU;
 
@@ -13,17 +15,17 @@ pub(crate) struct Complex {
 impl Complex {
     pub(crate) fn from_polar(magnitude: f32, phase: f32) -> Self {
         Self {
-            re: magnitude * phase.cos(),
-            im: magnitude * phase.sin(),
+            re: magnitude * libm::cosf(phase),
+            im: magnitude * libm::sinf(phase),
         }
     }
 
     pub(crate) fn magnitude(self) -> f32 {
-        self.re.hypot(self.im)
+        libm::hypotf(self.re, self.im)
     }
 
     pub(crate) fn phase(self) -> f32 {
-        self.im.atan2(self.re)
+        libm::atan2f(self.im, self.re)
     }
 
     pub(crate) fn multiply(self, other: Self) -> Self {
