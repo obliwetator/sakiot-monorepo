@@ -150,7 +150,7 @@ export function PhysicalRecordingsPanel(props: {
 								fragment.audio_file_id ??
 								`${fragment.start_ms}-${fragment.end_ms}`
 							}
-							className="justify-start [text-transform:none] px-2"
+							className="justify-start normal-case px-2"
 							variant="ghost"
 							onPress={() => props.onSeek(fragment.start_ms)}
 						>

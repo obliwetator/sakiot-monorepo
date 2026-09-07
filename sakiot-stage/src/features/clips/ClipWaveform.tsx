@@ -50,9 +50,9 @@ export function ClipWaveform(props: {
 			: 0;
 
 	return (
-		<div className="relative my-4 h-35 [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]">
+		<div className="relative my-4 h-35 rounded-[1px] overflow-hidden bg-purple-500/18">
 			{generating && !waveformError && (
-				<div className="absolute top-0 left-0 right-0 [z-index:2] px-2 py-1 [background-color:rgba(15,_23,_42,_0.78)] pointer-events-none">
+				<div className="absolute top-0 left-0 right-0 z-2 px-2 py-1 bg-slate-900/78 pointer-events-none">
 					<span className="text-xs leading-5">
 						Building clip waveform ({progress}%)
 					</span>
@@ -60,14 +60,14 @@ export function ClipWaveform(props: {
 				</div>
 			)}
 			{!data?.data && !generating && !waveformError && (
-				<div className="absolute inset-0 grid [place-items:center] pointer-events-none">
+				<div className="absolute inset-0 grid place-items-center pointer-events-none">
 					<span className="text-muted text-xs leading-5">
 						Clip waveform has not been built.
 					</span>
 				</div>
 			)}
 			{waveformError && (
-				<div className="absolute inset-0 grid [place-items:center]">
+				<div className="absolute inset-0 grid place-items-center">
 					<span className="text-danger text-xs leading-5">
 						Clip waveform unavailable.
 					</span>
@@ -85,7 +85,7 @@ export function ClipWaveform(props: {
 			/>
 			{!data?.data && (
 				<Button
-					className="absolute right-2 bottom-2 [z-index:3]"
+					className="absolute right-2 bottom-2 z-3"
 					variant="primary"
 					size="sm"
 					isDisabled={generating}
@@ -98,7 +98,7 @@ export function ClipWaveform(props: {
 				</Button>
 			)}
 			<div
-				className="absolute top-0 bottom-0 w-0.5 [background-color:white] pointer-events-none"
+				className="absolute top-0 bottom-0 w-0.5 bg-white pointer-events-none"
 				style={{ left: `${playhead}%` }}
 			/>
 		</div>

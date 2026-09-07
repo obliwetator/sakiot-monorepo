@@ -17,11 +17,9 @@ export function DragGhost(props: {
 			aria-hidden="true"
 			data-testid="clip-drag-ghost"
 			className={cn(
-				"absolute top-2 bottom-2 [border-radius:1px] [border:2px_dashed] pointer-events-none [z-index:5]",
+				"absolute top-2 bottom-2 rounded-[1px] border-2 border-dashed pointer-events-none z-5",
 				props.invalid ? "border-danger" : "border-focus",
-				props.invalid
-					? "[background-color:rgba(248,_113,_113,_0.12)]"
-					: "[background-color:rgba(56,_189,_248,_0.16)]",
+				props.invalid ? "bg-danger/12" : "bg-info/16",
 			)}
 			style={{
 				left: `${props.leftFraction}%`,
@@ -29,7 +27,7 @@ export function DragGhost(props: {
 			}}
 		>
 			{props.label && (
-				<span className="text-xs leading-5 px-1 whitespace-nowrap overflow-hidden [text-overflow:ellipsis] block [line-height:1.6]">
+				<span className="text-xs leading-5 px-1 whitespace-nowrap overflow-hidden text-ellipsis block leading-[1.6]">
 					{props.label}
 				</span>
 			)}
@@ -50,7 +48,7 @@ export function PhantomTrackRow(props: {
 	return (
 		<TimelineRow label={props.label}>
 			<div
-				className="relative mb-1 [border-radius:1px] [border:2px_dashed] border-primary-strong overflow-hidden"
+				className="relative mb-1 rounded-[1px] border-2 border-dashed border-primary-strong overflow-hidden"
 				style={{ height: TRACK_HEIGHT_PX }}
 			>
 				{props.ghosts.map((ghost) => (
@@ -87,7 +85,7 @@ export function FloatingDragChip(props: {
 	return (
 		<div
 			aria-hidden="true"
-			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-60 px-2 py-1 [border-radius:1px] [border:1px_dashed] border-danger [background-color:rgba(248,_113,_113,_0.14)] [backdrop-filter:blur(4px)] overflow-hidden"
+			className="fixed -translate-x-1/2 translate-y-3.5 pointer-events-none z-1400 max-w-60 px-2 py-1 rounded-[1px] border border-dashed border-danger bg-danger/14 backdrop-blur-xs overflow-hidden"
 			style={{ left: props.x, top: props.y }}
 		>
 			<span className="text-xs leading-5 truncate">
@@ -101,7 +99,7 @@ export function ClampedEdgeWarning(props: { x: number; y: number }) {
 	return (
 		<div
 			aria-hidden="true"
-			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-65 px-2 py-1 [border-radius:1px] border border-warning [background-color:rgba(245,_158,_11,_0.14)] [backdrop-filter:blur(4px)]"
+			className="fixed -translate-x-1/2 translate-y-3.5 pointer-events-none z-1400 max-w-65 px-2 py-1 rounded-[1px] border border-warning bg-amber-500/14 backdrop-blur-xs"
 			style={{ left: props.x, top: props.y }}
 		>
 			<span className="text-xs leading-5 truncate">
@@ -115,7 +113,7 @@ export function TrackCollisionWarning(props: { x: number; y: number }) {
 	return (
 		<div
 			aria-hidden="true"
-			className="fixed [transform:translate(-50%,_14px)] pointer-events-none [z-index:1400] max-w-80 px-2 py-1 [border-radius:1px] border border-danger [background-color:rgba(248,_113,_113,_0.14)] [backdrop-filter:blur(4px)]"
+			className="fixed -translate-x-1/2 translate-y-3.5 pointer-events-none z-1400 max-w-80 px-2 py-1 rounded-[1px] border border-danger bg-danger/14 backdrop-blur-xs"
 			style={{ left: props.x, top: props.y }}
 		>
 			<span className="text-xs leading-5 truncate">

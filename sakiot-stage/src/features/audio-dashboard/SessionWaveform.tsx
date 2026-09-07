@@ -100,7 +100,7 @@ export function SessionWaveform(props: {
 			label={`${waveformName} logical recording waveform`}
 		>
 			{buildInProgress && !waveformError && (
-				<div className="absolute top-0 left-0 right-0 [z-index:2] px-2 py-1 [background-color:rgba(15,_23,_42,_0.78)] pointer-events-none">
+				<div className="absolute top-0 left-0 right-0 z-2 px-2 py-1 bg-slate-900/78 pointer-events-none">
 					<span className="text-xs leading-5">
 						Building {waveformName.toLowerCase()} waveform ({rebuildProgress}%)
 					</span>
@@ -108,7 +108,7 @@ export function SessionWaveform(props: {
 				</div>
 			)}
 			{!data?.data && !buildInProgress && !waveformError && (
-				<div className="absolute inset-0 grid [place-items:center] [z-index:1] pointer-events-none">
+				<div className="absolute inset-0 grid place-items-center z-1 pointer-events-none">
 					<span className="text-muted text-xs leading-5">
 						{waveformName} waveform has not been built.
 						{!props.silenceFree &&
@@ -117,14 +117,14 @@ export function SessionWaveform(props: {
 				</div>
 			)}
 			{waveformError && (
-				<div className="absolute inset-0 grid [place-items:center] [z-index:2] pointer-events-none">
+				<div className="absolute inset-0 grid place-items-center z-2 pointer-events-none">
 					<span className="text-danger text-xs leading-5">
 						{waveformName} waveform unavailable.
 					</span>
 				</div>
 			)}
 			<Button
-				className="absolute right-2 bottom-2 [z-index:4]"
+				className="absolute right-2 bottom-2 z-4"
 				variant="primary"
 				size="sm"
 				isDisabled={buildInProgress}
@@ -152,7 +152,7 @@ export function SessionWaveformDisplay(props: {
 
 	return (
 		<div
-			className="relative [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]"
+			className="relative rounded-[1px] overflow-hidden bg-purple-500/18"
 			style={{ height: WAVEFORM_HEIGHT_PX }}
 		>
 			<WaveformCanvas
@@ -166,11 +166,11 @@ export function SessionWaveformDisplay(props: {
 			{hoverFraction !== null && (
 				<div
 					aria-hidden="true"
-					className="absolute top-0 bottom-0 [border-left:1px_solid_rgba(125,_211,_252,_0.85)] pointer-events-none [z-index:3]"
+					className="absolute top-0 bottom-0 border-l border-sky-300/85 pointer-events-none z-3"
 					style={{ left: `${hoverFraction * 100}%` }}
 				>
 					<span
-						className="text-xs leading-5 absolute top-1.5 px-1.5 py-0.5 [border-radius:0.75px] [background-color:rgba(2,_6,_23,_0.9)] [color:#7dd3fc] tabular-nums whitespace-nowrap"
+						className="text-xs leading-5 absolute top-1.5 px-1.5 py-0.5 rounded-[0.75px] bg-slate-900/90 text-sky-300 tabular-nums whitespace-nowrap"
 						style={{
 							transform:
 								hoverFraction < 0.1

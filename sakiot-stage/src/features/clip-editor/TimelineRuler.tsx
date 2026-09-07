@@ -80,7 +80,7 @@ export function TimelineRuler(props: {
 						),
 					);
 				}}
-				className="relative h-8 touch-none select-none [cursor:ew-resize] overflow-hidden"
+				className="relative h-8 touch-none select-none cursor-ew-resize overflow-hidden"
 			>
 				{TIMELINE_AXIS_FRACTIONS.map((fraction) => {
 					const sec = props.viewStartSec + fraction * props.viewWidthSec;
@@ -94,7 +94,7 @@ export function TimelineRuler(props: {
 							}}
 						>
 							<span
-								className="text-muted text-xs leading-5 block whitespace-nowrap pl-1 tabular-nums [line-height:1.4]"
+								className="text-muted text-xs leading-5 block whitespace-nowrap pl-1 tabular-nums leading-[1.4]"
 								style={{ transform: axisLabelTransform(fraction) }}
 							>
 								{formatDuration(sec)}

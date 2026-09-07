@@ -57,7 +57,7 @@ export function Inspector(props: {
 			aria-label="Inspector"
 			data-testid="clip-inspector"
 			className={cn(
-				"w-full min-[900px]:w-65 min-[900px]:[max-height:none] min-[900px]:flex-none min-h-0 min-w-0 overflow-y-auto overflow-x-hidden [border-left:0px_solid] min-[900px]:border-l border-t min-[900px]:[border-top:0px_solid] border-ui-border p-2 min-[900px]:p-4",
+				"w-full min-[900px]:w-65 min-[900px]:[max-height:none] min-[900px]:flex-none min-h-0 min-w-0 overflow-y-auto overflow-x-hidden border-l-0 min-[900px]:border-l border-t min-[900px]:border-t-0 border-ui-border p-2 min-[900px]:p-4",
 				segment ? "[max-height:33.333%]" : "[max-height:none]",
 				segment ? "[flex:0_0_33.333%]" : "flex-none",
 			)}
@@ -735,7 +735,7 @@ function EffectSlider(props: {
 				<span
 					className={cn(
 						"text-xs leading-5",
-						disabled ? "[color:#64748b]" : "text-muted",
+						disabled ? "text-slate-500" : "text-muted",
 					)}
 				>
 					{props.label} · {props.format(props.value)}
@@ -773,7 +773,7 @@ function EffectGroup(props: {
 					<span
 						className={cn(
 							"text-xs leading-5",
-							props.active ? "text-creative" : "[color:#64748b]",
+							props.active ? "text-creative" : "text-slate-500",
 						)}
 					>
 						{props.active ? "On" : "Off"}

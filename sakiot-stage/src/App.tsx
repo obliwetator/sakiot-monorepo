@@ -37,7 +37,7 @@ function AuthenticatedApp() {
 				<RouterProvider router={mainRouter} />
 				<BundleUpdatePrompt />
 				{authData?.user?.is_dev && (
-					<div className="fixed bottom-4 right-4 bg-danger [color:#180b0b] [padding:4px_8px] [border-radius:1px] [font-weight:bold] [z-index:9999] pointer-events-none">
+					<div className="fixed bottom-4 right-4 bg-danger text-[#180b0b] px-2 py-1 rounded-[1px] font-bold z-9999 pointer-events-none">
 						DEV ACCOUNT
 					</div>
 				)}

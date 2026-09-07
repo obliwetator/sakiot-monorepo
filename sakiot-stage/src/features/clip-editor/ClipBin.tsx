@@ -274,7 +274,7 @@ function ClipBinItem(props: {
 			onDoubleClick={() => {
 				if (!props.tapToAdd) props.onAdd(props.clip);
 			}}
-			className="w-full justify-start text-left px-3 py-1.5 mb-1.5 border border-ui-border [border-radius:1px] bg-surface-raised [touch-action:pan-y] select-none last:mb-0 hover:[background-color:color-mix(in_srgb,_var(--color-surface-raised)_82%,_white)] hover:border-primary-strong"
+			className="w-full justify-start text-left px-3 py-1.5 mb-1.5 border border-ui-border rounded-[1px] bg-surface-raised touch-pan-y select-none last:mb-0 hover:bg-[color-mix(in_srgb,var(--color-surface-raised)_82%,_white)] hover:border-primary-strong"
 			onClick={(event) => {
 				if (Date.now() < ignoreClickUntilRef.current) {
 					event.preventDefault();

@@ -13,7 +13,7 @@ export function ClipRangePrecisionOverlay({
 				<>
 					<div
 						aria-hidden="true"
-						className="fixed [z-index:1290] [border-top:1px_solid_rgba(125,_211,_252,_0.5)] [border-bottom:1px_solid_rgba(125,_211,_252,_0.5)] [background-color:rgba(56,_189,_248,_0.035)] pointer-events-none"
+						className="fixed z-1290 border-y border-sky-300/50 bg-info/[3.5%] pointer-events-none"
 						style={{
 							top: precisionZone.topPx,
 							left: dragFeedback.plotLeftPx,
@@ -51,14 +51,14 @@ export function ClipRangePrecisionOverlay({
 								<div
 									key={boundary.label}
 									aria-hidden="true"
-									className="fixed h-7.5 [z-index:1291] [backdrop-filter:blur(7px)] [background:linear-gradient(180deg,_rgba(2,_6,_23,_0),_rgba(56,_189,_248,_0.18),_rgba(2,_6,_23,_0))] [border-top:1px_solid_rgba(125,_211,_252,_0.18)] [border-bottom:1px_solid_rgba(125,_211,_252,_0.18)] pointer-events-none"
+									className="fixed h-7.5 z-1291 backdrop-blur-[7px] bg-linear-to-b from-transparent via-info/18 to-transparent border-y border-sky-300/18 pointer-events-none"
 									style={{
 										top: boundary.yPx - 15,
 										left: dragFeedback.plotLeftPx,
 										width: dragFeedback.plotWidthPx,
 									}}
 								>
-									<span className="text-xs leading-5 absolute right-2 top-1.5 text-focus [text-shadow:0_1px_2px_rgba(2,_6,_23,_0.9)]">
+									<span className="text-xs leading-5 absolute right-2 top-1.5 text-focus text-shadow-[0_1px_2px_rgba(2,6,23,0.9)]">
 										{boundary.label}
 									</span>
 								</div>

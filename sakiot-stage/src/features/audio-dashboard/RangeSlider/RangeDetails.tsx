@@ -47,9 +47,7 @@ export function RangeDetails(props: {
 						const parts = (props.params.file_name ?? "").split("-");
 						const userId = parts[1];
 						return userId ? (
-							<div className="[font-size:12px] [opacity:0.75]">
-								User ID: {userId}
-							</div>
+							<div className="text-xs opacity-75">User ID: {userId}</div>
 						) : null;
 					})()}
 				</div>

@@ -31,7 +31,7 @@ export function DoubleSlider(props: {
 				thumbLabels={["Start", "End"]}
 				onChange={props.handleChange}
 			/>
-			<div className="flex items-center justify-between [margin-top:-16px]">
+			<div className="flex items-center justify-between -mt-4">
 				<TinyText>{formatDuration(props.startEnd[0])} </TinyText>
 				<TinyText>{formatDuration(Math.round(props.durationSec))}</TinyText>
 			</div>

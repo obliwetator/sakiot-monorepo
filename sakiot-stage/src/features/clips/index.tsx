@@ -63,7 +63,7 @@ function ClipList(props: {
 			<Disclosure
 				key={el.clip_id}
 				className={cn(
-					"mb-2 border [border-radius:8px_!important] [box-shadow:none] before:hidden",
+					"mb-2 border rounded-[8px]! shadow-none before:hidden",
 					location.pathname.endsWith(encodeURIComponent(el.clip_id))
 						? "border-creative"
 						: "border-ui-border",

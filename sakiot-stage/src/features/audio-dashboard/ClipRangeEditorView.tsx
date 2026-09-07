@@ -98,14 +98,14 @@ export function ClipRangeEditorView({
 					data-testid="clip-session-window"
 					{...viewDragHandlers("overview")}
 					className={cn(
-						"relative [border-radius:0.5px] [background-color:rgba(148,_163,_184,_0.11)] touch-none select-none overflow-hidden",
-						viewDragging === "overview" ? "[cursor:grabbing]" : "[cursor:grab]",
+						"relative rounded-[0.5px] bg-muted/11 touch-none select-none overflow-hidden",
+						viewDragging === "overview" ? "cursor-grabbing" : "cursor-grab",
 					)}
 					style={{ height: OVERVIEW_HEIGHT_PX }}
 				>
 					<div
 						aria-hidden="true"
-						className="absolute top-0 bottom-0 bg-accent [opacity:0.55] [border-radius:0.5px]"
+						className="absolute top-0 bottom-0 bg-accent opacity-55 rounded-[0.5px]"
 						style={{
 							left: percent(view.startMs / Math.max(1, durationMs)),
 							width: `max(3px, ${
@@ -115,7 +115,7 @@ export function ClipRangeEditorView({
 					/>
 					<div
 						aria-hidden="true"
-						className="absolute top-0 bottom-0 w-0.5 [transform:translateX(-1px)]"
+						className="absolute top-0 bottom-0 w-0.5 -translate-x-px"
 						style={{
 							left: percent(props.positionMs / Math.max(1, durationMs)),
 							backgroundColor: TIMELINE_PLAYHEAD_COLOR,
@@ -129,10 +129,10 @@ export function ClipRangeEditorView({
 				<div
 					ref={plotRef}
 					{...viewDragHandlers("detail")}
-					className="relative [cursor:ew-resize] touch-none select-none"
+					className="relative cursor-ew-resize touch-none select-none"
 					style={{ height: DETAIL_HEIGHT_PX }}
 				>
-					<div className="absolute inset-0 [border-radius:1px] overflow-hidden [background-color:rgba(168,_85,_247,_0.18)]">
+					<div className="absolute inset-0 rounded-[1px] overflow-hidden bg-purple-500/18">
 						<WaveformCanvas
 							peaks={peaks}
 							height={DETAIL_HEIGHT_PX}
@@ -147,7 +147,7 @@ export function ClipRangeEditorView({
 							<div
 								key={mask.key}
 								aria-hidden="true"
-								className="absolute top-0 bottom-0 [background-color:rgba(2,_6,_23,_0.6)] pointer-events-none"
+								className="absolute top-0 bottom-0 bg-slate-900/60 pointer-events-none"
 								style={{ left: mask.left, right: mask.right }}
 							/>
 						))}
@@ -171,10 +171,10 @@ export function ClipRangeEditorView({
 						stampFraction <= 1 && (
 							<div
 								aria-hidden="true"
-								className="absolute top-0 bottom-0 [border-left-style:dashed] [border-left-width:1px] [border-left-color:#fcd34d] pointer-events-none [z-index:3]"
+								className="absolute top-0 bottom-0 border-l border-dashed border-amber-300 pointer-events-none z-3"
 								style={{ left: percent(stampFraction) }}
 							>
-								<span className="text-xs leading-5 absolute top-0.5 left-1 [color:#fcd34d] [text-shadow:0_1px_2px_rgba(2,_6,_23,_0.9)]">
+								<span className="text-xs leading-5 absolute top-0.5 left-1 text-amber-300 text-shadow-[0_1px_2px_rgba(2,6,23,0.9)]">
 									Stamp
 								</span>
 							</div>
@@ -188,29 +188,16 @@ export function ClipRangeEditorView({
 							aria-label="Move clip selection; click to set nearest edge"
 							title="Drag to move the selection, or click to set the nearest edge"
 							className={cn(
-								"absolute top-0 bottom-0 [border-top-width:2px] [border-bottom-width:2px] [border-left-style:solid] [border-left-width:2px] [border-right-style:solid] [border-right-width:2px] [cursor:grab] touch-none active:[cursor:grabbing]",
-								valid && !dragInvalid
-									? "[background-color:rgba(56,_189,_248,_0.28)]"
-									: "[background-color:rgba(248,_113,_113,_0.28)]",
+								"absolute top-0 bottom-0 border-y-2 border-x-2 cursor-grab touch-none active:cursor-grabbing",
+								valid && !dragInvalid ? "bg-info/28" : "bg-danger/28",
 								selectionDrag.snapshot
-									? "[border-top-style:dashed]"
-									: "[border-top-style:solid]",
-								valid && !dragInvalid
-									? "[border-top-color:#7dd3fc]"
-									: "[border-top-color:#fca5a5]",
-								selectionDrag.snapshot
-									? "[border-bottom-style:dashed]"
-									: "[border-bottom-style:solid]",
-								valid && !dragInvalid
-									? "[border-bottom-color:#7dd3fc]"
-									: "[border-bottom-color:#fca5a5]",
-								valid && !dragInvalid
-									? "[border-left-color:#7dd3fc]"
-									: "[border-left-color:#fca5a5]",
-								valid && !dragInvalid
-									? "[border-right-color:#7dd3fc]"
-									: "[border-right-color:#fca5a5]",
-								selectionDrag.snapshot ? "[opacity:0.7]" : "[opacity:1]",
+									? "[border-top-style:dashed] [border-bottom-style:dashed]"
+									: "",
+								valid && !dragInvalid ? "border-t-sky-300" : "border-t-red-300",
+								valid && !dragInvalid ? "border-b-sky-300" : "border-b-red-300",
+								valid && !dragInvalid ? "border-l-sky-300" : "border-l-red-300",
+								valid && !dragInvalid ? "border-r-sky-300" : "border-r-red-300",
+								selectionDrag.snapshot ? "opacity-70" : "opacity-100",
 							)}
 							style={{
 								left: percent(selectionGeometry.startFraction),
@@ -247,13 +234,11 @@ export function ClipRangeEditorView({
 								aria-valuenow={Math.round(valueMs)}
 								aria-valuetext={formatDurationPrecise(valueMs / 1_000)}
 								className={cn(
-									'absolute [top:-4px] [bottom:-4px] [border-radius:1px] [box-shadow:0_1px_4px_rgba(2,6,23,0.7)] [cursor:ew-resize] [z-index:11] [outline-offset:2px] touch-none grid [place-items:center] after:[content:""] after:w-[3px] after:[height:40%] after:[border-radius:2px] after:[background-color:rgba(2,_6,_23,_0.55)] focus-visible:[outline:2px_solid] focus-visible:[outline-color:var(--color-focus)] focus-visible:[outline-offset:2px]',
-									valid && !dragInvalid
-										? "[background-color:#7dd3fc]"
-										: "[background-color:#fca5a5]",
+									'absolute -top-1 -bottom-1 rounded-[1px] shadow-[0_1px_4px_rgba(2,6,23,0.7)] cursor-ew-resize z-11 outline-offset-2 touch-none grid place-items-center after:content-[""] after:w-[3px] after:h-[40%] after:rounded-[2px] after:bg-slate-900/55 focus-visible:outline-2 focus-visible:outline-(--color-focus) focus-visible:outline-offset-2',
+									valid && !dragInvalid ? "bg-sky-300" : "bg-red-300",
 									edge === suggestedEdge
-										? "[outline:2px_solid_rgba(125,_211,_252,_0.72)]"
-										: "[outline:none]",
+										? "outline-2 outline-sky-300/72"
+										: "outline-none",
 								)}
 								style={{
 									left: percent(fraction),
@@ -275,7 +260,7 @@ export function ClipRangeEditorView({
 							aria-valuenow={Math.round(props.positionMs)}
 							aria-valuetext={formatDurationPrecise(props.positionMs / 1_000)}
 							className={
-								'absolute top-0 bottom-0 [z-index:10] [cursor:ew-resize] touch-none after:[content:""] after:absolute after:top-0 after:bottom-0 after:[left:50%] after:w-0.5 after:[transform:translateX(-1px)] after:[background-color:var(--after-background-color)] after:[box-shadow:var(--after-box-shadow)]'
+								'absolute top-0 bottom-0 z-10 cursor-ew-resize touch-none after:content-[""] after:absolute after:top-0 after:bottom-0 after:left-1/2 after:w-0.5 after:-translate-x-px after:bg-(--after-background-color) after:shadow-(--after-box-shadow)'
 							}
 							style={
 								{
@@ -293,19 +278,19 @@ export function ClipRangeEditorView({
 						<div
 							aria-hidden="true"
 							className={
-								'absolute top-1 left-1 right-1 [z-index:12] overflow-hidden border border-focus [border-radius:1px] [background-color:rgba(2,_6,_23,_0.94)] [box-shadow:0_4px_14px_rgba(2,_6,_23,_0.55)] pointer-events-none before:[content:""] before:absolute before:top-0 before:bottom-0 before:w-14 before:[z-index:5] after:[content:""] after:absolute after:top-0 after:bottom-0 after:w-14 after:[z-index:5] before:left-0 before:[background:linear-gradient(90deg,_rgba(2,_6,_23,_0.96),_rgba(2,_6,_23,_0))] after:right-0 after:[background:linear-gradient(270deg,_rgba(2,_6,_23,_0.96),_rgba(2,_6,_23,_0))]'
+								'absolute top-1 left-1 right-1 z-12 overflow-hidden border border-focus rounded-[1px] bg-slate-900/94 shadow-[0_4px_14px_rgba(2,6,23,0.55)] pointer-events-none before:content-[""] before:absolute before:top-0 before:bottom-0 before:w-14 before:z-5 after:content-[""] after:absolute after:top-0 after:bottom-0 after:w-14 after:z-5 before:left-0 before:bg-linear-to-r before:from-slate-900/96 before:to-slate-900/0 after:right-0 after:bg-linear-to-l after:from-slate-900/96 after:to-slate-900/0'
 							}
 							style={{ height: DETAIL_HEIGHT_PX / 2 } as CSSProperties}
 						>
 							{rollingStrength !== 0 && (
 								<div
 									className={cn(
-										"absolute top-0 bottom-0 [z-index:6] grid [place-items:center] text-focus",
+										"absolute top-0 bottom-0 z-6 grid place-items-center text-focus",
 										rollingStrength < 0 ? "left-0" : "left-auto",
 										rollingStrength > 0 ? "right-0" : "right-auto",
 										rollingStrength < 0
-											? "[background:linear-gradient(90deg,_rgba(56,_189,_248,_0.42),_rgba(56,_189,_248,_0))]"
-											: "[background:linear-gradient(270deg,_rgba(56,_189,_248,_0.42),_rgba(56,_189,_248,_0))]",
+											? "bg-linear-to-r from-info/42 to-info/0"
+											: "bg-linear-to-l from-info/42 to-info/0",
 									)}
 									style={
 										{
@@ -320,16 +305,10 @@ export function ClipRangeEditorView({
 							{fineSelectionGeometry?.overlaps && (
 								<div
 									className={cn(
-										"absolute top-0 bottom-0 [border-top-style:solid] [border-top-width:2px] [border-bottom-style:solid] [border-bottom-width:2px] [z-index:1]",
-										valid
-											? "[background-color:rgba(56,_189,_248,_0.2)]"
-											: "[background-color:rgba(248,_113,_113,_0.2)]",
-										valid
-											? "[border-top-color:#7dd3fc]"
-											: "[border-top-color:#fca5a5]",
-										valid
-											? "[border-bottom-color:#7dd3fc]"
-											: "[border-bottom-color:#fca5a5]",
+										"absolute top-0 bottom-0 border-y-2 z-1",
+										valid ? "bg-info/20" : "bg-danger/20",
+										valid ? "border-t-sky-300" : "border-t-red-300",
+										valid ? "border-b-sky-300" : "border-b-red-300",
 									)}
 									style={
 										{
@@ -347,7 +326,7 @@ export function ClipRangeEditorView({
 								<div
 									key={fraction}
 									className={cn(
-										"absolute bottom-0 w-[1px] [background-color:rgba(226,_232,_240,_0.28)] [z-index:2]",
+										"absolute bottom-0 w-[1px] bg-slate-200/28 z-2",
 										fraction === 0 || fraction === 0.5 || fraction === 1
 											? "top-5.5"
 											: "top-7.5",
@@ -364,12 +343,12 @@ export function ClipRangeEditorView({
 								otherEdgeFraction >= 0 &&
 								otherEdgeFraction <= 1 && (
 									<div
-										className="absolute top-4.5 bottom-2.5 [border-left-style:dashed] [border-left-width:2px] [border-left-color:#fcd34d] [z-index:4]"
+										className="absolute top-4.5 bottom-2.5 border-l-2 border-dashed border-amber-300 z-4"
 										style={
 											{ left: percent(otherEdgeFraction) } as CSSProperties
 										}
 									>
-										<span className="text-xs leading-5 absolute [top:-16px] left-[3px] [color:#fcd34d]">
+										<span className="text-xs leading-5 absolute -top-4 left-[3px] text-amber-300">
 											{dragFeedback.kind.type === "edge" &&
 											dragFeedback.kind.edge === "start"
 												? "Out"
@@ -378,7 +357,7 @@ export function ClipRangeEditorView({
 									</div>
 								)}
 							<div
-								className="absolute top-4.5 bottom-2.5 w-[3px] [transform:translateX(-1px)] [background-color:#7dd3fc] [z-index:7]"
+								className="absolute top-4.5 bottom-2.5 w-[3px] -translate-x-px bg-sky-300 z-7"
 								style={
 									{
 										left: percent(fineValueFraction ?? 0),
@@ -387,7 +366,7 @@ export function ClipRangeEditorView({
 								}
 							/>
 							<Badge
-								className="absolute top-1 [left:50%] [transform:translateX(-50%)] tabular-nums [z-index:8]"
+								className="absolute top-1 left-1/2 -translate-x-1/2 tabular-nums z-8"
 								size={"sm"}
 							>{`${
 								fineLimitFraction !== null && fineLimitFraction <= 0
@@ -408,11 +387,11 @@ export function ClipRangeEditorView({
 							)} · ${signedSeconds(
 								dragFeedback.valueMs - dragFeedback.originMs,
 							)}`}</Badge>
-							<span className="text-xs leading-5 absolute top-[5px] left-2 [font-weight:700] text-focus [z-index:8]">
+							<span className="text-xs leading-5 absolute top-[5px] left-2 font-bold text-focus z-8">
 								{dragFeedback.multiplier >= 100 ? "ULTRA ×100" : "FINE ×10"}
 							</span>
 							{dragFeedback.multiplier === 10 && (
-								<span className="text-xs leading-5 absolute top-[5px] right-2 text-muted [z-index:8]">
+								<span className="text-xs leading-5 absolute top-[5px] right-2 text-muted z-8">
 									↑{" "}
 									{Math.max(
 										0,
@@ -421,10 +400,10 @@ export function ClipRangeEditorView({
 									px to ultra
 								</span>
 							)}
-							<span className="text-xs leading-5 absolute left-2 bottom-[3px] tabular-nums [z-index:8]">
+							<span className="text-xs leading-5 absolute left-2 bottom-[3px] tabular-nums z-8">
 								Start {formatDurationPrecise(fineLimitWindow.startMs / 1_000)}
 							</span>
-							<span className="text-xs leading-5 absolute right-2 bottom-[3px] tabular-nums [z-index:8]">
+							<span className="text-xs leading-5 absolute right-2 bottom-[3px] tabular-nums z-8">
 								End {formatDurationPrecise(fineLimitWindow.endMs / 1_000)}
 							</span>
 						</div>
@@ -446,7 +425,7 @@ export function ClipRangeEditorView({
 								style={{ left: percent(fraction) } as CSSProperties}
 							>
 								<span
-									className="text-muted text-xs leading-5 block whitespace-nowrap tabular-nums [line-height:1.2]"
+									className="text-muted text-xs leading-5 block whitespace-nowrap tabular-nums leading-[1.2]"
 									style={
 										{ transform: axisLabelTransform(fraction) } as CSSProperties
 									}
@@ -558,7 +537,7 @@ export function ClipRangeEditorView({
 						</div>
 					))}
 					{props.edgeHint && (
-						<span className="text-warning text-xs leading-5 [flex-basis:100%]">
+						<span className="text-warning text-xs leading-5 basis-full">
 							{props.edgeHint}
 						</span>
 					)}

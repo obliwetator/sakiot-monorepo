@@ -70,7 +70,7 @@ export function Stamps() {
 	return (
 		<div className="p-3 min-[900px]:p-6 max-w-350">
 			<ViewAsRoleBanner guildId={guildId} />
-			<h4 className="leading-6 [font-weight:700] font-semibold tracking-tight mb-2">
+			<h4 className="leading-6 font-semibold tracking-tight mb-2">
 				Stamps {guildName ? `— ${guildName}` : ""}
 			</h4>
 			<p className="leading-6 text-muted mb-4">

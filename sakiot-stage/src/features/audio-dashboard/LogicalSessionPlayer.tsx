@@ -479,7 +479,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 							onSeekPreview={setSeekPreviewMs}
 							positionAriaLabel="Logical playback position"
 							rightDetail={
-								<p className="leading-6 [color:var(--color-muted)] text-sm [font-variant-numeric:tabular-nums]">
+								<p className="leading-6 text-muted text-sm tabular-nums">
 									Real time{" "}
 									{new Date(
 										manifest.started_at_ms + displayedPositionMs,
@@ -610,13 +610,13 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					)}
 
 					<TabPanel id="mix" shouldForceMount className="data-[inert]:hidden">
-						<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm shadow-none [padding:16px] [margin-top:12px]">
-							<div className="flex flex-col justify-between items-start min-[600px]:items-center flex-col min-[600px]:flex-row [gap:8px]">
+						<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-4 mt-3">
+							<div className="flex flex-col justify-between items-start min-[600px]:items-center min-[600px]:flex-row gap-2">
 								<div>
 									<h6 className="leading-6 font-semibold tracking-tight font-medium tracking-[0.001em] leading-[1.6] text-xl">
 										Channel mix
 									</h6>
-									<p className="leading-6 [color:var(--color-muted)] text-sm">
+									<p className="leading-6 text-muted text-sm">
 										{channelMixScope === "all_recordings"
 											? "All recordings while the bot was continuously connected to this channel are shown on one timeline."
 											: "Only recordings overlapping this selected session are shown on one timeline (anchor-style)."}
@@ -646,11 +646,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 							</div>
 
 							{channelMixError && !channelMix && (
-								<Notice
-									className="[margin-top:12px]"
-									tone={"error"}
-									announce="alert"
-								>
+								<Notice className="mt-3" tone={"error"} announce="alert">
 									Channel mix status is unavailable.{" "}
 									<Button size="sm" onPress={() => void refetchChannelMix()}>
 										Retry status
@@ -661,7 +657,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 								<>
 									{channelMix.reason && channelMix.status !== "ready" && (
 										<Notice
-											className="[margin-top:12px]"
+											className="mt-3"
 											tone={channelMix.status === "failed" ? "error" : "info"}
 											announce={
 												(channelMix.status === "failed" ? "error" : "info") ===
@@ -677,7 +673,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 										<ChannelMixProgress progress={channelMix.progress} />
 									)}
 									{channelMix.status === "idle" && (
-										<p className="leading-6 [color:var(--color-muted)] text-sm [margin-top:8px]">
+										<p className="leading-6 text-muted text-sm mt-2">
 											{channelMix.source_count} source recordings found. The mix
 											is ready to generate.
 										</p>
@@ -713,11 +709,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 								</>
 							)}
 							{channelMixActionError && (
-								<Notice
-									className="[margin-top:8px]"
-									tone={"error"}
-									announce="alert"
-								>
+								<Notice className="mt-2" tone={"error"} announce="alert">
 									{channelMixActionError}
 								</Notice>
 							)}

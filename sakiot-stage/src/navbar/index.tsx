@@ -82,7 +82,7 @@ function ResponsiveAppBar(props: {
 	return (
 		<header className="w-full border-b border-ui-border bg-header text-fg shadow-sm static">
 			<div
-				className={cn("mx-auto w-full px-4 sm:px-6 [max-width:xl]", "min-w-0")}
+				className={cn("mx-auto w-full px-4 sm:px-6 max-w-[1536px]", "min-w-0")}
 			>
 				<div
 					className={cn(
@@ -112,7 +112,7 @@ function ResponsiveAppBar(props: {
 
 					<h6
 						className={cn(
-							"font-medium tracking-[0.001em] text-xl truncate grow [color:inherit]",
+							"font-medium tracking-[0.001em] text-xl truncate grow text-inherit",
 							useInlineNavigation ? "hidden" : "flex min-[900px]:hidden",
 						)}
 					>

@@ -4,8 +4,9 @@ import { cn } from "../../shared/ui";
 // Every timeline row (waveform, scrubber, event lanes, axis) reserves the same
 // label gutter, so one millisecond lands on the same x in all of them.
 export const TIMELINE_AXIS_FRACTIONS = [0, 0.25, 0.5, 0.75, 1] as const;
-export const TIMELINE_GRID_COLOR = "rgba(148, 163, 184, 0.16)";
-export const TIMELINE_PLAYHEAD_COLOR = "#f8fafc";
+export const TIMELINE_GRID_COLOR =
+	"color-mix(in srgb, var(--color-muted) 16%, transparent)";
+export const TIMELINE_PLAYHEAD_COLOR = "var(--color-fg)";
 export const TIMELINE_PLAYHEAD_SHADOW = "0 0 0 1px rgba(2, 6, 23, 0.75)";
 
 /** Horizontal offset of an axis label so it stays inside the plot at the ends. */
@@ -26,11 +27,11 @@ export function TimelinePlayhead(props: { percent: number }) {
 	return (
 		<div
 			aria-hidden="true"
-			className="absolute top-0 bottom-0 w-0.5 [transform:translateX(-1px)] pointer-events-none [z-index:6]"
+			className="absolute top-0 bottom-0 w-0.5 -translate-x-px pointer-events-none z-6"
 			style={{
 				backgroundColor: TIMELINE_PLAYHEAD_COLOR,
 				boxShadow: TIMELINE_PLAYHEAD_SHADOW,
-				...{ left: `${props.percent}%` },
+				left: `${props.percent}%`,
 			}}
 		/>
 	);
@@ -41,7 +42,7 @@ export function TimelineGrid() {
 	return (
 		<div
 			aria-hidden="true"
-			className="absolute inset-0 pointer-events-none [z-index:0]"
+			className="absolute inset-0 pointer-events-none z-0"
 		>
 			{TIMELINE_AXIS_FRACTIONS.map((fraction) => (
 				<div

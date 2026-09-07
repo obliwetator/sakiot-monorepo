@@ -39,7 +39,6 @@ const LANE_PADDING_PX = 6;
 const MIN_LANE_HEIGHT_PX = 30;
 const CLUSTER_DISTANCE_PX = 14;
 const AXIS_TICK_HEIGHT_PX = 4;
-const LANE_RADIUS_PX = 4;
 
 function laneHeight(lane: TimelineLane): number {
 	return Math.max(
@@ -90,7 +89,7 @@ function PointTooltip(props: {
 	if (props.cluster.points.length > 1) {
 		return (
 			<div>
-				<span className="[font-weight:700] text-xs leading-5">
+				<span className="font-bold text-xs leading-5">
 					{props.cluster.points.length} nearby events
 				</span>
 				<span className="block text-xs leading-5">
@@ -109,7 +108,7 @@ function PointTooltip(props: {
 	const context = eventContext(point.event);
 	return (
 		<div>
-			<span className="[font-weight:700] text-xs leading-5">{point.label}</span>
+			<span className="font-bold text-xs leading-5">{point.label}</span>
 			<span className="block text-xs leading-5">
 				{formatTimelineOffset(point.offsetMs)}
 				{wallClock ? ` · ${wallClock}` : ""}
@@ -130,7 +129,7 @@ function IntervalTooltip(props: {
 	const wallClock = formatWallClock(props.startedAtMs, props.interval.startMs);
 	return (
 		<div>
-			<span className="[font-weight:700] text-xs leading-5">
+			<span className="font-bold text-xs leading-5">
 				{props.interval.label}
 			</span>
 			<span className="block text-xs leading-5">
@@ -200,7 +199,7 @@ function ClusterPicker(props: {
 					return (
 						<Button
 							key={point.id}
-							className="w-full justify-start text-left [text-transform:none] gap-2"
+							className="w-full justify-start text-left normal-case gap-2"
 							size="sm"
 							onPress={() => {
 								props.onSeek(point.offsetMs);
@@ -303,11 +302,7 @@ export function AudioEventTimeline(props: {
 			<Button
 				aria-expanded={expanded}
 				aria-controls={contentId}
-				className="w-full min-h-6 h-6 px-1.5 py-0 [border:1px_solid_rgba(148,_163,_184,_0.14)] [border-radius:0.75px] [background-color:rgba(148,_163,_184,_0.04)] text-muted [text-transform:none] [justify-content:stretch]"
-				style={{
-					backgroundColor: "rgba(148, 163, 184, 0.04)",
-					color: "var(--color-muted)",
-				}}
+				className="w-full min-h-6 h-6 px-1.5 py-0 border border-muted/14 rounded-[0.75px] bg-muted/4 text-muted normal-case justify-stretch"
 				size="sm"
 				onPress={() => {
 					setExpanded((current) => !current);
@@ -315,11 +310,9 @@ export function AudioEventTimeline(props: {
 				}}
 			>
 				<div className="flex items-center justify-between gap-2 w-full">
-					<span className="[font-weight:700] text-xs leading-5">
-						Event timeline
-					</span>
+					<span className="font-bold text-xs leading-5">Event timeline</span>
 					<span className="flex items-center">
-						<span className="[color:inherit] text-xs leading-5">
+						<span className="text-inherit text-xs leading-5">
 							{model.totalEvents} event{model.totalEvents === 1 ? "" : "s"}
 							{intervalCount > 0
 								? ` · ${intervalCount} period${intervalCount === 1 ? "" : "s"}`
@@ -327,11 +320,10 @@ export function AudioEventTimeline(props: {
 						</span>
 						<ExpandMoreIcon
 							size={17}
-							style={{
-								marginLeft: 2,
-								transform: expanded ? "rotate(180deg)" : "none",
-								transition: "transform 150ms ease",
-							}}
+							className={cn(
+								"ml-0.5 transition-transform duration-150 ease-[ease]",
+								expanded ? "rotate-180" : "rotate-0",
+							)}
 						/>
 					</span>
 				</div>
@@ -374,20 +366,12 @@ export function AudioEventTimeline(props: {
 										key={lane.id}
 										className={cn(
 											"relative",
-											laneIndex % 2 === 0
-												? "[background-color:rgba(148,_163,_184,_0.11)]"
-												: "[background-color:rgba(148,_163,_184,_0.04)]",
-											isLastLane
-												? "[box-shadow:none]"
-												: "[box-shadow:inset_0_-1px_0_rgba(148,_163,_184,_0.14)]",
+											laneIndex % 2 === 0 ? "bg-muted/11" : "bg-muted/4",
+											isLastLane ? "" : "border-b border-muted/14",
+											isFirstLane && "rounded-t-sm",
+											isLastLane && "rounded-b-sm",
 										)}
-										style={{
-											height: height,
-											borderTopLeftRadius: isFirstLane ? LANE_RADIUS_PX : 0,
-											borderTopRightRadius: isFirstLane ? LANE_RADIUS_PX : 0,
-											borderBottomLeftRadius: isLastLane ? LANE_RADIUS_PX : 0,
-											borderBottomRightRadius: isLastLane ? LANE_RADIUS_PX : 0,
-										}}
+										style={{ height }}
 									>
 										{lane.intervals.map((interval) => {
 											const left = percent(interval.startMs, props.durationMs);
@@ -415,20 +399,14 @@ export function AudioEventTimeline(props: {
 																);
 															}}
 															className={cn(
-																"absolute p-0 overflow-hidden [border:0px_solid] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.35),_0_1px_2px_rgba(2,6,23,0.5)] [color:#0f172a] [cursor:pointer] [font-size:10px] [font-weight:700] [line-height:1] text-left whitespace-nowrap [text-overflow:ellipsis] [z-index:1] hover:[filter:brightness(1.14)] hover:[z-index:4] focus-visible:[filter:brightness(1.14)] focus-visible:[z-index:4]",
+																"absolute p-0 overflow-hidden border-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_1px_2px_rgba(2,6,23,0.5)] text-slate-900 cursor-pointer text-[10px] font-bold leading-none text-left whitespace-nowrap text-ellipsis z-1 hover:brightness-[1.14] hover:z-4 focus-visible:brightness-[1.14] focus-visible:z-4",
 																widthPx >= 60 ? "px-1.5" : "px-0",
 																interval.startsAtBoundary
-																	? "[border-top-left-radius:0px]"
-																	: "[border-top-left-radius:999px]",
-																interval.startsAtBoundary
-																	? "[border-bottom-left-radius:0px]"
-																	: "[border-bottom-left-radius:999px]",
+																	? "rounded-tl-none rounded-bl-none"
+																	: "rounded-tl-full rounded-bl-full",
 																interval.endsAtBoundary
-																	? "[border-top-right-radius:0px]"
-																	: "[border-top-right-radius:999px]",
-																interval.endsAtBoundary
-																	? "[border-bottom-right-radius:0px]"
-																	: "[border-bottom-right-radius:999px]",
+																	? "rounded-tr-none rounded-br-none"
+																	: "rounded-tr-full rounded-br-full",
 															)}
 															style={{
 																left: `${left}%`,
@@ -541,7 +519,7 @@ export function AudioEventTimeline(props: {
 										}}
 									/>
 									<span
-										className="text-muted text-xs leading-5 block whitespace-nowrap tabular-nums [line-height:1.2]"
+										className="text-muted text-xs leading-5 block whitespace-nowrap tabular-nums leading-[1.2]"
 										style={{
 											marginTop: `${AXIS_TICK_HEIGHT_PX}px`,
 											transform: axisLabelTransform(fraction),

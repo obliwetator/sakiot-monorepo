@@ -230,7 +230,7 @@ export function SessionPlaybackTimeline(props: {
 					{hoverMs !== null && (
 						<span
 							aria-hidden="true"
-							className="text-xs leading-5 absolute [top:-13px] px-1.5 py-0.5 [border-radius:0.75px] [background-color:rgba(2,_6,_23,_0.92)] [color:#7dd3fc] tabular-nums whitespace-nowrap pointer-events-none [z-index:4]"
+							className="text-xs leading-5 absolute -top-[13px] px-1.5 py-0.5 rounded-[0.75px] bg-slate-900/92 text-sky-300 tabular-nums whitespace-nowrap pointer-events-none z-4"
 							style={{
 								left: `${(hoverMs / Math.max(1, props.durationMs)) * 100}%`,
 								transform:

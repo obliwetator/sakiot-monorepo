@@ -88,7 +88,7 @@ function PlacedSourceWaveform(props: {
 			)}
 			{waveform.peaks.min.length === 0 && (
 				<Button
-					className="absolute right-1 top-1 [z-index:1]"
+					className="absolute right-1 top-1 z-1"
 					variant="outline"
 					size="sm"
 					isDisabled={waveform.loading || waveform.building}
@@ -131,7 +131,7 @@ function TimelineWaveform(props: {
 				);
 				props.onSeek(fraction * props.durationMs);
 			}}
-			className="relative [border-radius:1px] [background-color:rgba(168,_85,_247,_0.12)] overflow-hidden [cursor:pointer]"
+			className="relative rounded-[1px] bg-purple-500/12 overflow-hidden cursor-pointer"
 			style={{ height: props.height }}
 		>
 			{props.segments.map((segment) => (

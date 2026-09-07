@@ -221,7 +221,7 @@ export function GuildMembers() {
 									>
 										<span
 											aria-hidden="true"
-											className="w-3.5 h-3.5 [border-radius:4px] shrink-0 mr-3"
+											className="w-3.5 h-3.5 rounded-sm shrink-0 mr-3"
 											style={{ background: roleSwatchBackground(role) }}
 										/>
 										<div>

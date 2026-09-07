@@ -176,15 +176,15 @@ function TimelineViewportScrollbar(props: {
 				dragRef.current = null;
 			}}
 			className={cn(
-				"relative h-4 my-0.5 [border-radius:1px] [background-color:action.hover] border border-ui-border touch-none select-none focus-visible:[outline:2px_solid] focus-visible:[outline-color:var(--color-accent)] focus-visible:[outline-offset:1px]",
-				maxStartSec > 0 ? "[cursor:grab]" : "[cursor:default]",
+				"relative h-4 my-0.5 rounded-[1px] bg-white/8 border border-ui-border touch-none select-none focus-visible:outline-2 focus-visible:outline-(--color-accent) focus-visible:outline-offset-1",
+				maxStartSec > 0 ? "cursor-grab" : "cursor-default",
 			)}
 		>
 			<div
 				aria-hidden="true"
 				className={cn(
-					"top-[1px] bottom-[1px] min-w-2 [border-radius:1px] bg-muted",
-					maxStartSec > 0 ? "[opacity:0.8]" : "[opacity:0.45]",
+					"top-[1px] bottom-[1px] min-w-2 rounded-[1px] bg-muted",
+					maxStartSec > 0 ? "opacity-80" : "opacity-45",
 				)}
 				style={{
 					position: "absolute",
@@ -824,7 +824,7 @@ export function Timeline(props: {
 						return (
 							<div
 								aria-hidden="true"
-								className="[border:1px_dashed] border-focus [background-color:rgba(56,_189,_248,_0.08)] pointer-events-none [z-index:20]"
+								className="border border-dashed border-focus bg-info/8 pointer-events-none z-20"
 								style={{
 									position: "absolute",
 									left: offset.left,

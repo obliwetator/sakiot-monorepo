@@ -447,7 +447,7 @@ export function ClipEditor(props: { guildId: string }) {
 			{mobileDragGhost && (
 				<div
 					aria-hidden="true"
-					className="fixed max-w-55 px-2.5 py-1.5 [border:1px_dashed] border-accent [border-radius:1px] bg-surface [box-shadow:4px] [font-size:0.75rem] [font-weight:600] whitespace-nowrap overflow-hidden [text-overflow:ellipsis] pointer-events-none"
+					className="fixed max-w-55 px-2.5 py-1.5 border border-dashed border-accent rounded-[1px] bg-surface [box-shadow:4px] text-xs font-semibold whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none"
 					style={{
 						zIndex: 70,
 						...{

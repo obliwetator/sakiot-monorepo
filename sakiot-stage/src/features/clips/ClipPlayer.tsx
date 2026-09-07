@@ -446,7 +446,7 @@ export function ClipPlayer(props: {
 				onChange={(value) => setSeekPreview(Number(value))}
 			/>
 
-			<div className="flex justify-between flex-col min-[600px]:flex-row gap-1 [margin-top:-8px] mb-4">
+			<div className="flex justify-between flex-col min-[600px]:flex-row gap-1 -mt-2 mb-4">
 				<p className="text-sm tabular-nums">
 					Clip time {formatDuration(displayedPosition)} /{" "}
 					{formatDuration(duration)}
