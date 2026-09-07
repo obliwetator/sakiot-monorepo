@@ -577,6 +577,15 @@ fn seekable_reverse_preserves_stereo_frames_and_matches_reference() {
 
 #[actix_rt::test]
 async fn long_segment_does_not_change_another_segments_effects_or_stereo() {
+    let Ok(version) = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+    else {
+        return;
+    };
+    if !version.status.success() {
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("source.wav");
     assert!(
