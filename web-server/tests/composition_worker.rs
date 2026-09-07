@@ -6,6 +6,13 @@ use std::{os::unix::process::CommandExt, process::Stdio, time::Duration};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+fn ffmpeg_available() -> bool {
+    std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 async fn seed(
     pool: &PgPool,
     root: &std::path::Path,
@@ -84,6 +91,9 @@ fn run(
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn real_worker_renders_and_publishes_once(pool: PgPool) -> TestResult {
+    if !ffmpeg_available() {
+        return Ok(());
+    }
     let root = tempfile::tempdir()?;
     let (id, token) = seed(&pool, root.path()).await?;
     let output = run(command(&pool, root.path(), &id, &token))?;
@@ -111,6 +121,9 @@ async fn real_worker_renders_and_publishes_once(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn killed_worker_can_restart_with_a_new_attempt(pool: PgPool) -> TestResult {
+    if !ffmpeg_available() {
+        return Ok(());
+    }
     let root = tempfile::tempdir()?;
     let (id, token) = seed(&pool, root.path()).await?;
     // Hold the source row's table to stop the child inside preparation. This
