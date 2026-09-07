@@ -667,6 +667,15 @@ async fn long_segment_does_not_change_another_segments_effects_or_stereo() {
 #[test]
 fn common_mixer_places_and_sums_float_pcm_without_quantizing_quiet_effect_tails() {
     use std::io::Write;
+    let Ok(version) = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+    else {
+        return;
+    };
+    if !version.status.success() {
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let raw = temp.path().join("quiet.f32");
     let mut file = std::fs::File::create(&raw).unwrap();
