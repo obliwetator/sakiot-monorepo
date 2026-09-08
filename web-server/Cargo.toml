@@ -11,10 +11,7 @@ actix-web = { version = "4", features = ["openssl"] }
 actix-rt = "2.9.0"
 actix-cors = "0.7"
 actix-files = "0.6"
-openssl = { version = "0.10", features = ["v110"] }
-actix-web-lab = "0.26"
 reqwest = { version = "0.12", features = ["json"] }
-walkdir = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_with = "3"
@@ -37,7 +34,6 @@ prost = "0.14"
 tonic-prost = "0.14.2"
 bitflags = "2.0.2"
 thiserror = "2"
-once_cell = "1.10.0"
 tokio-util = "0.7.8"
 parking_lot = "0.12.1"
 base64 = { version = "0.22.1", features = ["alloc"] }

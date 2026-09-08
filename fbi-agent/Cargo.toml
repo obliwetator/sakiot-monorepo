@@ -44,13 +44,10 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 chrono = "0.4"
 serde = "1"
-serde_repr = "0.1"
 tonic = "0.14"
 prost = "0.14"
 tonic-prost = "0.14.2"
 sakiot-proto = { path = "../sakiot-proto" }
-crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
-console-subscriber = "0.5.0"
 rustls = { version = "0.23", features = ["ring"] }
 dashmap = "6.1.0"
 dotenvy = "0.15"
