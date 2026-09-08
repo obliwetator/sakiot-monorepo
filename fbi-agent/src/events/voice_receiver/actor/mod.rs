@@ -16,7 +16,10 @@ pub(super) use handle::{RecorderCommand, RecorderHandle, VoicePacket};
 pub(super) use packets::{disconnect_command, extract_opus_payload};
 
 use std::{
-    sync::{Arc, atomic::AtomicU64},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64},
+    },
     time::Duration,
 };
 
@@ -50,6 +53,10 @@ struct RecorderActor {
     disconnected_at_ms: i64,
     recoverable_disconnect_deadline_ms: i64,
     current_channel_id: Arc<AtomicU64>,
+    /// Shared with [`RecorderHandle`]: set as soon as this actor commits to
+    /// exiting, so `get_or_create` waits for termination instead of handing the
+    /// dying actor to a reconnect.
+    stopping: Arc<AtomicBool>,
     planned_handoff: Option<PlannedHandoff>,
     has_afk_channel: bool,
     pending_cap_seconds: i64,
@@ -108,7 +115,11 @@ impl RecorderActor {
                     self.reap_stale_users().await;
                 }
                 _ = deadlines.tick() => {
-                    self.handle_deadlines(chrono::Utc::now().timestamp_millis()).await;
+                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    if let Some(at_ms) = self.handle_deadlines(now_ms).await {
+                        self.handle_voice_session_ended(at_ms).await;
+                        break;
+                    }
                 }
             }
         }

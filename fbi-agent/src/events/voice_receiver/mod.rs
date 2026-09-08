@@ -219,6 +219,59 @@ async fn coordinator_from_ctx(ctx: &Context, guild_id: GuildId) -> Option<actor:
     registry.get(guild_id).await
 }
 
+/// How a teardown reaches the guild's recorder actor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DepartureNotify {
+    /// External caller: signal the owning actor, wait for it to finish, evict it.
+    Registry,
+    /// Called from inside the actor itself: the caller signals its own run loop
+    /// and exits. It must not wait for its own termination, because the signal
+    /// it would await is only sent after the loop it is running in returns.
+    Caller,
+}
+
+/// The part of a recorder actor a departure needs.
+#[async_trait]
+pub(crate) trait Terminable {
+    fn termination_id(&self) -> Arc<()>;
+    fn signal_exit(&self, at_ms: i64);
+    async fn await_termination(&self);
+}
+
+#[async_trait]
+impl Terminable for actor::RecorderHandle {
+    fn termination_id(&self) -> Arc<()> {
+        self.actor_id()
+    }
+
+    fn signal_exit(&self, at_ms: i64) {
+        self.request_shutdown(at_ms);
+    }
+
+    async fn await_termination(&self) {
+        self.wait_terminated().await;
+    }
+}
+
+/// Signals a departure and reports whether the caller must now evict the actor.
+///
+/// A caller that *is* the actor returns `false`: `RecorderActor::run` removes
+/// its own registry entry after finalizing recordings, and evicting it early
+/// would let a concurrent `get_or_create` spawn a second actor for the same
+/// guild while the first is still writing.
+pub(crate) async fn signal_departure<T: Terminable + Sync>(
+    actor: &T,
+    at_ms: i64,
+    notify: DepartureNotify,
+) -> bool {
+    actor.signal_exit(at_ms);
+    if matches!(notify, DepartureNotify::Registry) {
+        actor.await_termination().await;
+        return true;
+    }
+    false
+}
+
 /// Notifies the guild's recorder actor that its voice call was removed so it
 /// can pause open sessions and terminate. Waits for cleanup so a reconnect
 /// cannot attach its receiver to an actor already committed to exiting.
@@ -226,6 +279,7 @@ pub(crate) async fn notify_voice_session_ended(
     data: &Arc<RwLock<TypeMap>>,
     guild_id: GuildId,
     at_ms: i64,
+    notify: DepartureNotify,
 ) {
     let registry = {
         let data_read = data.read().await;
@@ -235,10 +289,10 @@ pub(crate) async fn notify_voice_session_ended(
         return;
     };
     if let Some(actor) = registry.get(guild_id).await {
-        let actor_id = actor.actor_id();
-        actor.request_shutdown(at_ms);
-        actor.wait_terminated().await;
-        registry.remove_if(guild_id, &actor_id).await;
+        let actor_id = actor.termination_id();
+        if signal_departure(&actor, at_ms, notify).await {
+            registry.remove_if(guild_id, &actor_id).await;
+        }
     }
 }
 

@@ -74,6 +74,7 @@ impl RecorderHandle {
             disconnected_at_ms: 0,
             recoverable_disconnect_deadline_ms: 0,
             current_channel_id: current_channel_id.clone(),
+            stopping: Arc::clone(&stopping),
             planned_handoff: None,
             has_afk_channel: false,
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,

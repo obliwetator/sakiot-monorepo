@@ -275,6 +275,16 @@ fn register_recording_counters(instruments: &Instruments) {
         |m| m.recording_finalize_errors.load(Relaxed),
     );
     instruments.counter(
+        "recovery_teardowns",
+        "Total actor teardowns after a recoverable disconnect timed out",
+        |m| m.recovery_teardowns.load(Relaxed),
+    );
+    instruments.counter(
+        "recovery_teardown_manager_missing",
+        "Total recovery teardowns that found no Songbird manager",
+        |m| m.recovery_teardown_manager_missing.load(Relaxed),
+    );
+    instruments.counter(
         "audio_packets_received",
         "Total audio packets received",
         |m| m.audio_packets_received.load(Relaxed),

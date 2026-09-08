@@ -13,6 +13,7 @@ use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
 use crate::cast::ToI64;
+use crate::events::voice_receiver::DepartureNotify;
 use crate::{BotMetricsKey, events::voice_receiver::Receiver};
 
 static FALLBACK_OPERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -143,7 +144,8 @@ pub(crate) async fn teardown_voice_session(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
 ) -> VoiceTeardownReport {
-    teardown_voice_session_with_operation(data, pool, guild_id, None).await
+    teardown_voice_session_with_operation(data, pool, guild_id, None, DepartureNotify::Registry)
+        .await
 }
 
 pub(crate) async fn teardown_voice_session_with_operation(
@@ -151,6 +153,7 @@ pub(crate) async fn teardown_voice_session_with_operation(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
     operation: Option<&VoiceOperation>,
+    notify: DepartureNotify,
 ) -> VoiceTeardownReport {
     let started_at_ms = operation
         .map(|operation| operation.started_at_ms)
@@ -166,12 +169,15 @@ pub(crate) async fn teardown_voice_session_with_operation(
     let Some(manager) = manager else {
         error!("Songbird manager missing while tearing down voice session");
         release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
-        crate::events::voice_receiver::notify_voice_session_ended(
-            data,
-            guild_id,
-            chrono::Utc::now().timestamp_millis(),
-        )
-        .await;
+        if matches!(notify, DepartureNotify::Registry) {
+            crate::events::voice_receiver::notify_voice_session_ended(
+                data,
+                guild_id,
+                chrono::Utc::now().timestamp_millis(),
+                notify,
+            )
+            .await;
+        }
         refresh_active_voice_connection_gauge(data, None).await;
         return VoiceTeardownReport {
             manager_missing: true,
@@ -198,12 +204,15 @@ pub(crate) async fn teardown_voice_session_with_operation(
     let connected_after = current_channel_is_some(manager.get(guild_id)).await;
     if !connected_after {
         release_disconnected_lease(pool, runtime.as_deref(), guild_id).await;
-        crate::events::voice_receiver::notify_voice_session_ended(
-            data,
-            guild_id,
-            chrono::Utc::now().timestamp_millis(),
-        )
-        .await;
+        if matches!(notify, DepartureNotify::Registry) {
+            crate::events::voice_receiver::notify_voice_session_ended(
+                data,
+                guild_id,
+                chrono::Utc::now().timestamp_millis(),
+                notify,
+            )
+            .await;
+        }
     }
 
     refresh_active_voice_connection_gauge(data, Some(&manager)).await;
@@ -657,6 +666,7 @@ async fn retain_or_release_after_failure(
             &ctx.data,
             guild_id,
             chrono::Utc::now().timestamp_millis(),
+            DepartureNotify::Registry,
         )
         .await;
     }
@@ -785,6 +795,7 @@ async fn cleanup_failed_fresh_join(
             data,
             guild_id,
             chrono::Utc::now().timestamp_millis(),
+            DepartureNotify::Registry,
         )
         .await;
     }

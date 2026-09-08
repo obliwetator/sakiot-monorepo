@@ -1,5 +1,6 @@
 use crate::cast::ToI64;
 use crate::event_handler::Handler;
+use crate::events::voice_receiver::DepartureNotify;
 use serenity::{
     client::{Cache, Context},
     model::id::{ChannelId, GuildId},
@@ -80,17 +81,24 @@ pub async fn disconnect_voice_channel(
     session::disconnect_voice_channel(data, pool, guild_id).await
 }
 
+/// Tears down the guild's voice session under its per-guild operation lock.
+///
+/// `notify` selects how the recorder actor learns about the departure: external
+/// callers wait for it to terminate, the actor itself only signals its own run
+/// loop, which is the task that must perform the termination.
 pub(crate) async fn teardown_voice_session(
     data: &Arc<RwLock<TypeMap>>,
     pool: &Pool<Postgres>,
     guild_id: GuildId,
+    notify: DepartureNotify,
 ) -> session::VoiceTeardownReport {
     if let Some(registry) = coordinator_registry(data).await {
         let coordinator = registry.guild(guild_id);
         let _operation_guard = coordinator.operation.lock().await;
-        return session::teardown_voice_session(data, pool, guild_id).await;
+        return session::teardown_voice_session_with_operation(data, pool, guild_id, None, notify)
+            .await;
     }
-    session::teardown_voice_session(data, pool, guild_id).await
+    session::teardown_voice_session_with_operation(data, pool, guild_id, None, notify).await
 }
 
 pub(crate) async fn connected_voice_connection_count(manager: &songbird::Songbird) -> u32 {
@@ -449,6 +457,7 @@ async fn route_once_locked(
                 pool,
                 guild_id,
                 Some(&operation),
+                DepartureNotify::Registry,
             )
             .await;
             if report.connected_after {

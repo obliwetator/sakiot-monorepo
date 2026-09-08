@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::RecorderActor;
 use crate::cast::ToI64;
 use crate::events::voice_receiver::{
-    disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
+    DepartureNotify, disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
 };
 
 impl RecorderActor {
@@ -436,7 +436,12 @@ impl RecorderActor {
         }
     }
 
-    pub(super) async fn handle_deadlines(&mut self, now_ms: i64) {
+    /// Returns the departure timestamp when the actor must exit, or `None` to
+    /// keep running. The run loop that calls this performs the departure
+    /// handling and terminates, so this must never await the actor's own
+    /// termination: the signal it would wait for is only sent after the loop it
+    /// is running inside returns.
+    pub(super) async fn handle_deadlines(&mut self, now_ms: i64) -> Option<i64> {
         if recoverable_disconnect_timed_out(
             self.disconnected_at_ms,
             self.recoverable_disconnect_deadline_ms,
@@ -449,20 +454,36 @@ impl RecorderActor {
             self.disconnected_at_ms = 0;
             self.recoverable_disconnect_deadline_ms = 0;
             self.planned_handoff = None;
+            self.metrics.record_recovery_teardown();
             let report = crate::events::voice::teardown_voice_session(
                 &self.ctx.data,
                 &self.pool,
                 self.guild_id,
+                DepartureNotify::Caller,
             )
             .await;
+            if report.manager_missing {
+                self.metrics.record_recovery_teardown_manager_missing();
+                warn!(
+                    guild_id = self.guild_id.get(),
+                    "voice teardown found no Songbird manager; recorder exiting"
+                );
+            }
             if report.connected_after {
                 warn!(
                     guild_id = self.guild_id.get(),
                     remove_error = report.remove_error,
                     "voice call remained connected after recovery timeout teardown"
                 );
+                return None;
             }
+            // Publish the exit before the run loop records the departure, so a
+            // concurrent get_or_create waits for termination instead of
+            // attaching its receiver to an actor committed to exiting.
+            self.stopping.store(true, Ordering::Release);
+            return Some(now_ms);
         }
+        None
     }
 
     /// The guild's voice call was removed (or the actor lost every handle).

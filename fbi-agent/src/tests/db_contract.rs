@@ -1289,7 +1289,13 @@ async fn local_disconnect_releases_only_current_owner_lease(
         data_write.insert::<crate::runtime::RuntimeStateKey>(own_runtime.clone());
     }
 
-    let report = crate::events::voice::teardown_voice_session(&data, &pool, own_guild).await;
+    let report = crate::events::voice::teardown_voice_session(
+        &data,
+        &pool,
+        own_guild,
+        crate::events::voice_receiver::DepartureNotify::Registry,
+    )
+    .await;
     assert!(!report.had_call);
     assert!(!report.connected_after);
 
