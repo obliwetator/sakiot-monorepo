@@ -1820,7 +1820,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fbi_agent"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -4585,7 +4585,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sakiot-deploy"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4605,7 +4605,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-dev"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4633,11 +4633,11 @@ dependencies = [
 
 [[package]]
 name = "sakiot-paths"
-version = "1.0.31"
+version = "1.0.32"
 
 [[package]]
 name = "sakiot-proto"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "prost",
  "tonic",
@@ -4647,7 +4647,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-storage"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "aws-sdk-s3",
  "axum",
@@ -6679,7 +6679,7 @@ dependencies = [
 
 [[package]]
 name = "web_server"
-version = "1.0.31"
+version = "1.0.32"
 dependencies = [
  "actix-cors",
  "actix-files",
