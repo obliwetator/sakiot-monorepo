@@ -39,9 +39,9 @@ export class ErrorBoundary extends Component<
 					gap: "1rem",
 					padding: "2rem",
 					textAlign: "center",
-					backgroundColor: "#121212",
-					color: "#ffffff",
-					fontFamily: "Roboto, Helvetica, Arial, sans-serif",
+					backgroundColor: "var(--color-canvas)",
+					color: "var(--color-fg)",
+					fontFamily: '"Inter Variable", system-ui, sans-serif',
 				}}
 			>
 				<h1 style={{ margin: 0 }}>Something went wrong</h1>
@@ -54,7 +54,7 @@ export class ErrorBoundary extends Component<
 					style={{
 						padding: "0.5rem 1.5rem",
 						borderRadius: "4px",
-						border: "1px solid #666",
+						border: "1px solid var(--color-ui-border)",
 						backgroundColor: "transparent",
 						color: "inherit",
 						font: "inherit",

@@ -184,7 +184,7 @@ function WaveFormButton(props: {
 				You have to click every time you want to generate a waveform. (for now).
 				Be patient for big files
 			</p>
-			{error && <p style={{ color: "red", padding: "10px" }}>{error}</p>}
+			{error && <p className="text-danger p-2.5">{error}</p>}
 			<div style={{ marginTop: "10px", marginBottom: "10px" }}>
 				<label>
 					Zoom:{" "}

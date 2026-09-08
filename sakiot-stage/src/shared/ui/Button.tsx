@@ -15,7 +15,7 @@ export type ButtonVariant =
 export type ButtonSize = "sm" | "md" | "lg";
 const variants: Record<ButtonVariant, string> = {
 	primary:
-		"border-accent bg-accent text-slate-950 data-[hovered]:border-[#a6d4fa] data-[hovered]:bg-[#a6d4fa]",
+		"border-accent bg-accent text-slate-950 data-[hovered]:border-accent-hover data-[hovered]:bg-accent-hover",
 	secondary:
 		"border-ui-border bg-surface-raised text-fg data-[hovered]:border-creative data-[hovered]:text-violet-200",
 	outline:

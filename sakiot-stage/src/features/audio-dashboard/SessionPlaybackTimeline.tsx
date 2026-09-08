@@ -221,7 +221,6 @@ export function SessionPlaybackTimeline(props: {
 						step={0.01}
 						value={Math.min(durationSeconds, displayedPositionMs / 1_000)}
 						className="block py-3 transition-none"
-						style={{ accentColor: "#90caf9" }}
 						minValue={0}
 						maxValue={Math.max(0.001, durationSeconds)}
 						onChangeEnd={(value) => commitSeek(value)}

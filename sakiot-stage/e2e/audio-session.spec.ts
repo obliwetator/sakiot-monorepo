@@ -405,13 +405,24 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	}
 	const eventTimeline = page.getByRole("button", { name: /Event timeline/ });
 	await eventTimeline.click();
+	// Tailwind v4 resolves opacity-modified tokens through color-mix(), which
+	// Chrome serializes in oklab rather than rgba. Compare against a probe
+	// carrying the same utility so this asserts the colour, not its spelling.
+	const mutedSurface = await page.evaluate(() => {
+		const probe = document.createElement("div");
+		probe.className = "bg-muted/4";
+		document.body.append(probe);
+		const background = getComputedStyle(probe).backgroundColor;
+		probe.remove();
+		return background;
+	});
 	await expect
 		.poll(() =>
 			eventTimeline.evaluate(
 				(element) => getComputedStyle(element).backgroundColor,
 			),
 		)
-		.toBe("rgba(148, 163, 184, 0.04)");
+		.toBe(mutedSurface);
 	await expect
 		.poll(() =>
 			eventTimeline.evaluate((element) => getComputedStyle(element).color),
