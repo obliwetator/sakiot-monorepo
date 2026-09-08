@@ -34,3 +34,33 @@ for (const interaction of ["title click", "keyboard"] as const) {
 		else await expect(row).toHaveAttribute("aria-expanded", "true");
 	});
 }
+
+test("clip search filters the list and restores it when cleared", async ({
+	page,
+	isMobile,
+}) => {
+	await mockClipEditorApi(page);
+	await page.goto(`/dashboard/${GUILD_ID}/clips`);
+	if (isMobile)
+		await page
+			.getByRole("button", { name: "Browse clips", exact: true })
+			.click();
+
+	const working = page.getByRole("button", { name: /Working source/ });
+	const broken = page.getByRole("button", { name: /Broken source/ });
+	await expect(working).toBeVisible();
+	await expect(broken).toBeVisible();
+
+	const search = page.getByRole("textbox", { name: "Search clips" });
+	await search.fill("broken");
+	await expect(broken).toBeVisible();
+	await expect(working).toHaveCount(0);
+
+	await search.fill("no-such-clip");
+	await expect(page.getByText("No clips match this search.")).toBeVisible();
+	await expect(working).toHaveCount(0);
+
+	await search.fill("");
+	await expect(working).toBeVisible();
+	await expect(broken).toBeVisible();
+});
