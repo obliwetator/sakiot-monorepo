@@ -112,6 +112,10 @@ For isolated local PostgreSQL on port `54320`:
 cargo dev db up
 ```
 
+When that container is not running, database-backed tests fail with
+`PoolTimedOut` rather than a connection error; start it before running the
+suite.
+
 ## Rust Workspace
 
 The root Cargo workspace contains both services, three shared crates, and the
