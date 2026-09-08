@@ -784,3 +784,60 @@ async fn forbidden_cross_guild_requests_are_rejected(
 
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn clip_list_is_ordered_by_name_case_insensitively(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    // Inserted out of order, and with mixed case, so this fails if the endpoint
+    // ever falls back to heap order. seed_authorization_data's own clip has a
+    // null name, which must sort last.
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time, name)
+         VALUES
+            ('clip-zeta', $1, $2, $3, '2026/05/zeta.ogg', 0, 'zeta'),
+            ('clip-alpha', $1, $2, $3, '2026/05/alpha.ogg', 0, 'Alpha'),
+            ('clip-beta', $1, $2, $3, '2026/05/beta.ogg', 0, 'beta'),
+            ('clip-alpha-two', $1, $2, $3, '2026/05/alpha2.ogg', 0, 'alpha 2')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .execute(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(get_clips)),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}"))
+        .insert_header(("Cookie", access_cookie_value()?))
+        .to_request();
+    let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+    let names: Vec<Option<&str>> = body
+        .as_array()
+        .expect("clip list is an array")
+        .iter()
+        .map(|clip| clip["name"].as_str())
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            Some("Alpha"),
+            Some("alpha 2"),
+            Some("beta"),
+            Some("zeta"),
+            None
+        ],
+        "clips must come back in case-insensitive name order, unnamed last"
+    );
+    Ok(())
+}

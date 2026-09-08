@@ -239,6 +239,11 @@ pub async fn get_clips(
                   )
               )
           )
+        -- Heap order is not stable across imports or VACUUM FULL, so the list
+        -- must be ordered explicitly. Sort the way the names read rather than
+        -- the way the bytes compare, because this database collates
+        -- case-sensitively; clip_id keeps equal names deterministic.
+        ORDER BY lower(name) NULLS LAST, name, clip_id
         "#,
     )
     .bind(guild_id)
