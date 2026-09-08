@@ -29,7 +29,11 @@ export function BaseDialog(props: {
 			</div>
 			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
 				{props.actions ?? (
-					<Button isDisabled={props.busy} onPress={props.onClose}>
+					<Button
+						variant="primary"
+						isDisabled={props.busy}
+						onPress={props.onClose}
+					>
 						{props.closeLabel ?? "Close"}
 					</Button>
 				)}

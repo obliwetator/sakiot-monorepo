@@ -132,7 +132,11 @@ function RenameClipButton(props: { clip: ClipData }) {
 				busy={isLoading}
 				actions={
 					<>
-						<Button isDisabled={isLoading} onPress={handleClose}>
+						<Button
+							variant="primary"
+							isDisabled={isLoading}
+							onPress={handleClose}
+						>
 							Cancel
 						</Button>
 						<Button

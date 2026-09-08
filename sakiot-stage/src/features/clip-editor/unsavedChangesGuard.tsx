@@ -30,7 +30,11 @@ export function useUnsavedChangesGuard(dirty: boolean) {
 			title="Discard clip editor work?"
 			actions={
 				<>
-					<Button autoFocus onPress={() => blockedBlocker?.reset()}>
+					<Button
+						variant="primary"
+						autoFocus
+						onPress={() => blockedBlocker?.reset()}
+					>
 						Stay
 					</Button>
 					<Button variant="danger" onPress={() => blockedBlocker?.proceed()}>

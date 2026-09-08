@@ -368,7 +368,12 @@ export function ChannelMixPlayer(props: {
 				<Notice className="mt-3" tone={"warning"} announce="status">
 					The rendered version uses older participant settings.
 					{props.onGenerate && (
-						<Button className="ml-2" size="sm" onPress={props.onGenerate}>
+						<Button
+							variant="primary"
+							className="ml-2"
+							size="sm"
+							onPress={props.onGenerate}
+						>
 							Regenerate
 						</Button>
 					)}
@@ -479,7 +484,12 @@ export function ChannelMixPlayer(props: {
 					</span>
 				</div>
 				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button onPress={() => props.onDialogOpenChange(false)}>Close</Button>
+					<Button
+						variant="primary"
+						onPress={() => props.onDialogOpenChange(false)}
+					>
+						Close
+					</Button>
 				</div>
 			</Modal>
 		</div>

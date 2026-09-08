@@ -80,10 +80,18 @@ export function ClipDialog(props: {
 				busy={isLoading}
 				actions={
 					<>
-						<Button isDisabled={isLoading} onPress={handleClose}>
+						<Button
+							variant="primary"
+							isDisabled={isLoading}
+							onPress={handleClose}
+						>
 							Cancel
 						</Button>
-						<Button isDisabled={isLoading} onPress={handleClip}>
+						<Button
+							variant="primary"
+							isDisabled={isLoading}
+							onPress={handleClip}
+						>
 							{isLoading ? "Creating..." : "Clip"}
 						</Button>
 					</>

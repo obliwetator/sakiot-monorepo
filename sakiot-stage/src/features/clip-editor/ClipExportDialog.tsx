@@ -34,7 +34,7 @@ export function ClipExportDialog(props: {
 			busy={busy}
 			actions={
 				<>
-					<Button onPress={props.onClose}>
+					<Button variant="primary" onPress={props.onClose}>
 						{busy ? "Close" : props.done ? "Done" : "Cancel"}
 					</Button>
 					{!props.done && (

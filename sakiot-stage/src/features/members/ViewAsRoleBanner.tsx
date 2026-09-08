@@ -25,7 +25,7 @@ export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 				session stays visible: <em>can't listen</em> marks channels this role
 				can see but not join, <em>hidden</em> marks channels it can't see at
 				all. Playing or downloading media still uses your own permissions.
-				<Button size="sm" onPress={exitPreview}>
+				<Button variant="primary" size="sm" onPress={exitPreview}>
 					Exit preview
 				</Button>
 			</Notice>

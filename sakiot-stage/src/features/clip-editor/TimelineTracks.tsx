@@ -119,7 +119,9 @@ function TrackLabel(props: {
 				title={`Remove Track ${props.track + 1}?`}
 				actions={
 					<>
-						<Button onPress={() => setConfirmOpen(false)}>Cancel</Button>
+						<Button variant="primary" onPress={() => setConfirmOpen(false)}>
+							Cancel
+						</Button>
 						<Button variant="danger" onPress={confirmRemove}>
 							Remove track
 						</Button>

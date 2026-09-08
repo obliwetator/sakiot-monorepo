@@ -53,7 +53,9 @@ export function EffectSettingsJsonDialog(props: {
 			error={error ?? undefined}
 			actions={
 				<>
-					<Button onPress={props.onClose}>Cancel</Button>
+					<Button variant="primary" onPress={props.onClose}>
+						Cancel
+					</Button>
 					<Button variant="primary" onPress={apply}>
 						Apply to selected
 					</Button>

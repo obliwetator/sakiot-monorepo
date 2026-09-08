@@ -178,8 +178,10 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 					</p>
 				</div>
 				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button onPress={handleClose}>No</Button>
-					<Button autoFocus onPress={handleYes}>
+					<Button variant="primary" onPress={handleClose}>
+						No
+					</Button>
+					<Button variant="primary" autoFocus onPress={handleYes}>
 						YEP
 					</Button>
 				</div>

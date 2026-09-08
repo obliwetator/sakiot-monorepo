@@ -648,7 +648,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 							{channelMixError && !channelMix && (
 								<Notice className="mt-3" tone={"error"} announce="alert">
 									Channel mix status is unavailable.{" "}
-									<Button size="sm" onPress={() => void refetchChannelMix()}>
+									<Button
+										variant="primary"
+										size="sm"
+										onPress={() => void refetchChannelMix()}
+									>
 										Retry status
 									</Button>
 								</Notice>

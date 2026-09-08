@@ -199,6 +199,7 @@ function ClusterPicker(props: {
 					const wallClock = formatWallClock(props.startedAtMs, point.offsetMs);
 					return (
 						<Button
+							variant="primary"
 							key={point.id}
 							className="w-full justify-start text-left normal-case gap-2"
 							size="sm"
@@ -301,6 +302,7 @@ export function AudioEventTimeline(props: {
 	return (
 		<section aria-label="Recording event timeline" className="min-w-0">
 			<Button
+				variant="primary"
 				aria-expanded={expanded}
 				aria-controls={contentId}
 				className="w-full min-h-6 h-6 px-1.5 py-0 border border-muted/14 rounded-[0.75px] bg-muted/4 text-muted normal-case justify-stretch data-[hovered]:border-muted/14 data-[hovered]:bg-muted/4"

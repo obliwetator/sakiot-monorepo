@@ -79,7 +79,11 @@ export function BundleUpdatePrompt() {
 			<div className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2">
 				<Notice className="items-center" tone={"info"} announce="status">
 					New version available
-					<Button size="sm" onPress={() => window.location.reload()}>
+					<Button
+						variant="primary"
+						size="sm"
+						onPress={() => window.location.reload()}
+					>
 						Reload
 					</Button>
 				</Notice>

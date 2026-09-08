@@ -153,7 +153,9 @@ function RolePreviewDialog(props: {
 				)}
 			</div>
 			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-				<Button onPress={onClose}>Close</Button>
+				<Button variant="primary" onPress={onClose}>
+					Close
+				</Button>
 				<Button variant="primary" isDisabled={!role} onPress={openAudioPreview}>
 					<RemoveRedEyeIcon />
 					Open audio preview

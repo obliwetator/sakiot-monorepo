@@ -126,7 +126,9 @@ export function EffectLimitsDialog(props: {
 			title="Effect limits"
 			actions={
 				<>
-					<Button onPress={reset}>Reset to defaults</Button>
+					<Button variant="primary" onPress={reset}>
+						Reset to defaults
+					</Button>
 					<Button variant="primary" onPress={props.onClose}>
 						Done
 					</Button>
