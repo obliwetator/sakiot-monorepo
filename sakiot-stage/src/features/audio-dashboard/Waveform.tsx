@@ -7,6 +7,7 @@ import {
 	useGetWaveformQuery,
 } from "../../app/apiSlice";
 import type { AudioParams } from "../../Constants";
+import { palette } from "../../shared/palette";
 import { Button } from "../../shared/ui";
 import { decodeWaveformPeaks } from "./waveformPeaks";
 
@@ -28,8 +29,8 @@ function WaveFormButton(props: {
 
 	const { wavesurfer, isReady } = useWavesurfer({
 		container: containerRef,
-		waveColor: "#ff00ff", // magenta
-		progressColor: "#cc00cc", // darker magenta for progress
+		waveColor: palette.magenta, // magenta
+		progressColor: palette.magentaDark, // darker magenta for progress
 		barWidth: 2,
 		barGap: 1,
 		barRadius: 2,
@@ -43,7 +44,7 @@ function WaveFormButton(props: {
 					primaryLabelInterval: 600,
 					style: {
 						fontSize: "12px",
-						color: "#6a6a6a",
+						color: palette.waveformLabel,
 					},
 				}),
 			],

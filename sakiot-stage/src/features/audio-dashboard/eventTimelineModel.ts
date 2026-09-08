@@ -1,3 +1,4 @@
+import { palette } from "../../shared/palette";
 export type TimelineLaneId =
 	| "recording"
 	| "mute"
@@ -154,7 +155,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "mute",
 		track: 0,
 		label: "Server muted",
-		color: "#ef4444",
+		color: palette.red500,
 	},
 	server_unmute: {
 		phase: "end",
@@ -162,7 +163,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "mute",
 		track: 0,
 		label: "Server muted",
-		color: "#ef4444",
+		color: palette.red500,
 	},
 	self_mute: {
 		phase: "start",
@@ -170,7 +171,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "mute",
 		track: 1,
 		label: "Muted",
-		color: "#fb7185",
+		color: palette.rose400,
 	},
 	self_unmute: {
 		phase: "end",
@@ -178,7 +179,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "mute",
 		track: 1,
 		label: "Muted",
-		color: "#fb7185",
+		color: palette.rose400,
 	},
 	server_deafen: {
 		phase: "start",
@@ -186,7 +187,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "deafen",
 		track: 0,
 		label: "Server deafened",
-		color: "#a855f7",
+		color: palette.purple500,
 	},
 	server_undeafen: {
 		phase: "end",
@@ -194,7 +195,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "deafen",
 		track: 0,
 		label: "Server deafened",
-		color: "#a855f7",
+		color: palette.purple500,
 	},
 	self_deafen: {
 		phase: "start",
@@ -202,7 +203,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "deafen",
 		track: 1,
 		label: "Deafened",
-		color: "#c084fc",
+		color: palette.purple400,
 	},
 	self_undeafen: {
 		phase: "end",
@@ -210,7 +211,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "deafen",
 		track: 1,
 		label: "Deafened",
-		color: "#c084fc",
+		color: palette.purple400,
 	},
 	suppress_on: {
 		phase: "start",
@@ -218,7 +219,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "suppress",
 		track: 0,
 		label: "Suppressed",
-		color: "#eab308",
+		color: palette.yellow500,
 	},
 	suppress_off: {
 		phase: "end",
@@ -226,7 +227,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "suppress",
 		track: 0,
 		label: "Suppressed",
-		color: "#eab308",
+		color: palette.yellow500,
 	},
 	stream_start: {
 		phase: "start",
@@ -234,7 +235,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "media",
 		track: 0,
 		label: "Streaming",
-		color: "#22c55e",
+		color: palette.green500,
 	},
 	stream_stop: {
 		phase: "end",
@@ -242,7 +243,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "media",
 		track: 0,
 		label: "Streaming",
-		color: "#22c55e",
+		color: palette.green500,
 	},
 	video_on: {
 		phase: "start",
@@ -250,7 +251,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "media",
 		track: 1,
 		label: "Camera on",
-		color: "#14b8a6",
+		color: palette.teal500,
 	},
 	video_off: {
 		phase: "end",
@@ -258,7 +259,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "media",
 		track: 1,
 		label: "Camera on",
-		color: "#14b8a6",
+		color: palette.teal500,
 	},
 	recording_pause: {
 		phase: "start",
@@ -266,7 +267,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 1,
 		label: "Recording paused",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	recording_resume: {
 		phase: "end",
@@ -274,7 +275,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 1,
 		label: "Recording paused",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	user_recording_pause: {
 		phase: "start",
@@ -282,7 +283,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 2,
 		label: "User recording paused",
-		color: "#fb923c",
+		color: palette.orange400,
 	},
 	user_recording_resume: {
 		phase: "end",
@@ -290,7 +291,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 2,
 		label: "User recording paused",
-		color: "#fb923c",
+		color: palette.orange400,
 	},
 	pause: {
 		phase: "start",
@@ -298,7 +299,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 0,
 		label: "Session paused",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	network_pause: {
 		phase: "start",
@@ -306,7 +307,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 0,
 		label: "Network pause",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	disconnect: {
 		phase: "start",
@@ -314,7 +315,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 0,
 		label: "Disconnected",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	afk: {
 		phase: "start",
@@ -322,7 +323,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 0,
 		label: "Moved to AFK",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 	resume: {
 		phase: "end",
@@ -330,7 +331,7 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		laneId: "recording",
 		track: 0,
 		label: "Session paused",
-		color: "#f97316",
+		color: palette.orange500,
 	},
 };
 
@@ -387,7 +388,7 @@ function pointDescriptor(
 			laneId: "connection",
 			track: 0,
 			label: humanizeEventType(event.event_type),
-			color: failed ? "#ef4444" : "#0ea5e9",
+			color: failed ? palette.red500 : palette.sky500,
 		};
 	}
 	if (type.startsWith("channel_")) {
@@ -395,7 +396,7 @@ function pointDescriptor(
 			laneId: "channel",
 			track: 0,
 			label: humanizeEventType(event.event_type),
-			color: "#06b6d4",
+			color: palette.cyan500,
 		};
 	}
 	if (
@@ -412,14 +413,14 @@ function pointDescriptor(
 			laneId: "recording",
 			track: 0,
 			label: humanizeEventType(event.event_type),
-			color: failed ? "#ef4444" : "#22c55e",
+			color: failed ? palette.red500 : palette.green500,
 		};
 	}
 	return {
 		laneId: "other",
 		track: 0,
 		label: humanizeEventType(event.event_type),
-		color: "#94a3b8",
+		color: palette.slate400,
 	};
 }
 

@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
+import { alpha, palette } from "../../shared/palette";
 import {
 	Button,
 	cn,
@@ -502,7 +503,7 @@ function TrackSegment(props: {
 						height="calc(100% - 4px)"
 						rx="4"
 						fill="none"
-						stroke="rgba(125, 211, 252, 0.9)"
+						stroke={alpha(palette.sky300, 0.9)}
 						strokeWidth="2"
 						strokeDasharray="10 8"
 					/>
@@ -671,7 +672,7 @@ function CopiedOutline() {
 				height="calc(100% - 4px)"
 				rx="4"
 				fill="none"
-				stroke="rgba(125, 211, 252, 0.9)"
+				stroke={alpha(palette.sky300, 0.9)}
 				strokeWidth="2"
 				strokeDasharray="10 8"
 			/>
@@ -744,10 +745,10 @@ function EffectTailOverlay(props: {
 	const fractions = effectTailFractions(props.segment);
 	if (!fractions) return null;
 	const stripeColor = props.muted
-		? "rgba(203, 213, 225, 0.42)"
+		? alpha(palette.slate300, 0.42)
 		: props.selected
-			? "rgba(255, 255, 255, 0.5)"
-			: "rgba(15, 23, 42, 0.5)";
+			? alpha(palette.white, 0.5)
+			: alpha(palette.slate900, 0.5);
 	return (
 		<div
 			aria-hidden="true"

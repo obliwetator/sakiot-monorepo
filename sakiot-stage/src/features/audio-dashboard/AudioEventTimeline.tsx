@@ -7,6 +7,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { palette } from "../../shared/palette";
 import {
 	Button,
 	cn,
@@ -171,7 +172,7 @@ function clusterColor(cluster: TimelinePointCluster): string {
 	const first = cluster.points[0].color;
 	return cluster.points.every((point) => point.color === first)
 		? first
-		: "#64748b";
+		: palette.slate500;
 }
 
 function ClusterPicker(props: {

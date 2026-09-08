@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { alpha, palette } from "../../shared/palette";
 import { drawSessionWaveform } from "../audio-dashboard/sessionWaveformCanvas";
 import type { WaveformEnvelope } from "../audio-dashboard/waveformPeaks";
 
@@ -23,9 +24,11 @@ export function segmentWaveformStrokeStyle(
 	muted: boolean,
 ): string {
 	if (muted) {
-		return selected ? "rgba(203, 213, 225, 0.9)" : "rgba(148, 163, 184, 0.72)";
+		return selected
+			? alpha(palette.slate300, 0.9)
+			: alpha(palette.slate400, 0.72);
 	}
-	return selected ? "rgba(165, 243, 252, 0.95)" : "rgba(45, 212, 191, 0.9)";
+	return selected ? alpha(palette.cyan200, 0.95) : alpha(palette.teal400, 0.9);
 }
 
 /**

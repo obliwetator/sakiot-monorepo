@@ -1,3 +1,4 @@
+import { alpha, palette } from "../../shared/palette";
 import type { WaveformEnvelope } from "./waveformPeaks";
 
 export interface WaveformCanvasContext {
@@ -50,11 +51,11 @@ export function drawSessionWaveform(
 	if (pointCount === 0 || width <= 0) return;
 
 	if (style.fillStyle !== null) {
-		context.fillStyle = style.fillStyle ?? "rgba(168, 85, 247, 0.18)";
+		context.fillStyle = style.fillStyle ?? alpha(palette.purple500, 0.18);
 		context.fillRect(0, 0, width, height);
 	}
 	const center = height / 2;
-	context.strokeStyle = style.strokeStyle ?? "#d946ef";
+	context.strokeStyle = style.strokeStyle ?? palette.fuchsia500;
 	context.lineWidth = 1;
 	context.beginPath();
 
