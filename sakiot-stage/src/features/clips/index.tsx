@@ -25,6 +25,7 @@ import {
 	DisclosureTrigger,
 	Drawer,
 	Modal,
+	Notice,
 	Tab,
 	TabList,
 	TabPanel,
@@ -208,7 +209,7 @@ export default function Clips() {
 	const guild =
 		authData?.guilds?.find((g) => g.id === guildId) ?? guildSelected;
 	const { asRoleArg } = useAsRole();
-	const { data, isError, isSuccess } = useGetClipsQuery(
+	const { data, isError, isLoading, isUninitialized } = useGetClipsQuery(
 		{ guild_id: guildId, ...asRoleArg },
 		{
 			skip: !guildId,
@@ -216,25 +217,39 @@ export default function Clips() {
 		},
 	);
 
+	// A failed or in-flight request must not read as "no clips": rendering the
+	// same empty page for all three made a broken API look like an empty library.
 	if (isError) {
-		console.error("cannot get clip data");
-	}
-
-	if (isSuccess && data) {
 		return (
 			<div className="p-3 min-[900px]:p-6">
 				<ViewAsRoleBanner guildId={guildId} />
-				<ClipsLayout
-					data={data}
-					params={params}
-					currentUserId={authData?.user?.user_id ?? null}
-					guildSelected={guild}
-				/>
+				<Notice tone="error" announce="alert">
+					Could not load clips. Check your connection, then reload the page.
+				</Notice>
 			</div>
 		);
-	} else {
-		return <div>No clip data</div>;
 	}
+
+	if (isLoading || isUninitialized) {
+		return (
+			<div className="p-3 min-[900px]:p-6">
+				<ViewAsRoleBanner guildId={guildId} />
+				<Notice announce="status">Loading clips…</Notice>
+			</div>
+		);
+	}
+
+	return (
+		<div className="p-3 min-[900px]:p-6">
+			<ViewAsRoleBanner guildId={guildId} />
+			<ClipsLayout
+				data={data ?? []}
+				params={params}
+				currentUserId={authData?.user?.user_id ?? null}
+				guildSelected={guild}
+			/>
+		</div>
+	);
 }
 
 function ClipsLayout(props: {
@@ -293,6 +308,11 @@ function ClipsLayout(props: {
 					>{`Combined${composedClips.length > 0 ? ` (${composedClips.length})` : ""}`}</Tab>
 				</TabList>
 				<TabPanel id="clips">
+					{pureClips.length === 0 && (
+						<p className="text-muted text-sm p-4">
+							No clips yet. Cut one from the audio dashboard or the clip editor.
+						</p>
+					)}
 					<ClipList
 						onSelect={() => setDrawerOpen(false)}
 						data={pureClips}
