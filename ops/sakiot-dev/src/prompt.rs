@@ -100,6 +100,37 @@ pub fn latest_recording_count<P: PromptIo + ?Sized>(
     }
 }
 
+/// Ask for a bounded sample of an optional category. Interactive syncs default
+/// to none so pressing Enter keeps the previous run's selection, `all` stays an
+/// explicit flag, and an empty category is skipped rather than prompted.
+pub fn latest_optional_count<P: PromptIo + ?Sized>(
+    prompt: &mut P,
+    label: &str,
+    available: u64,
+    all_flag: &str,
+) -> Result<CountSelection> {
+    if available == 0 {
+        return Ok(CountSelection::None);
+    }
+    loop {
+        let answer = prompt.ask(&format!(
+            "download {label}(s) (server has {available}; enter a number or none) [none]: "
+        ))?;
+        let answer = if answer.is_empty() {
+            "none"
+        } else {
+            answer.as_str()
+        };
+        match answer.parse::<CountSelection>() {
+            Ok(CountSelection::All) => log(&format!(
+                "enter a number or none; use --{all_flag} all explicitly for every {label}"
+            )),
+            Ok(value) => return Ok(value),
+            Err(_) => log("enter an unsigned number or none"),
+        }
+    }
+}
+
 pub fn confirm<P: PromptIo + ?Sized>(
     prompt: &mut P,
     message: &str,
@@ -220,6 +251,39 @@ mod tests {
         assert_eq!(
             latest_recording_count(&mut prompt, 42).unwrap(),
             CountSelection::Limit(10)
+        );
+    }
+
+    #[test]
+    fn optional_category_prompt_defaults_to_none_and_rejects_all() {
+        let mut prompt = FakePrompt {
+            terminal: true,
+            answers: vec!["all".into(), String::new()],
+        };
+        assert_eq!(
+            latest_optional_count(&mut prompt, "clip", 36, "clips").unwrap(),
+            CountSelection::None
+        );
+
+        let mut prompt = FakePrompt {
+            terminal: true,
+            answers: vec!["5".into()],
+        };
+        assert_eq!(
+            latest_optional_count(&mut prompt, "clip", 36, "clips").unwrap(),
+            CountSelection::Limit(5)
+        );
+    }
+
+    #[test]
+    fn optional_category_prompt_is_skipped_when_the_server_has_none() {
+        let mut prompt = FakePrompt {
+            terminal: true,
+            answers: Vec::new(),
+        };
+        assert_eq!(
+            latest_optional_count(&mut prompt, "stamp", 0, "stamps").unwrap(),
+            CountSelection::None
         );
     }
 }

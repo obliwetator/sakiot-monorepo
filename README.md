@@ -64,7 +64,7 @@ cargo dev db up                                      # Postgres + migrate + seed
 cargo dev up --fixtures prompt                       # choose skip/full/custom
 cargo dev db down                                    # stop Postgres
 cargo dev db reset                                   # drop the volume and re-seed
-cargo dev fixtures sync                              # show counts, then choose latest recordings
+cargo dev fixtures sync                              # show counts, then choose recordings, clips, and stamps
 cargo dev fixtures fetch <what>                     # copy one recording/session/clip/stamp
 cargo dev clean --yes                                # drop the volume + delete managed fixtures
 ```

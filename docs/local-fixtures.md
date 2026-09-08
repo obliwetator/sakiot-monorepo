@@ -59,15 +59,20 @@ SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --guild <id> --recordings 2
 
 The interactive sync prints how many finalized recordings, clips, and stamps the
 selected guild has on the server, then asks for a newest-first recording count
-(10 is the default). It does not offer an implicit “all” choice. Use
-`--recordings all` explicitly when you really want every recording. Clips and
-stamps are only copied when their flags are supplied. `--days N` is the global
+(10 is the default), a clip sample, and a stamp sample. The clip and stamp
+prompts default to none, so pressing Enter imports recordings only, and they are
+skipped entirely when the server has none of that category. No category offers
+an implicit “all” choice: use `--recordings all`, `--clips all`, or
+`--stamps all` explicitly. Supplying any category flag skips the prompt for the
+categories you did not name and leaves them at none. `--days N` is the global
 time-window form: it copies every eligible recording, clip, and stamp whose
 source timestamp falls within the last N days:
 
 ```
 [dev] staging guild 362257054829641758 has 509 finalized recording(s), 36 clip(s), and 123 stamp(s) on the server
 [dev] download latest recording(s) (server has 509; enter a number or none) [10]:
+[dev] download clip(s) (server has 36; enter a number or none) [none]:
+[dev] download stamp(s) (server has 123; enter a number or none) [none]:
 ```
 
 Bulk sync is scoped to guild `362257054829641758` by default, including startup

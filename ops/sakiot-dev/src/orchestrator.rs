@@ -225,11 +225,24 @@ async fn run_sync(root: &Path, mut deps: Deps<'_>, args: FixtureSyncArgs) -> Res
             None if has_explicit_selection => CountSelection::None,
             None => prompt::latest_recording_count(deps.prompt, counts.recordings)?,
         };
+        // Clips and stamps are opt-in: the prompt defaults to none so Enter
+        // keeps the previous selection, but they are no longer unreachable
+        // without a flag.
+        let clips = match args.clips {
+            Some(selection) => selection,
+            None if has_explicit_selection => CountSelection::None,
+            None => prompt::latest_optional_count(deps.prompt, "clip", counts.clips, "clips")?,
+        };
+        let stamps = match args.stamps {
+            Some(selection) => selection,
+            None if has_explicit_selection => CountSelection::None,
+            None => prompt::latest_optional_count(deps.prompt, "stamp", counts.stamps, "stamps")?,
+        };
         BulkSelection {
             recordings,
-            clips: args.clips.unwrap_or(CountSelection::None),
+            clips,
             days: None,
-            stamps: args.stamps.unwrap_or(CountSelection::None),
+            stamps,
             guild: Some(guild),
             source,
         }
