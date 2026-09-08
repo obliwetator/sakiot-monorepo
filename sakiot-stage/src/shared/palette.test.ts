@@ -31,7 +31,10 @@ describe("colour literals", () => {
 	it("are declared only in index.css and shared/palette.ts", () => {
 		const offenders: string[] = [];
 
-		for (const entry of readdirSync(SRC_ROOT, { recursive: true })) {
+		for (const entry of readdirSync(SRC_ROOT, {
+			recursive: true,
+			encoding: "utf8",
+		})) {
 			if (!/\.(ts|tsx|css)$/.test(entry)) continue;
 			// Tests assert literal values on purpose, so they are out of scope.
 			if (entry.endsWith(".test.ts") || entry.endsWith(".test.tsx")) continue;
@@ -64,6 +67,6 @@ describe("colour literals", () => {
 		const css = readFileSync(join(STAGE_ROOT, "src/index.css"), "utf8");
 		const muted = /--color-muted:\s*([^;]+);/.exec(css)?.[1]?.trim();
 
-		expect(palette.slate400).toBe(muted);
+		expect(muted).toBe(palette.slate400);
 	});
 });

@@ -1,0 +1,12 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		// The app config excludes tests so the production build never pulls in
+		// bun:test; this one type-checks them with the same settings.
+		"tsBuildInfoFile": "node_modules/.cache/tsconfig-test/tsconfig.tsbuildinfo",
+		"types": ["node", "bun"]
+	},
+	"include": ["src"],
+	"exclude": [],
+	"references": []
+}

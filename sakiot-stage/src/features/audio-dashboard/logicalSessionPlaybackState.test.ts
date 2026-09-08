@@ -10,8 +10,10 @@ import {
 import type { PlaybackSegment } from "./logicalSessionTimeline";
 import { parseSilenceRemovalStatus } from "./silenceRemovalState";
 
+// `audio_file_id` is a Discord snowflake: the API contract (and the server)
+// types it as a string, so the fixture must too.
 const audio = (
-	id: number,
+	id: string,
 	start_ms: number,
 	end_ms: number,
 ): PlaybackSegment => ({
@@ -38,9 +40,9 @@ describe("session deep links", () => {
 
 describe("playback state helpers", () => {
 	test("selects segments with end-exclusive bounds", () => {
-		const segments = [audio(1, 0, 1_000), audio(2, 1_000, 2_000)];
-		expect(segmentAtPosition(segments, 999)?.audio_file_id).toBe(1);
-		expect(segmentAtPosition(segments, 1_000)?.audio_file_id).toBe(2);
+		const segments = [audio("1", 0, 1_000), audio("2", 1_000, 2_000)];
+		expect(segmentAtPosition(segments, 999)?.audio_file_id).toBe("1");
+		expect(segmentAtPosition(segments, 1_000)?.audio_file_id).toBe("2");
 		expect(segmentAtPosition(segments, 2_000)).toBeUndefined();
 	});
 
@@ -51,10 +53,10 @@ describe("playback state helpers", () => {
 	});
 
 	test("recognizes same physical media across state refresh", () => {
-		expect(isSameMediaSegment(audio(1, 0, 1_000), audio(1, 0, 2_000))).toBe(
+		expect(isSameMediaSegment(audio("1", 0, 1_000), audio("1", 0, 2_000))).toBe(
 			true,
 		);
-		expect(isSameMediaSegment(audio(1, 0, 1_000), audio(2, 0, 1_000))).toBe(
+		expect(isSameMediaSegment(audio("1", 0, 1_000), audio("2", 0, 1_000))).toBe(
 			false,
 		);
 	});

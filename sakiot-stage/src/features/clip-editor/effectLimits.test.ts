@@ -3,6 +3,7 @@ import {
 	clampLimitToSafety,
 	DEFAULT_EFFECT_LIMITS,
 	EFFECT_LIMIT_SAFETY_CAPS,
+	type EffectLimits,
 	loadEffectLimits,
 	type StorageLike,
 	saveEffectLimits,
@@ -38,7 +39,7 @@ describe("loadEffectLimits", () => {
 
 	test("round-trips saved limits", () => {
 		const store = storage();
-		const custom = {
+		const custom: EffectLimits = {
 			...DEFAULT_EFFECT_LIMITS,
 			volumeDb: [-100, 60],
 			rate: [0.1, 8],

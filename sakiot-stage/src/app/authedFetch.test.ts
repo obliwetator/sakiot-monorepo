@@ -13,6 +13,20 @@ const originalDocument = globalThis.document;
 const originalFetch = globalThis.fetch;
 const originalWindow = globalThis.window;
 
+type FetchInput = RequestInfo | URL;
+/** Bun's `Mock` is not structurally a `typeof fetch` (no `preconnect`), and an
+ * untyped `mock()` records a zero-length call tuple. Both are fixed by giving
+ * the stub the fetch signature and casting through `unknown` at the seam. */
+function fetchStub(
+	handler: (input: FetchInput, init?: RequestInit) => Promise<Response>,
+) {
+	return mock(handler);
+}
+
+function installFetch(stub: ReturnType<typeof fetchStub>) {
+	globalThis.fetch = stub as unknown as typeof fetch;
+}
+
 function setCookie(cookie: string) {
 	Object.defineProperty(globalThis, "document", {
 		configurable: true,
@@ -89,8 +103,10 @@ describe("auth cookie helpers", () => {
 describe("authedFetch", () => {
 	it("adds credentials and csrf header for mutating relative requests", async () => {
 		setCookie("xsrf_token=csrf-123; logged_in=1");
-		const fetchMock = mock(async () => new Response("ok", { status: 200 }));
-		globalThis.fetch = fetchMock as typeof fetch;
+		const fetchMock = fetchStub(
+			async () => new Response("ok", { status: 200 }),
+		);
+		installFetch(fetchMock);
 
 		await authedFetch("clips", { method: "POST", body: "x" });
 
@@ -103,8 +119,10 @@ describe("authedFetch", () => {
 
 	it("resolves API-root-relative media URLs without duplicating the API prefix", async () => {
 		setCookie("logged_in=1");
-		const fetchMock = mock(async () => new Response("ok", { status: 200 }));
-		globalThis.fetch = fetchMock as typeof fetch;
+		const fetchMock = fetchStub(
+			async () => new Response("ok", { status: 200 }),
+		);
+		installFetch(fetchMock);
 
 		await authedFetch("/api/audio/waveform/recording");
 
@@ -115,7 +133,7 @@ describe("authedFetch", () => {
 
 	it("refreshes once and retries after a 401", async () => {
 		setCookie("xsrf_token=csrf-123; logged_in=1");
-		const fetchMock = mock(async (url: RequestInfo | URL) => {
+		const fetchMock = fetchStub(async (url: FetchInput) => {
 			if (String(url).endsWith("protected")) {
 				const count = fetchMock.mock.calls.filter(([callUrl]) =>
 					String(callUrl).endsWith("protected"),
@@ -129,7 +147,7 @@ describe("authedFetch", () => {
 			}
 			return new Response("unexpected", { status: 500 });
 		});
-		globalThis.fetch = fetchMock as typeof fetch;
+		installFetch(fetchMock);
 
 		const res = await authedFetch("protected");
 
@@ -150,20 +168,20 @@ describe("authedFetch", () => {
 describe("refreshForMediaRetry", () => {
 	it("reports a live session when the refresh succeeds", async () => {
 		setCookie("xsrf_token=csrf-123; logged_in=1");
-		const fetchMock = mock(
+		const fetchMock = fetchStub(
 			async () => new Response("refreshed", { status: 200 }),
 		);
-		globalThis.fetch = fetchMock as typeof fetch;
+		installFetch(fetchMock);
 
 		await expect(refreshForMediaRetry()).resolves.toBe(true);
 	});
 
 	it("reports an expired session when the refresh is rejected", async () => {
 		setCookie("xsrf_token=csrf-123; logged_in=1");
-		const fetchMock = mock(
+		const fetchMock = fetchStub(
 			async () => new Response("expired", { status: 401 }),
 		);
-		globalThis.fetch = fetchMock as typeof fetch;
+		installFetch(fetchMock);
 
 		await expect(refreshForMediaRetry()).resolves.toBe(false);
 		expect(SESSION_EXPIRED_MESSAGE).toContain("session has expired");
