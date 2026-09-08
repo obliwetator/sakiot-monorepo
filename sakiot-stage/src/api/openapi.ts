@@ -132,6 +132,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/clips/waveform/{guild_id}/{clip_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_clip_waveform_data"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/clips/{guild_id}": {
 		parameters: {
 			query?: never;
@@ -187,7 +203,7 @@ export interface paths {
 			path?: never;
 			cookie?: never;
 		};
-		get?: never;
+		get: operations["get_clip"];
 		put: operations["rename_clip"];
 		post?: never;
 		delete: operations["delete"];
@@ -220,6 +236,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/playlist.m3u8": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["live_playlist"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/state": {
 		parameters: {
 			query?: never;
@@ -228,6 +260,22 @@ export interface paths {
 			cookie?: never;
 		};
 		get: operations["live_state"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/{seg}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["live_segment"];
 		put?: never;
 		post?: never;
 		delete?: never;
@@ -316,6 +364,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/sessions/{recording_session_id}/live/{audio_file_id}/playlist.m3u8": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["session_live_playlist"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/live/{audio_file_id}/{segment}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["session_live_segment"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/sessions/{recording_session_id}/manifest": {
 		parameters: {
 			query?: never;
@@ -342,6 +422,22 @@ export interface paths {
 		get: operations["get_session_silence_removal_status"];
 		put?: never;
 		post: operations["remove_session_silence"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/sessions/{recording_session_id}/segments/{audio_file_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_session_segment"];
+		put?: never;
+		post?: never;
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -428,6 +524,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_waveform_data"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_audio"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/current/{guild_id}": {
 		parameters: {
 			query?: never;
@@ -465,6 +593,54 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/discord_login": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["discord_login"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["download_audio"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/jamit": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["play_clip"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/logout": {
 		parameters: {
 			query?: never;
@@ -475,6 +651,22 @@ export interface paths {
 		get?: never;
 		put?: never;
 		post: operations["logout"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/oauth/start": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["oauth_start"];
+		put?: never;
+		post?: never;
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -1007,6 +1199,11 @@ export interface components {
 						state?: string | null;
 						user_id?: string | null;
 				  }[];
+		};
+		JamItBody: {
+			clip_name: string;
+			/** Format: int64 */
+			guild_id: number;
 		};
 		RefreshTokenError: {
 			error: string;
@@ -1901,6 +2098,66 @@ export interface operations {
 			};
 		};
 	};
+	get_clip_waveform_data: {
+		parameters: {
+			query?: {
+				/** @description Serve the silence-free waveform when true */
+				silence?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Clip id */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Base64 waveform peaks */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Waveform is still being generated */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_clips: {
 		parameters: {
 			query: {
@@ -2089,6 +2346,58 @@ export interface operations {
 				};
 			};
 			/** @description Job not found, expired, or owned by another user */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Clip id or saved file name */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Clip audio */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
 			404: {
 				headers: {
 					[name: string]: unknown;
@@ -2318,6 +2627,64 @@ export interface operations {
 			};
 		};
 	};
+	live_playlist: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file stem */
+				stem: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description HLS playlist for the live recording */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/vnd.apple.mpegurl": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Live recording not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	live_state: {
 		parameters: {
 			query?: never;
@@ -2367,6 +2734,66 @@ export interface operations {
 			};
 			/** @description Missing channel permission */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	live_segment: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file stem */
+				stem: string;
+				/** @description HLS segment name */
+				seg: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description HLS media segment */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"video/mp2t": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Segment not found */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -2783,6 +3210,112 @@ export interface operations {
 			};
 		};
 	};
+	session_live_playlist: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+				/** @description Audio fragment id */
+				audio_file_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description HLS playlist for the live fragment */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/vnd.apple.mpegurl": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Fragment not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	session_live_segment: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+				/** @description Audio fragment id */
+				audio_file_id: number;
+				/** @description HLS segment name */
+				segment: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description HLS media segment */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"video/mp2t": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Segment not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_session_manifest: {
 		parameters: {
 			query?: never;
@@ -2953,6 +3486,58 @@ export interface operations {
 				};
 			};
 			/** @description Composition failed */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_segment: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Logical recording session id */
+				recording_session_id: number;
+				/** @description Audio fragment id */
+				audio_file_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Fragment audio */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Fragment not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
 			500: {
 				headers: {
 					[name: string]: unknown;
@@ -3270,6 +3855,151 @@ export interface operations {
 			};
 		};
 	};
+	get_waveform_data: {
+		parameters: {
+			query?: {
+				/** @description Serve the silence-free waveform when true */
+				silence?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file name */
+				file: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Base64 waveform peaks */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Waveform is still being generated */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Recording not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_audio: {
+		parameters: {
+			query?: {
+				/** @description Serve the silence-free variant when true */
+				silence?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file name */
+				file_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Recording audio */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Invalid file name */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Recording not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_current_month_permission: {
 		parameters: {
 			query: {
@@ -3412,6 +4142,193 @@ export interface operations {
 			};
 		};
 	};
+	discord_login: {
+		parameters: {
+			query: {
+				/** @description Discord OAuth authorization code */
+				code: string;
+				/** @description OAuth state echoed from /oauth/start */
+				state?: string;
+			};
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Redirect back to the opener with auth cookies set */
+			302: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or mismatched OAuth state */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Discord rejected the authorization code */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	download_audio: {
+		parameters: {
+			query?: {
+				/** @description Serve the silence-free variant when true */
+				silence?: boolean;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file name */
+				file_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Recording audio as a download */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"audio/ogg": unknown;
+				};
+			};
+			/** @description Invalid file name */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Recording not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	play_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["JamItBody"];
+			};
+		};
+		responses: {
+			/** @description Jam command forwarded to the agent owning the guild */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid request */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	logout: {
 		parameters: {
 			query?: never;
@@ -3430,6 +4347,36 @@ export interface operations {
 			};
 			/** @description Missing or invalid CSRF token */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	oauth_start: {
+		parameters: {
+			query: {
+				/** @description Allowed opener origin for the OAuth popup */
+				origin: string;
+			};
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Redirect to the Discord OAuth consent screen */
+			302: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid opener origin */
+			400: {
 				headers: {
 					[name: string]: unknown;
 				};

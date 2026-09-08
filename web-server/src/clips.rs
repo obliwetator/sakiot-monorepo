@@ -69,6 +69,22 @@ pub struct ClipInfo {
     composition: Option<serde_json::Value>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/clips/{guild_id}/{clip_id}",
+    tag = "clips",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("clip_id" = String, Path, description = "Clip id or saved file name"),
+    ),
+    responses(
+        (status = 200, description = "Clip audio", content_type = "audio/ogg"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Clip not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[route(
     "/audio/clips/{guild_id}/{clip_id:.*}",
     method = "GET",
@@ -259,7 +275,7 @@ pub async fn get_clips(
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
     Ok(HttpResponse::Ok().json(result))
 }
-#[derive(Deserialize, PartialEq, Debug)]
+#[derive(Deserialize, PartialEq, Debug, utoipa::ToSchema)]
 pub struct JamItBody {
     #[serde(with = "DisplayFromstr")]
     guild_id: i64,
@@ -275,6 +291,20 @@ pub enum JamItResponse {
     Unknown,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/jamit",
+    tag = "clips",
+    request_body = JamItBody,
+    responses(
+        (status = 200, description = "Jam command forwarded to the agent owning the guild"),
+        (status = 400, description = "Invalid request", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Clip not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[post("/jamit")]
 pub async fn play_clip(
     req: HttpRequest,

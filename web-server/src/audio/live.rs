@@ -655,6 +655,25 @@ async fn ensure_job_locked(
     spawn_job(container, pool, key, src, out_dir, is_live).await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/playlist.m3u8",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("stem" = String, Path, description = "Recording file stem"),
+    ),
+    responses(
+        (status = 200, description = "HLS playlist for the live recording", content_type = "application/vnd.apple.mpegurl"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Live recording not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/playlist.m3u8")]
 pub async fn live_playlist(
     path: web::Path<(i64, i64, i32, u32, String)>,
@@ -748,6 +767,26 @@ pub async fn live_state(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/{seg}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("stem" = String, Path, description = "Recording file stem"),
+        ("seg" = String, Path, description = "HLS segment name"),
+    ),
+    responses(
+        (status = 200, description = "HLS media segment", content_type = "video/mp2t"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Segment not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/{seg}")]
 pub async fn live_segment(
     req: HttpRequest,

@@ -42,6 +42,28 @@ impl AudioQuery {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("file_name" = String, Path, description = "Recording file name"),
+        ("silence" = Option<bool>, Query, description = "Serve the silence-free variant when true"),
+    ),
+    responses(
+        (status = 200, description = "Recording audio", content_type = "audio/ogg"),
+        (status = 400, description = "Invalid file name", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Recording not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[route(
     "/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
     method = "GET",
@@ -111,6 +133,28 @@ pub async fn get_audio(
         .await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("file_name" = String, Path, description = "Recording file name"),
+        ("silence" = Option<bool>, Query, description = "Serve the silence-free variant when true"),
+    ),
+    responses(
+        (status = 200, description = "Recording audio as a download", content_type = "audio/ogg"),
+        (status = 400, description = "Invalid file name", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
+        (status = 404, description = "Recording not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[route(
     "/download/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
     method = "GET",

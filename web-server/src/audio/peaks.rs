@@ -88,6 +88,27 @@ async fn waveform_response_with_progress(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("channel_id" = i64, Path, description = "Discord channel id"),
+        ("year" = i32, Path, description = "Recording year"),
+        ("month" = u32, Path, description = "Recording month"),
+        ("file" = String, Path, description = "Recording file name"),
+        ("silence" = Option<bool>, Query, description = "Serve the silence-free waveform when true"),
+    ),
+    responses(
+        (status = 200, description = "Base64 waveform peaks"),
+        (status = 202, description = "Waveform is still being generated"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Recording not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}")]
 pub async fn get_waveform_data(
     _req: HttpRequest,
@@ -311,6 +332,24 @@ fn clip_waveform_key(clip_id: &str, input: &std::path::Path) -> String {
 // A clip is its own trimmed, immutable .ogg — no live/end_ts logic. Generate
 // peaks straight from the clip file, keyed by clip_id, mirroring the simple
 // silence-free path. On-disk existence is the cache (the file never changes).
+#[utoipa::path(
+    get,
+    path = "/api/audio/clips/waveform/{guild_id}/{clip_id}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("clip_id" = String, Path, description = "Clip id"),
+        ("silence" = Option<bool>, Query, description = "Serve the silence-free waveform when true"),
+    ),
+    responses(
+        (status = 200, description = "Base64 waveform peaks"),
+        (status = 202, description = "Waveform is still being generated"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Clip not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/clips/waveform/{guild_id}/{clip_id}")]
 pub async fn get_clip_waveform_data(
     path: web::Path<(i64, String)>,

@@ -5,6 +5,7 @@ import type {
 } from "@reduxjs/toolkit/query/react";
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { components } from "../api/openapi";
+import { API_ROUTES, apiUrl } from "../api/routes";
 import type { Channels, UserGuilds } from "../Constants";
 import type { JamItRespStatus } from "../features/audio-dashboard/RangeSlider/JamIt";
 import {
@@ -111,7 +112,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; clip_name: string }
 		>({
 			query: (body) => ({
-				url: "jamit",
+				url: apiUrl(API_ROUTES.jamIt),
 				method: "POST",
 				headers: {
 					Accept: "application/json",
@@ -139,7 +140,13 @@ export const apiSlice = createApi({
 				file_name,
 				idempotency_key,
 			}) => ({
-				url: `remove_silence/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}`,
+				url: apiUrl(API_ROUTES.removeSilence, {
+					guild_id,
+					channel_id,
+					year,
+					month,
+					file_name,
+				}),
 				method: "POST",
 				headers: {
 					Accept: "application/json",
@@ -149,35 +156,35 @@ export const apiSlice = createApi({
 			}),
 		}),
 		refresh: builder.mutation<void, void>({
-			query: () => ({ url: "refresh", method: "POST" }),
+			query: () => ({ url: apiUrl(API_ROUTES.refresh), method: "POST" }),
 		}),
 		logout: builder.mutation<void, void>({
-			query: () => ({ url: "logout", method: "POST" }),
+			query: () => ({ url: apiUrl(API_ROUTES.logout), method: "POST" }),
 		}),
 		getCurrentGuildDirs: builder.query<
 			Channels[],
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) =>
-				`current/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
+				`${apiUrl(API_ROUTES.currentGuildDirs, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
 		}),
 		getLiveStems: builder.query<
 			string[],
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) =>
-				`current/${guild_id}/live-stems${as_role ? `?as_role=${as_role}` : ""}`,
+				`${apiUrl(API_ROUTES.liveStems, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
 		}),
 		getSessionManifest: builder.query<SessionManifest, string>({
 			query: (recording_session_id) =>
-				`audio/sessions/${recording_session_id}/manifest`,
+				apiUrl(API_ROUTES.sessionManifest, { recording_session_id }),
 		}),
 		getSessionChannelMix: builder.query<
 			ChannelMixResponse,
 			{ recording_session_id: string; scope?: ChannelMixScope }
 		>({
 			query: ({ recording_session_id, scope = "all_recordings" }) =>
-				`audio/sessions/${recording_session_id}/channel-mix?scope=${scope}`,
+				`${apiUrl(API_ROUTES.sessionChannelMix, { recording_session_id })}?scope=${scope}`,
 		}),
 		generateSessionChannelMix: builder.mutation<
 			ChannelMixResponse,
@@ -188,25 +195,29 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ recording_session_id, scope = "all_recordings", body }) => ({
-				url: `audio/sessions/${recording_session_id}/channel-mix?scope=${scope}`,
+				url: `${apiUrl(API_ROUTES.sessionChannelMix, { recording_session_id })}?scope=${scope}`,
 				method: "POST",
 				...(body ? { body } : {}),
 			}),
 		}),
 		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
 			query: (recording_session_id) =>
-				`audio/sessions/${recording_session_id}/waveform`,
+				apiUrl(API_ROUTES.sessionWaveform, { recording_session_id }),
 		}),
 		getSilenceFreeSessionWaveform: builder.query<
 			SessionWaveformResponse,
 			string
 		>({
 			query: (recording_session_id) =>
-				`audio/sessions/${recording_session_id}/silence-free/waveform`,
+				apiUrl(API_ROUTES.sessionSilenceFreeWaveform, {
+					recording_session_id,
+				}),
 		}),
 		rebuildSessionWaveform: builder.mutation<SessionWaveformResponse, string>({
 			query: (recording_session_id) => ({
-				url: `audio/sessions/${recording_session_id}/waveform/rebuild`,
+				url: apiUrl(API_ROUTES.sessionWaveformRebuild, {
+					recording_session_id,
+				}),
 				method: "POST",
 			}),
 		}),
@@ -215,7 +226,9 @@ export const apiSlice = createApi({
 			string
 		>({
 			query: (recording_session_id) => ({
-				url: `audio/sessions/${recording_session_id}/silence-free/waveform/rebuild`,
+				url: apiUrl(API_ROUTES.sessionSilenceFreeWaveformRebuild, {
+					recording_session_id,
+				}),
 				method: "POST",
 			}),
 		}),
@@ -230,7 +243,7 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ recording_session_id, start, end, name, silence_free }) => ({
-				url: `audio/sessions/${recording_session_id}/clips`,
+				url: apiUrl(API_ROUTES.sessionClips, { recording_session_id }),
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: { start, end, name, silence_free },
@@ -240,7 +253,7 @@ export const apiSlice = createApi({
 		getClips: builder.query<ClipData[], { guild_id: string; as_role?: string }>(
 			{
 				query: ({ guild_id, as_role }) => ({
-					url: `audio/clips/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
+					url: `${apiUrl(API_ROUTES.clips, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
 				}),
 				providesTags: ["Clips"],
 			},
@@ -254,7 +267,7 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ guild_id, body, idempotency_key }) => ({
-				url: `audio/clips/${guild_id}/compose`,
+				url: apiUrl(API_ROUTES.clipCompose, { guild_id }),
 				method: "POST",
 				headers: {
 					"Idempotency-Key": idempotency_key,
@@ -269,7 +282,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; clip_id: string }
 		>({
 			query: ({ guild_id, clip_id }) => ({
-				url: `audio/clips/${guild_id}/compose/${encodeURIComponent(clip_id)}`,
+				url: apiUrl(API_ROUTES.clipComposeStatus, { guild_id, clip_id }),
 			}),
 		}),
 		getStamps: builder.query<
@@ -277,13 +290,13 @@ export const apiSlice = createApi({
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) => ({
-				url: `stamps/${guild_id}${as_role ? `?as_role=${as_role}` : ""}`,
+				url: `${apiUrl(API_ROUTES.stamps, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
 			}),
 		}),
 		deleteClip: builder.mutation<void, { guild_id: string; file_name: string }>(
 			{
 				query: ({ guild_id, file_name }) => ({
-					url: `audio/clips/${guild_id}/${encodeURIComponent(file_name)}`,
+					url: apiUrl(API_ROUTES.clip, { guild_id, clip_id: file_name }),
 					method: "DELETE",
 				}),
 				invalidatesTags: ["Clips"],
@@ -294,7 +307,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; clip_id: string; name: string }
 		>({
 			query: ({ guild_id, clip_id, name }) => ({
-				url: `audio/clips/${guild_id}/${encodeURIComponent(clip_id)}`,
+				url: apiUrl(API_ROUTES.clip, { guild_id, clip_id }),
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: { name },
@@ -324,7 +337,13 @@ export const apiSlice = createApi({
 				end,
 				name,
 			}) => ({
-				url: `audio/clips/create/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}`,
+				url: apiUrl(API_ROUTES.clipCreate, {
+					guild_id,
+					channel_id,
+					year,
+					month,
+					file_name,
+				}),
 				method: "POST",
 				headers: {
 					Accept: "application/json",
@@ -345,7 +364,13 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ guild_id, channel_id, year, month, file_name }) => ({
-				url: `audio/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}.ogg?silence=true`,
+				url: `${apiUrl(API_ROUTES.audio, {
+					guild_id,
+					channel_id,
+					year,
+					month,
+					file_name: `${file_name}.ogg`,
+				})}?silence=true`,
 				method: "HEAD",
 			}),
 		}),
@@ -361,7 +386,13 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ guild_id, channel_id, year, month, file_name, user_id }) => ({
-				url: `audio/events/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}${user_id ? `?user_id=${user_id}` : ""}`,
+				url: `${apiUrl(API_ROUTES.recordingEvents, {
+					guild_id,
+					channel_id,
+					year,
+					month,
+					stem: file_name,
+				})}${user_id ? `?user_id=${user_id}` : ""}`,
 			}),
 		}),
 		getLiveState: builder.query<
@@ -375,7 +406,13 @@ export const apiSlice = createApi({
 			}
 		>({
 			query: ({ guild_id, channel_id, year, month, file_name }) => ({
-				url: `audio/live/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}/state`,
+				url: apiUrl(API_ROUTES.liveState, {
+					guild_id,
+					channel_id,
+					year,
+					month,
+					stem: file_name,
+				}),
 			}),
 		}),
 		getWaveform: builder.query<
@@ -404,7 +441,13 @@ export const apiSlice = createApi({
 				if (silence) qs.set("silence", "true");
 				const suffix = qs.toString() ? `?${qs}` : "";
 				return {
-					url: `audio/waveform/${guild_id}/${channel_id}/${year}/${month}/${encodeURIComponent(file_name)}${suffix}`,
+					url: `${apiUrl(API_ROUTES.recordingWaveform, {
+						guild_id,
+						channel_id,
+						year,
+						month,
+						file: file_name,
+					})}${suffix}`,
 				};
 			},
 		}),
@@ -426,12 +469,12 @@ export const apiSlice = createApi({
 				if (timestamp) qs.set("t", String(timestamp));
 				const suffix = qs.toString() ? `?${qs}` : "";
 				return {
-					url: `audio/clips/waveform/${guild_id}/${encodeURIComponent(clip_id)}${suffix}`,
+					url: `${apiUrl(API_ROUTES.clipWaveform, { guild_id, clip_id })}${suffix}`,
 				};
 			},
 		}),
 		getGuildCooldown: builder.query<ApiSchema["GuildCooldown"], string>({
-			query: (guild_id) => `admin/guilds/${guild_id}/cooldown`,
+			query: (guild_id) => apiUrl(API_ROUTES.guildCooldown, { guild_id }),
 			providesTags: (_r, _e, id) => [{ type: "GuildCooldown", id }],
 		}),
 		setGuildCooldown: builder.mutation<
@@ -439,7 +482,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; cooldown_seconds: number }
 		>({
 			query: ({ guild_id, cooldown_seconds }) => ({
-				url: `admin/guilds/${guild_id}/cooldown`,
+				url: apiUrl(API_ROUTES.guildCooldown, { guild_id }),
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: { cooldown_seconds },
@@ -449,7 +492,7 @@ export const apiSlice = createApi({
 			],
 		}),
 		listUserOverrides: builder.query<UserOverride[], string>({
-			query: (guild_id) => `admin/guilds/${guild_id}/cooldown/overrides`,
+			query: (guild_id) => apiUrl(API_ROUTES.userOverrides, { guild_id }),
 			providesTags: (_r, _e, id) => [{ type: "UserOverrides", id }],
 		}),
 		setUserOverride: builder.mutation<
@@ -457,7 +500,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; user_id: string; cooldown_seconds: number }
 		>({
 			query: ({ guild_id, user_id, cooldown_seconds }) => ({
-				url: `admin/guilds/${guild_id}/cooldown/overrides/${user_id}`,
+				url: apiUrl(API_ROUTES.userOverride, { guild_id, user_id }),
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: { cooldown_seconds },
@@ -471,7 +514,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; user_id: string }
 		>({
 			query: ({ guild_id, user_id }) => ({
-				url: `admin/guilds/${guild_id}/cooldown/overrides/${user_id}`,
+				url: apiUrl(API_ROUTES.userOverride, { guild_id, user_id }),
 				method: "DELETE",
 			}),
 			invalidatesTags: (_r, _e, { guild_id }) => [
@@ -479,7 +522,7 @@ export const apiSlice = createApi({
 			],
 		}),
 		getGuildVoiceSettings: builder.query<GuildVoiceSettings, string>({
-			query: (guild_id) => `admin/guilds/${guild_id}/voice-settings`,
+			query: (guild_id) => apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
 			providesTags: (_result, _error, guild_id) => [
 				{ type: "GuildVoiceSettings", id: guild_id },
 			],
@@ -489,7 +532,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; pending_cap_seconds: number }
 		>({
 			query: ({ guild_id, pending_cap_seconds }) => ({
-				url: `admin/guilds/${guild_id}/voice-settings`,
+				url: apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: { pending_cap_seconds },
@@ -500,7 +543,7 @@ export const apiSlice = createApi({
 		}),
 		deleteGuildVoiceSettings: builder.mutation<GuildVoiceSettings, string>({
 			query: (guild_id) => ({
-				url: `admin/guilds/${guild_id}/voice-settings`,
+				url: apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
 				method: "DELETE",
 			}),
 			invalidatesTags: (_result, _error, guild_id) => [
@@ -508,27 +551,27 @@ export const apiSlice = createApi({
 			],
 		}),
 		getGuildRoles: builder.query<GuildRole[], string>({
-			query: (guild_id) => `admin/guilds/${guild_id}/roles`,
+			query: (guild_id) => apiUrl(API_ROUTES.guildRoles, { guild_id }),
 		}),
 		getRoleMembers: builder.query<
 			RoleMember[],
 			{ guild_id: string; role_id: string }
 		>({
 			query: ({ guild_id, role_id }) =>
-				`admin/guilds/${guild_id}/roles/${role_id}/members`,
+				apiUrl(API_ROUTES.roleMembers, { guild_id, role_id }),
 		}),
 		getRoleView: builder.query<RoleView, { guild_id: string; role_id: string }>(
 			{
 				query: ({ guild_id, role_id }) =>
-					`admin/guilds/${guild_id}/roles/${role_id}/channels`,
+					apiUrl(API_ROUTES.roleChannels, { guild_id, role_id }),
 			},
 		),
 		// Combine all 3 requests into a single query to emulate the existing Promise.all behavior
 		getAuthDetails: builder.query<AuthDetails, void>({
 			async queryFn(_arg, _queryApi, _extraOptions, fetchWithBQ) {
 				const [userResult, guildsResult] = await Promise.all([
-					fetchWithBQ("users/current"),
-					fetchWithBQ("users/current/guilds"),
+					fetchWithBQ(apiUrl(API_ROUTES.currentUser)),
+					fetchWithBQ(apiUrl(API_ROUTES.currentUserGuilds)),
 				]);
 
 				if (userResult.error || guildsResult.error) {

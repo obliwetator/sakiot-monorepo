@@ -151,6 +151,18 @@ fn require_cookie_csrf(req: &HttpRequest) -> Result<(), AppError> {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/oauth/start",
+    tag = "auth",
+    params(
+        ("origin" = String, Query, description = "Allowed opener origin for the OAuth popup"),
+    ),
+    responses(
+        (status = 302, description = "Redirect to the Discord OAuth consent screen"),
+        (status = 400, description = "Invalid opener origin", body = crate::errors::ApiError),
+    ),
+)]
 #[get("/oauth/start")]
 pub async fn oauth_start(
     query: web::Query<OauthStartQuery>,
@@ -176,6 +188,21 @@ pub async fn oauth_start(
     Ok(resp)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/discord_login",
+    tag = "auth",
+    params(
+        ("code" = String, Query, description = "Discord OAuth authorization code"),
+        ("state" = Option<String>, Query, description = "OAuth state echoed from /oauth/start"),
+    ),
+    responses(
+        (status = 302, description = "Redirect back to the opener with auth cookies set"),
+        (status = 400, description = "Missing or mismatched OAuth state", body = crate::errors::ApiError),
+        (status = 401, description = "Discord rejected the authorization code", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+)]
 #[get("/discord_login")]
 pub async fn discord_login(
     req: HttpRequest,

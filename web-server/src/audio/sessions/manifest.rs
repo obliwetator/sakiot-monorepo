@@ -53,6 +53,22 @@ pub async fn get_session_events(
     Ok(HttpResponse::Ok().json(load_events(&pool, &access, timeline_end_ms).await?))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/sessions/{recording_session_id}/segments/{audio_file_id}",
+    tag = "audio",
+    params(
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("audio_file_id" = i64, Path, description = "Audio fragment id"),
+    ),
+    responses(
+        (status = 200, description = "Fragment audio", content_type = "audio/ogg"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Fragment not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[route(
     "/audio/sessions/{recording_session_id}/segments/{audio_file_id}",
     method = "GET",
@@ -83,6 +99,22 @@ pub async fn get_session_segment(
         .await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/sessions/{recording_session_id}/live/{audio_file_id}/playlist.m3u8",
+    tag = "audio",
+    params(
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("audio_file_id" = i64, Path, description = "Audio fragment id"),
+    ),
+    responses(
+        (status = 200, description = "HLS playlist for the live fragment", content_type = "application/vnd.apple.mpegurl"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Fragment not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/sessions/{recording_session_id}/live/{audio_file_id}/playlist.m3u8")]
 pub async fn session_live_playlist(
     path: web::Path<(i64, i64)>,
@@ -117,6 +149,23 @@ pub async fn session_live_playlist(
         .body(body))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audio/sessions/{recording_session_id}/live/{audio_file_id}/{segment}",
+    tag = "audio",
+    params(
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("audio_file_id" = i64, Path, description = "Audio fragment id"),
+        ("segment" = String, Path, description = "HLS segment name"),
+    ),
+    responses(
+        (status = 200, description = "HLS media segment", content_type = "video/mp2t"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Segment not found", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
 #[get("/audio/sessions/{recording_session_id}/live/{audio_file_id}/{segment}")]
 pub async fn session_live_segment(
     req: HttpRequest,
