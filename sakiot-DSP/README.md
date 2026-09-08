@@ -135,17 +135,19 @@ cargo run --manifest-path sakiot-DSP/Cargo.toml --example render_clip_raw -- \
 
 ## WASM assets
 
-From the repository root, install the target and the pinned binding generator,
-then rebuild both the WASM bindings and the worklet bundle as CI does:
+`pkg/` is committed so the frontend, CI, and the deploy engine can build
+without a WASM toolchain. Regenerate it with the repository script after any
+change to the DSP sources or to the pinned tooling; it enforces the pinned
+`wasm-bindgen` and `rolldown` versions and always builds from `sakiot-DSP`, so
+the output does not depend on the caller's working directory. From the
+repository root:
 
 ```sh
-cd sakiot-DSP
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version "$(cat wasm-bindgen-cli-version)" --locked
-npm ci
-npm run wasm:build
-npm run browser:build-worklet
-node web/verify-wasm.mjs
+cargo install wasm-bindgen-cli --version "$(cat sakiot-DSP/wasm-bindgen-cli-version)" --locked
+(cd sakiot-DSP && npm ci)
+scripts/build-dsp.sh
+(cd sakiot-DSP && node web/verify-wasm.mjs)
 ```
 
 `sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
@@ -153,14 +155,15 @@ bundled `pkg/sakiot-dsp-worklet.bundle.js`. The worker owns random-access
 preprocessing and exact waveform rendering; the AudioWorklet is the production
 real-time boundary for the downstream chain.
 
+The script is the only place that names the build steps: `npm run wasm:build`
+delegates to it, and the CI `dsp` job calls it directly.
+
 To verify the generated WASM processor against the native processor with the
 version-matched `wasm-bindgen` CLI and Node.js (from `sakiot-DSP/`):
 
 ```sh
-cargo build --locked --target wasm32-unknown-unknown --features wasm --release
-wasm-bindgen target/wasm32-unknown-unknown/release/sakiot_dsp.wasm \
-  --out-dir pkg --target web
-node web/verify-wasm.mjs
+scripts/build-dsp.sh
+(cd sakiot-DSP && node web/verify-wasm.mjs)
 ```
 
 CI runs the parity verifier once against the committed browser asset and again

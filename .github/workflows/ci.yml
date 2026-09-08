@@ -227,7 +227,8 @@ jobs:
         run: node web/verify-wasm.mjs
 
       - name: Build WASM and worklet
-        run: npm run wasm:build && npm run browser:build-worklet
+        working-directory: ${{ github.workspace }}
+        run: scripts/build-dsp.sh
 
       - name: Verify rebuilt WASM/native parity
         run: node web/verify-wasm.mjs
