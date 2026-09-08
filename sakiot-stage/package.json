@@ -8,6 +8,7 @@
 		"typecheck": "tsc -b && tsc -p tsconfig.test.json && tsc -p tsconfig.e2e.json",
 		"build": "biome check . && bun run typecheck && bun run build:bundle",
 		"build:bundle": "vite build",
+		"analyze": "ANALYZE=1 bun run build:bundle",
 		"deploy": "bun run build && ./scripts/deploy.sh",
 		"generate:api-types": "bun scripts/generate-api-types.ts",
 		"check:api-types": "bun scripts/generate-api-types.ts --check",

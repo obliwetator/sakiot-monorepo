@@ -1,6 +1,8 @@
 import type * as React from "react";
+import type { User } from "../app/apiSlice";
 import type { UserGuilds } from "../Constants";
 import Login from "../login/login";
+import { discordAvatarUrl } from "../shared/discordAvatar";
 import { GuildSelect } from "../shared/GuildSelect";
 import { Avatar, Button } from "../shared/ui";
 import { type PageName, pageIcons } from "./constants";
@@ -11,13 +13,20 @@ export function MobileDrawer(props: {
 	guildSelected: UserGuilds | null;
 	setGuildSelected: (guild: UserGuilds | null) => void;
 	userGuilds: UserGuilds[] | null;
+	user: User | null;
 	visiblePages: PageName[];
 	onNavigate: (name: PageName) => void;
 }) {
+	const { user } = props;
 	return (
 		<div role="presentation" className="w-70">
 			<div className="p-4 flex items-center gap-4">
-				<Avatar alt="user" src="/pepega.png" />
+				<Avatar
+					alt={user ? `${user.username} avatar` : "user"}
+					src={discordAvatarUrl(user) ?? undefined}
+				>
+					{user ? user.username.slice(0, 1).toUpperCase() : null}
+				</Avatar>
 				<h6 className="text-base truncate">
 					{props.isLoggedIn ? "Account" : "Guest"}
 				</h6>

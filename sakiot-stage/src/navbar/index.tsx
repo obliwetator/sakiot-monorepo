@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import type { User } from "../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../Constants";
 import Login from "../login/login";
 import { GuildSelect } from "../shared/GuildSelect";
@@ -15,6 +16,7 @@ function ResponsiveAppBar(props: {
 	guildSelected: UserGuilds | null;
 	setGuildSelected: (guild: UserGuilds | null) => void;
 	userGuilds: UserGuilds[] | null;
+	user: User | null;
 }) {
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -165,7 +167,7 @@ function ResponsiveAppBar(props: {
 						/>
 					</div>
 
-					<UserMenu />
+					<UserMenu user={props.user} />
 				</div>
 			</div>
 
@@ -184,6 +186,7 @@ function ResponsiveAppBar(props: {
 						guildSelected={props.guildSelected}
 						setGuildSelected={props.setGuildSelected}
 						userGuilds={props.userGuilds}
+						user={props.user}
 						visiblePages={visiblePages}
 						onNavigate={handleDrawerNavClick}
 					/>

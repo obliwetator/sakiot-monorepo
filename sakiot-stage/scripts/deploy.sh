@@ -60,6 +60,7 @@ rsync -a --no-owner --no-group --no-perms --no-times --delete --checksum \
   --exclude='assets.legacy-*/' \
   --exclude='index.html' \
   --exclude='version.json' \
+  --exclude='stats.html' \
   "$SRC" "$TARGET/"
 
 INDEX_TEMP="${TARGET}/.index.html.new.$$"

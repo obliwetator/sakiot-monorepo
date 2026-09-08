@@ -6,6 +6,11 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const monorepoRoot = fileURLToPath(new URL("..", import.meta.url));
 
+// The bundle visualizer writes a ~1 MB module graph. It is a debugging tool,
+// not a product asset, so it stays out of `dist/` unless explicitly requested
+// with `bun run analyze`; the publish script also refuses to ship it.
+const analyzeBundle = process.env.ANALYZE === "1";
+
 const bundleBuiltAt = new Date().toISOString();
 const releaseTag = process.env.SAKIOT_RELEASE_TAG ?? "development";
 const commitSha = process.env.SAKIOT_COMMIT_SHA ?? "unknown";
@@ -60,11 +65,15 @@ export default defineConfig(({ command, mode }) => {
 			// plugin-react v6 transforms JSX with oxc and no longer accepts a
 			// `babel` option, so the React Compiler runs as its own preset.
 			babel({ presets: [reactCompilerPreset()] }),
-			visualizer({
-				filename: "dist/stats.html",
-				gzipSize: true,
-				brotliSize: true,
-			}),
+			...(analyzeBundle
+				? [
+						visualizer({
+							filename: "dist/stats.html",
+							gzipSize: true,
+							brotliSize: true,
+						}),
+					]
+				: []),
 		],
 		server: {
 			port: 8081,

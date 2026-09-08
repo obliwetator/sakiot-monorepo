@@ -41,6 +41,7 @@ export function LayoutsWithNavbar() {
 				guildSelected={guildSelected}
 				setGuildSelected={setGuildSelectedAction}
 				userGuilds={userGuilds}
+				user={authData?.user ?? null}
 			/>
 			<div className="flex-1 min-h-0 overflow-auto">
 				<Outlet />
