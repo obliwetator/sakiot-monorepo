@@ -311,6 +311,17 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
 	await page.getByRole("button", { name: "Expand 2026" }).click();
 	await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
+	// Pressing anywhere on a parent row must toggle it, not just the chevron.
+	const yearRow = page.locator('[role="row"][data-key="2026"]');
+	await yearRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
+	await yearRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
+	const monthRow = page.locator('[role="row"][data-key="2026-8"]');
+	await monthRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
+	await monthRow.click();
+	await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
 	await page.getByTitle(RECORDING_FILE).click();
 	if (isMobile) {
 		await expect(
@@ -321,6 +332,17 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	await expect(page).toHaveURL(
 		new RegExp(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}$`),
 	);
+	if (!isMobile) {
+		// With a recording selected the press routes through selection instead of
+		// the primary action; it must still toggle rather than navigate away.
+		await yearRow.click();
+		await expect(page.getByTitle(RECORDING_FILE)).toBeHidden();
+		await yearRow.click();
+		await expect(page.getByTitle(RECORDING_FILE)).toBeVisible();
+		await expect(page).toHaveURL(
+			new RegExp(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}$`),
+		);
+	}
 	await expect(
 		page.getByText(`Session ${SESSION_ID}`, { exact: true }),
 	).toBeVisible();

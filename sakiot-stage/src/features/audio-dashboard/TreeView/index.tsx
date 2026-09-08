@@ -157,6 +157,24 @@ export default function RecordingTree(
 			navigate(targetPath + location.search);
 		}
 	};
+	const toggleExpanded = (itemId: string) => {
+		setExpandedItems((prev) =>
+			prev.includes(itemId)
+				? prev.filter((item) => item !== itemId)
+				: [...prev, itemId],
+		);
+	};
+	// React Aria only expands a row from its chevron button. Year/month/day rows
+	// carry no route, so pressing anywhere on them toggles the branch instead,
+	// while leaves keep navigating. Exactly one of onSelectionChange/onAction
+	// fires per press (mouse and Space select, Enter acts), so both dispatch here.
+	const handleTreePress = (itemId: string) => {
+		if (itemRoutes.has(itemId)) {
+			selectRecording(itemId);
+			return;
+		}
+		toggleExpanded(itemId);
+	};
 
 	return (
 		<div className="w-full rounded-lg bg-surface p-2">
@@ -186,10 +204,10 @@ export default function RecordingTree(
 					onSelectionChange={(keys) => {
 						if (keys !== "all") {
 							const key = [...keys][0];
-							if (key != null) selectRecording(String(key));
+							if (key != null) handleTreePress(String(key));
 						}
 					}}
-					onAction={(key) => selectRecording(String(key))}
+					onAction={(key) => handleTreePress(String(key))}
 					className="mt-3 w-full space-y-1"
 				>
 					{years}
