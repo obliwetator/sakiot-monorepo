@@ -456,7 +456,7 @@ impl RecorderActor {
             self.planned_handoff = None;
             self.metrics.record_recovery_teardown();
             let report = crate::events::voice::teardown_voice_session(
-                &self.ctx.data,
+                &self.env.data,
                 &self.pool,
                 self.guild_id,
                 DepartureNotify::Caller,
@@ -475,13 +475,13 @@ impl RecorderActor {
                     remove_error = report.remove_error,
                     "voice call remained connected after recovery timeout teardown"
                 );
-                return None;
             }
+            let exit_at_ms = deadline_exit(report.connected_after, now_ms)?;
             // Publish the exit before the run loop records the departure, so a
             // concurrent get_or_create waits for termination instead of
             // attaching its receiver to an actor committed to exiting.
             self.stopping.store(true, Ordering::Release);
-            return Some(now_ms);
+            return Some(exit_at_ms);
         }
         None
     }
@@ -544,7 +544,7 @@ impl RecorderActor {
 
     fn scan_users_no_longer_in_recorded_channel(&self) -> Vec<(u64, u32)> {
         let mut users_to_remove = Vec::new();
-        if let Some(guild) = self.ctx.cache.guild(self.guild_id) {
+        if let Some(guild) = self.env.cache.guild(self.guild_id) {
             for (uid, ssrc) in self.recordings.user_ssrc_pairs() {
                 let still_here = guild
                     .voice_states
@@ -559,7 +559,7 @@ impl RecorderActor {
     }
 
     fn human_users_in_channel(&self, channel_id: ChannelId) -> Vec<u64> {
-        let Some(guild) = self.ctx.cache.guild(self.guild_id) else {
+        let Some(guild) = self.env.cache.guild(self.guild_id) else {
             return Vec::new();
         };
         guild
@@ -580,6 +580,14 @@ fn timestamp(at_ms: i64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now)
 }
 
+/// Whether a teardown result commits the actor to exiting.
+///
+/// A call that is still connected after teardown is a failed teardown, not a
+/// departure: the actor stays alive so a later attempt can finish the job.
+fn deadline_exit(connected_after: bool, now_ms: i64) -> Option<i64> {
+    (!connected_after).then_some(now_ms)
+}
+
 fn recoverable_disconnect_timed_out(
     disconnected_at_ms: i64,
     deadline_ms: i64,
@@ -590,7 +598,7 @@ fn recoverable_disconnect_timed_out(
 
 #[cfg(test)]
 mod tests {
-    use super::recoverable_disconnect_timed_out;
+    use super::{deadline_exit, recoverable_disconnect_timed_out};
 
     #[test]
     fn reconnect_before_recovery_deadline_is_preserved() {
@@ -602,5 +610,11 @@ mod tests {
     fn recovery_deadline_fires_at_most_once_after_state_reset() {
         assert!(recoverable_disconnect_timed_out(1_000, 61_000, 61_000));
         assert!(!recoverable_disconnect_timed_out(0, 0, 61_001));
+    }
+
+    #[test]
+    fn a_call_that_survives_teardown_keeps_the_actor_alive() {
+        assert_eq!(deadline_exit(false, 61_000), Some(61_000));
+        assert_eq!(deadline_exit(true, 61_000), None);
     }
 }

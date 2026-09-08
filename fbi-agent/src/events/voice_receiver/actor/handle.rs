@@ -6,15 +6,12 @@ use std::{
     time::Duration,
 };
 
-use serenity::{
-    client::Context,
-    model::id::{ChannelId, GuildId},
-};
+use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 use tracing::warn;
 
-use super::RecorderActor;
+use super::{RecorderActor, RecorderEnv};
 use crate::events::voice_receiver::recordings::{RecorderStats, Recordings};
 
 const COMMAND_CAPACITY: usize = 256;
@@ -37,7 +34,7 @@ pub(in crate::events::voice_receiver) struct RecorderHandle {
 impl RecorderHandle {
     pub(in crate::events::voice_receiver) async fn new(
         pool: Pool<Postgres>,
-        ctx: Arc<Context>,
+        env: RecorderEnv,
         guild_id: GuildId,
         channel_id: ChannelId,
         metrics: Arc<crate::BotMetrics>,
@@ -46,7 +43,7 @@ impl RecorderHandle {
         let guild_metrics = metrics.guild_metrics(guild_id.get());
         let channel_metrics = metrics.channel_metrics(guild_id.get(), channel_id.get());
         let recording_owner_instance_id = {
-            let data = ctx.data.read().await;
+            let data = env.data.read().await;
             data.get::<crate::runtime::RuntimeStateKey>()
                 .map(|runtime| runtime.config().instance_id.clone())
                 .unwrap_or_else(|| {
@@ -62,7 +59,7 @@ impl RecorderHandle {
         let (terminated_tx, terminated_rx) = watch::channel(false);
         let actor = RecorderActor {
             pool,
-            ctx,
+            env,
             guild_id,
             channel_id,
             metrics: metrics.clone(),

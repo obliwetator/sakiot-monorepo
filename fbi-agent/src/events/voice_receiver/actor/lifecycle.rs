@@ -64,7 +64,7 @@ impl RecorderActor {
     }
 
     async fn resolve_member(&self, user_id: u64) -> Option<Member> {
-        let guild = match self.ctx.cache.guild(self.guild_id) {
+        let guild = match self.env.cache.guild(self.guild_id) {
             Some(guild) => guild.to_owned(),
             None => {
                 error!("Guild {} not in cache", self.guild_id);
@@ -76,8 +76,13 @@ impl RecorderActor {
             return Some(member);
         }
 
-        match guild.member(&self.ctx, UserId::new(user_id)).await {
-            Ok(member) => Some(member.into_owned()),
+        match self
+            .env
+            .http
+            .get_member(self.guild_id, UserId::new(user_id))
+            .await
+        {
+            Ok(member) => Some(member),
             Err(err) => {
                 error!("Failed to get member: {}", err);
                 None

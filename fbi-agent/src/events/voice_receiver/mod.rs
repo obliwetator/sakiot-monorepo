@@ -49,7 +49,7 @@ impl RecordingCoordinatorRegistry {
     async fn get_or_create(
         self: &Arc<Self>,
         pool: Pool<Postgres>,
-        ctx: Arc<Context>,
+        env: actor::RecorderEnv,
         guild_id: GuildId,
         channel_id: ChannelId,
         metrics: Arc<crate::BotMetrics>,
@@ -65,7 +65,7 @@ impl RecordingCoordinatorRegistry {
                 } else {
                     let actor = actor::RecorderHandle::new(
                         pool.clone(),
-                        ctx.clone(),
+                        env.clone(),
                         guild_id,
                         channel_id,
                         metrics.clone(),
@@ -114,7 +114,13 @@ impl Receiver {
         let actor = match registry {
             Some(registry) => {
                 registry
-                    .get_or_create(pool, ctx.clone(), guild_id, channel_id, metrics)
+                    .get_or_create(
+                        pool,
+                        actor::RecorderEnv::from_ctx(&ctx),
+                        guild_id,
+                        channel_id,
+                        metrics,
+                    )
                     .await
             }
             None => {
@@ -122,8 +128,15 @@ impl Receiver {
                     guild_id = guild_id.get(),
                     "recording coordinator registry missing; using unregistered actor"
                 );
-                actor::RecorderHandle::new(pool, ctx.clone(), guild_id, channel_id, metrics, None)
-                    .await
+                actor::RecorderHandle::new(
+                    pool,
+                    actor::RecorderEnv::from_ctx(&ctx),
+                    guild_id,
+                    channel_id,
+                    metrics,
+                    None,
+                )
+                .await
             }
         };
         Self {

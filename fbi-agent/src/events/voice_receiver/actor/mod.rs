@@ -6,12 +6,18 @@
 //! - [`lifecycle`]: opening, writing, heartbeating, and finalizing recordings
 //! - [`recovery`]: pause/resume, disconnect recovery, deadlines, stale reaping
 //! - [`packets`]: RTP payload extraction and disconnect command mapping
+//! - [`env`]: the narrow Discord client surface the actor depends on
 
+mod env;
 mod handle;
 mod lifecycle;
 mod packets;
 mod recovery;
 
+#[cfg(test)]
+mod tests;
+
+pub(super) use env::RecorderEnv;
 pub(super) use handle::{RecorderCommand, RecorderHandle, VoicePacket};
 pub(super) use packets::{disconnect_command, extract_opus_payload};
 
@@ -23,10 +29,7 @@ use std::{
     time::Duration,
 };
 
-use serenity::{
-    client::Context,
-    model::id::{ChannelId, GuildId},
-};
+use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 
@@ -41,7 +44,7 @@ const DEADLINE_INTERVAL: Duration = Duration::from_secs(1);
 
 struct RecorderActor {
     pool: Pool<Postgres>,
-    ctx: Arc<Context>,
+    env: RecorderEnv,
     guild_id: GuildId,
     channel_id: ChannelId,
     metrics: Arc<crate::BotMetrics>,
