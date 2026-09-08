@@ -1,2 +1,7 @@
+# Bun's default discovery also matches Playwright's `e2e/*.spec.ts`, which
+# cannot run under `bun test` ("Playwright Test did not expect test() to be
+# called here"). Pin discovery to the unit tests so `bun test` and the
+# `test` script agree; run the specs with `bun run test:e2e`.
 [test]
+root = "./src"
 preload = ["./test-setup.ts"]

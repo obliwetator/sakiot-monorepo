@@ -1,0 +1,6 @@
+# There is no root package.json; this exists only so `bun test` run from the
+# repository root resolves the same unit tests as `cd sakiot-stage && bun test`.
+# The frontend's own sakiot-stage/bunfig.toml governs runs from that directory.
+[test]
+root = "./sakiot-stage/src"
+preload = ["./sakiot-stage/test-setup.ts"]
