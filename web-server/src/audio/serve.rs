@@ -34,6 +34,14 @@ pub struct AudioQuery {
     pub silence: Option<bool>,
 }
 
+impl AudioQuery {
+    /// The silence-free variant is selected only by an explicit `?silence=true`.
+    /// An absent parameter and `?silence=false` both mean the original audio.
+    pub fn wants_silence_free(&self) -> bool {
+        self.silence == Some(true)
+    }
+}
+
 #[route(
     "/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
     method = "GET",
@@ -65,7 +73,7 @@ pub async fn get_audio(
     )
     .await?;
 
-    let silence_free = query_param.silence.is_some();
+    let silence_free = query_param.wants_silence_free();
     let root = if silence_free {
         no_silence_recording_path()
     } else {
@@ -80,7 +88,7 @@ pub async fn get_audio(
     if let Ok(f) = NamedFile::open_async(&path).await {
         return Ok(f.into_response(&req));
     }
-    if query_param.silence.is_some() {
+    if query_param.wants_silence_free() {
         return Err(AppError::FileNotFound);
     }
     let audio_file_id = crate::media_archive::recording_id(
@@ -137,7 +145,7 @@ pub async fn download_audio(
     )
     .await?;
 
-    let silence_free = is_silence.silence.is_some();
+    let silence_free = is_silence.wants_silence_free();
     let root = if silence_free {
         no_silence_recording_path()
     } else {
@@ -163,7 +171,7 @@ pub async fn download_audio(
             })
             .into_response(&req));
     }
-    if is_silence.silence.is_some() {
+    if is_silence.wants_silence_free() {
         return Err(AppError::FileNotFound);
     }
     let audio_file_id = crate::media_archive::recording_id(
@@ -188,7 +196,7 @@ pub async fn download_audio(
 
 #[cfg(test)]
 mod tests {
-    use super::audio_leaf;
+    use super::{AudioQuery, audio_leaf};
 
     #[test]
     fn audio_leaf_adds_ogg_to_a_recording_stem() {
@@ -206,5 +214,22 @@ mod tests {
     #[test]
     fn audio_leaf_adds_the_silence_free_prefix_after_normalizing() {
         assert_eq!(audio_leaf("recording", true), "_no_silence_recording.ogg");
+    }
+
+    #[test]
+    fn silence_free_variant_requires_an_explicit_true() {
+        assert!(
+            AudioQuery {
+                silence: Some(true)
+            }
+            .wants_silence_free()
+        );
+        assert!(
+            !AudioQuery {
+                silence: Some(false)
+            }
+            .wants_silence_free()
+        );
+        assert!(!AudioQuery { silence: None }.wants_silence_free());
     }
 }

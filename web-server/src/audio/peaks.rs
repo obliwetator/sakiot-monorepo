@@ -114,7 +114,7 @@ pub async fn get_waveform_data(
     // Silence-free version is a separate static file: distinct input,
     // distinct cache/progress key. No DB cache marker — the file is final
     // once produced, so on-disk existence is the cache.
-    if query.silence.is_some() {
+    if query.wants_silence_free() {
         return silence_free_waveform(&path, &progress_map).await;
     }
 
