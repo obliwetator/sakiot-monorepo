@@ -65,8 +65,13 @@ echo "public tables restored: $tables"
 # Migration ledger: every migration in migrations/ should already be applied
 # in the restored db (warn, don't hard-fail — baseline is schema-only).
 if command -v sqlx >/dev/null 2>&1 && [[ -d "$MIGRATIONS_DIR" ]]; then
-  if DATABASE_URL="$TEST_DATABASE_URL" \
-       sqlx migrate info --source "$MIGRATIONS_DIR" 2>/dev/null | grep -qi pending; then
+  # Capture the output and the exit status separately: piping into grep would
+  # hide a sqlx failure (unreachable database, bad credentials) behind grep's
+  # "no match" status, silently skipping the check.
+  if ! migration_info="$(DATABASE_URL="$TEST_DATABASE_URL" \
+       sqlx migrate info --source "$MIGRATIONS_DIR" 2>&1)"; then
+    echo "WARN: migration check failed: ${migration_info}" >&2
+  elif grep -qi pending <<<"${migration_info}"; then
     echo "WARN: restored db reports pending migrations" >&2
   fi
 else

@@ -58,9 +58,12 @@ chmod 0755 "${install_root}/systemctl-wrapper"
 # sakiot user (cargo lives in its home), installed root-owned.
 if sudo -u sakiot bash -lc 'command -v cargo' >/dev/null 2>&1; then
   repo_root="$(cd "${script_dir}/.." && pwd)"
+  # The path is a positional argument, not interpolated into the script: a
+  # checkout path containing a quote would otherwise break the command.
   sudo -u sakiot bash -lc \
-    "cd '${repo_root}' && CARGO_TARGET_DIR=/var/cache/sakiot/cargo-target \
-     cargo build --release --locked --package sakiot-deploy"
+    'cd "$1" && CARGO_TARGET_DIR=/var/cache/sakiot/cargo-target \
+     cargo build --release --locked --package sakiot-deploy' \
+    _ "${repo_root}"
   install -d -o root -g root -m 0755 "${install_root}/bin"
   install -o root -g root -m 0755 \
     /var/cache/sakiot/cargo-target/release/sakiot-deploy \
@@ -117,7 +120,14 @@ fi
 install -d -o sakiot -g sakiot -m 0700 /var/lib/sakiot/.ssh
 authorized_keys="/var/lib/sakiot/.ssh/authorized_keys"
 forced_options="restrict,command=\"${install_root}/ssh/forced-command\""
-printf '%s %s\n' "${forced_options}" "${public_key}" >"${authorized_keys}"
+# Append instead of overwriting: re-running the installer must not revoke
+# keys that were already authorized (e.g. a second operator or a rotated key
+# added by hand).
+entry="${forced_options} ${public_key}"
+touch "${authorized_keys}"
+if ! grep -qxF "${entry}" "${authorized_keys}"; then
+  printf '%s\n' "${entry}" >>"${authorized_keys}"
+fi
 chown sakiot:sakiot "${authorized_keys}"
 chmod 0600 "${authorized_keys}"
 
