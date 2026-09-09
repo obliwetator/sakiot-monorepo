@@ -17,7 +17,6 @@ import {
 	TimelinePlayhead,
 	TimelineRow,
 } from "../audio-dashboard/timelineLayout";
-import { EMPTY_WAVEFORM_ENVELOPE } from "../audio-dashboard/waveformPeaks";
 import type { TimelineSegment } from "./model";
 import {
 	effectiveRate,
@@ -34,6 +33,7 @@ import type {
 } from "./timelineDrag";
 import { dragGroupForSelection } from "./timelineDrag";
 import type { UseClipEditorReturn } from "./useClipEditor";
+import { useClipWaveform } from "./useClipWaveform";
 import { useProcessedSegmentWaveform } from "./useProcessedSegmentWaveform";
 
 const TRACK_HEIGHT_PX = 83;
@@ -346,10 +346,13 @@ function TrackSegment(props: {
 	onBeginDrag: (drag: SegmentDragState) => void;
 }) {
 	const { segment, editor } = props;
+	// Before the first processed render, draw the source clip's waveform (the
+	// documented fallback) instead of leaving the segment blank.
+	const sourceWaveform = useClipWaveform(props.guildId, segment.sourceId);
 	const waveform = useProcessedSegmentWaveform(
 		props.guildId,
 		segment,
-		EMPTY_WAVEFORM_ENVELOPE,
+		sourceWaveform,
 	);
 	const durationSec = props.maxSource > 0 ? props.maxSource : segment.sourceOut;
 
@@ -693,10 +696,11 @@ function MergedMemberWaveform(props: {
 	muted: boolean;
 }) {
 	const { segment } = props;
+	const sourceWaveform = useClipWaveform(props.guildId, segment.sourceId);
 	const waveform = useProcessedSegmentWaveform(
 		props.guildId,
 		segment,
-		EMPTY_WAVEFORM_ENVELOPE,
+		sourceWaveform,
 	);
 	const durationSec =
 		props.editor.sourceDuration(segment.sourceId) ?? segment.sourceOut;
