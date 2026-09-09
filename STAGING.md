@@ -110,9 +110,8 @@ location / {
   runtime-gated: set
   `DEV_ACCOUNT_ID` + `DEV_LOGIN_SECRET` in `staging.env` and restart
   `sakiot-staging-web.service`. The frontend shows the button on hosts containing
-  `debug`/`dev`/`staging` (`sakiot-stage/src/login/login.tsx`); leave
-  `VITE_DEV_LOGIN_SECRET` unset so the secret is prompted, not baked into the
-  public bundle.
+  `debug`/`dev`/`staging` (`sakiot-stage/src/login/login.tsx`) and always prompts
+  for the secret, so it is never baked into the public bundle.
 
 ## GitHub
 

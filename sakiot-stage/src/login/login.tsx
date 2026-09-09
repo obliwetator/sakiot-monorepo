@@ -1,4 +1,5 @@
 import type React from "react";
+import { API_ROUTES, apiAbsoluteUrl } from "../api/routes";
 import { BASE_API_URL, useLogoutMutation } from "../app/apiSlice";
 import { captureCsrfToken, setCsrfToken } from "../app/authedFetch";
 import { Button } from "../shared/ui";
@@ -11,7 +12,7 @@ export default function Login(props: {
 	const handleLogin = () => {
 		const origin = encodeURIComponent(window.location.origin);
 		window.open(
-			`${BASE_API_URL}oauth/start?origin=${origin}`,
+			`${apiAbsoluteUrl(API_ROUTES.oauthStart)}?origin=${origin}`,
 			"popup",
 			"width=500,height=800",
 		);
@@ -36,15 +37,20 @@ export default function Login(props: {
 		window.location.hostname.includes("preview");
 
 	const handleDevLogin = async () => {
-		const secret =
-			(import.meta.env.VITE_DEV_LOGIN_SECRET as string | undefined) ||
-			window.prompt("Dev login secret:") ||
-			"";
+		// Always prompt. A build-time VITE_DEV_LOGIN_SECRET would be compiled
+		// into the public bundle, where anyone could read the secret that
+		// mints dev sessions.
+		const secret = window.prompt("Dev login secret:") ?? "";
 		if (!secret) return;
-		const res = await fetch(`${BASE_API_URL}dev_login?t=${Date.now()}`, {
-			credentials: "include",
-			headers: { "X-Dev-Login-Secret": secret },
-		});
+		// Not part of the documented API: the endpoint only exists in
+		// dev-login builds, so it cannot come from API_ROUTES.
+		const res = await fetch(
+			`${BASE_API_URL}dev_login?t=${Date.now()}`, // raw-url-ok
+			{
+				credentials: "include",
+				headers: { "X-Dev-Login-Secret": secret },
+			},
+		);
 		if (!res.ok) {
 			console.error("dev login failed", res.status);
 			return;

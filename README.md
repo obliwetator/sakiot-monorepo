@@ -41,8 +41,9 @@ must choose `--fixtures skip` or `--fixtures full`.
 
 `cargo dev up` supervises `web-server` under Cargo Watch and the frontend under
 Bun, prefixes their output, and stops both when either exits or Ctrl+C is
-pressed. Discord OAuth is not needed: the frontend's dev login button calls
-`/api/dev_login` using `VITE_DEV_LOGIN_SECRET`.
+pressed. Discord OAuth is not needed: the frontend's dev login button prompts
+for the secret written to `DEV_LOGIN_SECRET` in `.env` and sends it to
+`/api/dev_login`. The secret is never compiled into the bundle.
 
 Stopping `cargo dev up` with Ctrl+C also stops the local PostgreSQL container. Its
 named volume is preserved, so the next run starts with the same database.

@@ -35,8 +35,7 @@ pub fn ensure_local_environment(root: &Path, config: &Config) -> Result<()> {
                 ("JWT_ACCESS_SECRET", access_secret),
                 ("JWT_REFRESH_SECRET", refresh_secret),
                 ("DEV_ACCOUNT_ID", config.dev_account_id.to_string()),
-                ("DEV_LOGIN_SECRET", dev_secret.clone()),
-                ("VITE_DEV_LOGIN_SECRET", dev_secret),
+                ("DEV_LOGIN_SECRET", dev_secret),
                 ("PORT", port.to_string()),
             ],
             port,
@@ -59,15 +58,19 @@ pub fn ensure_local_environment(root: &Path, config: &Config) -> Result<()> {
         let port = env_value("PORT")
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(config.port);
-        let content = format!(
-            "VITE_API_URL=http://localhost:{}/api/\nVITE_DEV_LOGIN_SECRET={}\n",
-            port,
-            env_value("DEV_LOGIN_SECRET").unwrap_or_default()
-        );
+        let content = frontend_env_content(port);
         atomic_write_private(&frontend_env, content.as_bytes())?;
         log(format!("wrote {}", frontend_env.display()));
     }
     Ok(())
+}
+
+/// The generated frontend env holds only the API origin. The dev-login secret
+/// is deliberately absent: Vite inlines every `VITE_*` value into the public
+/// client bundle, so writing it here would publish the secret that mints dev
+/// sessions. The frontend always prompts for it instead.
+fn frontend_env_content(port: u16) -> String {
+    format!("VITE_API_URL=http://localhost:{port}/api/\n")
 }
 
 pub fn prepare_media_dirs(data_dir: &Path) -> Result<()> {
@@ -193,6 +196,18 @@ mod tests {
         assert_eq!(
             fs::metadata(path).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+    }
+
+    #[test]
+    fn frontend_env_carries_only_the_api_origin() {
+        // Regression: the dev-login secret used to be written here as
+        // VITE_DEV_LOGIN_SECRET, which Vite compiles into the public bundle.
+        let content = frontend_env_content(8904);
+        assert_eq!(content, "VITE_API_URL=http://localhost:8904/api/\n");
+        assert!(
+            !content.to_lowercase().contains("secret"),
+            "the frontend env must never carry a secret: {content}"
         );
     }
 }
