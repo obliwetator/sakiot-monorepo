@@ -208,6 +208,12 @@ async fn process_item_inner(
         }
     }
 
+    // The digest taken here is the archive's identity for these bytes: the
+    // object key, the recorded metadata, and the upload all derive from it.
+    // The local file could still change between hashing and uploading, so the
+    // post-upload verify_object re-reads the stored object against this same
+    // digest; a mismatch fails verification instead of publishing bytes under
+    // a hash they do not have.
     let digest = hash_file(&item.path).await?;
     let Some(key) = object_key(&item.source, &digest.sha256) else {
         repository::mark_conflict(
