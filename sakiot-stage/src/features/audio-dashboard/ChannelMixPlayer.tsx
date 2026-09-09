@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_ROUTES, apiUrl } from "../../api/routes";
 import type {
 	ChannelMixParticipantSettings,
 	ChannelMixResponse,
@@ -231,7 +232,9 @@ export function ChannelMixPlayer(props: {
 		setDownloadError(null);
 		try {
 			const response = await authedFetch(
-				`audio/sessions/${props.sessionId}/channel-mix/media?download=true&scope=${props.mix.scope}`,
+				`${apiUrl(API_ROUTES.sessionChannelMixMedia, {
+					recording_session_id: props.sessionId,
+				})}?download=true&scope=${props.mix.scope}`,
 			);
 			if (!response.ok) {
 				setDownloadError(`Download failed (${response.status}).`);

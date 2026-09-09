@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { API_ROUTES, apiUrl } from "../../api/routes";
 import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
 
 import { PcmBudget, SOURCE_CACHE_BYTES } from "./pcmBudget";
@@ -22,6 +23,29 @@ export function clipBufferKey(guildId: string, clipId: string): string {
 	return `${guildId}/${clipId}`;
 }
 
+type EvictListener = (key: string) => void;
+const evictListeners = new Set<EvictListener>();
+
+/**
+ * Notified when the shared PCM budget drops a decoded buffer. Callers that
+ * keep their own strong reference (the editor's playback map) must drop it
+ * too, or eviction frees nothing. Returns an unsubscribe function.
+ */
+export function onClipBufferEvicted(listener: EvictListener): () => void {
+	evictListeners.add(listener);
+	return () => {
+		evictListeners.delete(listener);
+	};
+}
+
+function evictBuffer(key: string, promise: Promise<AudioBuffer>): void {
+	if (bufferCache.get(key) !== promise) return;
+	bufferCache.delete(key);
+	// The composite `{guild}/{clip}` key: a clip id alone could belong to
+	// another guild's editor.
+	for (const listener of evictListeners) listener(key);
+}
+
 export function loadClipBuffer(
 	guildId: string,
 	clipId: string,
@@ -34,7 +58,7 @@ export function loadClipBuffer(
 	}
 	const promise = decodeQueue.then(async () => {
 		const response = await authedFetch(
-			`audio/clips/${guildId}/${encodeURIComponent(clipId)}`,
+			apiUrl(API_ROUTES.clip, { guild_id: guildId, clip_id: clipId }),
 		);
 		if (!response.ok) {
 			// authedFetch already retried once after a refresh; a 401 here
@@ -55,12 +79,8 @@ export function loadClipBuffer(
 	bufferCache.set(key, promise);
 	promise.then(
 		(buffer) => {
-			cacheBudget.retain(
-				key,
-				buffer.length * buffer.numberOfChannels * 4,
-				() => {
-					if (bufferCache.get(key) === promise) bufferCache.delete(key);
-				},
+			cacheBudget.retain(key, buffer.length * buffer.numberOfChannels * 4, () =>
+				evictBuffer(key, promise),
 			);
 		},
 		() => {

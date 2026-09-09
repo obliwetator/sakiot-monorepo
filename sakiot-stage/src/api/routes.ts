@@ -10,6 +10,7 @@ import type { paths } from "./openapi";
  */
 export const API_ROUTES = {
 	jamIt: "/api/jamit",
+	oauthStart: "/api/oauth/start",
 	removeSilence:
 		"/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
 	refresh: "/api/refresh",
@@ -21,6 +22,12 @@ export const API_ROUTES = {
 	sessionWaveform: "/api/audio/sessions/{recording_session_id}/waveform",
 	sessionSilenceFreeWaveform:
 		"/api/audio/sessions/{recording_session_id}/silence-free/waveform",
+	sessionSilenceFree: "/api/audio/sessions/{recording_session_id}/silence-free",
+	sessionRemoveSilence:
+		"/api/audio/sessions/{recording_session_id}/remove-silence",
+	sessionDownload: "/api/audio/sessions/{recording_session_id}/download",
+	sessionChannelMixMedia:
+		"/api/audio/sessions/{recording_session_id}/channel-mix/media",
 	sessionWaveformRebuild:
 		"/api/audio/sessions/{recording_session_id}/waveform/rebuild",
 	sessionSilenceFreeWaveformRebuild:
@@ -41,6 +48,8 @@ export const API_ROUTES = {
 		"/api/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file}",
 	liveState:
 		"/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/state",
+	livePlaylist:
+		"/api/audio/live/{guild_id}/{channel_id}/{year}/{month}/{stem}/playlist.m3u8",
 	guildCooldown: "/api/admin/guilds/{guild_id}/cooldown",
 	userOverrides: "/api/admin/guilds/{guild_id}/cooldown/overrides",
 	userOverride: "/api/admin/guilds/{guild_id}/cooldown/overrides/{user_id}",
@@ -82,4 +91,16 @@ export function apiUrl(
 	return BASE_API_URL.endsWith(API_SUFFIX)
 		? path.slice(API_SUFFIX.length)
 		: path;
+}
+
+/**
+ * Absolute URL for a documented route. Media elements (`<audio src>`, HLS
+ * playlists) need a full origin, unlike `apiUrl`'s relative fetch path.
+ */
+export function apiAbsoluteUrl(
+	route: ApiRoute,
+	params?: Record<string, string | number>,
+): string {
+	const base = BASE_API_URL.endsWith("/") ? BASE_API_URL : `${BASE_API_URL}/`;
+	return `${base}${apiUrl(route, params)}`;
 }
