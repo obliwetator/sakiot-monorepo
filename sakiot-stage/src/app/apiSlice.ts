@@ -55,6 +55,19 @@ function withCsrfHeader(args: string | FetchArgs): string | FetchArgs {
 	return { ...args, headers };
 }
 
+/**
+ * Set once per expiry episode so the invalidated auth probe, which itself 401s
+ * and fails its own refresh, cannot trigger another invalidation. A successful
+ * refresh (a new session) clears it.
+ */
+let sessionExpiryHandled = false;
+
+/** The auth probe: a success means the document now has a live session. */
+function isAuthProbe(args: string | FetchArgs): boolean {
+	const url = typeof args === "string" ? args : args.url;
+	return url.endsWith("users/current");
+}
+
 const baseQueryWithReauth: BaseQueryFn<
 	string | FetchArgs,
 	unknown,
@@ -62,9 +75,25 @@ const baseQueryWithReauth: BaseQueryFn<
 > = async (args, api, extraOptions) => {
 	let result = await baseQuery(withCsrfHeader(args), api, extraOptions);
 
+	// A successful auth probe means a session was re-established inside this
+	// document (OAuth popup or dev login without a reload), so the next expiry
+	// must be able to flip the shell again.
+	if (!result.error && sessionExpiryHandled && isAuthProbe(args)) {
+		sessionExpiryHandled = false;
+	}
+
 	if (result.error && result.error.status === 401) {
 		const ok = await ensureRefreshed();
-		if (ok) result = await baseQuery(withCsrfHeader(args), api, extraOptions);
+		if (ok) {
+			sessionExpiryHandled = false;
+			result = await baseQuery(withCsrfHeader(args), api, extraOptions);
+		} else if (!sessionExpiryHandled) {
+			// The refresh token is gone too: the session is over. Drop the
+			// cached auth details so the shell renders the logged-out state
+			// instead of a logged-in UI whose every action 401s.
+			sessionExpiryHandled = true;
+			api.dispatch(apiSlice.util.invalidateTags(["Auth"]));
+		}
 	}
 	return result;
 };
@@ -105,7 +134,13 @@ export type RoleView = ApiSchema["RoleView"];
 export const apiSlice = createApi({
 	reducerPath: "api",
 	baseQuery: baseQueryWithReauth,
-	tagTypes: ["Clips", "GuildCooldown", "UserOverrides", "GuildVoiceSettings"],
+	tagTypes: [
+		"Auth",
+		"Clips",
+		"GuildCooldown",
+		"UserOverrides",
+		"GuildVoiceSettings",
+	],
 	endpoints: (builder) => ({
 		jamIt: builder.mutation<
 			{ code: JamItRespStatus },
@@ -568,6 +603,9 @@ export const apiSlice = createApi({
 		),
 		// Combine all 3 requests into a single query to emulate the existing Promise.all behavior
 		getAuthDetails: builder.query<AuthDetails, void>({
+			// Invalidated when a refresh fails, so the shell drops back to the
+			// login screen the moment the session expires.
+			providesTags: ["Auth"],
 			async queryFn(_arg, _queryApi, _extraOptions, fetchWithBQ) {
 				const [userResult, guildsResult] = await Promise.all([
 					fetchWithBQ(apiUrl(API_ROUTES.currentUser)),

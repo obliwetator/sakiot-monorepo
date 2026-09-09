@@ -8,6 +8,7 @@ import {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { API_ROUTES, apiUrl } from "../../api/routes";
 import {
 	BASE_API_URL,
 	type ClipData,
@@ -344,17 +345,26 @@ export function ClipPlayer(props: {
 
 	const download = async () => {
 		setError(null);
-		const response = await authedFetch(
-			`audio/clips/${props.clip.guild_id}/${encodeURIComponent(props.clip.clip_id)}`,
-		);
-		if (!response.ok) {
-			setError(`Clip download failed (${response.status}).`);
-			return;
+		try {
+			const response = await authedFetch(
+				apiUrl(API_ROUTES.clip, {
+					guild_id: props.clip.guild_id,
+					clip_id: props.clip.clip_id,
+				}),
+			);
+			if (!response.ok) {
+				setError(`Clip download failed (${response.status}).`);
+				return;
+			}
+			saveBlob(
+				await response.blob(),
+				`${safeFileName(props.clip.name ?? props.clip.clip_id)}.ogg`,
+			);
+		} catch {
+			// A dropped connection rejects instead of returning a response;
+			// without this the button silently did nothing.
+			setError("Clip download failed. Check your connection and try again.");
 		}
-		saveBlob(
-			await response.blob(),
-			`${safeFileName(props.clip.name ?? props.clip.clip_id)}.ogg`,
-		);
 	};
 
 	const displayedPosition = seekPreview ?? position;
