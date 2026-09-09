@@ -622,3 +622,27 @@ async fn ffmpeg_fixture_starts_delayed_audio_at_the_expected_offset() {
         "silence_end={silence_end}"
     );
 }
+
+#[test]
+fn selected_session_mix_cache_is_separate_from_all_recordings() {
+    // Both scopes used to share one directory, so each render overwrote the
+    // other's output and fingerprint and every scope switch regenerated the
+    // mix. AllRecordings keeps the legacy path for existing cached mixes.
+    let access = session_access("finalized");
+    let all = mix_cache_dir(&access, &[], ChannelMixScope::AllRecordings);
+    let selected = mix_cache_dir(&access, &[], ChannelMixScope::SelectedSession);
+
+    assert_eq!(
+        selected,
+        all.join(format!("session-{}", access.session_id)),
+        "the selected-session cache must be keyed by the session, not the anchor"
+    );
+    assert_ne!(selected, all);
+    // Two sessions sharing guild/channel/started_at must not collide.
+    let mut other = session_access("finalized");
+    other.session_id = access.session_id + 1;
+    assert_ne!(
+        mix_cache_dir(&other, &[], ChannelMixScope::SelectedSession),
+        selected
+    );
+}
