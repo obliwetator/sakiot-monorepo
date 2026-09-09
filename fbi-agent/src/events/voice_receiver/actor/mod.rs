@@ -139,8 +139,12 @@ impl RecorderActor {
             RecorderCommand::SpeakingState { user_id, ssrc } => {
                 self.handle_speaking_state_update(user_id, ssrc).await;
             }
-            RecorderCommand::VoiceTick { at_ms, packets } => {
-                self.handle_voice_tick(at_ms, packets).await;
+            RecorderCommand::VoiceTick {
+                at_ms,
+                packets,
+                silence_ticks,
+            } => {
+                self.handle_voice_tick(at_ms, packets, silence_ticks).await;
             }
             RecorderCommand::ClientDisconnect { user_id, at_ms } => {
                 self.handle_client_disconnect(user_id, at_ms).await;

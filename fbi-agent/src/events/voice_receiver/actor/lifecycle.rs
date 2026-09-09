@@ -192,7 +192,12 @@ impl RecorderActor {
         info!("1 file created for ssrc: {}", ssrc);
     }
 
-    pub(super) async fn handle_voice_tick(&mut self, at_ms: i64, packets: Vec<VoicePacket>) {
+    pub(super) async fn handle_voice_tick(
+        &mut self,
+        at_ms: i64,
+        packets: Vec<VoicePacket>,
+        silence_ticks: u32,
+    ) {
         let packet_map: HashMap<u32, Vec<u8>> = packets
             .into_iter()
             .filter(|packet| !packet.opus.is_empty())
@@ -204,22 +209,29 @@ impl RecorderActor {
             let Some(recording) = self.recordings.active_get_mut(ssrc) else {
                 continue;
             };
-            let result = match packet_map.get(&ssrc) {
-                Some(bytes) => {
-                    self.stats
-                        .last_voice_packet_time
-                        .store(at_ms, Ordering::Relaxed);
-                    self.metrics.track_last_voice_packet(
-                        &self.guild_metrics,
-                        &self.channel_metrics,
-                        at_ms,
-                    );
-                    self.metrics
-                        .track_audio_packet_received(&self.guild_metrics, &self.channel_metrics);
-                    recording.writer.write_packet(bytes)
+            let packet = packet_map.get(&ssrc);
+            if packet.is_some() {
+                self.stats
+                    .last_voice_packet_time
+                    .store(at_ms, Ordering::Relaxed);
+                self.metrics.track_last_voice_packet(
+                    &self.guild_metrics,
+                    &self.channel_metrics,
+                    at_ms,
+                );
+                self.metrics
+                    .track_audio_packet_received(&self.guild_metrics, &self.channel_metrics);
+            }
+            let mut result = Ok(());
+            for write in tick_writes(packet.map(Vec::as_slice), silence_ticks) {
+                result = match write {
+                    TickWrite::Silence(frames) => recording.writer.write_silence(frames),
+                    TickWrite::Packet(bytes) => recording.writer.write_packet(bytes),
+                };
+                if result.is_err() {
+                    break;
                 }
-                None => recording.writer.write_silence(1),
-            };
+            }
 
             if let Err(err) = result {
                 error!("Writer error for ssrc {}: {}", ssrc, err);
@@ -402,5 +414,55 @@ fn finalize_reason(event_type: VoiceEventType) -> RecordingFinalizeReason {
         VoiceEventType::WriterClose => RecordingFinalizeReason::WriterClose,
         VoiceEventType::WriterError => RecordingFinalizeReason::WriterError,
         VoiceEventType::ZombieReaped => RecordingFinalizeReason::ZombieReaped,
+    }
+}
+
+/// One ordered write for a tick.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TickWrite<'a> {
+    Silence(u64),
+    Packet(&'a [u8]),
+}
+
+/// The writes for one tick, in timeline order. A dropped tick occupied the
+/// frames BEFORE the delivered packet, so the compensating silence comes first;
+/// writing it afterwards would place the recovered packet early and every
+/// later frame would keep that offset.
+pub(super) fn tick_writes<'a>(packet: Option<&'a [u8]>, silence_ticks: u32) -> Vec<TickWrite<'a>> {
+    match packet {
+        Some(bytes) => {
+            let mut writes = Vec::with_capacity(2);
+            if silence_ticks > 0 {
+                writes.push(TickWrite::Silence(u64::from(silence_ticks)));
+            }
+            writes.push(TickWrite::Packet(bytes));
+            writes
+        }
+        None => vec![TickWrite::Silence(1 + u64::from(silence_ticks))],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TickWrite, tick_writes};
+
+    #[test]
+    fn compensation_silence_precedes_the_recovered_packet() {
+        let packet = [1u8, 2, 3];
+        assert_eq!(
+            tick_writes(Some(&packet), 3),
+            vec![TickWrite::Silence(3), TickWrite::Packet(&packet)],
+        );
+        // Without dropped ticks the packet is written on its own.
+        assert_eq!(
+            tick_writes(Some(&packet), 0),
+            vec![TickWrite::Packet(&packet)],
+        );
+    }
+
+    #[test]
+    fn a_silent_user_writes_one_frame_per_tick_plus_the_debt() {
+        assert_eq!(tick_writes(None, 0), vec![TickWrite::Silence(1)]);
+        assert_eq!(tick_writes(None, 4), vec![TickWrite::Silence(5)]);
     }
 }

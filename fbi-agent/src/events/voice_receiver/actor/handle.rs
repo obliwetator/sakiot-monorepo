@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -16,6 +16,10 @@ use crate::events::voice_receiver::recordings::{RecorderStats, Recordings};
 
 const COMMAND_CAPACITY: usize = 256;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
+/// Upper bound on the silence ticks one delivery replays after a stall. The
+/// recorder writes 20 ms frames, so this caps the compensating burst at five
+/// seconds instead of letting a long stall write a huge silent gap.
+const MAX_COMPENSATED_TICKS: u32 = 250;
 
 #[derive(Clone)]
 pub(in crate::events::voice_receiver) struct RecorderHandle {
@@ -27,6 +31,9 @@ pub(in crate::events::voice_receiver) struct RecorderHandle {
     current_channel_id: Arc<AtomicU64>,
     actor_id: Arc<()>,
     stopping: Arc<AtomicBool>,
+    /// Ticks the bounded queue refused since the last delivery; the next
+    /// delivered tick replays them as silence to keep the recording aligned.
+    dropped_ticks: Arc<AtomicU32>,
     shutdown_tx: watch::Sender<Option<i64>>,
     terminated_rx: watch::Receiver<bool>,
 }
@@ -90,6 +97,7 @@ impl RecorderHandle {
             current_channel_id,
             actor_id,
             stopping,
+            dropped_ticks: Arc::new(AtomicU32::new(0)),
             shutdown_tx,
             terminated_rx,
         }
@@ -152,12 +160,32 @@ impl RecorderHandle {
         packets: Vec<VoicePacket>,
     ) {
         let packet_count = packets.len();
-        match self
-            .tx
-            .try_send(RecorderCommand::VoiceTick { at_ms, packets })
-        {
-            Ok(()) => {}
+        // Ticks dropped since the last delivery. The recorder advances every
+        // active user by exactly one frame per tick, so a dropped tick has to
+        // be replayed as silence or every later frame shifts earlier than its
+        // wall-clock timestamp.
+        let owed = self.dropped_ticks.swap(0, Ordering::Relaxed);
+        // One delivery replays at most MAX_COMPENSATED_TICKS frames; the rest
+        // stays owed, so even a stall longer than the cap ends with an aligned
+        // timeline instead of losing the excess time for good.
+        let (silence_ticks, remaining) = split_compensation(owed);
+        match self.tx.try_send(RecorderCommand::VoiceTick {
+            at_ms,
+            packets,
+            silence_ticks,
+        }) {
+            Ok(()) => {
+                if remaining > 0 {
+                    // fetch_add, not store: a concurrent sender may have added
+                    // debt since the swap and a store would drop it.
+                    self.dropped_ticks.fetch_add(remaining, Ordering::Relaxed);
+                }
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
+                // Put the whole debt back, plus this tick, for the next
+                // delivery.
+                self.dropped_ticks
+                    .fetch_add(owed.saturating_add(1), Ordering::Relaxed);
                 let drop_count =
                     voice_tick_drop_count(self.stats.active_user_count(), packet_count);
                 self.metrics.track_audio_packets_dropped(
@@ -167,6 +195,8 @@ impl RecorderHandle {
                 );
                 warn!(
                     drop_count,
+                    compensated_ticks = silence_ticks,
+                    outstanding_ticks = remaining,
                     "recorder voice tick dropped because actor queue is full"
                 );
             }
@@ -192,6 +222,8 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     VoiceTick {
         at_ms: i64,
         packets: Vec<VoicePacket>,
+        /// Dropped ticks this delivery compensates for, written as silence.
+        silence_ticks: u32,
     },
     ClientDisconnect {
         user_id: u64,
@@ -229,13 +261,33 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     },
 }
 
+/// Splits the outstanding tick debt into the frames this delivery replays and
+/// the debt carried to later deliveries. The cap bounds one delivery's silent
+/// burst; the remainder is never discarded, so the timeline realigns even
+/// after a stall longer than the cap.
+fn split_compensation(owed: u32) -> (u32, u32) {
+    let delivered = owed.min(MAX_COMPENSATED_TICKS);
+    (delivered, owed - delivered)
+}
+
 fn voice_tick_drop_count(active_user_count: usize, packet_count: usize) -> u64 {
     active_user_count.max(packet_count).max(1) as u64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::voice_tick_drop_count;
+    use super::{split_compensation, voice_tick_drop_count};
+
+    #[test]
+    fn compensation_is_capped_per_delivery_but_never_discarded() {
+        assert_eq!(split_compensation(0), (0, 0));
+        assert_eq!(split_compensation(4), (4, 0));
+        assert_eq!(split_compensation(250), (250, 0));
+        // A stall longer than the cap keeps the excess owed for later
+        // deliveries instead of losing the timeline offset permanently.
+        assert_eq!(split_compensation(300), (250, 50));
+        assert_eq!(split_compensation(u32::MAX), (250, u32::MAX - 250));
+    }
 
     #[test]
     fn voice_tick_drop_count_uses_largest_available_signal() {
