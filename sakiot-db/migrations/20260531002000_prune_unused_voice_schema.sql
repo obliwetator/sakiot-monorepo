@@ -15,43 +15,7 @@ DROP TABLE IF EXISTS public.users;
 DO $$
 BEGIN
     IF to_regclass('public.voice_events_audit') IS NOT NULL THEN
-        -- The superseded table is renamed, not dropped: the audit rows are
-        -- cheap to keep and the rename is reversible. Only an already-renamed
-        -- legacy table (a re-run) falls back to dropping it.
-        IF to_regclass('public.voice_events') IS NOT NULL THEN
-            IF to_regclass('public.voice_events_legacy') IS NULL THEN
-                ALTER TABLE public.voice_events RENAME TO voice_events_legacy;
-
-                -- Dependent object names do not follow a table rename, and the
-                -- audit table below reuses the voice_events_* names.
-                IF to_regclass('public.voice_events_id_seq') IS NOT NULL THEN
-                    ALTER SEQUENCE public.voice_events_id_seq
-                        RENAME TO voice_events_legacy_id_seq;
-                END IF;
-
-                IF EXISTS (
-                    SELECT 1
-                    FROM pg_constraint
-                    WHERE conname = 'voice_events_pkey'
-                      AND conrelid = 'public.voice_events_legacy'::regclass
-                ) THEN
-                    ALTER TABLE public.voice_events_legacy
-                        RENAME CONSTRAINT voice_events_pkey TO voice_events_legacy_pkey;
-                END IF;
-
-                IF to_regclass('public.voice_events_channel_time') IS NOT NULL THEN
-                    ALTER INDEX public.voice_events_channel_time
-                        RENAME TO voice_events_legacy_channel_time;
-                END IF;
-
-                IF to_regclass('public.voice_events_user_time') IS NOT NULL THEN
-                    ALTER INDEX public.voice_events_user_time
-                        RENAME TO voice_events_legacy_user_time;
-                END IF;
-            ELSE
-                DROP TABLE public.voice_events CASCADE;
-            END IF;
-        END IF;
+        DROP TABLE IF EXISTS public.voice_events CASCADE;
 
         ALTER TABLE public.voice_events_audit RENAME TO voice_events;
 

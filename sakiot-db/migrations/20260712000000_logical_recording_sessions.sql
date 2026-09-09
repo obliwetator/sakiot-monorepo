@@ -156,13 +156,10 @@ ALTER TABLE public.voice_state_events
 -- Every existing physical file becomes its own logical recording. Do not infer
 -- relationships between historical files. Pre-allocating session ids provides
 -- a set-based, deterministic mapping without retaining a legacy mapping column.
--- No ON COMMIT DROP: the table must survive until the backfill finishes even
--- if this migration is ever applied outside a transaction; it is dropped
--- explicitly at the end.
 CREATE TEMP TABLE logical_recording_backfill_map (
     audio_file_id bigint PRIMARY KEY,
     recording_session_id bigint NOT NULL
-);
+) ON COMMIT DROP;
 
 INSERT INTO logical_recording_backfill_map (audio_file_id, recording_session_id)
 SELECT af.id, nextval(pg_get_serial_sequence('public.recording_sessions', 'id'))
@@ -274,5 +271,3 @@ COMMENT ON COLUMN public.audio_files.segment_index IS
 
 COMMENT ON TABLE public.recording_gaps IS
     'Explicit synthetic-silence intervals. Permission redaction may extend this model later; current APIs deny the whole session if any audible channel is inaccessible.';
-
-DROP TABLE IF EXISTS logical_recording_backfill_map;

@@ -31,7 +31,6 @@ BEGIN
         SELECT 1
           FROM pg_constraint
          WHERE conname = 'audio_files_finalize_reason_id_fkey'
-           AND conrelid = 'public.audio_files'::regclass
     ) THEN
         ALTER TABLE public.audio_files
             ADD CONSTRAINT audio_files_finalize_reason_id_fkey
