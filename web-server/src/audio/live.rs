@@ -85,6 +85,20 @@ impl LiveContainer {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
+
+    /// Drops a creation lock once nobody is waiting on it. The job map already
+    /// deduplicates later requests, so keeping one lock per recording ever
+    /// streamed would grow without bound.
+    async fn release_key_lock(&self, id: &str, lock: Arc<Mutex<()>>) {
+        drop(lock);
+        let mut locks = self.locks.lock().await;
+        if locks
+            .get(id)
+            .is_some_and(|current| Arc::strong_count(current) == 1)
+        {
+            locks.remove(id);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -593,12 +607,16 @@ pub(crate) async fn ensure_job(
     // and then reuses the entry the winner inserts, so only one ffmpeg
     // pipeline writes the shared `hls-{stem}` directory.
     let key_guard = container.key_lock(&id).await;
-    let _key_guard = key_guard.lock().await;
-    if let Some(s) = container.jobs.read().await.get(&id).cloned() {
-        return Ok(s);
-    }
-
-    ensure_job_locked(container, pool, key).await
+    let result = {
+        let _key_guard = key_guard.lock().await;
+        if let Some(s) = container.jobs.read().await.get(&id).cloned() {
+            Ok(s)
+        } else {
+            ensure_job_locked(container.clone(), pool, key).await
+        }
+    };
+    container.release_key_lock(&id, key_guard).await;
+    result
 }
 
 async fn ensure_job_locked(
@@ -759,7 +777,10 @@ pub async fn live_state(
     )
     .await?;
     let db = db_state(&pool, &stem).await?;
-    let ended_at = db.end_ts.or(if db.live { None } else { db.start_ts });
+    // A finalized recording with no end timestamp has an unknown end. Falling
+    // back to the start timestamp reported every such recording as zero
+    // seconds long, which the UI showed as an empty timeline.
+    let ended_at = db.end_ts;
     Ok(HttpResponse::Ok().json(StateResponse {
         live: db.live,
         started_at: db.start_ts,
@@ -845,6 +866,35 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &retry));
         assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[tokio::test]
+    async fn released_creation_lock_is_pruned_unless_a_waiter_holds_it() {
+        let container = LiveContainer::default();
+        let lock = container.key_lock("recording").await;
+
+        // A waiter still holding a clone keeps the entry: it must observe the
+        // same lock or two spawns could race for one recording.
+        let waiter = container.key_lock("recording").await;
+        container.release_key_lock("recording", lock).await;
+        assert_eq!(container.locks.lock().await.len(), 1);
+
+        // With nobody waiting, the entry goes away and the map cannot grow
+        // with every recording ever streamed.
+        container.release_key_lock("recording", waiter).await;
+        assert!(container.locks.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pruned_lock_is_recreated_for_later_requests() {
+        let container = LiveContainer::default();
+        let lock = container.key_lock("recording").await;
+        container.release_key_lock("recording", lock).await;
+
+        let recreated = container.key_lock("recording").await;
+        let stored = container.locks.lock().await.get("recording").cloned();
+        assert_eq!(container.locks.lock().await.len(), 1);
+        assert!(stored.is_some_and(|stored| Arc::ptr_eq(&recreated, &stored)));
     }
 
     #[tokio::test]
