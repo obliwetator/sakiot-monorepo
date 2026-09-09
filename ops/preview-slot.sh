@@ -46,6 +46,10 @@ log() { printf '\033[1;34m[preview-slot]\033[0m %s\n' "$*"; }
 [[ "$SLOT" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || die "invalid slot name '$SLOT'"
 
 DOMAIN="${PREVIEW_DOMAIN:-preview.patrykstyla.com}"
+# Prefix for the per-slot filesystem roots. Empty on a real host; the teardown
+# test points it at a temporary directory so `--remove` never touches real
+# slot state.
+STATE_ROOT="${SAKIOT_PREVIEW_STATE_ROOT:-}"
 SUBDOMAIN="${SLOT}.${DOMAIN}"
 [[ "$(id -u)" -eq 0 ]] || die "run as root"
 
@@ -67,6 +71,20 @@ slot_port() {
     printf '%d' $(( 8903 + h % 25 ))
 }
 
+# curl with the Cloudflare token supplied through a private config file so the
+# bearer token never appears in the process list.
+cf_curl() {
+    local config status=0
+    config="$(mktemp)"
+    chmod 0600 "$config"
+    printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$config"
+    # `|| status=$?` keeps `set -e` from exiting before the token file is
+    # removed; a bare curl failure would leave the file on disk.
+    curl -fsS --max-time 15 --config "$config" "$@" || status=$?
+    rm -f "$config"
+    return "$status"
+}
+
 if [[ "$ACTION" = create ]]; then
     # ---- DNS record --------------------------------------------------------
     if [[ "$NO_DNS" -eq 0 ]]; then
@@ -74,21 +92,21 @@ if [[ "$ACTION" = create ]]; then
         zone="${CLOUDFLARE_ZONE:-${DOMAIN#*.}}"
         ip="${VPS_IP:-$(curl -4 -fsS --max-time 10 https://api.ipify.org || die "could not detect VPS IP; set VPS_IP")}"
         log "ensuring A record ${SUBDOMAIN} -> ${ip} (zone ${zone})"
-        zone_id=$(curl -fsS --max-time 15 "https://api.cloudflare.com/client/v4/zones?name=${zone}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | jq -r '.result[0].id // empty')
+        zone_id=$(cf_curl "https://api.cloudflare.com/client/v4/zones?name=${zone}" \
+            | jq -r '.result[0].id // empty')
         [[ -n "$zone_id" ]] || die "Cloudflare zone '${zone}' not found"
-        existing=$(curl -fsS --max-time 15 \
+        existing=$(cf_curl \
             "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${SUBDOMAIN}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | jq -r '.result[0].id // empty')
+            | jq -r '.result[0].id // empty')
         if [[ -n "$existing" ]]; then
-            curl -fsS --max-time 15 -X PATCH \
+            cf_curl -X PATCH \
                 "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${existing}" \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
+                -H "Content-Type: application/json" \
                 -d "{\"content\":\"${ip}\"}" >/dev/null
         else
-            curl -fsS --max-time 15 -X POST \
+            cf_curl -X POST \
                 "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" \
+                -H "Content-Type: application/json" \
                 -d "{\"type\":\"A\",\"name\":\"${SUBDOMAIN}\",\"content\":\"${ip}\",\"proxied\":false}" \
                 >/dev/null
         fi
@@ -104,7 +122,16 @@ if [[ "$ACTION" = create ]]; then
     if [[ -f "$ENV_FILE" ]]; then
         log "${ENV_FILE} already exists; keeping it"
     else
-        repo_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/OWNER/REPOSITORY.git")
+        # Prefer the deployed configuration: a VPS checkout may have no
+        # origin remote at all, and the preview env must point at the same
+        # repository production deploys from.
+        repo_url="${SAKIOT_REPOSITORY_URL:-}"
+        if [[ -z "$repo_url" && -f /etc/sakiot/production.env ]]; then
+            repo_url="$(sed -n 's/^SAKIOT_REPOSITORY_URL=//p' /etc/sakiot/production.env | head -n1)"
+        fi
+        if [[ -z "$repo_url" ]]; then
+            repo_url=$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "https://github.com/OWNER/REPOSITORY.git")
+        fi
         repo_url=${repo_url/git@github.com:/https:\/\/github.com\/}
         repo_url=${repo_url%.git}
         sed -e "s|OWNER/REPOSITORY|${repo_url#https://github.com/}|g" \
@@ -128,6 +155,22 @@ if [[ "$ACTION" = create ]]; then
         die "missing from ${ENV_FILE}: ${missing_keys[*]}"
     fi
 
+    # Placeholder secrets would leave the slot's only login (dev login) open
+    # and its JWTs forgeable, so refuse to create a slot until they are real.
+    placeholder_secrets=()
+    for key in JWT_ACCESS_SECRET JWT_REFRESH_SECRET DEV_LOGIN_SECRET FBI_AGENT_REGISTRY_SECRET; do
+        value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n1)"
+        if [[ -z "$value" || "$value" == "replace_me" || "$value" == "replace_with_a_strong_secret" ]]; then
+            placeholder_secrets+=("$key")
+        fi
+    done
+    if grep -q '://[^:]*:replace_me@' "$ENV_FILE"; then
+        placeholder_secrets+=(DATABASE_URL)
+    fi
+    if [[ "${#placeholder_secrets[@]}" -gt 0 ]]; then
+        die "${ENV_FILE} still contains placeholder secrets: ${placeholder_secrets[*]}; set real values and re-run"
+    fi
+
     # ---- per-slot directories (mirrors install-production.sh; the deploy
     # engine, running as sakiot, expects these to exist and be writable) -----
     install -d -o sakiot -g sakiot -m 0750 \
@@ -144,8 +187,9 @@ if [[ "$ACTION" = create ]]; then
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
     if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot'" | grep -q 1; then
         [[ -n "$db_pass" ]] || die "could not read the database password from ${ENV_FILE} (DATABASE_URL)"
-        sudo -u postgres psql -v ON_ERROR_STOP=1 \
-            -c "CREATE ROLE sakiot LOGIN PASSWORD '${db_pass//\'/\'\'}'" >/dev/null
+        # The password is fed on stdin: `psql -c` would expose it in argv.
+        printf "CREATE ROLE sakiot LOGIN PASSWORD '%s';\n" "${db_pass//\'/\'\'}" \
+            | sudo -u postgres psql -v ON_ERROR_STOP=1 -f - >/dev/null
         log "created role sakiot"
     fi
     if [[ "$db_pass" == "replace_me" ]]; then
@@ -209,7 +253,9 @@ if [[ "$ACTION" = create ]]; then
         "$OPS_DIR/systemd/sakiot-staging-web.service" > "/etc/systemd/system/sakiot-preview-${SLOT}-web.service"
     log "installed unit sakiot-preview-${SLOT}-web.service"
     systemctl daemon-reload
-    systemctl enable "sakiot-preview-${SLOT}-web.service" >/dev/null 2>&1 || true
+    if ! systemctl enable "sakiot-preview-${SLOT}-web.service" >/dev/null 2>&1; then
+        log "warning: could not enable sakiot-preview-${SLOT}-web.service (masked?); the slot will not start on boot"
+    fi
 
     # ---- nginx -------------------------------------------------------------
     # Preview hostnames can exceed nginx's default 64-byte server-name hash
@@ -251,20 +297,43 @@ if [[ "$ACTION" = create ]]; then
 
 elif [[ "$ACTION" = remove ]]; then
     # ---- DNS ---------------------------------------------------------------
+    # Best-effort. A missing token or a Cloudflare error must not abort the
+    # teardown: the vhost, units, database, and data are what leak resources.
+    # The stale record is reported at the end and the script exits non-zero.
+    dns_failed=0
     if [[ "$NO_DNS" -eq 0 ]]; then
-        : "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN or use --no-dns}"
-        zone="${CLOUDFLARE_ZONE:-${DOMAIN#*.}}"
-        zone_id=$(curl -fsS --max-time 15 "https://api.cloudflare.com/client/v4/zones?name=${zone}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | jq -r '.result[0].id // empty')
-        if [[ -n "$zone_id" ]]; then
-            record_id=$(curl -fsS --max-time 15 \
-                "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${SUBDOMAIN}" \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | jq -r '.result[0].id // empty')
-            if [[ -n "$record_id" ]]; then
-                curl -fsS --max-time 15 -X DELETE \
+        if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            log "warning: CLOUDFLARE_API_TOKEN is not set; leaving DNS record ${SUBDOMAIN}"
+            dns_failed=1
+        else
+            zone="${CLOUDFLARE_ZONE:-${DOMAIN#*.}}"
+            zone_id=""
+            if ! zone_id=$(cf_curl \
+                "https://api.cloudflare.com/client/v4/zones?name=${zone}" 2>/dev/null \
+                | jq -r '.result[0].id // empty' 2>/dev/null); then
+                zone_id=""
+            fi
+            if [[ -z "$zone_id" ]]; then
+                log "warning: could not look up the Cloudflare zone '${zone}'; leaving DNS record ${SUBDOMAIN}"
+                dns_failed=1
+            else
+                record_id=""
+                if ! record_id=$(cf_curl \
+                    "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${SUBDOMAIN}" 2>/dev/null \
+                    | jq -r '.result[0].id // empty' 2>/dev/null); then
+                    record_id=""
+                    log "warning: could not read the DNS record ${SUBDOMAIN}; leaving it in place"
+                    dns_failed=1
+                elif [[ -z "$record_id" ]]; then
+                    log "no DNS record for ${SUBDOMAIN} (already removed)"
+                elif ! cf_curl -X DELETE \
                     "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${record_id}" \
-                    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" >/dev/null
-                log "deleted DNS record ${SUBDOMAIN}"
+                    >/dev/null 2>&1; then
+                    log "warning: could not delete DNS record ${SUBDOMAIN}"
+                    dns_failed=1
+                else
+                    log "deleted DNS record ${SUBDOMAIN}"
+                fi
             fi
         fi
     fi
@@ -289,10 +358,23 @@ elif [[ "$ACTION" = remove ]]; then
     # ---- local data files --------------------------------------------------
     # The slot's recording/clip/waveform files are its own copies; removing
     # them never touches staging or production data.
-    if [[ -d "/var/lib/sakiot-preview-${SLOT}/data" ]]; then
-        rm -rf "/var/lib/sakiot-preview-${SLOT}/data"
+    if [[ -d "${STATE_ROOT}/var/lib/sakiot-preview-${SLOT}/data" ]]; then
+        rm -rf "${STATE_ROOT}/var/lib/sakiot-preview-${SLOT}/data"
         log "removed preview data files"
     fi
+
+    # ---- per-slot roots ----------------------------------------------------
+    # Releases, caches, and the published vhost root belong to this slot only;
+    # leaving them behind makes a recreated slot inherit stale files. The
+    # deploy symlink goes first, then the whole state tree in one step (a
+    # bottom-up rmdir cannot succeed while the symlink is still there).
+    rm -f "${STATE_ROOT}/var/lib/sakiot-preview-${SLOT}/deploy/current" 2>/dev/null || true
+    rm -rf \
+        "${STATE_ROOT}/var/lib/sakiot-preview-${SLOT}" \
+        "${STATE_ROOT}/srv/sakiot-preview-${SLOT}" \
+        "${STATE_ROOT}/var/cache/sakiot-preview-${SLOT}" \
+        "${STATE_ROOT}/var/www/${SUBDOMAIN}" 2>/dev/null || true
+    log "removed per-slot roots"
 
     # ---- B2 objects uploaded by the slot -----------------------------------
     # Purges automatically whenever a delete-capable key is configured:
@@ -350,8 +432,12 @@ elif [[ "$ACTION" = remove ]]; then
     fi
 
     # ---- env file (shared: never removed with a slot) ----------------------
-    rm -f "/var/lib/sakiot-preview-${SLOT}/deploy/current" 2>/dev/null || true
     log "shared ${ENV_FILE} kept (used by every slot)"
+    if [[ "$dns_failed" -ne 0 ]]; then
+        log "warning: DNS record ${SUBDOMAIN} may still exist; the slot itself is gone"
+        log "slot ${SLOT} removed (with DNS warnings)"
+        exit 1
+    fi
     log "slot ${SLOT} removed"
 else
     die "unknown action '${ACTION}'"
