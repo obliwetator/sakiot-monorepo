@@ -213,10 +213,6 @@ impl SessionKey {
     pub fn playlist_url(&self) -> String {
         format!("{}/playlist.m3u8", self.session_url_prefix())
     }
-
-    pub fn state_url(&self) -> String {
-        format!("{}/state", self.session_url_prefix())
-    }
 }
 
 #[cfg(test)]
@@ -325,6 +321,5 @@ mod tests {
             s.playlist_url(),
             "/api/audio/1/2/2026/04/1700000000000/playlist.m3u8"
         );
-        assert_eq!(s.state_url(), "/api/audio/1/2/2026/04/1700000000000/state");
     }
 }

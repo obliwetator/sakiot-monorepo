@@ -27,7 +27,6 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
             let mut response_msg = CreateInteractionResponseMessage::new().ephemeral(true);
 
             match application_command.data.name.as_str() {
-                "help" => response_msg = response_msg.content(":("),
                 "jam" => {
                     let (content, clip_id) = handle_jam(
                         &application_command,
