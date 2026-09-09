@@ -27,6 +27,7 @@ import {
 	dragGhostGeometries,
 	marqueeIntersectsSegment,
 	marqueeOverlayOffset,
+	marqueeSelectionChanged,
 	type SegmentDragState,
 	transitionTimelineDrag,
 } from "./timelineDrag";
@@ -336,7 +337,7 @@ export function Timeline(props: {
 				currentY: point.y,
 			};
 			const ids = marqueeOverlapIds(next);
-			if (ids.length !== lastMarqueeSelectionRef.current.length) {
+			if (marqueeSelectionChanged(ids, lastMarqueeSelectionRef.current)) {
 				lastMarqueeSelectionRef.current = ids;
 				editor.selectMany(ids);
 			}
