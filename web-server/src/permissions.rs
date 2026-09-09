@@ -252,6 +252,25 @@ pub async fn get_combined_perm_for_user(
         return Ok(Permissions::all());
     }
 
+    // Membership is a precondition for every other grant. The aggregation below
+    // always includes `@everyone` (`role_id = guild_id`), so without this check
+    // a stranger who was never in the guild would inherit `@everyone`'s bits —
+    // including ADMINISTRATOR when a guild grants it there.
+    let member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1
+               FROM user_guilds
+              WHERE id = $1 AND user_id = $2
+         )",
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_one(pool.get_ref())
+    .await?;
+    if !member {
+        return Ok(Permissions::empty());
+    }
+
     // The OAuth guild list stores a combined permission snapshot from login.
     // Build the value from the agent-maintained role cache instead so role and
     // membership revocations take effect without requiring a new login.
