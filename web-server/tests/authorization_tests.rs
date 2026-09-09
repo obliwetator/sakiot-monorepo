@@ -907,6 +907,17 @@ async fn create_clip_rejects_invalid_ranges_without_storing_a_clip(
     Ok(())
 }
 
+/// Whether a media tool is installed. CI has no FFmpeg, so the tests that
+/// need one skip rather than fail (same convention as the mix fixtures).
+fn media_tool_available(tool: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// Write a recording fixture where `create_clip` resolves recordings (the
 /// `SAKIOT_DATA_DIR` roots) and return its path. Callers remove it afterwards.
 fn recording_fixture_path(stem: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -966,6 +977,9 @@ async fn seed_recording_row(pool: &PgPool, stem: &str) -> Result<(), sqlx::Error
 async fn create_clip_rejects_ranges_past_the_recording_duration(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !media_tool_available("ffmpeg") || !media_tool_available("ffprobe") {
+        return Ok(());
+    }
     seed_authorization_data(&pool).await?;
     let stem = "p0-1-duration-check";
     let source = generated_recording_fixture(stem, 2)?;
@@ -1017,6 +1031,9 @@ async fn create_clip_rejects_ranges_past_the_recording_duration(
 async fn create_clip_reports_bad_gateway_when_the_recording_cannot_be_probed(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !media_tool_available("ffprobe") {
+        return Ok(());
+    }
     seed_authorization_data(&pool).await?;
     let stem = "p0-1-unprobeable";
     let source = recording_fixture_path(stem)?;
@@ -1069,6 +1086,9 @@ async fn create_clip_reports_bad_gateway_when_the_recording_cannot_be_probed(
 async fn create_clip_stores_a_real_clip_for_a_valid_range(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !media_tool_available("ffmpeg") || !media_tool_available("ffprobe") {
+        return Ok(());
+    }
     seed_authorization_data(&pool).await?;
     let stem = "p0-1-valid-range";
     let source = generated_recording_fixture(stem, 2)?;

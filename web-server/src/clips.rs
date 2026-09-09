@@ -989,8 +989,23 @@ mod tests {
         assert!(!is_unusable_clip_output(18_229, Some(2.0065)));
     }
 
+    /// Whether a media tool is installed. CI has no FFmpeg, so tests that
+    /// need one skip rather than fail (same convention as the mix fixtures).
+    async fn media_tool_available(tool: &str) -> bool {
+        tokio::process::Command::new(tool)
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    }
+
     #[tokio::test]
     async fn probes_real_audio_and_reports_unreadable_sources() {
+        if !media_tool_available("ffmpeg").await || !media_tool_available("ffprobe").await {
+            return;
+        }
         let dir = tempfile::tempdir().expect("temp dir");
         let ogg = dir.path().join("tone.ogg");
         let generated = std::process::Command::new("ffmpeg")
