@@ -4,6 +4,8 @@ import { expect, type Page, test } from "@playwright/test";
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
 const GUILD_ID = "guild-123";
+// 2^53 + 1: exceeds Number.MAX_SAFE_INTEGER, so it must stay a string.
+const SNOWFLAKE_USER_ID = "9007199254740993";
 const updateDepthErrors = new WeakMap<Page, string[]>();
 
 test.beforeEach(({ page }) => {
@@ -29,7 +31,7 @@ test.afterEach(({ page }) => {
 });
 
 interface Override {
-	user_id: number;
+	user_id: string;
 	cooldown_seconds: number;
 	updated_at: string;
 }
@@ -50,12 +52,12 @@ interface MockState {
 
 const populatedOverrides: Override[] = [
 	{
-		user_id: 10001,
+		user_id: SNOWFLAKE_USER_ID,
 		cooldown_seconds: 30,
 		updated_at: "2026-08-11T12:30:00.000Z",
 	},
 	{
-		user_id: 10002,
+		user_id: "10002",
 		cooldown_seconds: 0,
 		updated_at: "2026-08-10T09:15:00.000Z",
 	},
@@ -173,7 +175,7 @@ async function mockApi(
 				await fulfillJson({ detail: "save failed" }, 500);
 				return;
 			}
-			const userId = Number(overrideMatch[1]);
+			const userId = overrideMatch[1];
 			const body = request.postDataJSON() as { cooldown_seconds: number };
 			const existing = state.overrides.find(
 				(override) => override.user_id === userId,
@@ -196,7 +198,7 @@ async function mockApi(
 				await fulfillJson({ detail: "delete failed" }, 500);
 				return;
 			}
-			const userId = Number(overrideMatch[1]);
+			const userId = overrideMatch[1];
 			state.overrides = state.overrides.filter(
 				(override) => override.user_id !== userId,
 			);
@@ -281,10 +283,12 @@ test("shows loading and populated states with accessible keyboard behavior", asy
 	await expect(page.getByText("Loading guild cooldown…")).toBeVisible();
 	await expect(page.getByText("Loading admin cooldowns…")).toBeVisible();
 	await expect(
-		page.getByRole("cell", { name: "10001", exact: true }),
+		page.getByRole("cell", { name: SNOWFLAKE_USER_ID, exact: true }),
 	).toBeVisible();
 	await expect(
-		page.getByRole("button", { name: "Delete override for user 10001" }),
+		page.getByRole("button", {
+			name: `Delete override for user ${SNOWFLAKE_USER_ID}`,
+		}),
 	).toBeVisible();
 
 	const guildInput = page.getByLabel("Cooldown (seconds)").first();
@@ -393,24 +397,24 @@ test("announces failed deletion and removes an override after success", async ({
 
 	state.failNextDelete = true;
 	const deleteButton = page.getByRole("button", {
-		name: "Delete override for user 10001",
+		name: `Delete override for user ${SNOWFLAKE_USER_ID}`,
 	});
 	await deleteButton.click();
 	await expect(page.getByRole("alert")).toContainText(
-		"Could not delete the override for user 10001.",
+		`Could not delete the override for user ${SNOWFLAKE_USER_ID}.`,
 	);
 	await expect(
-		page.getByRole("cell", { name: "10001", exact: true }),
+		page.getByRole("cell", { name: SNOWFLAKE_USER_ID, exact: true }),
 	).toBeVisible();
 
 	await deleteButton.click();
 	await expect(
 		page
 			.getByRole("status")
-			.filter({ hasText: "Override for user 10001 deleted." }),
+			.filter({ hasText: `Override for user ${SNOWFLAKE_USER_ID} deleted.` }),
 	).toBeVisible();
 	await expect(
-		page.getByRole("cell", { name: "10001", exact: true }),
+		page.getByRole("cell", { name: SNOWFLAKE_USER_ID, exact: true }),
 	).toHaveCount(0);
 });
 
@@ -418,6 +422,42 @@ test("renders the empty table state", async ({ page }) => {
 	await mockApi(page, { overrides: [] });
 	await openCooldowns(page);
 	await expect(page.getByText("No per-user overrides.")).toBeVisible();
+});
+
+test("shows a snowflake user id in full and scrolls the table instead of clipping it", async ({
+	page,
+}) => {
+	await mockApi(page);
+	await openCooldowns(page);
+
+	// The 16-digit id exceeds 2^53 and must render verbatim, not rounded.
+	const cell = page.getByRole("cell", {
+		name: SNOWFLAKE_USER_ID,
+		exact: true,
+	});
+	await expect(cell).toBeVisible();
+	await expect(cell).toHaveText(SNOWFLAKE_USER_ID);
+
+	// The id widens the first column; the table is a horizontal scroll region,
+	// so the trailing columns stay reachable rather than being cut off.
+	const container = page
+		.getByRole("table", { name: "Per-user cooldown overrides" })
+		.locator("..");
+	// A programmatic scrollLeft only proves the content can move; the styling
+	// assertion proves the region is scrollable for a user at all.
+	await expect(container).toHaveCSS("overflow-x", "auto");
+	const metrics = await container.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	if (metrics.scrollWidth > metrics.clientWidth) {
+		await container.evaluate((element) => {
+			element.scrollLeft = element.scrollWidth;
+		});
+		await expect(
+			page.getByRole("columnheader", { name: "Updated" }),
+		).toBeInViewport();
+	}
 });
 
 test("navigates between admin screens without an update loop", async ({
