@@ -1,3 +1,8 @@
+import {
+	EFFECT_LIMIT_KEYS,
+	type EffectLimits,
+	effectLimit,
+} from "./effectLimits";
 import { DEFAULT_EFFECTS, type SegmentEffects } from "./model";
 
 type NumberRange = readonly [minimum: number, maximum: number];
@@ -42,9 +47,23 @@ function unwrapMarkdownFence(input: string): string {
 	return match?.[1] ?? trimmed;
 }
 
-/** Parse and validate a complete or partial camelCase SegmentEffects object. */
+function isLimitedKey(
+	key: keyof SegmentEffects,
+): key is (typeof EFFECT_LIMIT_KEYS)[number] {
+	return (EFFECT_LIMIT_KEYS as readonly string[]).includes(key);
+}
+
+/**
+ * Parse and validate a complete or partial camelCase SegmentEffects object.
+ *
+ * The six slider-backed effects are validated against the caller's active
+ * `limits` (the same bounds the sliders and the server enforce); without them
+ * the hardcoded defaults apply, which would reject values the user legitimately
+ * widened.
+ */
 export function parseEffectSettingsJson(
 	input: string,
+	limits?: EffectLimits,
 ): EffectSettingsJsonResult {
 	let parsed: unknown;
 	try {
@@ -80,7 +99,10 @@ export function parseEffectSettingsJson(
 			if (!Number.isFinite(value)) {
 				return { ok: false, error: `“${key}” must be finite.` };
 			}
-			const range = NUMBER_RANGES[effectKey as keyof typeof NUMBER_RANGES];
+			const range =
+				limits && isLimitedKey(effectKey)
+					? effectLimit(effectKey, limits)
+					: NUMBER_RANGES[effectKey as keyof typeof NUMBER_RANGES];
 			if (range && (value < range[0] || value > range[1])) {
 				return {
 					ok: false,

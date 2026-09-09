@@ -81,6 +81,40 @@ export function effectLimit(
 	return clampLimitToSafety(key, limits[key]);
 }
 
+/**
+ * Parse a limits number field. Blank input means "still typing", not zero:
+ * `Number("")` is 0, which would silently collapse the bound to the middle of
+ * the safety caps as soon as the user clears the field to retype it.
+ */
+export function parseLimitInput(value: string): number | null {
+	const trimmed = value.trim();
+	if (trimmed === "") return null;
+	const parsed = Number(trimmed);
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Every pair must keep `min < max`. A draft with any inverted pair is held
+ * back as a whole: validating only the pair being edited would persist an
+ * already-inverted pair the moment the user moves on to another field.
+ */
+export function limitsAreValid(limits: EffectLimits): boolean {
+	return EFFECT_LIMIT_KEYS.every((key) => {
+		const [minimum, maximum] = limits[key];
+		return minimum < maximum;
+	});
+}
+
+/** The draft with one pair replaced; the caller decides whether to persist. */
+export function withLimitPair(
+	limits: EffectLimits,
+	key: keyof EffectLimits,
+	minimum: number,
+	maximum: number,
+): EffectLimits {
+	return { ...limits, [key]: [minimum, maximum] };
+}
+
 export interface StorageLike {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;

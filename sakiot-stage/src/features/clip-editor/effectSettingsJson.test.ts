@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_EFFECT_LIMITS } from "./effectLimits";
 import {
 	isEffectSettingsJsonShortcut,
 	parseEffectSettingsJson,
@@ -72,6 +73,42 @@ describe("isEffectSettingsJsonShortcut", () => {
 		);
 		expect(isEffectSettingsJsonShortcut({ ...event, key: "P" })).toBe(false);
 		expect(isEffectSettingsJsonShortcut({ ...event, altKey: true })).toBe(
+			false,
+		);
+	});
+});
+
+describe("parseEffectSettingsJson with active limits", () => {
+	const widened = {
+		...DEFAULT_EFFECT_LIMITS,
+		volumeDb: [-240, 240] as const,
+	};
+
+	test("accepts values the user widened past the hardcoded defaults", () => {
+		// The hardcoded range is -80..24; the slider limits allow -240..240.
+		expect(parseEffectSettingsJson('{"volumeDb":120}').ok).toBe(false);
+		expect(parseEffectSettingsJson('{"volumeDb":120}', widened)).toEqual({
+			ok: true,
+			patch: { volumeDb: 120 },
+		});
+	});
+
+	test("still rejects values outside the active limits", () => {
+		const result = parseEffectSettingsJson('{"volumeDb":300}', widened);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain("between -240 and 240");
+	});
+
+	test("falls back to the safety caps for a corrupted limits object", () => {
+		const corrupted = {
+			...DEFAULT_EFFECT_LIMITS,
+			pitchCents: [10, -10] as [number, number],
+		};
+		// An inverted pair falls back to the default range, not to "anything".
+		expect(parseEffectSettingsJson('{"pitchCents":2400}', corrupted).ok).toBe(
+			true,
+		);
+		expect(parseEffectSettingsJson('{"pitchCents":9999}', corrupted).ok).toBe(
 			false,
 		);
 	});

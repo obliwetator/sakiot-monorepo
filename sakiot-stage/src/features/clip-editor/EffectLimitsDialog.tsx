@@ -6,6 +6,9 @@ import {
 	EFFECT_LIMIT_KEYS,
 	EFFECT_LIMIT_SAFETY_CAPS,
 	type EffectLimits,
+	limitsAreValid,
+	parseLimitInput,
+	withLimitPair,
 } from "./effectLimits";
 
 type LimitsKey = keyof EffectLimits;
@@ -46,8 +49,10 @@ function PairFieldRow(props: {
 					value={String(minimum)}
 					isInvalid={props.error}
 					onChange={(value) => {
-						const parsed = Number(value);
-						if (!Number.isFinite(parsed)) return;
+						// A cleared field must not be read as 0; the controlled
+						// input restores the previous value on the next render.
+						const parsed = parseLimitInput(value);
+						if (parsed === null) return;
 						props.onDraft(props.param, clamp(parsed, caps), maximum);
 					}}
 					min={caps[0]}
@@ -60,8 +65,8 @@ function PairFieldRow(props: {
 					value={String(maximum)}
 					isInvalid={props.error}
 					onChange={(value) => {
-						const parsed = Number(value);
-						if (!Number.isFinite(parsed)) return;
+						const parsed = parseLimitInput(value);
+						if (parsed === null) return;
 						props.onDraft(props.param, minimum, clamp(parsed, caps));
 					}}
 					min={caps[0]}
@@ -97,15 +102,13 @@ export function EffectLimitsDialog(props: {
 	}, [props.open, props.limits]);
 
 	const applyPair = (param: LimitsKey, min: number, max: number) => {
-		const next: EffectLimits = {
-			...draft,
-			[param]: [min, max],
-		};
+		const next = withLimitPair(draft, param, min, max);
 		setDraft(next);
-		// Hold back pairs whose min is no longer below max; the field keeps
-		// the typed value so the user can fix the partner instead of having
-		// it silently reverted.
-		if (min < max) props.onChange(next);
+		// Hold back the whole draft while any pair is inverted; the field keeps
+		// the typed value so the user can fix the partner instead of having it
+		// silently reverted. Checking only the edited pair would persist an
+		// already-inverted pair as soon as another field is touched.
+		if (limitsAreValid(next)) props.onChange(next);
 	};
 
 	const reset = () => {
