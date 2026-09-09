@@ -23,7 +23,7 @@ import {
 	unmergeSegments,
 } from "./model";
 import { sharedDspPreprocessKey } from "./sharedDsp";
-import { loadClipBuffer } from "./useClipBuffer";
+import { loadClipBuffer, onClipBufferEvicted } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
 export type UseClipEditorReturn = ReturnType<typeof useClipEditor>;
@@ -33,8 +33,11 @@ export interface PasteTarget {
 	track: number;
 }
 
-export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
+export function useClipEditor(
+	options: { copyAllSelected?: boolean; guildId?: string } = {},
+) {
 	const copyAllSelected = options.copyAllSelected ?? true;
+	const guildId = options.guildId ?? "";
 	const history = useEditHistory(emptyEdit());
 	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo, reset } =
 		history;
@@ -49,6 +52,11 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 	const [copySourceIds, setCopySourceIds] = useState<string[]>([]);
 	/** Warning describing why the last merge attempt was refused. */
 	const [mergeWarning, setMergeWarning] = useState<string | null>(null);
+	/**
+	 * True when preview playback is running without the shared DSP, so pitch,
+	 * speed, and reverse are not applied. Exports are unaffected.
+	 */
+	const [effectsUnavailable, setEffectsUnavailable] = useState(false);
 	const [viewStartSec, setViewStartSec] = useState(0);
 	const [viewWidthSec, setViewWidthSec] = useState(30);
 	const contentDurationSec = editDuration(edit) + 2;
@@ -91,6 +99,19 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		return engineRef.current;
 	}, []);
 
+	// The playback map holds its own strong references to decoded buffers;
+	// without this the PCM budget's eviction frees nothing.
+	useEffect(
+		() =>
+			onClipBufferEvicted((key) => {
+				const separator = key.indexOf("/");
+				if (separator < 0) return;
+				if (guildId && key.slice(0, separator) !== guildId) return;
+				buffersRef.current.delete(key.slice(separator + 1));
+			}),
+		[guildId],
+	);
+
 	useEffect(
 		() => () => {
 			if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -112,6 +133,12 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 			setPositionSec(0);
 			return;
 		}
+		// Preparation runs while playback starts, so the fallback only becomes
+		// known after the first frames; keep the notice in sync from the tick.
+		const fallback = engine.isUsingNativeEffectsFallback;
+		setEffectsUnavailable((current) =>
+			current === fallback ? current : fallback,
+		);
 		const next = engine.positionSec;
 		positionRef.current = next;
 		setPositionSec(next);
@@ -655,6 +682,7 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		unmergeSelected,
 		mergeWarning,
 		dismissMergeWarning,
+		effectsUnavailable,
 		toggleTrackMute,
 		toggleReverse,
 	};

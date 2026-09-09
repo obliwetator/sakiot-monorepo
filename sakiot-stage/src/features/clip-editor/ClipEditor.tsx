@@ -62,7 +62,10 @@ export function ClipEditor(props: { guildId: string }) {
 	const [options, setOptions] = useState<EditorOptions>(() =>
 		loadEditorOptions(),
 	);
-	const editor = useClipEditor({ copyAllSelected: options.copyAllSelected });
+	const editor = useClipEditor({
+		copyAllSelected: options.copyAllSelected,
+		guildId: props.guildId,
+	});
 	// Any undoable or redoable history step means the page holds work.
 	const { dialog: unsavedDialog } = useUnsavedChangesGuard(
 		editor.canUndo || editor.canRedo,
@@ -480,6 +483,7 @@ export function ClipEditor(props: { guildId: string }) {
 				open={effectSettingsJsonOpen}
 				onClose={() => setEffectSettingsJsonOpen(false)}
 				editor={editor}
+				limits={effectLimits}
 			/>
 			<EffectLimitsDialog
 				open={effectLimitsOpen}
@@ -505,6 +509,14 @@ export function ClipEditor(props: { guildId: string }) {
 						>
 							Dismiss
 						</Button>
+					</Notice>
+				</div>
+			)}
+			{editor.effectsUnavailable && (
+				<div className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2">
+					<Notice className="items-center" tone={"warning"} announce="status">
+						Effects unavailable: this preview is playing without pitch, speed,
+						and reverse. Exports still apply them.
 					</Notice>
 				</div>
 			)}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { segmentSourceWindow } from "./engine";
+import { segmentSourceWindow, usesNativeEffectsFallback } from "./engine";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 
 function seg(rate: number, sourceIn = 0, sourceOut = 10, timelineStart = 0) {
@@ -104,5 +104,31 @@ describe("segmentSourceWindow", () => {
 			offset: 10,
 			duration: 0,
 		});
+	});
+});
+
+describe("usesNativeEffectsFallback", () => {
+	test("is false when every segment was rendered by the shared DSP", () => {
+		expect(
+			usesNativeEffectsFallback([
+				{ processing: "streaming" },
+				{ processing: "complete" },
+			]),
+		).toBe(false);
+	});
+
+	test("is true when any segment fell back to the native graph", () => {
+		// A "source" segment plays through the native graph, which applies
+		// volume and EQ but not pitch, speed, or reverse.
+		expect(
+			usesNativeEffectsFallback([
+				{ processing: "streaming" },
+				{ processing: "source" },
+			]),
+		).toBe(true);
+	});
+
+	test("is false for an empty preparation", () => {
+		expect(usesNativeEffectsFallback([])).toBe(false);
 	});
 });
