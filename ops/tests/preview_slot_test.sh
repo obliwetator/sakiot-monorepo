@@ -171,4 +171,18 @@ assert_cleanup_ran "${output}"
 grep -q "slot zz-ops-test removed$" "${output}" \
   || { echo "missing success log: $(cat "${output}")" >&2; exit 1; }
 
+# The create path must hand restored objects to the slot's role: migrations run
+# as sakiot, so creating an index on a restored table needs ownership and any
+# DDL in public needs CREATE on the schema. Without this the slot's first
+# migration fails with "must be owner of table".
+ownership_sql="$(awk "/<<'SQL'/{flag=1;next}/^SQL$/{flag=0}flag" "${script}")"
+for statement in \
+  "GRANT USAGE, CREATE ON SCHEMA public TO sakiot" \
+  "ALTER TABLE public.%I OWNER TO sakiot" \
+  "ALTER SEQUENCE public.%I OWNER TO sakiot" \
+  "ALTER VIEW public.%I OWNER TO sakiot"; do
+  grep -qF "${statement}" <<<"${ownership_sql}" \
+    || { echo "frontend/ownership repair missing: ${statement}" >&2; exit 1; }
+done
+
 echo "preview slot removal: ok"

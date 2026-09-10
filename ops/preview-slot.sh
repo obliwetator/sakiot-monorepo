@@ -216,14 +216,6 @@ if [[ "$ACTION" = create ]]; then
         if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='sakiot_staging'" | grep -q 1; then
             sudo -u postgres bash -c \
                 "pg_dump -Fc sakiot_staging | pg_restore -d '${db}' --no-privileges"
-            # Staging connects to its database as the postgres superuser, so
-            # the restored tables are postgres-owned; the preview slot
-            # connects as sakiot, which gets nothing without explicit grants
-            # (future migrations run as sakiot and keep their own objects).
-            sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
-                "GRANT USAGE ON SCHEMA public TO sakiot; \
-                 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO sakiot; \
-                 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO sakiot;"
             log "copied sakiot_staging database into ${db}"
         fi
         if [[ -d /var/lib/sakiot-staging/data ]]; then
@@ -231,6 +223,43 @@ if [[ "$ACTION" = create ]]; then
             log "copied staging data files into the preview slot"
         fi
     fi
+
+    # ---- database ownership and grants -------------------------------------
+    # The snapshot restores postgres-owned objects, and older slots were
+    # created before this repair existed, so normalize on every run. The slot
+    # connects as sakiot and runs migrations as sakiot: a migration creating an
+    # index on a restored table needs ownership of that table, and any DDL in
+    # public needs CREATE on the schema. REASSIGN OWNED BY postgres is refused
+    # ("objects ... required by the database system"), so ownership moves per
+    # object; indexes follow their table automatically.
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" <<'SQL' >/dev/null
+GRANT USAGE, CREATE ON SCHEMA public TO sakiot;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO sakiot;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO sakiot;
+DO $$
+DECLARE object record;
+BEGIN
+    FOR object IN
+        SELECT tablename FROM pg_tables
+         WHERE schemaname = 'public' AND tableowner <> 'sakiot'
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I OWNER TO sakiot', object.tablename);
+    END LOOP;
+    FOR object IN
+        SELECT sequencename FROM pg_sequences
+         WHERE schemaname = 'public' AND sequenceowner <> 'sakiot'
+    LOOP
+        EXECUTE format('ALTER SEQUENCE public.%I OWNER TO sakiot', object.sequencename);
+    END LOOP;
+    FOR object IN
+        SELECT viewname FROM pg_views
+         WHERE schemaname = 'public' AND viewowner <> 'sakiot'
+    LOOP
+        EXECUTE format('ALTER VIEW public.%I OWNER TO sakiot', object.viewname);
+    END LOOP;
+END $$;
+SQL
+    log "normalized database ownership for ${db}"
 
     # ---- dev-login account --------------------------------------------------
     # Preview databases start empty, but GET /api/users/current 500s on a
