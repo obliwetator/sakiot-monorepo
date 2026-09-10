@@ -112,14 +112,23 @@ assert_slot_roots_removed() {
   done
 }
 
+# The script's env-file paths are redirected into the temporary directory:
+# running the suite as an unprivileged user on a real host must never read
+# (or trip over) /etc/sakiot files it cannot access.
+preview_env="${temporary}/preview.env"
+printf '# deliberately without CLOUDFLARE_API_TOKEN\n' >"${preview_env}"
+default_purge_env="${temporary}/absent-purge.env"
+
 run_remove() {
-  local bin_dir="$1" token="$2" output="$3"
+  local bin_dir="$1" token="$2" output="$3" purge="${4:-${default_purge_env}}"
   seed_slot_roots
   set +e
   PATH="${bin_dir}:${PATH}" \
     CLOUDFLARE_API_TOKEN="${token}" \
     PREVIEW_DOMAIN="preview.example.test" \
     SAKIOT_PREVIEW_STATE_ROOT="${state_root}" \
+    SAKIOT_PREVIEW_ENV_FILE="${preview_env}" \
+    B2_PURGE_ENV_FILE="${purge}" \
     "${script}" zz-ops-test --remove >"${output}" 2>&1
   local status=$?
   set -e
@@ -184,5 +193,25 @@ for statement in \
   grep -qF "${statement}" <<<"${ownership_sql}" \
     || { echo "frontend/ownership repair missing: ${statement}" >&2; exit 1; }
 done
+
+# 4. An unreadable purge env must degrade to "not configured" instead of
+#    aborting the teardown before the database is dropped. Root bypasses file
+#    permissions, so only assert this when the mode actually denies access.
+unreadable_purge="${temporary}/unreadable-purge.env"
+printf 'B2_PURGE_KEY_ID=id\nB2_PURGE_KEY_SECRET=secret\n' >"${unreadable_purge}"
+chmod 000 "${unreadable_purge}"
+if [[ ! -r "${unreadable_purge}" ]]; then
+  output="${temporary}/unreadable.log"
+  status="$(run_remove "${temporary}/bin-ok" "test-token" "${output}" "${unreadable_purge}")"
+  [[ "${status}" -eq 0 ]] \
+    || { echo "an unreadable purge env must not fail the teardown: $(cat "${output}")" >&2; exit 1; }
+  grep -q "is not readable; skipping B2 purge" "${output}" \
+    || { echo "missing unreadable-purge warning: $(cat "${output}")" >&2; exit 1; }
+  assert_cleanup_ran "${output}"
+  grep -q "slot zz-ops-test removed$" "${output}" \
+    || { echo "teardown did not finish with an unreadable purge env: $(cat "${output}")" >&2; exit 1; }
+else
+  echo "note: running with file-permission bypass; skipping the unreadable-purge case"
+fi
 
 echo "preview slot removal: ok"

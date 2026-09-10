@@ -55,8 +55,9 @@ SUBDOMAIN="${SLOT}.${DOMAIN}"
 
 # The shared env file holds CLOUDFLARE_API_TOKEN and CERTBOT_EMAIL; fall back
 # to it when the variables were not passed on the command line.
-ENV_FILE="/etc/sakiot/preview.env"
-if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && -f "$ENV_FILE" ]]; then
+# Overridable so the teardown tests never read the host's real secrets.
+ENV_FILE="${SAKIOT_PREVIEW_ENV_FILE:-/etc/sakiot/preview.env}"
+if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && -f "$ENV_FILE" && -r "$ENV_FILE" ]]; then
     CLOUDFLARE_API_TOKEN="$(sed -n 's/^CLOUDFLARE_API_TOKEN=//p' "$ENV_FILE" | head -n1)"
 fi
 
@@ -416,10 +417,19 @@ elif [[ "$ACTION" = remove ]]; then
     # B2 versions stay recoverable by an admin.
     purge_key_id="${B2_PURGE_KEY_ID:-}"
     purge_key_secret="${B2_PURGE_KEY_SECRET:-}"
-    purge_env="/etc/sakiot/preview-b2-purge.env"
+    purge_env="${B2_PURGE_ENV_FILE:-/etc/sakiot/preview-b2-purge.env}"
     if [[ -f "$purge_env" ]]; then
-        [[ -n "$purge_key_id" ]] || purge_key_id="$(sed -n 's/^B2_PURGE_KEY_ID=//p' "$purge_env" | head -n1)"
-        [[ -n "$purge_key_secret" ]] || purge_key_secret="$(sed -n 's/^B2_PURGE_KEY_SECRET=//p' "$purge_env" | head -n1)"
+        # An unreadable purge env (wrong owner or mode) must degrade to "not
+        # configured": aborting here would leave the slot half-removed, which
+        # is the failure mode this whole branch is not supposed to have.
+        if [[ ! -r "$purge_env" ]]; then
+            log "warning: ${purge_env} is not readable; skipping B2 purge"
+            purge_key_id=""
+            purge_key_secret=""
+        else
+            [[ -n "$purge_key_id" ]] || purge_key_id="$(sed -n 's/^B2_PURGE_KEY_ID=//p' "$purge_env" | head -n1)"
+            [[ -n "$purge_key_secret" ]] || purge_key_secret="$(sed -n 's/^B2_PURGE_KEY_SECRET=//p' "$purge_env" | head -n1)"
+        fi
     fi
     if [[ -n "$purge_key_id" && -n "$purge_key_secret" ]]; then
         if ! command -v rclone >/dev/null 2>&1; then
