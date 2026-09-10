@@ -156,8 +156,9 @@ if [[ "$ACTION" = create ]]; then
         die "missing from ${ENV_FILE}: ${missing_keys[*]}"
     fi
 
-    # Placeholder secrets would leave the slot's only login (dev login) open
-    # and its JWTs forgeable, so refuse to create a slot until they are real.
+    # Internet-facing secrets must be real before a slot serves traffic: a
+    # placeholder dev-login or JWT secret is forgeable by anyone who can reach
+    # the host.
     placeholder_secrets=()
     for key in JWT_ACCESS_SECRET JWT_REFRESH_SECRET DEV_LOGIN_SECRET FBI_AGENT_REGISTRY_SECRET; do
         value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n1)"
@@ -165,11 +166,15 @@ if [[ "$ACTION" = create ]]; then
             placeholder_secrets+=("$key")
         fi
     done
-    if grep -q '://[^:]*:replace_me@' "$ENV_FILE"; then
-        placeholder_secrets+=(DATABASE_URL)
-    fi
     if [[ "${#placeholder_secrets[@]}" -gt 0 ]]; then
         die "${ENV_FILE} still contains placeholder secrets: ${placeholder_secrets[*]}; set real values and re-run"
+    fi
+    # The database password is a local-only credential (127.0.0.1) and one
+    # Postgres role is shared by production, staging and every slot, so
+    # rotating it is a coordinated change across all of them. Warn rather
+    # than block provisioning; the internet-facing secrets above stay fatal.
+    if grep -q '://[^:]*:replace_me@' "$ENV_FILE"; then
+        log "warning: ${ENV_FILE} still uses the template database password 'replace_me'; rotate it across every env file when convenient"
     fi
 
     # ---- per-slot directories (mirrors install-production.sh; the deploy
