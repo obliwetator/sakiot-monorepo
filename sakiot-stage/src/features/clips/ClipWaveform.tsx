@@ -121,6 +121,8 @@ export function ClipWaveform(props: {
 					size="sm"
 					isDisabled={generating}
 					onPress={() => {
+						pollErrors.current = 0;
+						wasFetching.current = false;
 						setGenerating(true);
 						setRequestKey(Date.now());
 					}}

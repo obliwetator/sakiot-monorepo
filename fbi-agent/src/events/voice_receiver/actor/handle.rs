@@ -16,10 +16,6 @@ use crate::events::voice_receiver::recordings::{RecorderStats, Recordings};
 
 const COMMAND_CAPACITY: usize = 256;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
-/// Upper bound on the silence ticks one delivery replays after a stall. The
-/// recorder writes 20 ms frames, so this caps the compensating burst at five
-/// seconds instead of letting a long stall write a huge silent gap.
-const MAX_COMPENSATED_TICKS: u32 = 250;
 
 #[derive(Clone)]
 pub(in crate::events::voice_receiver) struct RecorderHandle {
@@ -165,22 +161,14 @@ impl RecorderHandle {
         // be replayed as silence or every later frame shifts earlier than its
         // wall-clock timestamp.
         let owed = self.dropped_ticks.swap(0, Ordering::Relaxed);
-        // One delivery replays at most MAX_COMPENSATED_TICKS frames; the rest
-        // stays owed, so even a stall longer than the cap ends with an aligned
-        // timeline instead of losing the excess time for good.
-        let (silence_ticks, remaining) = split_compensation(owed);
+        // The whole debt belongs before this packet. The actor chunks the
+        // writes and yields between chunks without moving silence past audio.
         match self.tx.try_send(RecorderCommand::VoiceTick {
             at_ms,
             packets,
-            silence_ticks,
+            silence_ticks: owed,
         }) {
-            Ok(()) => {
-                if remaining > 0 {
-                    // fetch_add, not store: a concurrent sender may have added
-                    // debt since the swap and a store would drop it.
-                    self.dropped_ticks.fetch_add(remaining, Ordering::Relaxed);
-                }
-            }
+            Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 // Put the whole debt back, plus this tick, for the next
                 // delivery.
@@ -195,8 +183,7 @@ impl RecorderHandle {
                 );
                 warn!(
                     drop_count,
-                    compensated_ticks = silence_ticks,
-                    outstanding_ticks = remaining,
+                    outstanding_ticks = owed,
                     "recorder voice tick dropped because actor queue is full"
                 );
             }
@@ -261,32 +248,63 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     },
 }
 
-/// Splits the outstanding tick debt into the frames this delivery replays and
-/// the debt carried to later deliveries. The cap bounds one delivery's silent
-/// burst; the remainder is never discarded, so the timeline realigns even
-/// after a stall longer than the cap.
-fn split_compensation(owed: u32) -> (u32, u32) {
-    let delivered = owed.min(MAX_COMPENSATED_TICKS);
-    (delivered, owed - delivered)
-}
-
 fn voice_tick_drop_count(active_user_count: usize, packet_count: usize) -> u64 {
     active_user_count.max(packet_count).max(1) as u64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{split_compensation, voice_tick_drop_count};
+    use super::*;
 
-    #[test]
-    fn compensation_is_capped_per_delivery_but_never_discarded() {
-        assert_eq!(split_compensation(0), (0, 0));
-        assert_eq!(split_compensation(4), (4, 0));
-        assert_eq!(split_compensation(250), (250, 0));
-        // A stall longer than the cap keeps the excess owed for later
-        // deliveries instead of losing the timeline offset permanently.
-        assert_eq!(split_compensation(300), (250, 50));
-        assert_eq!(split_compensation(u32::MAX), (250, u32::MAX - 250));
+    #[tokio::test]
+    async fn recovered_packet_carries_all_dropped_ticks_before_its_audio() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (shutdown_tx, _) = watch::channel(None);
+        let (_, terminated_rx) = watch::channel(false);
+        let metrics = Arc::new(crate::BotMetrics::default());
+        let handle = RecorderHandle {
+            tx,
+            stats: Arc::new(RecorderStats::default()),
+            guild_metrics: metrics.guild_metrics(1),
+            channel_metrics: metrics.channel_metrics(1, 1),
+            metrics,
+            current_channel_id: Arc::new(AtomicU64::new(1)),
+            actor_id: Arc::new(()),
+            stopping: Arc::new(AtomicBool::new(false)),
+            dropped_ticks: Arc::new(AtomicU32::new(0)),
+            shutdown_tx,
+            terminated_rx,
+        };
+        handle.try_send_tick(0, vec![]);
+        for tick in 1..=300 {
+            handle.try_send_tick(tick * 20, vec![]);
+        }
+        rx.recv().await.unwrap();
+        handle.try_send_tick(
+            6_020,
+            vec![VoicePacket {
+                ssrc: 1,
+                opus: vec![42],
+            }],
+        );
+        let RecorderCommand::VoiceTick {
+            at_ms,
+            packets,
+            silence_ticks,
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected recovered voice tick");
+        };
+        assert_eq!(at_ms, 6_020);
+        assert_eq!(silence_ticks, 300);
+        assert_eq!(handle.dropped_ticks.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            super::super::lifecycle::tick_writes(Some(&packets[0].opus), silence_ticks),
+            vec![
+                super::super::lifecycle::TickWrite::Silence(300),
+                super::super::lifecycle::TickWrite::Packet(&[42]),
+            ],
+        );
     }
 
     #[test]

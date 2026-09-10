@@ -225,7 +225,23 @@ impl RecorderActor {
             let mut result = Ok(());
             for write in tick_writes(packet.map(Vec::as_slice), silence_ticks) {
                 result = match write {
-                    TickWrite::Silence(frames) => recording.writer.write_silence(frames),
+                    TickWrite::Silence(mut frames) => {
+                        // Bound each synchronous write to five seconds of audio,
+                        // but drain the entire gap before the recovered packet.
+                        let mut written = Ok(());
+                        while frames > 0 {
+                            let chunk = frames.min(250);
+                            written = recording.writer.write_silence(chunk);
+                            if written.is_err() {
+                                break;
+                            }
+                            frames -= chunk;
+                            if frames > 0 {
+                                tokio::task::yield_now().await;
+                            }
+                        }
+                        written
+                    }
                     TickWrite::Packet(bytes) => recording.writer.write_packet(bytes),
                 };
                 if result.is_err() {

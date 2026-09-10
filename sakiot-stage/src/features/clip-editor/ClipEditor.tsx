@@ -64,7 +64,6 @@ export function ClipEditor(props: { guildId: string }) {
 	);
 	const editor = useClipEditor({
 		copyAllSelected: options.copyAllSelected,
-		guildId: props.guildId,
 	});
 	// Any undoable or redoable history step means the page holds work.
 	const { dialog: unsavedDialog } = useUnsavedChangesGuard(

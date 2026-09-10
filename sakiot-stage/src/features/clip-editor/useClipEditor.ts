@@ -23,7 +23,7 @@ import {
 	unmergeSegments,
 } from "./model";
 import { sharedDspPreprocessKey } from "./sharedDsp";
-import { loadClipBuffer, onClipBufferEvicted } from "./useClipBuffer";
+import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
 export type UseClipEditorReturn = ReturnType<typeof useClipEditor>;
@@ -33,11 +33,8 @@ export interface PasteTarget {
 	track: number;
 }
 
-export function useClipEditor(
-	options: { copyAllSelected?: boolean; guildId?: string } = {},
-) {
+export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 	const copyAllSelected = options.copyAllSelected ?? true;
-	const guildId = options.guildId ?? "";
 	const history = useEditHistory(emptyEdit());
 	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo, reset } =
 		history;
@@ -67,6 +64,9 @@ export function useClipEditor(
 	);
 
 	const engineRef = useRef<ClipEditorEngine | null>(null);
+	// The editor owns these sources for its timeline, clipboard and undo history.
+	// Shared-cache eviction must not remove them: playback requires every source
+	// synchronously, including sources restored by undo after cache pressure.
 	const buffersRef = useRef<Map<string, AudioBuffer>>(new Map());
 	const positionRef = useRef(0);
 	const playingRef = useRef(false);
@@ -98,19 +98,6 @@ export function useClipEditor(
 		if (!engineRef.current) engineRef.current = new ClipEditorEngine();
 		return engineRef.current;
 	}, []);
-
-	// The playback map holds its own strong references to decoded buffers;
-	// without this the PCM budget's eviction frees nothing.
-	useEffect(
-		() =>
-			onClipBufferEvicted((key) => {
-				const separator = key.indexOf("/");
-				if (separator < 0) return;
-				if (guildId && key.slice(0, separator) !== guildId) return;
-				buffersRef.current.delete(key.slice(separator + 1));
-			}),
-		[guildId],
-	);
 
 	useEffect(
 		() => () => {
