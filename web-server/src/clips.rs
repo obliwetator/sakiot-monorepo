@@ -400,7 +400,7 @@ pub async fn play_clip(
     };
     let (grpc_address, mut client) = connected;
 
-    let request = tonic::Request::new(JamData {
+    let request = grpc_client::jam_request(JamData {
         clip_name: resolved_clip_id.unwrap_or_else(|| info.clip_name.clone()),
         guild_id: info.guild_id,
         user_id,

@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::RecorderActor;
 use crate::cast::ToI64;
 use crate::events::voice_receiver::{
-    DepartureNotify, disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
+    disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
 };
 
 impl RecorderActor {
@@ -447,6 +447,17 @@ impl RecorderActor {
             self.recoverable_disconnect_deadline_ms,
             now_ms,
         ) {
+            // The run loop must never block on the guild operation mutex: a
+            // holder may be awaiting this actor's termination, which would
+            // deadlock. If the lock is contended, keep the deadline state and
+            // retry on the next tick — or exit via the shutdown signal if the
+            // holder is a teardown that already signalled us.
+            let report = crate::events::voice::try_teardown_voice_session(
+                &self.env.data,
+                &self.pool,
+                self.guild_id,
+            )
+            .await?;
             warn!(
                 guild_id = self.guild_id.get(),
                 "voice recovery timed out; tearing down stale call"
@@ -455,13 +466,6 @@ impl RecorderActor {
             self.recoverable_disconnect_deadline_ms = 0;
             self.planned_handoff = None;
             self.metrics.record_recovery_teardown();
-            let report = crate::events::voice::teardown_voice_session(
-                &self.env.data,
-                &self.pool,
-                self.guild_id,
-                DepartureNotify::Caller,
-            )
-            .await;
             if report.manager_missing {
                 self.metrics.record_recovery_teardown_manager_missing();
                 warn!(

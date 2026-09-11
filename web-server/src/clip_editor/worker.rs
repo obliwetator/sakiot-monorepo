@@ -83,9 +83,14 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
                 };
             }
             _ = heartbeat.tick() => {
+                // A transient database error must not kill a long render: the
+                // lease is valid for 60s and the next heartbeat retries. Only a
+                // definitive "not renewed" answer means the lease is gone.
                 match tokio::time::timeout(Duration::from_secs(5), queue::renew(pool, id, token)).await {
                     Ok(Ok(true)) => {},
-                    _ => break Err(AppError::Conflict("Export lease lost".into())),
+                    Ok(Ok(false)) => break Err(AppError::Conflict("Export lease lost".into())),
+                    Ok(Err(error)) => tracing::warn!(job_id = %id, ?error, "composition lease renewal failed; retrying next heartbeat"),
+                    Err(_) => tracing::warn!(job_id = %id, "composition lease renewal timed out; retrying next heartbeat"),
                 }
             }
             _ = &mut deadline => break Err(AppError::ServiceUnavailable("Export exceeded the execution deadline".into())),
@@ -168,10 +173,21 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
             _ = ticker.tick() => {
                 let pct = progress.0.read().await.get(&compose_progress_key(id)).copied().unwrap_or(0).clamp(0, 99);
                 let stage = if pct == 0 { "preparing" } else { "rendering" };
-                if !queue::report(&pool, id, token, stage, pct).await.unwrap_or(false) {
-                    // Publication may have just committed. Returning lets the
-                    // supervisor end the group; no new attempt may publish.
-                    break Err(AppError::Conflict("Export lease lost".into()));
+                // A transient database error here must not fail the export: the
+                // lease still has time left and the next tick retries. Only a
+                // definitive "not running" answer means the lease was lost.
+                match queue::report(&pool, id, token, stage, pct).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // Publication may have just committed. Returning lets the
+                        // supervisor end the group; no new attempt may publish.
+                        break Err(AppError::Conflict("Export lease lost".into()));
+                    }
+                    Err(error) => tracing::warn!(
+                        job_id = %id,
+                        ?error,
+                        "composition progress report failed; retrying next tick"
+                    ),
                 }
                 if workspace_bytes(&attempt_dir(id, token)).await? > DISK_BUDGET {
                     break Err(AppError::BadRequest("Export exceeded the temporary storage budget".into()));

@@ -3,7 +3,8 @@ use serenity::{
     all::{ButtonStyle, CommandDataOptionValue, CommandInteraction, Interaction},
     builder::{
         AutocompleteChoice, CreateActionRow, CreateAutocompleteResponse, CreateButton,
-        CreateInteractionResponse, CreateInteractionResponseMessage,
+        CreateInteractionResponse, CreateInteractionResponseFollowup,
+        CreateInteractionResponseMessage, EditInteractionResponse,
     },
     client::Context,
 };
@@ -24,7 +25,24 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
         Interaction::Command(application_command) => {
             record_command_executed(&ctx).await;
 
-            let mut response_msg = CreateInteractionResponseMessage::new().ephemeral(true);
+            // Acknowledge immediately: handlers may take seconds (voice
+            // joins, archive downloads) and Discord only accepts the initial
+            // response within ~3s. The real answer is delivered by editing
+            // the deferred response once the work is done.
+            if let Err(why) = application_command
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Defer(
+                        CreateInteractionResponseMessage::new().ephemeral(true),
+                    ),
+                )
+                .await
+            {
+                warn!("Cannot defer slash command: {}", why);
+                return;
+            }
+
+            let mut response_msg = EditInteractionResponse::new();
 
             match application_command.data.name.as_str() {
                 "jam" => {
@@ -79,15 +97,29 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
             }
 
             if let Err(why) = application_command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(response_msg))
+                .edit_response(&ctx.http, response_msg)
                 .await
             {
-                warn!("Cannot respond to slash command: {}", why);
+                warn!("Cannot edit deferred slash command response: {}", why);
             }
         }
         Interaction::Component(component) => {
             if let Some(clip_id) = component.data.custom_id.strip_prefix("jam_replay:") {
                 let user_id = component.user.id.to_i64();
+                // Defer first: replaying may download the clip from the
+                // archive, which can exceed the 3s response window.
+                if let Err(why) = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::Defer(
+                            CreateInteractionResponseMessage::new().ephemeral(true),
+                        ),
+                    )
+                    .await
+                {
+                    warn!("Cannot defer replay button: {}", why);
+                    return;
+                }
                 let content = replay_clip(
                     clip_id,
                     &component.guild_id,
@@ -98,17 +130,15 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                 )
                 .await;
                 if let Err(why) = component
-                    .create_response(
+                    .create_followup(
                         &ctx.http,
-                        CreateInteractionResponse::Message(
-                            CreateInteractionResponseMessage::new()
-                                .content(content)
-                                .ephemeral(true),
-                        ),
+                        CreateInteractionResponseFollowup::new()
+                            .content(content)
+                            .ephemeral(true),
                     )
                     .await
                 {
-                    warn!("Cannot respond to replay button: {}", why);
+                    warn!("Cannot send replay followup: {}", why);
                 }
             } else {
                 warn!(

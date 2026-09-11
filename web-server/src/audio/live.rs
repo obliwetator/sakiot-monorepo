@@ -232,11 +232,11 @@ async fn playlist_finalized(p: &Path) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HlsCacheAction {
     ReuseFinalized,
-    PurgeStaleLive,
+    PurgeStale,
     BuildFresh,
 }
 
-async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
+async fn hls_cache_action(playlist: &Path) -> HlsCacheAction {
     if !tokio::fs::try_exists(playlist).await.unwrap_or(false) {
         return HlsCacheAction::BuildFresh;
     }
@@ -245,11 +245,12 @@ async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
         return HlsCacheAction::ReuseFinalized;
     }
 
-    if is_live {
-        return HlsCacheAction::PurgeStaleLive;
-    }
-
-    HlsCacheAction::BuildFresh
+    // A playlist without #EXT-X-ENDLIST means the previous ffmpeg run (live
+    // or VOD) never finished — e.g. a crash between spawn and the ENDLIST
+    // append. The rebuild cannot reuse it: the VOD command answers prompts
+    // with stdin null, so ffmpeg would refuse to overwrite and exit,
+    // finalizing the dead playlist. Purge and rebuild from the source.
+    HlsCacheAction::PurgeStale
 }
 
 async fn append_endlist(p: &Path) -> std::io::Result<()> {
@@ -512,15 +513,19 @@ async fn spawn_job(
             .spawn()
             .map_err(AppError::IoError)?
     } else {
+        // `-y` + stdin null: never block on the overwrite prompt if a file
+        // from an earlier build is still present (stdin null means ffmpeg
+        // answers prompts with "no" and exits).
         let mut c = Command::new("ffmpeg");
         c.arg("-hide_banner")
-            .args(["-loglevel", "warning"])
+            .args(["-loglevel", "warning", "-y"])
             .arg("-i")
             .arg(&src);
         for a in ffmpeg_output_args(&out_dir, false) {
             c.arg(a);
         }
         c.stdout(Stdio::null())
+            .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
@@ -648,7 +653,7 @@ async fn ensure_job_locked(
     let db = db_state(&pool, &key.stem).await?;
     let is_live = db.live;
 
-    match hls_cache_action(&playlist, is_live).await {
+    match hls_cache_action(&playlist).await {
         HlsCacheAction::ReuseFinalized => {
             let s = Arc::new(Mutex::new(JobState {
                 finalized: true,
@@ -657,11 +662,11 @@ async fn ensure_job_locked(
             container.jobs.write().await.insert(id, s.clone());
             return Ok(s);
         }
-        HlsCacheAction::PurgeStaleLive => {
+        HlsCacheAction::PurgeStale => {
             warn!(
                 stem = %key.stem,
                 path = %out_dir.display(),
-                "purging stale non-finalized live HLS cache before respawn"
+                "purging stale non-finalized HLS cache before rebuild"
             );
             tokio::fs::remove_dir_all(&out_dir)
                 .await
@@ -904,7 +909,7 @@ mod tests {
         let playlist = dir.join("playlist.m3u8");
 
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
+            hls_cache_action(&playlist).await,
             HlsCacheAction::BuildFresh
         );
     }
@@ -919,7 +924,7 @@ mod tests {
         tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-ENDLIST\n").await?;
 
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
+            hls_cache_action(&playlist).await,
             HlsCacheAction::ReuseFinalized
         );
 
@@ -928,7 +933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hls_cache_action_purges_unfinalized_live_playlist()
+    async fn hls_cache_action_purges_unfinalized_playlist_even_for_vod()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir =
             std::env::temp_dir().join(format!("sakiot-live-test-stale-{}", uuid::Uuid::new_v4()));
@@ -936,13 +941,13 @@ mod tests {
         let playlist = dir.join("playlist.m3u8");
         tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n").await?;
 
+        // A non-finalized playlist means the previous run never completed,
+        // whether it was live or a VOD rebuild: both must purge, otherwise
+        // the VOD command (stdin null) refuses the overwrite and the dead
+        // playlist is served as finalized.
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
-            HlsCacheAction::PurgeStaleLive
-        );
-        assert_eq!(
-            hls_cache_action(&playlist, false).await,
-            HlsCacheAction::BuildFresh
+            hls_cache_action(&playlist).await,
+            HlsCacheAction::PurgeStale
         );
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
