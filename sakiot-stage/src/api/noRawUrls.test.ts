@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: this scanner and its fixtures match literal `${...}` text inside source snippets, so the pattern is data here rather than a string that forgot to be a template literal
 import { describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";

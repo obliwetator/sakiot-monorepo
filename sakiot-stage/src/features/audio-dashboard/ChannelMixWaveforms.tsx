@@ -118,8 +118,35 @@ function TimelineWaveform(props: {
 	label: string;
 	onSeek: (positionMs: number) => void;
 }) {
+	// Matches the seconds-based range used by the sibling position slider, so
+	// assistive tech announces the same scale for both seek controls.
+	const durationSec = Math.max(0.001, props.durationMs / 1_000);
+	const positionSec = Math.min(
+		durationSec,
+		Math.max(0, props.positionMs / 1_000),
+	);
 	return (
 		<div
+			role="slider"
+			aria-label={props.label}
+			aria-valuemin={0}
+			aria-valuemax={durationSec}
+			aria-valuenow={positionSec}
+			tabIndex={0}
+			onKeyDown={(event) => {
+				if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+				event.preventDefault();
+				const delta = event.shiftKey ? 1 : 0.1;
+				props.onSeek(
+					Math.min(
+						durationSec,
+						Math.max(
+							0,
+							positionSec + (event.key === "ArrowRight" ? delta : -delta),
+						),
+					) * 1_000,
+				);
+			}}
 			onClick={(event) => {
 				const bounds = event.currentTarget.getBoundingClientRect();
 				const fraction = Math.max(

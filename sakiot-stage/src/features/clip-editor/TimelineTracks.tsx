@@ -212,6 +212,7 @@ export function TrackRow(props: {
 				/>
 			}
 		>
+			{/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: pointer surface that activates the track for pasting on click and starts marquee selection on pointer-down; neither gesture has a keyboard equivalent yet */}
 			<div
 				ref={(element: HTMLDivElement | null) => props.onRowRef(element)}
 				onClick={props.onActivate}
@@ -451,6 +452,7 @@ function TrackSegment(props: {
 	) : null;
 
 	return (
+		/* biome-ignore lint/a11y/noStaticElementInteractions: direct-manipulation segment surface (drag to move, handles to resize, double-click to select); editing the selected segment is keyboard-reachable through the global shortcuts and Inspector */
 		<div
 			onPointerDown={
 				props.audacityStyleInteraction

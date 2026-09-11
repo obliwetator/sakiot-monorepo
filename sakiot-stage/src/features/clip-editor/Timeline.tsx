@@ -797,6 +797,7 @@ export function Timeline(props: {
 					viewStartSec={editor.viewStartSec}
 					viewWidthSec={editor.viewWidthSec}
 				/>
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: pointer drag-and-drop target that places clips at a track and time; the same clips can be added from the ClipBin buttons */}
 				<div
 					ref={tracksRef}
 					data-testid="clip-timeline-dropzone"
