@@ -266,11 +266,14 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     // Preview slots deploy the web server and frontend only. Bot behavior is
     // exercised on the staging instance, so preview branches need no Discord
     // bot (one gateway per token) and skip the blue/green bot handoff.
+    //
+    // The frontend is deployed unconditionally, ignoring path-based component
+    // selection: the CI verify step polls the slot's public version.json — a
+    // frontend artifact stamped at build time — for the deployed commit, so a
+    // component-scoped deploy that skips the frontend would fail its own
+    // verification while serving the previous commit's UI.
     let components: Vec<Component> = if target == Target::Preview {
-        components
-            .into_iter()
-            .filter(|component| *component != Component::Bot)
-            .collect()
+        vec![Component::Web, Component::Frontend]
     } else {
         components
     };
