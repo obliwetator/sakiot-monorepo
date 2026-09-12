@@ -2,8 +2,8 @@ import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useLocation, useParams } from "react-router-dom";
+import { API_ROUTES, apiAbsoluteUrl } from "../../api/routes";
 import {
-	BASE_API_URL,
 	useCheckSilenceFileQuery,
 	useGetLiveStateQuery,
 	useGetRecordingEventsQuery,
@@ -11,6 +11,7 @@ import {
 import { useAppSelector } from "../../app/hooks";
 import type { AudioParams, UserGuilds } from "../../Constants";
 import { setHasSilence } from "../../reducers/silence";
+import { deepLinkSeekSeconds } from "./deepLinkSeek";
 import { RangeSlider } from "./RangeSlider";
 
 export function AudioInterface(props: {
@@ -109,8 +110,17 @@ export function AudioInterface(props: {
 	// Direct streaming URL — browser issues HTTP Range requests against
 	// the audio element so playback can start before the full file lands.
 	const streamUrl = props.isClip
-		? `${BASE_API_URL}audio/clips/${params.guild_id}/${encodeURIComponent(params.file_name ?? "")}`
-		: `${BASE_API_URL}audio/${params.guild_id}/${params.channel_id}/${params.year}/${params.month}/${encodeURIComponent(params.file_name ?? "")}.ogg${props.isSilence ? `?silence=true&v=${silenceVersion}` : ""}`;
+		? apiAbsoluteUrl(API_ROUTES.clip, {
+				guild_id: params.guild_id ?? "",
+				clip_id: params.file_name ?? "",
+			})
+		: `${apiAbsoluteUrl(API_ROUTES.audio, {
+				guild_id: params.guild_id ?? "",
+				channel_id: params.channel_id ?? "",
+				year: params.year ?? "",
+				month: params.month ?? "",
+				file_name: `${params.file_name ?? ""}.ogg`,
+			})}${props.isSilence ? `?silence=true&v=${silenceVersion}` : ""}`;
 
 	// For non-clip/silence files, wait for liveState before opening the
 	// stream — avoids racing a blob-style download against a live
@@ -135,7 +145,13 @@ export function AudioInterface(props: {
 		setError(false);
 		setTrueDuration(null);
 
-		const hlsUrl = `${BASE_API_URL}audio/live/${params.guild_id}/${params.channel_id}/${params.year}/${params.month}/${encodeURIComponent(params.file_name)}/playlist.m3u8`;
+		const hlsUrl = apiAbsoluteUrl(API_ROUTES.livePlaylist, {
+			guild_id: params.guild_id ?? "",
+			channel_id: params.channel_id ?? "",
+			year: params.year ?? "",
+			month: Number(params.month),
+			stem: params.file_name ?? "",
+		});
 
 		const audio = new Audio();
 		audio.preload = "auto";
@@ -158,8 +174,8 @@ export function AudioInterface(props: {
 		};
 		const onCanPlay = () => {
 			if (!isActive) return;
-			const t = new URLSearchParams(location.search).get("t");
-			if (t && audio.currentTime === 0) audio.currentTime = parseFloat(t);
+			const seek = deepLinkSeekSeconds(location.search);
+			if (seek !== null && audio.currentTime === 0) audio.currentTime = seek;
 			setReadyToPlay(true);
 			setAudioRef(audio);
 			if (Number.isFinite(audio.duration)) setTrueDuration(audio.duration);
@@ -253,9 +269,9 @@ export function AudioInterface(props: {
 
 		localAudioRef.addEventListener("canplay", () => {
 			if (!isActive) return;
-			const t = new URLSearchParams(location.search).get("t");
-			if (t && localAudioRef.currentTime === 0)
-				localAudioRef.currentTime = parseFloat(t);
+			const seek = deepLinkSeekSeconds(location.search);
+			if (seek !== null && localAudioRef.currentTime === 0)
+				localAudioRef.currentTime = seek;
 			setReadyToPlay(true);
 			setAudioRef(localAudioRef);
 			if (

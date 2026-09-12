@@ -380,6 +380,11 @@ export function useSessionSelectionController(
 			disableLoop();
 			if (nextTab === "silence") options.normal.stop();
 			else options.silence.stop();
+			// The remembered shortcut target belonged to the player that is now
+			// hidden, so Space and the arrow keys would keep driving a paused,
+			// invisible player. Forget it; the shortcuts fall back to the
+			// newly visible tab's player.
+			options.lastPlaybackRef.current = null;
 			playbackTabRef.current = nextTab;
 			const next =
 				nextTab === "silence"
@@ -391,7 +396,7 @@ export function useSessionSelectionController(
 			setSelection(next);
 			setPlaybackTab(nextTab);
 		},
-		[disableLoop, options.normal, options.silence],
+		[disableLoop, options.lastPlaybackRef, options.normal, options.silence],
 	);
 
 	useEffect(() => {

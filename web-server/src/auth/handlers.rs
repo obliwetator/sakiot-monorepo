@@ -302,9 +302,11 @@ pub async fn dev_login(
 
     let (access_token, refresh_token) =
         create_jwt_tokens(dev_account_id, AuthKind::Dev, csrf_token.clone(), &keys).await?;
+    // The caller (the SPA's dev-login button) reads the CSRF header and the
+    // Set-Cookie headers; the body is ignored, so no page is served.
     let mut b = HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(include_str!("../../callback.html"));
+        .content_type("text/plain; charset=utf-8")
+        .body("dev login ok");
 
     let d = cfg.cookie_domain.as_str();
     b.add_cookie(&clear_legacy_access_cookie(d))?;

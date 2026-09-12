@@ -85,6 +85,20 @@ impl LiveContainer {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
+
+    /// Drops a creation lock once nobody is waiting on it. The job map already
+    /// deduplicates later requests, so keeping one lock per recording ever
+    /// streamed would grow without bound.
+    async fn release_key_lock(&self, id: &str, lock: Arc<Mutex<()>>) {
+        drop(lock);
+        let mut locks = self.locks.lock().await;
+        if locks
+            .get(id)
+            .is_some_and(|current| Arc::strong_count(current) == 1)
+        {
+            locks.remove(id);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -218,11 +232,11 @@ async fn playlist_finalized(p: &Path) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HlsCacheAction {
     ReuseFinalized,
-    PurgeStaleLive,
+    PurgeStale,
     BuildFresh,
 }
 
-async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
+async fn hls_cache_action(playlist: &Path) -> HlsCacheAction {
     if !tokio::fs::try_exists(playlist).await.unwrap_or(false) {
         return HlsCacheAction::BuildFresh;
     }
@@ -231,11 +245,12 @@ async fn hls_cache_action(playlist: &Path, is_live: bool) -> HlsCacheAction {
         return HlsCacheAction::ReuseFinalized;
     }
 
-    if is_live {
-        return HlsCacheAction::PurgeStaleLive;
-    }
-
-    HlsCacheAction::BuildFresh
+    // A playlist without #EXT-X-ENDLIST means the previous ffmpeg run (live
+    // or VOD) never finished — e.g. a crash between spawn and the ENDLIST
+    // append. The rebuild cannot reuse it: the VOD command answers prompts
+    // with stdin null, so ffmpeg would refuse to overwrite and exit,
+    // finalizing the dead playlist. Purge and rebuild from the source.
+    HlsCacheAction::PurgeStale
 }
 
 async fn append_endlist(p: &Path) -> std::io::Result<()> {
@@ -498,15 +513,19 @@ async fn spawn_job(
             .spawn()
             .map_err(AppError::IoError)?
     } else {
+        // `-y` + stdin null: never block on the overwrite prompt if a file
+        // from an earlier build is still present (stdin null means ffmpeg
+        // answers prompts with "no" and exits).
         let mut c = Command::new("ffmpeg");
         c.arg("-hide_banner")
-            .args(["-loglevel", "warning"])
+            .args(["-loglevel", "warning", "-y"])
             .arg("-i")
             .arg(&src);
         for a in ffmpeg_output_args(&out_dir, false) {
             c.arg(a);
         }
         c.stdout(Stdio::null())
+            .stdin(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
@@ -593,12 +612,16 @@ pub(crate) async fn ensure_job(
     // and then reuses the entry the winner inserts, so only one ffmpeg
     // pipeline writes the shared `hls-{stem}` directory.
     let key_guard = container.key_lock(&id).await;
-    let _key_guard = key_guard.lock().await;
-    if let Some(s) = container.jobs.read().await.get(&id).cloned() {
-        return Ok(s);
-    }
-
-    ensure_job_locked(container, pool, key).await
+    let result = {
+        let _key_guard = key_guard.lock().await;
+        if let Some(s) = container.jobs.read().await.get(&id).cloned() {
+            Ok(s)
+        } else {
+            ensure_job_locked(container.clone(), pool, key).await
+        }
+    };
+    container.release_key_lock(&id, key_guard).await;
+    result
 }
 
 async fn ensure_job_locked(
@@ -630,7 +653,7 @@ async fn ensure_job_locked(
     let db = db_state(&pool, &key.stem).await?;
     let is_live = db.live;
 
-    match hls_cache_action(&playlist, is_live).await {
+    match hls_cache_action(&playlist).await {
         HlsCacheAction::ReuseFinalized => {
             let s = Arc::new(Mutex::new(JobState {
                 finalized: true,
@@ -639,11 +662,11 @@ async fn ensure_job_locked(
             container.jobs.write().await.insert(id, s.clone());
             return Ok(s);
         }
-        HlsCacheAction::PurgeStaleLive => {
+        HlsCacheAction::PurgeStale => {
             warn!(
                 stem = %key.stem,
                 path = %out_dir.display(),
-                "purging stale non-finalized live HLS cache before respawn"
+                "purging stale non-finalized HLS cache before rebuild"
             );
             tokio::fs::remove_dir_all(&out_dir)
                 .await
@@ -759,7 +782,10 @@ pub async fn live_state(
     )
     .await?;
     let db = db_state(&pool, &stem).await?;
-    let ended_at = db.end_ts.or(if db.live { None } else { db.start_ts });
+    // A finalized recording with no end timestamp has an unknown end. Falling
+    // back to the start timestamp reported every such recording as zero
+    // seconds long, which the UI showed as an empty timeline.
+    let ended_at = db.end_ts;
     Ok(HttpResponse::Ok().json(StateResponse {
         live: db.live,
         started_at: db.start_ts,
@@ -848,13 +874,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn released_creation_lock_is_pruned_unless_a_waiter_holds_it() {
+        let container = LiveContainer::default();
+        let lock = container.key_lock("recording").await;
+
+        // A waiter still holding a clone keeps the entry: it must observe the
+        // same lock or two spawns could race for one recording.
+        let waiter = container.key_lock("recording").await;
+        container.release_key_lock("recording", lock).await;
+        assert_eq!(container.locks.lock().await.len(), 1);
+
+        // With nobody waiting, the entry goes away and the map cannot grow
+        // with every recording ever streamed.
+        container.release_key_lock("recording", waiter).await;
+        assert!(container.locks.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pruned_lock_is_recreated_for_later_requests() {
+        let container = LiveContainer::default();
+        let lock = container.key_lock("recording").await;
+        container.release_key_lock("recording", lock).await;
+
+        let recreated = container.key_lock("recording").await;
+        let stored = container.locks.lock().await.get("recording").cloned();
+        assert_eq!(container.locks.lock().await.len(), 1);
+        assert!(stored.is_some_and(|stored| Arc::ptr_eq(&recreated, &stored)));
+    }
+
+    #[tokio::test]
     async fn hls_cache_action_builds_when_playlist_missing() {
         let dir =
             std::env::temp_dir().join(format!("sakiot-live-test-missing-{}", uuid::Uuid::new_v4()));
         let playlist = dir.join("playlist.m3u8");
 
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
+            hls_cache_action(&playlist).await,
             HlsCacheAction::BuildFresh
         );
     }
@@ -869,7 +924,7 @@ mod tests {
         tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-ENDLIST\n").await?;
 
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
+            hls_cache_action(&playlist).await,
             HlsCacheAction::ReuseFinalized
         );
 
@@ -878,7 +933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hls_cache_action_purges_unfinalized_live_playlist()
+    async fn hls_cache_action_purges_unfinalized_playlist_even_for_vod()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir =
             std::env::temp_dir().join(format!("sakiot-live-test-stale-{}", uuid::Uuid::new_v4()));
@@ -886,13 +941,13 @@ mod tests {
         let playlist = dir.join("playlist.m3u8");
         tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n").await?;
 
+        // A non-finalized playlist means the previous run never completed,
+        // whether it was live or a VOD rebuild: both must purge, otherwise
+        // the VOD command (stdin null) refuses the overwrite and the dead
+        // playlist is served as finalized.
         assert_eq!(
-            hls_cache_action(&playlist, true).await,
-            HlsCacheAction::PurgeStaleLive
-        );
-        assert_eq!(
-            hls_cache_action(&playlist, false).await,
-            HlsCacheAction::BuildFresh
+            hls_cache_action(&playlist).await,
+            HlsCacheAction::PurgeStale
         );
 
         let _ = tokio::fs::remove_dir_all(&dir).await;

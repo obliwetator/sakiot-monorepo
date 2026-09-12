@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
 import { Button, ProgressBar } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
@@ -6,6 +6,10 @@ import {
 	decodeWaveformPeaks,
 	EMPTY_WAVEFORM_ENVELOPE,
 } from "../audio-dashboard/waveformPeaks";
+import {
+	nextPollErrorCount,
+	shouldKeepPollingClipWaveform,
+} from "./clipWaveformPolling";
 
 const CLIP_WAVEFORM_HEIGHT_PX = 140;
 
@@ -18,7 +22,11 @@ export function ClipWaveform(props: {
 }) {
 	const [requestKey, setRequestKey] = useState<number | undefined>();
 	const [generating, setGenerating] = useState(true);
-	const { currentData: data, isError } = useGetClipWaveformQuery(
+	const {
+		currentData: data,
+		isError,
+		isFetching,
+	} = useGetClipWaveformQuery(
 		{
 			guild_id: props.guildId,
 			clip_id: props.clipId,
@@ -29,9 +37,30 @@ export function ClipWaveform(props: {
 		},
 	);
 
+	// A poll can fail while the build is still in flight, so transport errors
+	// are retried rather than ending the loop. Only settled requests count:
+	// `isError` is cleared while a refetch is pending, so counting it directly
+	// would reset the streak on every poll.
+	const pollErrors = useRef(0);
+	const wasFetching = useRef(false);
 	useEffect(() => {
-		if (data?.progress === 100 || data?.error || isError) setGenerating(false);
-	}, [data?.error, data?.progress, isError]);
+		const settled = wasFetching.current && !isFetching;
+		wasFetching.current = isFetching;
+		pollErrors.current = nextPollErrorCount(
+			settled,
+			isError,
+			pollErrors.current,
+		);
+		if (
+			!shouldKeepPollingClipWaveform(
+				data?.progress,
+				pollErrors.current,
+				Boolean(data?.error),
+			)
+		) {
+			setGenerating(false);
+		}
+	}, [data?.error, data?.progress, isError, isFetching]);
 
 	const peaks = useMemo(
 		() =>
@@ -40,7 +69,9 @@ export function ClipWaveform(props: {
 	);
 
 	const progress = data?.progress ?? 0;
-	const waveformError = isError || Boolean(data?.error);
+	// While the poller is still retrying, show progress instead of the error
+	// panel; only a stopped poller reports the waveform as unavailable.
+	const waveformError = !generating && (isError || Boolean(data?.error));
 	const playhead =
 		props.durationSeconds > 0
 			? Math.min(
@@ -90,6 +121,8 @@ export function ClipWaveform(props: {
 					size="sm"
 					isDisabled={generating}
 					onPress={() => {
+						pollErrors.current = 0;
+						wasFetching.current = false;
 						setGenerating(true);
 						setRequestKey(Date.now());
 					}}

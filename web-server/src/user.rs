@@ -29,7 +29,9 @@ pub struct User {
     pub id: i64,
     pub username: String,
     pub discriminator: String,
-    pub avatar: String,
+    // Discord returns `null` for accounts without an uploaded avatar; the
+    // frontend resolves an empty hash to the deterministic default avatar.
+    pub avatar: Option<String>,
     pub bot: Option<bool>,
     pub system: Option<bool>,
     pub mfa_enabled: Option<bool>,
@@ -65,7 +67,7 @@ pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Re
 		user.id,
 		user.username,
 		user.discriminator,
-		user.avatar,
+		user.avatar.clone().unwrap_or_default(),
 		user.bot,
 		user.system,
 		user.mfa_enabled,

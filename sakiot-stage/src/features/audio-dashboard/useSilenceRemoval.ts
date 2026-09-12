@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_ROUTES, apiUrl } from "../../api/routes";
 import { BASE_API_URL } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
 import {
@@ -92,7 +93,11 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		setError(null);
 		setMessage(null);
 		if (!options.finalized) return;
-		void authedFetch(`audio/sessions/${options.sessionId}/remove-silence`)
+		void authedFetch(
+			apiUrl(API_ROUTES.sessionRemoveSilence, {
+				recording_session_id: options.sessionId,
+			}),
+		)
 			.then(async (response) => {
 				if (!response.ok) return;
 				const result = parseSilenceRemovalStatus(await response.json());
@@ -113,7 +118,9 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		const poll = async () => {
 			try {
 				const response = await authedFetch(
-					`audio/sessions/${options.sessionId}/remove-silence`,
+					apiUrl(API_ROUTES.sessionRemoveSilence, {
+						recording_session_id: options.sessionId,
+					}),
 				);
 				if (response.ok) {
 					const result = parseSilenceRemovalStatus(await response.json());
@@ -140,7 +147,9 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		setMessage(null);
 		try {
 			const response = await authedFetch(
-				`audio/sessions/${options.sessionId}/download`,
+				apiUrl(API_ROUTES.sessionDownload, {
+					recording_session_id: options.sessionId,
+				}),
 			);
 			if (!response.ok) {
 				setError(`Session download failed (${response.status}).`);
@@ -164,7 +173,9 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 			setMessage(null);
 			try {
 				const response = await authedFetch(
-					`audio/sessions/${options.sessionId}/remove-silence${force ? "?force=true" : ""}`,
+					`${apiUrl(API_ROUTES.sessionRemoveSilence, {
+						recording_session_id: options.sessionId,
+					})}${force ? "?force=true" : ""}`,
 					{
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
@@ -194,7 +205,9 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		setError(null);
 		try {
 			const response = await authedFetch(
-				`audio/sessions/${options.sessionId}/silence-free?download=true`,
+				`${apiUrl(API_ROUTES.sessionSilenceFree, {
+					recording_session_id: options.sessionId,
+				})}?download=true`,
 			);
 			if (!response.ok) {
 				setError(`Silence-free download failed (${response.status}).`);

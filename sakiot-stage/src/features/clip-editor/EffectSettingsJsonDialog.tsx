@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
 import { Button, TextArea } from "../../shared/ui";
+import type { EffectLimits } from "./effectLimits";
 import { parseEffectSettingsJson } from "./effectSettingsJson";
 import { DEFAULT_EFFECTS, resizeSelectedSegments } from "./model";
 import type { UseClipEditorReturn } from "./useClipEditor";
@@ -9,6 +10,7 @@ export function EffectSettingsJsonDialog(props: {
 	open: boolean;
 	onClose: () => void;
 	editor: UseClipEditorReturn;
+	limits: EffectLimits;
 }) {
 	const [json, setJson] = useState("");
 	const [error, setError] = useState<string | null>(null);
@@ -31,7 +33,7 @@ export function EffectSettingsJsonDialog(props: {
 			setError("Select at least one timeline segment first.");
 			return;
 		}
-		const result = parseEffectSettingsJson(json);
+		const result = parseEffectSettingsJson(json, props.limits);
 		if (!result.ok) {
 			setError(result.error);
 			return;

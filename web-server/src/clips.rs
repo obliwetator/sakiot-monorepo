@@ -400,7 +400,7 @@ pub async fn play_clip(
     };
     let (grpc_address, mut client) = connected;
 
-    let request = tonic::Request::new(JamData {
+    let request = grpc_client::jam_request(JamData {
         clip_name: resolved_clip_id.unwrap_or_else(|| info.clip_name.clone()),
         guild_id: info.guild_id,
         user_id,
@@ -432,6 +432,7 @@ pub async fn play_clip(
 
 use crate::audio::StartEnd;
 use chrono::Datelike;
+use std::path::Path;
 use std::process::Stdio;
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -469,6 +470,112 @@ async fn crop_ffmpeg(
     command
         .spawn()
         .map_err(|e| AppError::FfmpegError(e.to_string()))
+}
+
+/// Inclusive clip length bounds, shared by the pre-flight range validation.
+const CLIP_DURATION_SECONDS: std::ops::RangeInclusive<f32> = 1.0..=20.0;
+/// Allowance for container rounding when checking a requested end against the
+/// probed duration of the source recording.
+const CLIP_RANGE_TOLERANCE_SECONDS: f64 = 0.05;
+
+/// Reject ranges that can never describe a real clip: non-finite or negative
+/// starts, an end at or before the start, and lengths outside 1..=20 seconds.
+fn validate_clip_range(start: f32, end: f32) -> Result<(), AppError> {
+    if !start.is_finite()
+        || !end.is_finite()
+        || start < 0.0
+        || end <= start
+        || !CLIP_DURATION_SECONDS.contains(&(end - start))
+    {
+        return Err(AppError::BadRequest(
+            "Clip duration must be between 1 and 20 seconds".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Reject a range that runs past the end of the source recording. Without this
+/// ffmpeg happily writes a header-only Ogg and the clip row claims a length the
+/// file does not contain.
+fn validate_clip_fits_recording(end: f32, recording_duration: f64) -> Result<(), AppError> {
+    if f64::from(end) > recording_duration + CLIP_RANGE_TOLERANCE_SECONDS {
+        return Err(AppError::BadRequest(
+            "Clip range exceeds the recording duration".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Parse the `format=duration` value emitted by ffprobe. `None` covers the
+/// non-numeric (`N/A`), non-finite, and non-positive outputs that all mean "no
+/// usable audio in this file".
+fn parse_probe_duration(stdout: &[u8]) -> Option<f64> {
+    String::from_utf8_lossy(stdout)
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+}
+
+/// Run ffprobe for a container duration. Only process-level failures are
+/// errors here; a non-zero exit is returned to the caller as a failed status.
+async fn run_ffprobe(path: &Path) -> Result<std::process::Output, AppError> {
+    tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .output()
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                AppError::ServiceUnavailable(
+                    "ffprobe executable is unavailable; install FFmpeg on the web server".into(),
+                )
+            } else {
+                AppError::IoError(error)
+            }
+        })
+}
+
+/// Duration of the localized source recording, in seconds. A source we cannot
+/// measure is a bad gateway, not a client error: the request itself may be fine.
+async fn probe_source_duration(path: &Path) -> Result<f64, AppError> {
+    let probe = run_ffprobe(path).await?;
+    if !probe.status.success() {
+        return Err(AppError::BadGateway(
+            "ffprobe could not read the recording duration".into(),
+        ));
+    }
+    parse_probe_duration(&probe.stdout)
+        .ok_or_else(|| AppError::BadGateway("ffprobe returned no audio duration".into()))
+}
+
+/// Duration of a clip ffmpeg just wrote. `None` means the output carries no
+/// audio (header-only container), which must not be recorded as a clip.
+async fn probe_rendered_duration(path: &Path) -> Result<Option<f64>, AppError> {
+    let probe = run_ffprobe(path).await?;
+    if !probe.status.success() {
+        return Ok(None);
+    }
+    Ok(parse_probe_duration(&probe.stdout))
+}
+
+async fn discard_clip_output(path: &str) {
+    if let Err(error) = tokio::fs::remove_file(path).await {
+        warn!("could not remove empty clip output {path}: {error}");
+    }
+}
+
+/// A clip output is unusable when ffmpeg wrote no bytes at all, or wrote a
+/// container that carries no readable audio duration (a header-only Ogg).
+fn is_unusable_clip_output(size: u64, rendered_duration: Option<f64>) -> bool {
+    size == 0 || rendered_duration.is_none()
 }
 
 #[utoipa::path(
@@ -522,12 +629,8 @@ pub async fn create_clip(
     .await?;
     let start = clip_duration.start.unwrap_or(0.0);
     let end = clip_duration.end.unwrap_or(0.0);
+    validate_clip_range(start, end)?;
     let length = end - start;
-    if !(1.0..=20.0).contains(&length) {
-        return Err(AppError::BadRequest(
-            "Clip duration must be between 1 and 20 seconds".into(),
-        ));
-    }
 
     let src_path = {
         let dir = crate::audio::util::get_file_path_root(
@@ -559,6 +662,11 @@ pub async fn create_clip(
             std::path::Path::new(&src_path),
         )
         .await?;
+
+    // The recording is local now, so its real length is authoritative: a range
+    // that runs past the end would otherwise be stored as an empty clip.
+    let source_duration = probe_source_duration(Path::new(&src_path)).await?;
+    validate_clip_fits_recording(end, source_duration)?;
 
     let clip_name = if let Some(ref name) = clip_duration.name {
         name.clone()
@@ -592,8 +700,31 @@ pub async fn create_clip(
 
     let size = tokio::fs::metadata(&full_save_path)
         .await
-        .map(|m| m.len())
-        .unwrap_or(0) as i64;
+        .map_err(|error| {
+            error!("clip output missing after ffmpeg: {error}");
+            AppError::InternalError
+        })?
+        .len();
+    // A zero-byte or header-only Ogg is not a clip: drop it before the INSERT
+    // so the database never advertises audio that does not exist. A probe that
+    // cannot run at all must not leave the orphaned output behind either.
+    let rendered_duration = if size == 0 {
+        None
+    } else {
+        match probe_rendered_duration(Path::new(&full_save_path)).await {
+            Ok(duration) => duration,
+            Err(error) => {
+                discard_clip_output(&full_save_path).await;
+                return Err(error);
+            }
+        }
+    };
+    if is_unusable_clip_output(size, rendered_duration) {
+        error!("ffmpeg produced an empty clip for {file_name_from_url}");
+        discard_clip_output(&full_save_path).await;
+        return Err(AppError::InternalError);
+    }
+    let size = size as i64;
 
     sqlx::query!(
         "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -764,7 +895,12 @@ pub async fn delete(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_recording_file_name, normalized_clip_name};
+    use super::{
+        is_unusable_clip_output, is_valid_recording_file_name, normalized_clip_name,
+        parse_probe_duration, probe_rendered_duration, probe_source_duration,
+        validate_clip_fits_recording, validate_clip_range,
+    };
+    use crate::errors::AppError;
 
     #[test]
     fn validates_recording_file_name_for_clip_creation() {
@@ -787,5 +923,117 @@ mod tests {
         assert_eq!(normalized_clip_name("  \n\t"), None);
         assert!(normalized_clip_name(&"x".repeat(255)).is_some());
         assert_eq!(normalized_clip_name(&"x".repeat(256)), None);
+    }
+
+    #[test]
+    fn accepts_clip_ranges_inside_the_allowed_window() {
+        assert!(validate_clip_range(0.0, 1.0).is_ok());
+        assert!(validate_clip_range(12.5, 32.5).is_ok());
+        assert!(validate_clip_range(0.0, 20.0).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_clip_ranges() {
+        // Negative start, non-finite bounds, inverted range, and lengths
+        // outside 1..=20 seconds must all be refused before any media work.
+        for (start, end) in [
+            (-5.0_f32, 0.0_f32),
+            (0.0, 0.0),
+            (2.0, 1.0),
+            (0.0, 0.5),
+            (0.0, 20.5),
+            (f32::NAN, 5.0),
+            (0.0, f32::NAN),
+            (f32::NEG_INFINITY, 5.0),
+            (0.0, f32::INFINITY),
+        ] {
+            let error = validate_clip_range(start, end)
+                .expect_err(&format!("range {start}..{end} must be rejected"));
+            assert!(
+                matches!(error, AppError::BadRequest(_)),
+                "range {start}..{end} must be a 400"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_ranges_that_run_past_the_recording() {
+        assert!(validate_clip_fits_recording(10.0, 10.0).is_ok());
+        // Container rounding is tolerated up to the documented slack.
+        assert!(validate_clip_fits_recording(10.04, 10.0).is_ok());
+        assert!(validate_clip_fits_recording(10.06, 10.0).is_err());
+        assert!(validate_clip_fits_recording(99.0, 10.0).is_err());
+    }
+
+    #[test]
+    fn parses_only_usable_ffprobe_durations() {
+        assert_eq!(parse_probe_duration(b"2.006500\n"), Some(2.006500));
+        assert_eq!(parse_probe_duration(b"  12  "), Some(12.0));
+        for unusable in [&b""[..], b"N/A", b"0", b"-1", b"nan", b"inf", b"garbage"] {
+            assert_eq!(
+                parse_probe_duration(unusable),
+                None,
+                "{:?} must not be a duration",
+                String::from_utf8_lossy(unusable)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_empty_clip_outputs_before_inserting() {
+        // Zero bytes, or a container with no readable audio, must never become
+        // a clip row; a real rendered duration is the only acceptable output.
+        assert!(is_unusable_clip_output(0, None));
+        assert!(is_unusable_clip_output(0, Some(2.0)));
+        assert!(is_unusable_clip_output(18_229, None));
+        assert!(!is_unusable_clip_output(18_229, Some(2.0065)));
+    }
+
+    /// Whether a media tool is installed. CI has no FFmpeg, so tests that
+    /// need one skip rather than fail (same convention as the mix fixtures).
+    async fn media_tool_available(tool: &str) -> bool {
+        tokio::process::Command::new(tool)
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success())
+    }
+
+    #[tokio::test]
+    async fn probes_real_audio_and_reports_unreadable_sources() {
+        if !media_tool_available("ffmpeg").await || !media_tool_available("ffprobe").await {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("temp dir");
+        let ogg = dir.path().join("tone.ogg");
+        let generated = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=2"])
+            .args(["-c:a", "libopus"])
+            .arg(&ogg)
+            .status()
+            .expect("ffmpeg must be installed to exercise clip probing");
+        assert!(generated.success(), "ffmpeg failed to generate the fixture");
+
+        let duration = probe_source_duration(&ogg)
+            .await
+            .expect("a generated Ogg has a duration");
+        assert!(
+            (duration - 2.0).abs() < 0.1,
+            "unexpected duration {duration}"
+        );
+        assert!(probe_rendered_duration(&ogg).await.unwrap().is_some());
+
+        // A file ffprobe cannot decode is a bad gateway for the source probe,
+        // and "no audio" (never a server error) for a rendered clip.
+        let junk = dir.path().join("junk.ogg");
+        std::fs::write(&junk, b"not an ogg stream").expect("write junk");
+        assert!(matches!(
+            probe_source_duration(&junk).await,
+            Err(AppError::BadGateway(_))
+        ));
+        assert_eq!(probe_rendered_duration(&junk).await.unwrap(), None);
     }
 }

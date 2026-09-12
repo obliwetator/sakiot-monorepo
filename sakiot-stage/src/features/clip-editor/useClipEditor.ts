@@ -49,6 +49,11 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 	const [copySourceIds, setCopySourceIds] = useState<string[]>([]);
 	/** Warning describing why the last merge attempt was refused. */
 	const [mergeWarning, setMergeWarning] = useState<string | null>(null);
+	/**
+	 * True when preview playback is running without the shared DSP, so pitch,
+	 * speed, and reverse are not applied. Exports are unaffected.
+	 */
+	const [effectsUnavailable, setEffectsUnavailable] = useState(false);
 	const [viewStartSec, setViewStartSec] = useState(0);
 	const [viewWidthSec, setViewWidthSec] = useState(30);
 	const contentDurationSec = editDuration(edit) + 2;
@@ -59,6 +64,9 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 	);
 
 	const engineRef = useRef<ClipEditorEngine | null>(null);
+	// The editor owns these sources for its timeline, clipboard and undo history.
+	// Shared-cache eviction must not remove them: playback requires every source
+	// synchronously, including sources restored by undo after cache pressure.
 	const buffersRef = useRef<Map<string, AudioBuffer>>(new Map());
 	const positionRef = useRef(0);
 	const playingRef = useRef(false);
@@ -112,6 +120,12 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 			setPositionSec(0);
 			return;
 		}
+		// Preparation runs while playback starts, so the fallback only becomes
+		// known after the first frames; keep the notice in sync from the tick.
+		const fallback = engine.isUsingNativeEffectsFallback;
+		setEffectsUnavailable((current) =>
+			current === fallback ? current : fallback,
+		);
 		const next = engine.positionSec;
 		positionRef.current = next;
 		setPositionSec(next);
@@ -655,6 +669,7 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		unmergeSelected,
 		mergeWarning,
 		dismissMergeWarning,
+		effectsUnavailable,
 		toggleTrackMute,
 		toggleReverse,
 	};

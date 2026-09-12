@@ -1,6 +1,9 @@
 use crate::cast::ToI64;
+use sakiot_paths::{DataRoots, RecordingKey};
 use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use crate::database::DbResult;
 use crate::runtime::RuntimeState;
@@ -16,6 +19,23 @@ pub struct StoppedInstanceCleanup {
     pub leases_deleted: u64,
     pub recordings_closed: u64,
     pub instances_updated: u64,
+}
+
+/// End timestamp for a recording whose owner stopped. The source file's last
+/// write time is the closest honest estimate of when audio stopped; when the
+/// file is gone, the start timestamp stays as the documented sentinel for
+/// "closed without a measured end" (a zero-length recording).
+fn recording_end_ts(start_ts: Option<i64>, file_modified_ms: Option<i64>) -> Option<i64> {
+    let start = start_ts?;
+    Some(match file_modified_ms {
+        Some(modified) => start.max(modified),
+        None => start,
+    })
+}
+
+fn file_modified_ms(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    i64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_millis()).ok()
 }
 
 pub async fn upsert_instance(pool: &Pool<Postgres>, runtime: &RuntimeState) -> DbResult<()> {
@@ -186,19 +206,50 @@ pub async fn mark_instance_stopped(
     .await?
     .rows_affected();
 
-    let recordings_closed = sqlx::query!(
-        "UPDATE audio_files
-            SET end_ts = COALESCE(end_ts, start_ts),
-                reaped = CASE WHEN end_ts IS NULL THEN TRUE ELSE reaped END,
-                recording_heartbeat_at = NULL,
-                finalize_reason_id = COALESCE(finalize_reason_id, 3)
+    // Close every recording this instance still owns. A stopped instance
+    // never measured an end, so `COALESCE(end_ts, start_ts)` used to record a
+    // zero-length recording; the source file's last write time is the closest
+    // honest estimate of when audio stopped.
+    let recordings_root = DataRoots::from_env().recordings_str();
+    let open_recordings = sqlx::query!(
+        "SELECT id, guild_id, channel_id, year, month, file_name, start_ts
+           FROM audio_files
           WHERE recording_owner_instance_id = $1
             AND end_ts IS NULL",
         runtime.config().instance_id
     )
-    .execute(pool)
-    .await?
-    .rows_affected();
+    .fetch_all(pool)
+    .await?;
+    let mut recordings_closed = 0;
+    for recording in open_recordings {
+        let key = RecordingKey::new(
+            recording.guild_id,
+            recording.channel_id,
+            recording.year,
+            recording.month as u32,
+            recording.file_name.clone(),
+        );
+        let end_ts = recording_end_ts(
+            recording.start_ts,
+            file_modified_ms(&key.recording_path(&recordings_root)),
+        );
+        recordings_closed += sqlx::query!(
+            "UPDATE audio_files
+                SET end_ts = $2,
+                    reaped = TRUE,
+                    recording_heartbeat_at = NULL,
+                    finalize_reason_id = COALESCE(finalize_reason_id, 3)
+              WHERE id = $1
+                AND end_ts IS NULL
+                AND recording_owner_instance_id = $3",
+            recording.id,
+            end_ts,
+            runtime.config().instance_id
+        )
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
 
     sqlx::query(
         "UPDATE recording_sessions rs
@@ -244,4 +295,37 @@ pub async fn mark_instance_stopped(
         recordings_closed,
         instances_updated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{file_modified_ms, recording_end_ts};
+
+    #[test]
+    fn stopped_recordings_use_the_file_mtime_over_the_start() {
+        // The file outlived the start: its last write is the better end.
+        assert_eq!(recording_end_ts(Some(1_000), Some(9_000)), Some(9_000));
+        // A clock skew that puts the mtime before the start must not produce a
+        // negative duration.
+        assert_eq!(recording_end_ts(Some(9_000), Some(1_000)), Some(9_000));
+    }
+
+    #[test]
+    fn missing_files_keep_the_start_as_the_documented_sentinel() {
+        assert_eq!(recording_end_ts(Some(1_000), None), Some(1_000));
+        assert_eq!(recording_end_ts(None, Some(9_000)), None);
+        assert_eq!(recording_end_ts(None, None), None);
+    }
+
+    #[test]
+    fn file_modified_ms_reads_real_files_only() {
+        let dir =
+            std::env::temp_dir().join(format!("sakiot-runtime-test-{}", std::process::id() as u64));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("recording.ogg");
+        std::fs::write(&path, b"audio").unwrap();
+        assert!(file_modified_ms(&path).is_some());
+        assert!(file_modified_ms(&dir.join("missing.ogg")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

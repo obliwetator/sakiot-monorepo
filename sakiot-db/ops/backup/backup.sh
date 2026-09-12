@@ -35,7 +35,8 @@ if ! flock -n 9; then
   exit 1
 fi
 
-ts="$(date +%F_%H%M)"
+# UTC so backups from hosts in different timezones sort consistently.
+ts="$(date -u +%F_%H%M)"
 out="$BACKUP_DIR/sakiot_rouvas_${LABEL}_${ts}.dump.age"
 tmp="$out.partial"
 

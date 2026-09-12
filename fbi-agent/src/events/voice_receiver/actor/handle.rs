@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -27,6 +27,9 @@ pub(in crate::events::voice_receiver) struct RecorderHandle {
     current_channel_id: Arc<AtomicU64>,
     actor_id: Arc<()>,
     stopping: Arc<AtomicBool>,
+    /// Ticks the bounded queue refused since the last delivery; the next
+    /// delivered tick replays them as silence to keep the recording aligned.
+    dropped_ticks: Arc<AtomicU32>,
     shutdown_tx: watch::Sender<Option<i64>>,
     terminated_rx: watch::Receiver<bool>,
 }
@@ -90,6 +93,7 @@ impl RecorderHandle {
             current_channel_id,
             actor_id,
             stopping,
+            dropped_ticks: Arc::new(AtomicU32::new(0)),
             shutdown_tx,
             terminated_rx,
         }
@@ -152,12 +156,24 @@ impl RecorderHandle {
         packets: Vec<VoicePacket>,
     ) {
         let packet_count = packets.len();
-        match self
-            .tx
-            .try_send(RecorderCommand::VoiceTick { at_ms, packets })
-        {
+        // Ticks dropped since the last delivery. The recorder advances every
+        // active user by exactly one frame per tick, so a dropped tick has to
+        // be replayed as silence or every later frame shifts earlier than its
+        // wall-clock timestamp.
+        let owed = self.dropped_ticks.swap(0, Ordering::Relaxed);
+        // The whole debt belongs before this packet. The actor chunks the
+        // writes and yields between chunks without moving silence past audio.
+        match self.tx.try_send(RecorderCommand::VoiceTick {
+            at_ms,
+            packets,
+            silence_ticks: owed,
+        }) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
+                // Put the whole debt back, plus this tick, for the next
+                // delivery.
+                self.dropped_ticks
+                    .fetch_add(owed.saturating_add(1), Ordering::Relaxed);
                 let drop_count =
                     voice_tick_drop_count(self.stats.active_user_count(), packet_count);
                 self.metrics.track_audio_packets_dropped(
@@ -167,6 +183,7 @@ impl RecorderHandle {
                 );
                 warn!(
                     drop_count,
+                    outstanding_ticks = owed,
                     "recorder voice tick dropped because actor queue is full"
                 );
             }
@@ -192,6 +209,8 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     VoiceTick {
         at_ms: i64,
         packets: Vec<VoicePacket>,
+        /// Dropped ticks this delivery compensates for, written as silence.
+        silence_ticks: u32,
     },
     ClientDisconnect {
         user_id: u64,
@@ -235,7 +254,58 @@ fn voice_tick_drop_count(active_user_count: usize, packet_count: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::voice_tick_drop_count;
+    use super::*;
+
+    #[tokio::test]
+    async fn recovered_packet_carries_all_dropped_ticks_before_its_audio() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (shutdown_tx, _) = watch::channel(None);
+        let (_, terminated_rx) = watch::channel(false);
+        let metrics = Arc::new(crate::BotMetrics::default());
+        let handle = RecorderHandle {
+            tx,
+            stats: Arc::new(RecorderStats::default()),
+            guild_metrics: metrics.guild_metrics(1),
+            channel_metrics: metrics.channel_metrics(1, 1),
+            metrics,
+            current_channel_id: Arc::new(AtomicU64::new(1)),
+            actor_id: Arc::new(()),
+            stopping: Arc::new(AtomicBool::new(false)),
+            dropped_ticks: Arc::new(AtomicU32::new(0)),
+            shutdown_tx,
+            terminated_rx,
+        };
+        handle.try_send_tick(0, vec![]);
+        for tick in 1..=300 {
+            handle.try_send_tick(tick * 20, vec![]);
+        }
+        rx.recv().await.unwrap();
+        handle.try_send_tick(
+            6_020,
+            vec![VoicePacket {
+                ssrc: 1,
+                opus: vec![42],
+            }],
+        );
+        let RecorderCommand::VoiceTick {
+            at_ms,
+            packets,
+            silence_ticks,
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("expected recovered voice tick");
+        };
+        assert_eq!(at_ms, 6_020);
+        assert_eq!(silence_ticks, 300);
+        assert_eq!(handle.dropped_ticks.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            super::super::lifecycle::tick_writes(Some(&packets[0].opus), silence_ticks),
+            vec![
+                super::super::lifecycle::TickWrite::Silence(300),
+                super::super::lifecycle::TickWrite::Packet(&[42]),
+            ],
+        );
+    }
 
     #[test]
     fn voice_tick_drop_count_uses_largest_available_signal() {

@@ -27,6 +27,7 @@ import {
 	dragGhostGeometries,
 	marqueeIntersectsSegment,
 	marqueeOverlayOffset,
+	marqueeSelectionChanged,
 	type SegmentDragState,
 	transitionTimelineDrag,
 } from "./timelineDrag";
@@ -336,7 +337,7 @@ export function Timeline(props: {
 				currentY: point.y,
 			};
 			const ids = marqueeOverlapIds(next);
-			if (ids.length !== lastMarqueeSelectionRef.current.length) {
+			if (marqueeSelectionChanged(ids, lastMarqueeSelectionRef.current)) {
 				lastMarqueeSelectionRef.current = ids;
 				editor.selectMany(ids);
 			}
@@ -796,6 +797,7 @@ export function Timeline(props: {
 					viewStartSec={editor.viewStartSec}
 					viewWidthSec={editor.viewWidthSec}
 				/>
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: pointer drag-and-drop target that places clips at a track and time; the same clips can be added from the ClipBin buttons */}
 				<div
 					ref={tracksRef}
 					data-testid="clip-timeline-dropzone"

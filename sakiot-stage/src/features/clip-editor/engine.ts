@@ -52,6 +52,8 @@ interface SegmentAudioGraph {
 
 type SegmentProcessing = "source" | "streaming" | "complete";
 
+export type { SegmentProcessing };
+
 interface EditorAudioGraph {
 	createSegment(
 		effects: SegmentEffects,
@@ -198,6 +200,17 @@ interface PreparedSegment {
 }
 
 /**
+ * True when at least one segment could not be rendered through the shared DSP
+ * and plays through the native graph instead. Volume and EQ still apply there,
+ * but pitch, speed, and reverse do not, so the editor must say so.
+ */
+export function usesNativeEffectsFallback(
+	prepared: readonly { processing: SegmentProcessing }[],
+): boolean {
+	return prepared.some((segment) => segment.processing === "source");
+}
+
+/**
  * One AudioContext rendering a ClipEdit. Segments are scheduled as
  * AudioBufferSourceNodes; the server renderer uses the same effect semantics
  * when it exports the composition.
@@ -216,12 +229,21 @@ export class ClipEditorEngine {
 		buffers: ReadonlyMap<string, AudioBuffer>;
 		loop: boolean;
 	} | null = null;
+	private nativeEffectsFallback = false;
 
 	constructor(
 		private readonly createAudioGraph: EditorAudioGraphFactory = (ctx) =>
 			new SharedDspEditorAudioGraph(ctx),
 	) {
 		void warmSharedDsp();
+	}
+
+	/**
+	 * Whether the last preparation fell back to the native graph, which cannot
+	 * apply pitch, speed, or reverse. The editor surfaces this as a notice.
+	 */
+	get isUsingNativeEffectsFallback(): boolean {
+		return this.nativeEffectsFallback;
 	}
 
 	get isPlaying(): boolean {
@@ -300,7 +322,10 @@ export class ClipEditorEngine {
 					})),
 			);
 		}
-		return Promise.all(pending);
+		return Promise.all(pending).then((prepared) => {
+			this.nativeEffectsFallback = usesNativeEffectsFallback(prepared);
+			return prepared;
+		});
 	}
 
 	private schedulePlayback(
@@ -450,6 +475,7 @@ export class ClipEditorEngine {
 
 	dispose() {
 		this.cancel();
+		this.nativeEffectsFallback = false;
 		this.audioGraph?.dispose();
 		this.audioGraph = null;
 		if (this.ctx?.state !== "closed") void this.ctx?.close();

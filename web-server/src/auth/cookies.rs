@@ -96,10 +96,6 @@ fn opener_origin(domain: &str, value: &str, max_age: Duration) -> Cookie<'static
         .finish()
 }
 
-pub fn opener_origin_cookie(domain: &str, value: &str) -> Cookie<'static> {
-    opener_origin(domain, value, Duration::minutes(10))
-}
-
 pub fn clear_opener_origin_cookie(domain: &str) -> Cookie<'static> {
     opener_origin(domain, "", CLEAR)
 }

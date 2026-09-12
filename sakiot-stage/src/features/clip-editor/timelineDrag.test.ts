@@ -8,6 +8,7 @@ import {
 	groupTrackCollision,
 	marqueeIntersectsSegment,
 	marqueeOverlayOffset,
+	marqueeSelectionChanged,
 	resolveGroupDelta,
 	type SegmentDragMode,
 	type SegmentDragState,
@@ -302,6 +303,28 @@ describe("clampPointToRect", () => {
 		expect(clampPointToRect(500, 0, rect)).toEqual({ x: 500, y: 80 });
 		expect(clampPointToRect(2000, 300, rect)).toEqual({ x: 900, y: 300 });
 		expect(clampPointToRect(500, 2000, rect)).toEqual({ x: 500, y: 600 });
+	});
+});
+
+describe("marqueeSelectionChanged", () => {
+	test("detects a swap that keeps the selection size", () => {
+		// One pointermove dropped segment A and added B: the count is unchanged
+		// but the selection is different, so selectMany must run with B.
+		expect(marqueeSelectionChanged(["B"], ["A"])).toBe(true);
+		expect(marqueeSelectionChanged(["A", "C"], ["A", "B"])).toBe(true);
+		expect(marqueeSelectionChanged(["B", "A"], ["A", "B"])).toBe(true);
+	});
+
+	test("ignores an unchanged selection", () => {
+		expect(marqueeSelectionChanged([], [])).toBe(false);
+		expect(marqueeSelectionChanged(["A"], ["A"])).toBe(false);
+		expect(marqueeSelectionChanged(["A", "B"], ["A", "B"])).toBe(false);
+	});
+
+	test("detects growth and shrink", () => {
+		expect(marqueeSelectionChanged(["A", "B"], ["A"])).toBe(true);
+		expect(marqueeSelectionChanged(["A"], ["A", "B"])).toBe(true);
+		expect(marqueeSelectionChanged([], ["A"])).toBe(true);
 	});
 });
 

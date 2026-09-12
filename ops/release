@@ -65,7 +65,10 @@ else
 fi
 
 printf '\nCreate and push %s? [y/N] ' "${tag}"
-read -r reply
+# read fails at EOF (e.g. piped input); treat that as a refusal, not a crash.
+if ! read -r reply; then
+  reply=""
+fi
 [[ "${reply}" == "y" || "${reply}" == "Y" ]] || die "aborted"
 
 git tag -a "${tag}" -m "${tag}"

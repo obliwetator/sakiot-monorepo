@@ -44,6 +44,12 @@ pub enum AppError {
     InvalidParam(String),
     #[error("FFmpeg failed: {0}")]
     FfmpegError(String),
+    /// The request was valid but a local media tool (ffprobe/ffmpeg) could not
+    /// produce a trustworthy answer about the source. Distinct from
+    /// `FfmpegError` (a command that ran and failed) so callers can tell a
+    /// media-inspection failure apart from a server fault.
+    #[error("Bad Gateway: {0}")]
+    BadGateway(String),
     #[error("Upstream gRPC error: {0}")]
     GrpcError(String),
     #[error("Service Unavailable: {0}")]
@@ -52,6 +58,16 @@ pub enum AppError {
     RangeNotSatisfiable { total: u64 },
     #[error("Invalid or expired token")]
     InvalidToken,
+}
+
+/// The message sent to the client. Server faults must not echo internal detail
+/// (SQL, paths, secrets); client errors keep their explanatory text.
+fn client_message(status: StatusCode, error: &AppError) -> String {
+    if status.is_server_error() {
+        status.canonical_reason().unwrap_or("Error").to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 impl ResponseError for AppError {
@@ -68,6 +84,7 @@ impl ResponseError for AppError {
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::BadGateway(_) => StatusCode::BAD_GATEWAY,
             AppError::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -80,14 +97,7 @@ impl ResponseError for AppError {
         } else {
             tracing::debug!(error = ?self, "request rejected");
         }
-        let message = if status_code.is_server_error() {
-            status_code
-                .canonical_reason()
-                .unwrap_or("Error")
-                .to_string()
-        } else {
-            self.to_string()
-        };
+        let message = client_message(status_code, self);
         let error_response = ApiError {
             code: status_code.as_u16(),
             message,
@@ -100,5 +110,53 @@ impl ResponseError for AppError {
             ));
         }
         response.json(error_response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+    use actix_web::{HttpResponse, error::ResponseError, http::StatusCode};
+
+    #[test]
+    fn media_inspection_failures_are_bad_gateways_not_server_faults() {
+        // A recording ffprobe cannot measure is an upstream media problem: the
+        // client's request may be perfectly valid, so it must not look like a
+        // bug in this server.
+        assert_eq!(
+            AppError::BadGateway("ffprobe returned no audio duration".into()).status_code(),
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            AppError::BadRequest("Clip duration must be between 1 and 20 seconds".into())
+                .status_code(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            AppError::InternalError.status_code(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn server_faults_do_not_leak_internal_detail_to_clients() {
+        let response = AppError::InternalError.error_response();
+        assert_eq!(
+            response.status(),
+            HttpResponse::InternalServerError().finish().status()
+        );
+
+        // The body must carry the canonical reason, never the internal error
+        // text (SQL, paths, or anything else the operator needs to see).
+        let leaky = AppError::DbError(sqlx::Error::RowNotFound);
+        let message = super::client_message(StatusCode::INTERNAL_SERVER_ERROR, &leaky);
+        assert_eq!(message, "Internal Server Error");
+        assert!(!message.contains("RowNotFound"));
+        assert!(!message.contains("Database"));
+        // Client errors keep their explanatory text.
+        assert_eq!(
+            super::client_message(StatusCode::BAD_REQUEST, &AppError::BadRequest("bad".into())),
+            "Bad Request: bad"
+        );
     }
 }

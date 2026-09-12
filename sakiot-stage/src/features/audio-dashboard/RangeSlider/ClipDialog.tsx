@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Params } from "react-router-dom";
+import { API_ROUTES, apiUrl } from "../../../api/routes";
 import { useCreateClipMutation } from "../../../app/apiSlice";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
@@ -44,7 +45,10 @@ export function ClipDialog(props: {
 
 			if (response && response.status === "success") {
 				const fileRes = await authedFetch(
-					`audio/clips/${props.params.guild_id}/${response.id}`,
+					apiUrl(API_ROUTES.clip, {
+						guild_id: props.params.guild_id ?? "",
+						clip_id: response.id,
+					}),
 				);
 				if (!fileRes.ok) throw new Error(`download failed: ${fileRes.status}`);
 				const blob = await fileRes.blob();

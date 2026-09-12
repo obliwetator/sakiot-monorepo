@@ -1399,8 +1399,13 @@ export interface components {
 			cooldown_seconds: number;
 			/** Format: date-time */
 			updated_at: string;
-			/** Format: int64 */
-			user_id: number;
+			/**
+			 * @description Discord snowflakes exceed 2^53, so the id must travel as a decimal
+			 *     string: a JSON number would be rounded by the browser before the
+			 *     delete request could send it back.
+			 * @example 9007199254740993
+			 */
+			user_id: string;
 		};
 		VoiceEventDto: {
 			channel_id?: string | null;

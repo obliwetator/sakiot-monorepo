@@ -39,12 +39,14 @@ pub async fn guild_delete(
     handler: &Handler,
     _ctx: Context,
     incomplete: serenity::model::guild::UnavailableGuild,
-    full: Option<serenity::model::guild::Guild>,
+    _full: Option<serenity::model::guild::Guild>,
 ) {
-    // full = Some means the guild is temporarily unavailable and will come
-    // back as a guild_create; only an actual removal (None) drops it from
-    // guilds_present.
-    if full.is_some() {
+    // Discord sends GUILD_DELETE with unavailable=true when a guild is
+    // temporarily unavailable during an outage; the guild comes back as a
+    // guild_create and must stay in guilds_present. Only an actual removal
+    // (unavailable=false, typically with the full cached guild attached)
+    // drops it from guilds_present.
+    if incomplete.unavailable {
         return;
     }
     if let Err(err) =

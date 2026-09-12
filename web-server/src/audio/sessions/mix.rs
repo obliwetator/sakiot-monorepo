@@ -207,6 +207,18 @@ impl SessionMixContainer {
         {
             jobs.remove(&(session_id, scope));
         }
+        if !jobs.keys().any(|(id, _)| *id == session_id) {
+            // The session's creation lock is only needed while a job exists
+            // for it; dropping it keeps the lock map from growing with every
+            // session ever mixed. A waiter still holding a clone keeps it.
+            let mut locks = self.locks.lock().await;
+            if locks
+                .get(&session_id)
+                .is_some_and(|lock| Arc::strong_count(lock) == 1)
+            {
+                locks.remove(&session_id);
+            }
+        }
     }
 }
 
@@ -676,7 +688,7 @@ async fn build_mix_plan(
         (scope == ChannelMixScope::SelectedSession).then_some(access.user_id),
         timeline_start_ms,
     );
-    let cache_dir = mix_cache_dir(access, &selected_fragments);
+    let cache_dir = mix_cache_dir(access, &selected_fragments, scope);
     let source_fingerprint = mix_source_fingerprint(
         access,
         scope,

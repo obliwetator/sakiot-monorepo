@@ -4,10 +4,13 @@ import {
 	DEFAULT_EFFECT_LIMITS,
 	EFFECT_LIMIT_SAFETY_CAPS,
 	type EffectLimits,
+	limitsAreValid,
 	loadEffectLimits,
+	parseLimitInput,
 	type StorageLike,
 	saveEffectLimits,
 	serializeLimits,
+	withLimitPair,
 } from "./effectLimits";
 
 function storage(initial: Record<string, string> = {}): StorageLike & {
@@ -118,5 +121,56 @@ describe("serializeLimits", () => {
 			treble_db_min: -24,
 			treble_db_max: 24,
 		});
+	});
+});
+
+describe("parseLimitInput", () => {
+	test("treats a blank field as mid-edit, not as zero", () => {
+		// Number("") is 0, which would collapse the bound as soon as the user
+		// clears the field to retype it.
+		expect(parseLimitInput("")).toBeNull();
+		expect(parseLimitInput("   ")).toBeNull();
+		expect(parseLimitInput("\t\n")).toBeNull();
+	});
+
+	test("rejects values that are not finite numbers", () => {
+		expect(parseLimitInput("abc")).toBeNull();
+		expect(parseLimitInput("1e999")).toBeNull();
+		expect(parseLimitInput("Infinity")).toBeNull();
+	});
+
+	test("parses numbers, including negatives and decimals", () => {
+		expect(parseLimitInput("12")).toBe(12);
+		expect(parseLimitInput(" -3.5 ")).toBe(-3.5);
+		expect(parseLimitInput("0")).toBe(0);
+	});
+});
+
+describe("limitsAreValid", () => {
+	test("accepts the defaults", () => {
+		expect(limitsAreValid(DEFAULT_EFFECT_LIMITS)).toBe(true);
+	});
+
+	test("rejects a pair whose min is not below max", () => {
+		const inverted = withLimitPair(DEFAULT_EFFECT_LIMITS, "volumeDb", 10, -10);
+		expect(limitsAreValid(inverted)).toBe(false);
+		const equal = withLimitPair(DEFAULT_EFFECT_LIMITS, "rate", 2, 2);
+		expect(limitsAreValid(equal)).toBe(false);
+	});
+
+	test("an inverted pair keeps blocking after another pair is edited", () => {
+		// Regression: the dialog only validated the pair being edited, so
+		// inverting Volume and then editing Pitch persisted the inverted pair.
+		const inverted = withLimitPair(DEFAULT_EFFECT_LIMITS, "volumeDb", 10, -10);
+		const editedPitch = withLimitPair(inverted, "pitchCents", -100, 100);
+		expect(limitsAreValid(editedPitch)).toBe(false);
+	});
+
+	test("clearing a field leaves the previous pair intact", () => {
+		// The handler returns before drafting when parseLimitInput is null.
+		const parsed = parseLimitInput("");
+		expect(parsed).toBeNull();
+		const unchanged = withLimitPair(DEFAULT_EFFECT_LIMITS, "volumeDb", -80, 24);
+		expect(unchanged.volumeDb).toEqual([-80, 24]);
 	});
 });

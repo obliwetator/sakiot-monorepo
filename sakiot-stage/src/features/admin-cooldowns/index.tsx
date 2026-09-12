@@ -126,24 +126,23 @@ export function GuildAdminCooldowns() {
 		}
 	};
 
-	const handleDelete = async (userId: number) => {
-		const userIdString = String(userId);
-		setDeletingUserId(userIdString);
+	const handleDelete = async (userId: string) => {
+		setDeletingUserId(userId);
 		setDeleteFeedback(null);
 		deleteState.reset();
 		try {
 			await deleteUserOverride({
 				guild_id: gid,
-				user_id: userIdString,
+				user_id: userId,
 			}).unwrap();
 			setDeleteFeedback({
 				tone: "success",
-				message: `Override for user ${userIdString} deleted.`,
+				message: `Override for user ${userId} deleted.`,
 			});
 		} catch {
 			setDeleteFeedback({
 				tone: "error",
-				message: `Could not delete the override for user ${userIdString}.`,
+				message: `Could not delete the override for user ${userId}.`,
 			});
 		} finally {
 			setDeletingUserId(null);
@@ -173,7 +172,10 @@ export function GuildAdminCooldowns() {
 					<Text tone="muted">0 disables the cooldown for this guild.</Text>
 				</div>
 
-				{loadingGuild || (guildCooldown && initializedGuildId !== gid) ? (
+				{loadingGuild ? (
+					// Only while the request is in flight: the second condition
+					// used to stick forever when the user typed before the first
+					// response arrived, leaving the placeholder on screen.
 					<Text aria-live="polite">Loading guild cooldown…</Text>
 				) : null}
 
@@ -333,7 +335,9 @@ export function GuildAdminCooldowns() {
 							</TableHeader>
 							<TableBody>
 								{(overrides ?? []).map((override) => {
-									const userId = String(override.user_id);
+									// The id stays a decimal string end to end: it exceeds
+									// 2^53, so a number would lose precision.
+									const userId = override.user_id;
 									return (
 										<TableRow key={override.user_id}>
 											<TableCell className="font-mono text-xs text-cyan-100">

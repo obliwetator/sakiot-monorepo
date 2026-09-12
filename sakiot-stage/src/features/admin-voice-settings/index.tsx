@@ -42,8 +42,13 @@ export function GuildVoiceSettingsPage() {
 
 	const handleReset = async () => {
 		setValidation(null);
-		const restored = await reset(guildId).unwrap();
-		setSeconds(String(restored.pending_cap_seconds));
+		try {
+			const restored = await reset(guildId).unwrap();
+			setSeconds(String(restored.pending_cap_seconds));
+		} catch {
+			// resetState.isError renders the failure notice below; without this
+			// catch the rejection was silent.
+		}
 	};
 
 	if (!guildId) return <div className="p-4">Missing guild id.</div>;
@@ -118,6 +123,11 @@ export function GuildVoiceSettingsPage() {
 						{resetState.isSuccess && (
 							<Notice tone={"success"} announce="status">
 								Default restored.
+							</Notice>
+						)}
+						{resetState.isError && (
+							<Notice tone={"error"} announce="alert">
+								Could not restore the default. Try again.
 							</Notice>
 						)}
 					</div>

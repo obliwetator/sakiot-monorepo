@@ -57,15 +57,19 @@ async fn silence_free_waveform(
         if let Err(e) = generate_peaks_background(
             input_file,
             output,
-            cache_key,
+            cache_key.clone(),
             PeakDensity::DEFAULT,
-            progress_map_clone,
+            progress_map_clone.clone(),
             None,
             None,
         )
         .await
         {
             error!("Error generating silence-free peaks: {:?}", e);
+            // generate_peaks_background can fail before ever touching the
+            // slot; mark it failed so later polls surface a clean error
+            // instead of reporting "building" forever.
+            progress_map_clone.0.write().await.insert(cache_key, -1);
         }
     });
 
@@ -261,6 +265,10 @@ pub async fn get_waveform_data(
         .await
         {
             error!("Error generating peaks: {:?}", e);
+            // generate_peaks_background can fail before ever touching the
+            // slot (e.g. probe or spawn failures); mark it failed so later
+            // polls surface a clean error instead of reporting 0 forever.
+            progress_map_clone.0.write().await.insert(file_name, -1);
             return;
         }
 
@@ -420,15 +428,19 @@ pub async fn get_clip_waveform_data(
         if let Err(e) = generate_peaks_background(
             input_file,
             output,
-            cache_key,
+            cache_key.clone(),
             PeakDensity::DEFAULT,
-            progress_map_clone,
+            progress_map_clone.clone(),
             None,
             None,
         )
         .await
         {
             error!("Error generating clip peaks: {:?}", e);
+            // generate_peaks_background can fail before ever touching the
+            // slot; mark it failed so later polls surface a clean error
+            // instead of reporting "building" forever.
+            progress_map_clone.0.write().await.insert(cache_key, -1);
         }
     });
 

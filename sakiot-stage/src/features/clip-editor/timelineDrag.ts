@@ -178,6 +178,22 @@ export function marqueeOverlayOffset(
 }
 
 /**
+ * Whether a marquee step must push a new selection. Comparing only the count
+ * hides a swap: dragging from segment A onto segment B keeps the selection
+ * size but changes which segments are selected, so the ids are compared
+ * element-wise.
+ */
+export function marqueeSelectionChanged(
+	next: readonly string[],
+	previous: readonly string[],
+): boolean {
+	return (
+		next.length !== previous.length ||
+		next.some((id, index) => id !== previous[index])
+	);
+}
+
+/**
  * Whether a marquee rectangle (viewport bounds) touches a segment's row box.
  * The row's vertical padding mirrors the segment boxes drawn inside the row.
  */

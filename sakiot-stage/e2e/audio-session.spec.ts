@@ -106,7 +106,38 @@ test("native controls keep focus styling, pseudo-elements, and responsive layout
 	await expect(year).toHaveAttribute("aria-expanded", "true");
 });
 
-async function mockAudioApi(page: Page) {
+/** A mono 16-bit PCM WAV the browser can actually decode. */
+function silentWav(seconds = 1): Buffer {
+	const sampleRate = 8_000;
+	const dataBytes = sampleRate * 2 * seconds;
+	const wav = Buffer.alloc(44 + dataBytes);
+	wav.write("RIFF", 0);
+	wav.writeUInt32LE(36 + dataBytes, 4);
+	wav.write("WAVE", 8);
+	wav.write("fmt ", 12);
+	wav.writeUInt32LE(16, 16);
+	wav.writeUInt16LE(1, 20);
+	wav.writeUInt16LE(1, 22);
+	wav.writeUInt32LE(sampleRate, 24);
+	wav.writeUInt32LE(sampleRate * 2, 28);
+	wav.writeUInt16LE(2, 32);
+	wav.writeUInt16LE(16, 34);
+	wav.write("data", 36);
+	wav.writeUInt32LE(dataBytes, 40);
+	return wav;
+}
+
+interface MockAudioOptions {
+	/** Serve a finished silence-free render plus decodable audio bytes. */
+	silenceFreeReady?: boolean;
+	/**
+	 * Length of the served media. Playback assertions need audio that outlasts
+	 * the assertion window; a one-second clip can end before it is observed.
+	 */
+	mediaSeconds?: number;
+}
+
+async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
@@ -229,7 +260,38 @@ async function mockAudioApi(page: Page) {
 			return;
 		}
 		if (path === `/audio/sessions/${SESSION_ID}/remove-silence`) {
-			await fulfillJson({ status: "idle", progress: 0 });
+			await fulfillJson(
+				options.silenceFreeReady
+					? { status: "ready", progress: 100 }
+					: { status: "idle", progress: 0 },
+			);
+			return;
+		}
+		if (
+			options.silenceFreeReady &&
+			path === `/audio/sessions/${SESSION_ID}/silence-free`
+		) {
+			await route.fulfill({
+				status: 200,
+				headers: {
+					...corsHeaders,
+					"Accept-Ranges": "none",
+					"Content-Type": "audio/wav",
+				},
+				body: silentWav(options.mediaSeconds),
+			});
+			return;
+		}
+		if (options.silenceFreeReady && path.startsWith("/media/")) {
+			await route.fulfill({
+				status: 200,
+				headers: {
+					...corsHeaders,
+					"Accept-Ranges": "none",
+					"Content-Type": "audio/wav",
+				},
+				body: silentWav(options.mediaSeconds),
+			});
 			return;
 		}
 
@@ -555,4 +617,40 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	await expect(inPoint).toHaveAttribute("aria-valuenow", "10000");
 	await expect(outPoint).toHaveAttribute("aria-valuenow", "25000");
 	await expect.poll(() => updateDepthErrors).toEqual([]);
+});
+
+test("playback shortcuts follow the visible tab after switching", async ({
+	page,
+}) => {
+	await mockAudioApi(page, { silenceFreeReady: true, mediaSeconds: 30 });
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+
+	const normalPanel = page.getByRole("tabpanel", {
+		name: "Normal",
+		exact: true,
+	});
+	await expect(normalPanel).toBeVisible();
+	await normalPanel.getByRole("button", { name: "Play", exact: true }).click();
+	await expect(
+		normalPanel.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+
+	await page.getByRole("tab", { name: "Silence-free", exact: true }).click();
+	const silencePanel = page.getByRole("tabpanel", {
+		name: "Silence-free",
+		exact: true,
+	});
+	await expect(silencePanel).toBeVisible();
+
+	// Focus stays on the tab, which owns Space in react-aria; a user pressing
+	// Space from the page body must drive the player they can see, not the
+	// paused Normal player that is now hidden.
+	await page.evaluate(() => {
+		(document.activeElement as HTMLElement | null)?.blur();
+	});
+	await page.keyboard.press("Space");
+
+	await expect(
+		silencePanel.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible({ timeout: 10_000 });
 });

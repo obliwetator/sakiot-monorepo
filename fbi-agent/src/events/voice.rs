@@ -23,6 +23,8 @@ pub(super) use store::{
 
 use coordinator::{GuildVoiceCoordinator, VoiceCoordinatorRegistry, VoiceCoordinatorRegistryKey};
 use session::VoiceOperation;
+#[cfg(test)]
+pub(crate) use session::teardown_voice_session_with_operation;
 
 const LOG_VOICE_STATE_CHANGES: bool = false;
 const EMPTY_CHANNEL_LEAVE_DEBOUNCE: Duration = Duration::from_secs(3);
@@ -81,24 +83,50 @@ pub async fn disconnect_voice_channel(
     session::disconnect_voice_channel(data, pool, guild_id).await
 }
 
-/// Tears down the guild's voice session under its per-guild operation lock.
+/// Tears down the guild's voice session, taking the per-guild operation lock
+/// only when it is immediately free; returns `None` when another task holds
+/// it.
 ///
-/// `notify` selects how the recorder actor learns about the departure: external
-/// callers wait for it to terminate, the actor itself only signals its own run
-/// loop, which is the task that must perform the termination.
-pub(crate) async fn teardown_voice_session(
+/// This is the variant for callers *inside* the recorder actor: a lock holder
+/// may be awaiting the actor's termination (external teardowns wait for it
+/// while holding the lock), so blocking the run loop on the mutex would
+/// deadlock — the actor would never reach its select loop to observe its own
+/// shutdown signal. On contention the caller retries on its next deadline
+/// tick; if the holder is a teardown it has already signalled the actor, and
+/// the run loop exits, resolving the waiter.
+pub(crate) async fn try_teardown_voice_session(
     data: &Arc<RwLock<TypeMap>>,
     pool: &Pool<Postgres>,
     guild_id: GuildId,
-    notify: DepartureNotify,
-) -> session::VoiceTeardownReport {
-    if let Some(registry) = coordinator_registry(data).await {
-        let coordinator = registry.guild(guild_id);
-        let _operation_guard = coordinator.operation.lock().await;
-        return session::teardown_voice_session_with_operation(data, pool, guild_id, None, notify)
-            .await;
-    }
-    session::teardown_voice_session_with_operation(data, pool, guild_id, None, notify).await
+) -> Option<session::VoiceTeardownReport> {
+    let Some(registry) = coordinator_registry(data).await else {
+        // No coordinator registry at all; mirror `teardown_voice_session` and
+        // proceed without the lock.
+        return Some(
+            session::teardown_voice_session_with_operation(
+                data,
+                pool,
+                guild_id,
+                None,
+                DepartureNotify::Caller,
+            )
+            .await,
+        );
+    };
+    let coordinator = registry.guild(guild_id);
+    let Ok(_operation_guard) = coordinator.operation.try_lock() else {
+        return None;
+    };
+    Some(
+        session::teardown_voice_session_with_operation(
+            data,
+            pool,
+            guild_id,
+            None,
+            DepartureNotify::Caller,
+        )
+        .await,
+    )
 }
 
 pub(crate) async fn connected_voice_connection_count(manager: &songbird::Songbird) -> u32 {

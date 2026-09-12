@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { API_ROUTES, apiUrl } from "../../api/routes";
 import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
 
 import { PcmBudget, SOURCE_CACHE_BYTES } from "./pcmBudget";
@@ -22,6 +23,11 @@ export function clipBufferKey(guildId: string, clipId: string): string {
 	return `${guildId}/${clipId}`;
 }
 
+function evictBuffer(key: string, promise: Promise<AudioBuffer>): void {
+	if (bufferCache.get(key) !== promise) return;
+	bufferCache.delete(key);
+}
+
 export function loadClipBuffer(
 	guildId: string,
 	clipId: string,
@@ -34,7 +40,7 @@ export function loadClipBuffer(
 	}
 	const promise = decodeQueue.then(async () => {
 		const response = await authedFetch(
-			`audio/clips/${guildId}/${encodeURIComponent(clipId)}`,
+			apiUrl(API_ROUTES.clip, { guild_id: guildId, clip_id: clipId }),
 		);
 		if (!response.ok) {
 			// authedFetch already retried once after a refresh; a 401 here
@@ -55,12 +61,8 @@ export function loadClipBuffer(
 	bufferCache.set(key, promise);
 	promise.then(
 		(buffer) => {
-			cacheBudget.retain(
-				key,
-				buffer.length * buffer.numberOfChannels * 4,
-				() => {
-					if (bufferCache.get(key) === promise) bufferCache.delete(key);
-				},
+			cacheBudget.retain(key, buffer.length * buffer.numberOfChannels * 4, () =>
+				evictBuffer(key, promise),
 			);
 		},
 		() => {

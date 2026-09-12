@@ -21,7 +21,12 @@ git diff --cached --name-only | while IFS= read -r f; do
 	git add -- "$f"
 done
 check_sqlx=false
-for path in $(git diff --cached --name-only --diff-filter=ACMR); do
+# A file list, not `for path in $(...)`: filenames with spaces must survive.
+# Process substitution is not POSIX sh, so the list goes through a temp file.
+changed_list=$(mktemp)
+trap 'rm -f "$changed_list"' EXIT
+git diff --cached --name-only --diff-filter=ACMR >"$changed_list"
+while IFS= read -r path; do
 	case "$path" in
 		sakiot-db/migrations/*.sql)
 			check_sqlx=true
@@ -35,7 +40,7 @@ for path in $(git diff --cached --name-only --diff-filter=ACMR); do
 			fi
 			;;
 	esac
-done
+done <"$changed_list"
 
 [ "$check_sqlx" = true ] || exit 0
 

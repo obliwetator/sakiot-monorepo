@@ -64,3 +64,34 @@ test("clip search filters the list and restores it when cleared", async ({
 	await expect(working).toBeVisible();
 	await expect(broken).toBeVisible();
 });
+
+test("a failed clip download reports an error instead of failing silently", async ({
+	page,
+}) => {
+	await mockClipEditorApi(page);
+	// The clip's media URL serves both the player and the download; only the
+	// download may fail here.
+	let failDownload = false;
+	await page.route(
+		"**/api/audio/clips/guild-123/working-source",
+		async (route) => {
+			if (failDownload) {
+				await route.abort("failed");
+				return;
+			}
+			await route.fallback();
+		},
+	);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/working-source`);
+	await expect(
+		page.getByRole("heading", { name: "Working source", exact: true }),
+	).toBeVisible();
+
+	failDownload = true;
+	await page.getByRole("button", { name: "Download clip" }).click();
+	await expect(
+		page.getByText(
+			"Clip download failed. Check your connection and try again.",
+		),
+	).toBeVisible();
+});

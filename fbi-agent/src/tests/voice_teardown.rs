@@ -84,15 +84,11 @@ async fn caller_mode_teardown_without_songbird_manager_returns_promptly() {
 
     let report = tokio::time::timeout(
         Duration::from_secs(5),
-        crate::events::voice::teardown_voice_session(
-            &data,
-            &pool,
-            guild_id,
-            DepartureNotify::Caller,
-        ),
+        crate::events::voice::try_teardown_voice_session(&data, &pool, guild_id),
     )
     .await
-    .expect("caller-mode teardown must not await the actor's own termination");
+    .expect("caller-mode teardown must not await the actor's own termination")
+    .expect("an uncontended teardown must produce a report");
 
     assert!(report.manager_missing);
     assert!(!report.had_call);

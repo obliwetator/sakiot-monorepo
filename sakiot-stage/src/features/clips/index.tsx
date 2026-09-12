@@ -11,6 +11,7 @@ import {
 	useDeleteClipMutation,
 	useGetAuthDetailsQuery,
 	useGetClipsQuery,
+	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
@@ -37,6 +38,7 @@ import { formatDuration } from "../../utils/formatTime";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";
 import { filterClips } from "./clipSearch";
+import { clipAbsoluteStartMs } from "./clipStart";
 import { isComposedClip } from "./composedClip";
 
 function ClipList(props: {
@@ -61,7 +63,7 @@ function ClipList(props: {
 		setExpanded(isExpanded ? panel : false);
 	};
 
-	const elements = props.data.map((el, index) => {
+	const elements = props.data.map((el) => {
 		return (
 			<Disclosure
 				key={el.clip_id}
@@ -71,8 +73,8 @@ function ClipList(props: {
 						? "border-creative"
 						: "border-ui-border",
 				)}
-				isExpanded={expanded === `panel${index}`}
-				onExpandedChange={handleChange(`panel${index}`)}
+				isExpanded={expanded === el.clip_id}
+				onExpandedChange={handleChange(el.clip_id)}
 			>
 				<DisclosureTrigger
 					icon={<ExpandMoreIcon />}
@@ -191,13 +193,6 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 			</Modal>
 		</div>
 	);
-}
-
-function clipAbsoluteStartMs(clip: ClipData | null): number | null {
-	if (!clip?.original_file_name) return null;
-	const ts = Number.parseInt(clip.original_file_name.split("-")[0] ?? "", 10);
-	if (!Number.isFinite(ts)) return null;
-	return ts + clip.start_time * 1000;
 }
 
 export default function Clips() {
@@ -370,7 +365,19 @@ function ClipsLayout(props: {
 	const selectedClip = selectedClipId
 		? props.data.find((c) => c.clip_id === selectedClipId)
 		: null;
-	const absoluteStartMs = clipAbsoluteStartMs(selectedClip ?? null);
+	// Session-derived clips have no timestamp in their source name, so their
+	// absolute time comes from the session the clip was cut from.
+	// currentData, not data: RTK keeps the previous argument's result while the
+	// next one loads, which would compute this clip's start from another
+	// session's timestamp.
+	const { currentData: selectedSession } = useGetSessionManifestQuery(
+		selectedClip?.recording_session_id ?? "",
+		{ skip: !selectedClip?.recording_session_id },
+	);
+	const absoluteStartMs = clipAbsoluteStartMs(
+		selectedClip ?? null,
+		selectedSession?.started_at_ms ?? null,
+	);
 
 	// Confined to the outlet's height: the selection pane scrolls on its own
 	// instead of stretching the page past the viewport.

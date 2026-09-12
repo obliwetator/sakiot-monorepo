@@ -19,7 +19,11 @@ use super::{
     MIX_OUTPUT, MIX_SETTINGS, MixContributor, MixPlan, SessionMixContainer,
 };
 
-pub(super) fn mix_cache_dir(access: &SessionAccess, anchor_fragments: &[AudioFragment]) -> PathBuf {
+pub(super) fn mix_cache_dir(
+    access: &SessionAccess,
+    anchor_fragments: &[AudioFragment],
+    scope: ChannelMixScope,
+) -> PathBuf {
     let (channel_id, year, month) = anchor_fragments
         .first()
         .map(|fragment| (fragment.channel_id, fragment.year, fragment.month as u32))
@@ -28,14 +32,25 @@ pub(super) fn mix_cache_dir(access: &SessionAccess, anchor_fragments: &[AudioFra
                 .unwrap_or_else(Utc::now);
             (access.starting_channel_id, date.year(), date.month())
         });
-    SessionKey::new(
+    let base = SessionKey::new(
         access.guild_id,
         channel_id,
         year,
         month,
         access.started_at_ms,
     )
-    .mix_dir(&recording_path())
+    .mix_dir(&recording_path());
+    // The two scopes render different audio (every recording of the timeline
+    // versus the selected session only). Sharing one directory made each scope
+    // overwrite the other's output and fingerprint, so every switch
+    // regenerated the mix. AllRecordings keeps the legacy path for cached
+    // mixes; the selected-session mix gets its own per-session subdirectory so
+    // two sessions that share a guild, channel, and start timestamp cannot
+    // overwrite each other.
+    match scope {
+        ChannelMixScope::AllRecordings => base,
+        ChannelMixScope::SelectedSession => base.join(format!("session-{}", access.session_id)),
+    }
 }
 
 pub(super) fn default_generation_settings(
