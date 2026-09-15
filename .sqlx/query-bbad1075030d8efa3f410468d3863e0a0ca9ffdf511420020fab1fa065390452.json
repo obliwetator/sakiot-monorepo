@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE composition_jobs SET stage = $3, progress = GREATEST(progress, $4), updated_at = now() WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bbad1075030d8efa3f410468d3863e0a0ca9ffdf511420020fab1fa065390452"
+}

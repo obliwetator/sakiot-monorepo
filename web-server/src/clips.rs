@@ -7,8 +7,7 @@ use actix_web::{
 use serde::{Deserialize, Serialize};
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use serde_with::{As, DisplayFromStr};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
 use crate::permissions::{
@@ -18,7 +17,7 @@ use crate::permissions::{
 use crate::proto::jammer::JamData;
 use crate::proto::jammer::jam_response::JamResponseEnum;
 use crate::{
-    audio::{clips_path, recording_path},
+    audio::{clips_path, recording_path, util::is_valid_file_segment},
     auth::{Access, Token},
     errors::AppError,
     fbi_agent_registry::AgentGrpcRegistry,
@@ -26,18 +25,6 @@ use crate::{
     media_archive::{MediaArchive, RemoteDisposition},
 };
 use serde_json::json;
-
-type DisplayFromstr = As<DisplayFromStr>;
-
-fn is_valid_recording_file_name(file_name: &str) -> bool {
-    !file_name.is_empty()
-        && !file_name.contains("..")
-        && !file_name.contains('/')
-        && !file_name.contains('\\')
-        && !file_name.contains('\'')
-        && !file_name.contains('"')
-        && !file_name.chars().any(char::is_control)
-}
 
 pub(crate) fn normalized_clip_name(name: &str) -> Option<&str> {
     let name = name.trim();
@@ -47,7 +34,7 @@ pub(crate) fn normalized_clip_name(name: &str) -> Option<&str> {
 #[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct ClipInfo {
     clip_id: String,
-    #[serde(with = "DisplayFromstr")]
+    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
     #[schema(value_type = String, example = "146638124288704513")]
     user_id: i64,
     name: Option<String>,
@@ -55,10 +42,10 @@ pub struct ClipInfo {
     saved_file_name: Option<String>,
     length: Option<f32>,
     size: Option<i64>,
-    #[serde(with = "DisplayFromstr")]
+    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
     #[schema(value_type = String, example = "146638124288704513")]
     guild_id: i64,
-    #[serde(with = "DisplayFromstr")]
+    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
     #[schema(value_type = String, example = "146638124288704513")]
     channel_id: i64,
     start_time: f32,
@@ -102,33 +89,30 @@ pub async fn get_clip(
     let (guild_id, clip_id) = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
 
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT saved_file_name, channel_id, recording_session_id
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
     )
-    .bind(guild_id)
-    .bind(&clip_id)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    let recording_session_id: Option<i64> = row.try_get("recording_session_id")?;
-    if let Some(recording_session_id) = recording_session_id {
+    if let Some(recording_session_id) = row.recording_session_id {
         crate::audio::sessions::require_session_access(&pool, recording_session_id, token.user_id)
             .await?;
     } else {
-        let channel_id: Option<i64> = row.try_get("channel_id")?;
         require_channel_access(
             &pool,
             guild_id,
-            channel_id.ok_or(AppError::ClipNotFound)?,
+            row.channel_id.ok_or(AppError::ClipNotFound)?,
             token.user_id,
         )
         .await?;
     }
 
-    let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
-    let saved_file_name = saved_file_name.ok_or(AppError::ClipNotFound)?;
+    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = crate::media_archive::clip_local_path(&saved_file_name)?;
 
     let file = match NamedFile::open_async(&full_path).await {
@@ -188,7 +172,7 @@ pub async fn get_clips(
     }
     let permitted: Vec<i64> = permitted.into_iter().collect();
 
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r#"
         SELECT clip_id,
         user_id,
@@ -245,36 +229,30 @@ pub async fn get_clips(
         -- case-sensitively; clip_id keeps equal names deterministic.
         ORDER BY lower(name) NULLS LAST, name, clip_id
         "#,
+        guild_id,
+        &permitted,
     )
-    .bind(guild_id)
-    .bind(&permitted)
     .fetch_all(pool.get_ref())
     .await?;
     let result = rows
         .into_iter()
         .map(|row| {
             Ok(ClipInfo {
-                clip_id: row.try_get("clip_id")?,
-                user_id: row
-                    .try_get::<Option<i64>, _>("user_id")?
-                    .unwrap_or_default(),
-                name: row.try_get("name")?,
-                original_file_name: row.try_get("original_file_name")?,
-                saved_file_name: row.try_get("saved_file_name")?,
-                length: row.try_get("length")?,
-                size: row.try_get("size")?,
-                guild_id: row
-                    .try_get::<Option<i64>, _>("guild_id")?
-                    .unwrap_or_default(),
-                channel_id: row
-                    .try_get::<Option<i64>, _>("channel_id")?
-                    .unwrap_or_default(),
-                start_time: row.try_get("start_time")?,
+                clip_id: row.clip_id,
+                user_id: row.user_id.unwrap_or_default(),
+                name: row.name,
+                original_file_name: row.original_file_name,
+                saved_file_name: row.saved_file_name,
+                length: row.length,
+                size: row.size,
+                guild_id: row.guild_id.unwrap_or_default(),
+                channel_id: row.channel_id.unwrap_or_default(),
+                start_time: row.start_time,
                 recording_session_id: row
-                    .try_get::<Option<i64>, _>("recording_session_id")?
+                    .recording_session_id
                     .map(|session_id| session_id.to_string()),
-                silence_free: row.try_get("silence_free")?,
-                composition: row.try_get("composition")?,
+                silence_free: row.silence_free,
+                composition: row.composition,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -282,7 +260,7 @@ pub async fn get_clips(
 }
 #[derive(Deserialize, PartialEq, Debug, utoipa::ToSchema)]
 pub struct JamItBody {
-    #[serde(with = "DisplayFromstr")]
+    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
     guild_id: i64,
     clip_name: String,
 }
@@ -322,7 +300,7 @@ pub async fn play_clip(
         .get::<Token<Access>>()
         .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
-    let clip = sqlx::query(
+    let clip = sqlx::query!(
         "SELECT clip_id, channel_id, recording_session_id
            FROM clips
           WHERE guild_id = $1
@@ -330,16 +308,16 @@ pub async fn play_clip(
             AND (clip_id = $2 OR name = $2)
           ORDER BY (clip_id = $2) DESC, created_at, clip_id
           LIMIT 1",
+        info.guild_id,
+        info.clip_name
     )
-    .bind(info.guild_id)
-    .bind(&info.clip_name)
     .fetch_optional(pool.get_ref())
     .await?;
     let resolved_clip_id = if let Some(clip) = clip {
-        let resolved_clip_id: String = clip.try_get("clip_id")?;
-        if let Some(session_id) = clip.try_get::<Option<i64>, _>("recording_session_id")? {
+        let resolved_clip_id = clip.clip_id;
+        if let Some(session_id) = clip.recording_session_id {
             crate::audio::sessions::require_session_access(&pool, session_id, user_id).await?;
-        } else if let Some(channel_id) = clip.try_get::<Option<i64>, _>("channel_id")? {
+        } else if let Some(channel_id) = clip.channel_id {
             require_channel_access(&pool, info.guild_id, channel_id, user_id).await?;
         } else {
             return Err(AppError::Forbidden);
@@ -614,7 +592,7 @@ pub async fn create_clip(
         .map(|t| t.user_id)
         .ok_or(AppError::Unauthorized)?;
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
-    if !is_valid_recording_file_name(&file_name_from_url) {
+    if !is_valid_file_segment(&file_name_from_url) {
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
     crate::audio::sessions::require_recording_access(
@@ -801,24 +779,24 @@ pub async fn rename_clip(
         AppError::BadRequest("Clip name must be between 1 and 255 characters".into())
     })?;
 
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT user_id FROM clips WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
     )
-    .bind(guild_id)
-    .bind(&clip_id)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    if row.try_get::<Option<i64>, _>("user_id")? != Some(user_id) {
+    if row.user_id != Some(user_id) {
         require_guild_manager(&req, &pool, guild_id).await?;
     }
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE clips SET name = $3 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id,
+        name
     )
-    .bind(guild_id)
-    .bind(&clip_id)
-    .bind(name)
     .execute(pool.get_ref())
     .await?;
 
@@ -896,23 +874,11 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_unusable_clip_output, is_valid_recording_file_name, normalized_clip_name,
-        parse_probe_duration, probe_rendered_duration, probe_source_duration,
-        validate_clip_fits_recording, validate_clip_range,
+        is_unusable_clip_output, normalized_clip_name, parse_probe_duration,
+        probe_rendered_duration, probe_source_duration, validate_clip_fits_recording,
+        validate_clip_range,
     };
     use crate::errors::AppError;
-
-    #[test]
-    fn validates_recording_file_name_for_clip_creation() {
-        assert!(is_valid_recording_file_name("1712345678-123456789"));
-        assert!(!is_valid_recording_file_name(""));
-        assert!(!is_valid_recording_file_name("../secret"));
-        assert!(!is_valid_recording_file_name("dir/file"));
-        assert!(!is_valid_recording_file_name("dir\\file"));
-        assert!(!is_valid_recording_file_name("bad'name"));
-        assert!(!is_valid_recording_file_name("bad\"name"));
-        assert!(!is_valid_recording_file_name("bad\nname"));
-    }
 
     #[test]
     fn validates_and_trims_clip_names() {

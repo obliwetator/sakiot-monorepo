@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET etag = COALESCE($2, etag),\n                verified_at = now(),\n                local_delete_after = GREATEST(\n                    local_delete_after,\n                    now() + ($3::bigint * interval '1 day')\n                ),\n                last_error = NULL,\n                updated_at = now()\n          WHERE id = $1 AND state = 'available'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b1794d5bc7f6bf239f5f92a0336c938f4c4bc2e805e1dce587d981a0c1b6c51d"
+}

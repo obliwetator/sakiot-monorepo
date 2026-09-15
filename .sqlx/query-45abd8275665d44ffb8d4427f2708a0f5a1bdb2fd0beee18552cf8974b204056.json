@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id\n           FROM recording_sessions\n          WHERE guild_id = $1\n            AND user_id = $2\n            AND state = 'active'\n            AND owner_instance_id = $3\n          ORDER BY started_at DESC, id DESC\n          LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "45abd8275665d44ffb8d4427f2708a0f5a1bdb2fd0beee18552cf8974b204056"
+}

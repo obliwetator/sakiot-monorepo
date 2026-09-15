@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions rs\n            SET state = 'finalized',\n                ended_at = to_timestamp($2::double precision / 1000.0),\n                end_reason = 'fragment_setup_failed',\n                updated_at = now()\n          WHERE rs.id = $1\n            AND NOT EXISTS (\n                SELECT 1\n                  FROM audio_files af\n                 WHERE af.recording_session_id = rs.id\n                   AND af.end_ts IS NOT NULL\n                   AND af.reaped IS FALSE\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "38e377335f34590336de18e774afe2294193d75a380a2831c9833905fad44eea"
+}

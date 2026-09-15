@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET state = 'conflict',\n                lease_owner = NULL,\n                lease_expires_at = NULL,\n                last_error = left($3, 4000),\n                updated_at = now()\n          WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9eacdaaa0ea91229827a207f3a566426804320b86a090c0484631006ae19cd34"
+}

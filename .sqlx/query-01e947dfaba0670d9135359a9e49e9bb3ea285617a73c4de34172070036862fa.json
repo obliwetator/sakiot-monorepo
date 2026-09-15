@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT saved_file_name FROM clips WHERE clip_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "saved_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "saved_file_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "01e947dfaba0670d9135359a9e49e9bb3ea285617a73c4de34172070036862fa"
+}

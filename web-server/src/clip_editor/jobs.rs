@@ -29,8 +29,13 @@ pub(super) async fn publish(
     size: i64,
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
-    let owned: Option<String> = sqlx::query_scalar("SELECT id FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() FOR UPDATE")
-        .bind(&job.id).bind(&job.token).fetch_optional(&mut *tx).await?;
+    let owned = sqlx::query_scalar!(
+        "SELECT id FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() FOR UPDATE",
+        job.id,
+        job.token
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if owned.is_none() {
         return Err(AppError::Conflict("Export lease lost".into()));
     }
@@ -41,34 +46,58 @@ pub(super) async fn publish(
         object.remove("limits");
     }
     if let Some(target) = &job.snapshot.overwrite {
-        let result = sqlx::query("UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'")
-            .bind(job.guild_id).bind(&target.clip_id).bind(saved_file_name).bind(duration).bind(size)
-            .bind(&job.snapshot.name).bind(&composition).bind(&target.old_saved_file_name).execute(&mut *tx).await?;
+        let result = sqlx::query!(
+            "UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'",
+            job.guild_id,
+            target.clip_id,
+            saved_file_name,
+            duration,
+            size,
+            job.snapshot.name,
+            composition,
+            target.old_saved_file_name
+        )
+        .execute(&mut *tx)
+        .await?;
         if result.rows_affected() != 1 {
             return Err(AppError::Conflict("The destination clip changed or was deleted during export. Reopen it before overwriting.".into()));
         }
     } else {
-        sqlx::query("INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$6,'compose',$7,$8,0,$9)")
-            .bind(&job.result_clip_id).bind(duration).bind(size).bind(job.snapshot.channel_id)
-            .bind(job.guild_id).bind(job.user_id).bind(saved_file_name).bind(&job.snapshot.name).bind(&composition)
-            .execute(&mut *tx).await?;
+        sqlx::query!(
+            "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$6,'compose',$7,$8,0,$9)",
+            job.result_clip_id,
+            duration,
+            size,
+            job.snapshot.channel_id,
+            job.guild_id,
+            job.user_id,
+            saved_file_name,
+            job.snapshot.name,
+            composition
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     // Invalidate an in-flight upload's lease, as well as previously verified
     // bytes. Its old owner cannot mark this new media revision available.
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO media_objects (clip_id, clip_saved_file_name) VALUES ($1,$2)
         ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO UPDATE SET
         clip_saved_file_name = EXCLUDED.clip_saved_file_name, state = 'pending', retry_at = now(),
         lease_owner = NULL, lease_expires_at = NULL, object_key = NULL, bytes = NULL, sha256 = NULL,
         etag = NULL, attempts = 0, last_error = NULL, uploaded_at = NULL, verified_at = NULL,
         local_delete_after = NULL, updated_at = now()",
+        job.result_clip_id,
+        saved_file_name
     )
-    .bind(&job.result_clip_id)
-    .bind(saved_file_name)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("UPDATE composition_jobs SET state = 'ready', stage = 'ready', progress = 100, error = NULL, attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE id = $1")
-        .bind(&job.id).execute(&mut *tx).await?;
+    sqlx::query!(
+        "UPDATE composition_jobs SET state = 'ready', stage = 'ready', progress = 100, error = NULL, attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE id = $1",
+        job.id
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     tracing::info!(job_id = %job.id, clip_id = %job.result_clip_id, "composition published");
     Ok(())

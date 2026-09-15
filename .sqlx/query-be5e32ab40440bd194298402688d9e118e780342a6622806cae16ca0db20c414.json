@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n              (SELECT count(*)::bigint FROM audio_files WHERE end_ts IS NOT NULL) AS \"recordings!\",\n              (SELECT count(*)::bigint FROM clips\n                WHERE saved_file_name IS NOT NULL AND btrim(saved_file_name) <> '') AS \"clips!\",\n              (SELECT count(*)::bigint FROM media_objects) AS \"tracked!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recordings!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "clips!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "tracked!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "be5e32ab40440bd194298402688d9e118e780342a6622806cae16ca0db20c414"
+}

@@ -157,14 +157,14 @@ pub async fn update_voice_session_channel(
     guild_id: GuildId,
     channel_id: ChannelId,
 ) -> DbResult<u64> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE voice_session_leases
             SET channel_id = $3, heartbeat_at = now(), updated_at = now()
           WHERE guild_id = $1 AND owner_instance_id = $2",
+        guild_id.to_i64(),
+        runtime.config().instance_id,
+        channel_id.to_i64()
     )
-    .bind(guild_id.to_i64())
-    .bind(&runtime.config().instance_id)
-    .bind(channel_id.to_i64())
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -251,7 +251,7 @@ pub async fn mark_instance_stopped(
         .rows_affected();
     }
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions rs
             SET state = 'finalized',
                 ended_at = COALESCE(
@@ -266,17 +266,17 @@ pub async fn mark_instance_stopped(
                 end_reason = COALESCE(end_reason, 'instance_stopped'),
                 updated_at = now()
           WHERE rs.owner_instance_id = $1 AND rs.state = 'active'",
+        runtime.config().instance_id
     )
-    .bind(&runtime.config().instance_id)
     .execute(pool)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions
             SET owner_instance_id = NULL, updated_at = now()
           WHERE owner_instance_id = $1 AND state = 'pending'",
+        runtime.config().instance_id
     )
-    .bind(&runtime.config().instance_id)
     .execute(pool)
     .await?;
 

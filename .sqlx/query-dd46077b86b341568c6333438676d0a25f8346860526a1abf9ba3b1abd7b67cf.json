@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id,\n                (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,\n                (EXTRACT(EPOCH FROM pending_deadline_at) * 1000)::bigint AS deadline_ms,\n                (EXTRACT(EPOCH FROM absolute_cap_deadline_at) * 1000)::bigint AS cap_ms,\n                current_channel_id\n           FROM recording_sessions\n          WHERE state = 'pending'\n            AND (\n                (pending_deadline_at IS NOT NULL\n                    AND pending_deadline_at <= to_timestamp($1::double precision / 1000.0))\n                OR (absolute_cap_deadline_at IS NOT NULL\n                    AND absolute_cap_deadline_at <= to_timestamp($1::double precision / 1000.0))\n            )\n          FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pause_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "deadline_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "cap_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "current_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "current_channel_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "dd46077b86b341568c6333438676d0a25f8346860526a1abf9ba3b1abd7b67cf"
+}

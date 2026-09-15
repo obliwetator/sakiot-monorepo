@@ -1,0 +1,97 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id,\n                guild_id,\n                user_id,\n                starting_channel_id,\n                state,\n                (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS \"started_at_ms!\",\n                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS ended_at_ms,\n                (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_started_at_ms\n           FROM recording_sessions\n          WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "guild_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "starting_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "starting_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "ended_at_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "pause_started_at_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "2c904c72ae3de5a0f16b221ae529135f080f333bc845e2a8704afca991d9d76b"
+}

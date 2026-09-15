@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (EXISTS (\n             SELECT 1\n               FROM guilds\n              WHERE id = $1 AND owner_id = $2\n         ) OR EXISTS (\n             SELECT 1\n               FROM user_guilds\n              WHERE id = $1 AND user_id = $2 AND owner\n         )) AS \"owner!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4826a15d0c46ce14eda2ef19c8abf2f4b52c507021316af382ecf8be7170423d"
+}

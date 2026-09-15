@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS \"start_ms!\",\n                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS \"end_ms!\",\n                reason,\n                from_channel_id,\n                to_channel_id\n           FROM recording_gaps\n          WHERE recording_session_id = $1\n          ORDER BY started_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "end_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_gaps",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "from_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_gaps",
+            "name": "from_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "to_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_gaps",
+            "name": "to_channel_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "e4323c57beb0ee03ccc463ac99985ee50ec3e7e27f7bd5338677ddc85de2d3e0"
+}

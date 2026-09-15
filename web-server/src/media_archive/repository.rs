@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use sakiot_paths::{DataRoots, RecordingKey};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
 
@@ -10,6 +10,36 @@ use crate::errors::AppError;
 pub(crate) enum SourceId {
     Recording(i64),
     Clip(String),
+}
+
+/// Row shape shared by every `media_objects` query that claims work items.
+#[derive(Clone, Debug, sqlx::FromRow)]
+struct ClaimedMediaRow {
+    id: i64,
+    audio_file_id: Option<i64>,
+    clip_id: Option<String>,
+    clip_saved_file_name: Option<String>,
+    object_key: Option<String>,
+    bytes: Option<i64>,
+    sha256: Option<String>,
+    attempts: i32,
+}
+
+/// Row shape shared by every `media_objects` query that reads available
+/// objects. The `!`-annotated columns are nullable in the schema but
+/// guaranteed non-null for `state = 'available'` rows by the
+/// `media_objects_available_metadata_check` constraint, so the queries below
+/// override their inferred nullability.
+#[derive(Clone, Debug, sqlx::FromRow)]
+struct AvailableMediaRow {
+    id: i64,
+    audio_file_id: Option<i64>,
+    clip_id: Option<String>,
+    clip_saved_file_name: Option<String>,
+    object_key: String,
+    bytes: i64,
+    sha256: String,
+    local_delete_after: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,23 +83,23 @@ pub(crate) struct EligibleStatus {
 }
 
 pub(crate) async fn reconcile(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error> {
-    let recordings = sqlx::query(
+    let recordings = sqlx::query!(
         "INSERT INTO media_objects (audio_file_id)
          SELECT af.id
            FROM audio_files af
           WHERE af.end_ts IS NOT NULL
-         ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
+          ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
     )
     .execute(pool)
     .await?
     .rows_affected();
-    let clips = sqlx::query(
+    let clips = sqlx::query!(
         "INSERT INTO media_objects (clip_id)
          SELECT c.clip_id
            FROM clips c
           WHERE c.saved_file_name IS NOT NULL
             AND btrim(c.saved_file_name) <> ''
-         ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO NOTHING",
+          ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO NOTHING",
     )
     .execute(pool)
     .await?
@@ -82,7 +112,8 @@ pub(crate) async fn claim_batch(
     owner: &str,
     limit: i64,
 ) -> Result<Vec<WorkItem>, AppError> {
-    let rows = sqlx::query(
+    let rows: Vec<ClaimedMediaRow> = sqlx::query_as!(
+        ClaimedMediaRow,
         "WITH candidates AS (
              SELECT id
                FROM media_objects
@@ -112,30 +143,26 @@ pub(crate) async fn claim_batch(
                    object.bytes,
                    object.sha256,
                    object.attempts",
+        owner,
+        limit,
     )
-    .bind(owner)
-    .bind(limit)
     .fetch_all(pool)
     .await?;
 
     let mut work = Vec::with_capacity(rows.len());
     for row in rows {
-        let id: i64 = row.try_get("id")?;
-        let source = match (
-            row.try_get::<Option<i64>, _>("audio_file_id")?,
-            row.try_get::<Option<String>, _>("clip_id")?,
-        ) {
+        let source = match (row.audio_file_id, row.clip_id) {
             (Some(audio_file_id), None) => SourceId::Recording(audio_file_id),
             (None, Some(clip_id)) => SourceId::Clip(clip_id),
             _ => {
-                mark_conflict(pool, id, owner, "media row has invalid source identity").await?;
+                mark_conflict(pool, row.id, owner, "media row has invalid source identity").await?;
                 continue;
             }
         };
-        let Some(path) = revision_path(pool, &source, &row).await? else {
+        let Some(path) = revision_path(pool, &source, row.clip_saved_file_name).await? else {
             mark_missing(
                 pool,
-                id,
+                row.id,
                 owner,
                 "source database row or saved path is missing",
             )
@@ -143,13 +170,13 @@ pub(crate) async fn claim_batch(
             continue;
         };
         work.push(WorkItem {
-            id,
+            id: row.id,
             source,
             path,
-            object_key: row.try_get("object_key")?,
-            bytes: optional_bytes(&row, "bytes")?,
-            sha256: row.try_get("sha256")?,
-            attempts: row.try_get("attempts")?,
+            object_key: row.object_key,
+            bytes: optional_bytes(row.bytes)?,
+            sha256: row.sha256,
+            attempts: row.attempts,
         });
     }
     Ok(work)
@@ -160,14 +187,14 @@ pub(crate) async fn renew_lease(
     id: i64,
     owner: &str,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query(
+    Ok(sqlx::query!(
         "UPDATE media_objects
             SET lease_expires_at = now() + interval '5 minutes',
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        id,
+        owner,
     )
-    .bind(id)
-    .bind(owner)
     .execute(pool)
     .await?
     .rows_affected()
@@ -183,7 +210,7 @@ pub(crate) async fn record_prepared(
     sha256: &str,
 ) -> Result<bool, AppError> {
     let bytes = i64::try_from(bytes).map_err(|_| AppError::InternalError)?;
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE media_objects
             SET object_key = $3,
                 bytes = $4,
@@ -196,12 +223,12 @@ pub(crate) async fn record_prepared(
             AND (object_key IS NULL OR object_key = $3)
             AND (bytes IS NULL OR bytes = $4)
             AND (sha256 IS NULL OR sha256 = $5)",
+        item.id,
+        owner,
+        object_key,
+        bytes,
+        sha256,
     )
-    .bind(item.id)
-    .bind(owner)
-    .bind(object_key)
-    .bind(bytes)
-    .bind(sha256)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -213,17 +240,17 @@ pub(crate) async fn mark_uploaded(
     owner: &str,
     etag: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET etag = COALESCE($3, etag),
                 uploaded_at = COALESCE(uploaded_at, now()),
                 lease_expires_at = now() + interval '5 minutes',
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        id,
+        owner,
+        etag,
     )
-    .bind(id)
-    .bind(owner)
-    .bind(etag)
     .execute(pool)
     .await?;
     Ok(())
@@ -237,7 +264,7 @@ pub(crate) async fn mark_available(
     retention_days: u64,
 ) -> Result<bool, AppError> {
     let retention_days = i64::try_from(retention_days).map_err(|_| AppError::InternalError)?;
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE media_objects
             SET state = 'available',
                 etag = COALESCE($3, etag),
@@ -250,11 +277,11 @@ pub(crate) async fn mark_available(
                 last_error = NULL,
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        id,
+        owner,
+        etag,
+        retention_days,
     )
-    .bind(id)
-    .bind(owner)
-    .bind(etag)
-    .bind(retention_days)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -272,7 +299,7 @@ pub(crate) async fn mark_pending(
         .min(3_600);
     let jitter_seconds = fastrand::u64(0..=(base_seconds / 2).max(1));
     let delay_seconds = i64::try_from(base_seconds + jitter_seconds).unwrap_or(5_400);
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET state = 'pending',
                 retry_at = now() + ($4::bigint * interval '1 second'),
@@ -281,11 +308,11 @@ pub(crate) async fn mark_pending(
                 last_error = left($3, 4000),
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        item.id,
+        owner,
+        error,
+        delay_seconds,
     )
-    .bind(item.id)
-    .bind(owner)
-    .bind(error)
-    .bind(delay_seconds)
     .execute(pool)
     .await?;
     Ok(())
@@ -297,7 +324,7 @@ pub(crate) async fn mark_missing(
     owner: &str,
     error: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET state = 'missing',
                 lease_owner = NULL,
@@ -305,10 +332,10 @@ pub(crate) async fn mark_missing(
                 last_error = left($3, 4000),
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        id,
+        owner,
+        error,
     )
-    .bind(id)
-    .bind(owner)
-    .bind(error)
     .execute(pool)
     .await?;
     Ok(())
@@ -320,7 +347,7 @@ pub(crate) async fn mark_conflict(
     owner: &str,
     error: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET state = 'conflict',
                 lease_owner = NULL,
@@ -328,10 +355,10 @@ pub(crate) async fn mark_conflict(
                 last_error = left($3, 4000),
                 updated_at = now()
           WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+        id,
+        owner,
+        error,
     )
-    .bind(id)
-    .bind(owner)
-    .bind(error)
     .execute(pool)
     .await?;
     Ok(())
@@ -341,29 +368,48 @@ pub(crate) async fn available_object(
     pool: &Pool<Postgres>,
     source: &SourceId,
 ) -> Result<Option<AvailableObject>, AppError> {
-    let row =
-        match source {
-            SourceId::Recording(audio_file_id) => sqlx::query(
-                "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
-               FROM media_objects
-              WHERE audio_file_id = $1
-                AND state = 'available'
-                AND verified_at IS NOT NULL",
+    let row = match source {
+        SourceId::Recording(audio_file_id) => {
+            sqlx::query_as!(
+                AvailableMediaRow,
+                r#"SELECT id,
+                      audio_file_id,
+                      clip_id,
+                      clip_saved_file_name,
+                      object_key AS "object_key!",
+                      bytes AS "bytes!",
+                      sha256 AS "sha256!",
+                      local_delete_after AS "local_delete_after!"
+                 FROM media_objects
+                WHERE audio_file_id = $1
+                  AND state = 'available'
+                  AND verified_at IS NOT NULL"#,
+                audio_file_id
             )
-            .bind(audio_file_id)
             .fetch_optional(pool)
-            .await?,
-            SourceId::Clip(clip_id) => sqlx::query(
-                "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
-               FROM media_objects
-              WHERE clip_id = $1
-                AND state = 'available'
-                AND verified_at IS NOT NULL",
+            .await?
+        }
+        SourceId::Clip(clip_id) => {
+            sqlx::query_as!(
+                AvailableMediaRow,
+                r#"SELECT id,
+                      audio_file_id,
+                      clip_id,
+                      clip_saved_file_name,
+                      object_key AS "object_key!",
+                      bytes AS "bytes!",
+                      sha256 AS "sha256!",
+                      local_delete_after AS "local_delete_after!"
+                 FROM media_objects
+                WHERE clip_id = $1
+                  AND state = 'available'
+                  AND verified_at IS NOT NULL"#,
+                clip_id
             )
-            .bind(clip_id)
             .fetch_optional(pool)
-            .await?,
-        };
+            .await?
+        }
+    };
     let Some(row) = row else {
         return Ok(None);
     };
@@ -379,7 +425,7 @@ pub(crate) async fn recording_id(
     file_name: &str,
 ) -> Result<Option<i64>, sqlx::Error> {
     let stem = file_name.strip_suffix(".ogg").unwrap_or(file_name);
-    sqlx::query_scalar(
+    sqlx::query_scalar!(
         "SELECT id
            FROM audio_files
           WHERE guild_id = $1
@@ -389,13 +435,13 @@ pub(crate) async fn recording_id(
             AND (file_name = $5 OR file_name = $6)
           ORDER BY id DESC
           LIMIT 1",
+        guild_id,
+        channel_id,
+        year,
+        month,
+        file_name,
+        stem,
     )
-    .bind(guild_id)
-    .bind(channel_id)
-    .bind(year)
-    .bind(month)
-    .bind(file_name)
-    .bind(stem)
     .fetch_optional(pool)
     .await
 }
@@ -417,12 +463,11 @@ pub(crate) async fn clip_source_path(
 async fn revision_path(
     pool: &Pool<Postgres>,
     source: &SourceId,
-    row: &sqlx::postgres::PgRow,
+    clip_saved_file_name: Option<String>,
 ) -> Result<Option<PathBuf>, AppError> {
     match source {
         SourceId::Recording(_) => source_path(pool, source).await,
-        SourceId::Clip(_) => row
-            .try_get::<Option<String>, _>("clip_saved_file_name")?
+        SourceId::Clip(_) => clip_saved_file_name
             .map(|saved| super::clip_local_path(&saved))
             .transpose(),
     }
@@ -430,37 +475,43 @@ async fn revision_path(
 
 async fn available_from_row(
     pool: &Pool<Postgres>,
-    row: sqlx::postgres::PgRow,
+    row: AvailableMediaRow,
 ) -> Result<AvailableObject, AppError> {
-    let source = match (
-        row.try_get::<Option<i64>, _>("audio_file_id")?,
-        row.try_get::<Option<String>, _>("clip_id")?,
-    ) {
+    let source = match (row.audio_file_id, row.clip_id) {
         (Some(id), None) => SourceId::Recording(id),
         (None, Some(id)) => SourceId::Clip(id),
         _ => return Err(AppError::InternalError),
     };
-    let path = revision_path(pool, &source, &row)
+    let clip_saved_file_name = row.clip_saved_file_name.clone();
+    let path = revision_path(pool, &source, clip_saved_file_name)
         .await?
         .ok_or(AppError::FileNotFound)?;
     Ok(AvailableObject {
-        id: row.try_get("id")?,
+        id: row.id,
         path,
-        object_key: row.try_get("object_key")?,
-        bytes: required_bytes(&row, "bytes")?,
-        sha256: row.try_get("sha256")?,
-        local_delete_after: row.try_get("local_delete_after")?,
+        object_key: row.object_key,
+        bytes: required_bytes(row.bytes)?,
+        sha256: row.sha256,
+        local_delete_after: row.local_delete_after,
     })
 }
 
 pub(crate) async fn list_available(
     pool: &Pool<Postgres>,
 ) -> Result<Vec<AvailableObject>, AppError> {
-    let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
-           FROM media_objects
-          WHERE state = 'available' AND verified_at IS NOT NULL
-          ORDER BY id",
+    let rows = sqlx::query_as!(
+        AvailableMediaRow,
+        r#"SELECT id,
+                  audio_file_id,
+                  clip_id,
+                  clip_saved_file_name,
+                  object_key AS "object_key!",
+                  bytes AS "bytes!",
+                  sha256 AS "sha256!",
+                  local_delete_after AS "local_delete_after!"
+             FROM media_objects
+            WHERE state = 'available' AND verified_at IS NOT NULL
+            ORDER BY id"#,
     )
     .fetch_all(pool)
     .await?;
@@ -478,15 +529,23 @@ pub(crate) async fn list_available_recordings(
     if audio_file_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
-           FROM media_objects
-          WHERE state = 'available'
-            AND verified_at IS NOT NULL
-            AND audio_file_id = ANY($1)
-          ORDER BY id",
+    let rows = sqlx::query_as!(
+        AvailableMediaRow,
+        r#"SELECT id,
+                  audio_file_id,
+                  clip_id,
+                  clip_saved_file_name,
+                  object_key AS "object_key!",
+                  bytes AS "bytes!",
+                  sha256 AS "sha256!",
+                  local_delete_after AS "local_delete_after!"
+             FROM media_objects
+            WHERE state = 'available'
+              AND verified_at IS NOT NULL
+              AND audio_file_id = ANY($1)
+            ORDER BY id"#,
+        audio_file_ids,
     )
-    .bind(audio_file_ids)
     .fetch_all(pool)
     .await?;
     let mut objects = Vec::with_capacity(rows.len());
@@ -503,15 +562,23 @@ pub(crate) async fn list_available_clips(
     if clip_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = sqlx::query(
-        "SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after
-           FROM media_objects
-          WHERE state = 'available'
-            AND verified_at IS NOT NULL
-            AND clip_id = ANY($1)
-          ORDER BY id",
+    let rows = sqlx::query_as!(
+        AvailableMediaRow,
+        r#"SELECT id,
+                  audio_file_id,
+                  clip_id,
+                  clip_saved_file_name,
+                  object_key AS "object_key!",
+                  bytes AS "bytes!",
+                  sha256 AS "sha256!",
+                  local_delete_after AS "local_delete_after!"
+             FROM media_objects
+            WHERE state = 'available'
+              AND verified_at IS NOT NULL
+              AND clip_id = ANY($1)
+            ORDER BY id"#,
+        clip_ids,
     )
-    .bind(clip_ids)
     .fetch_all(pool)
     .await?;
     let mut objects = Vec::with_capacity(rows.len());
@@ -527,14 +594,14 @@ pub(crate) async fn reset_local_retention(
     retention_days: u64,
 ) -> Result<(), AppError> {
     let retention_days = i64::try_from(retention_days).map_err(|_| AppError::InternalError)?;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET local_delete_after = now() + ($2::bigint * interval '1 day'),
                 updated_at = now()
           WHERE id = $1 AND state = 'available' AND verified_at IS NOT NULL",
+        id,
+        retention_days,
     )
-    .bind(id)
-    .bind(retention_days)
     .execute(pool)
     .await?;
     Ok(())
@@ -545,15 +612,15 @@ pub(crate) async fn mark_remote_missing(
     id: i64,
     error: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET state = 'missing',
                 last_error = left($2, 4000),
                 updated_at = now()
           WHERE id = $1",
+        id,
+        error,
     )
-    .bind(id)
-    .bind(error)
     .execute(pool)
     .await?;
     Ok(())
@@ -566,7 +633,7 @@ pub(crate) async fn refresh_available_verification(
     retention_days: u64,
 ) -> Result<bool, AppError> {
     let retention_days = i64::try_from(retention_days).map_err(|_| AppError::InternalError)?;
-    Ok(sqlx::query(
+    Ok(sqlx::query!(
         "UPDATE media_objects
             SET etag = COALESCE($2, etag),
                 verified_at = now(),
@@ -577,10 +644,10 @@ pub(crate) async fn refresh_available_verification(
                 last_error = NULL,
                 updated_at = now()
           WHERE id = $1 AND state = 'available'",
+        id,
+        etag,
+        retention_days,
     )
-    .bind(id)
-    .bind(etag)
-    .bind(retention_days)
     .execute(pool)
     .await?
     .rows_affected()
@@ -592,7 +659,7 @@ pub(crate) async fn mark_verification_conflict(
     id: i64,
     error: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_objects
             SET state = 'conflict',
                 lease_owner = NULL,
@@ -600,77 +667,73 @@ pub(crate) async fn mark_verification_conflict(
                 last_error = left($2, 4000),
                 updated_at = now()
           WHERE id = $1 AND state = 'available'",
+        id,
+        error,
     )
-    .bind(id)
-    .bind(error)
     .execute(pool)
     .await?;
     Ok(())
 }
 
 pub(crate) async fn status(pool: &Pool<Postgres>) -> Result<ArchiveStatus, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT
-             count(*) FILTER (WHERE state = 'pending')::bigint AS pending_objects,
-             COALESCE(sum(bytes) FILTER (WHERE state IN ('pending', 'uploading')), 0)::bigint AS pending_bytes,
-             count(*) FILTER (WHERE state = 'uploading')::bigint AS uploading_objects,
-             count(*) FILTER (WHERE state = 'available')::bigint AS available_objects,
-             COALESCE(sum(bytes) FILTER (WHERE state = 'available'), 0)::bigint AS available_bytes,
-             count(*) FILTER (WHERE state = 'missing')::bigint AS missing_objects,
-             count(*) FILTER (WHERE state = 'conflict')::bigint AS conflict_objects,
-             COALESCE(
-                 EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (
-                     WHERE state IN ('pending', 'uploading')
-                 )))::bigint,
-                 0
-             ) AS oldest_backlog_seconds
-           FROM media_objects",
+    let row = sqlx::query!(
+        r#"SELECT
+              count(*) FILTER (WHERE state = 'pending')::bigint AS "pending_objects!",
+              COALESCE(sum(bytes) FILTER (WHERE state IN ('pending', 'uploading')), 0)::bigint AS "pending_bytes!",
+              count(*) FILTER (WHERE state = 'uploading')::bigint AS "uploading_objects!",
+              count(*) FILTER (WHERE state = 'available')::bigint AS "available_objects!",
+              COALESCE(sum(bytes) FILTER (WHERE state = 'available'), 0)::bigint AS "available_bytes!",
+              count(*) FILTER (WHERE state = 'missing')::bigint AS "missing_objects!",
+              count(*) FILTER (WHERE state = 'conflict')::bigint AS "conflict_objects!",
+              COALESCE(
+                  EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (
+                      WHERE state IN ('pending', 'uploading')
+                  )))::bigint,
+                  0
+              ) AS "oldest_backlog_seconds!"
+            FROM media_objects"#,
     )
     .fetch_one(pool)
     .await?;
     Ok(ArchiveStatus {
-        pending_objects: row.try_get("pending_objects")?,
-        pending_bytes: row.try_get("pending_bytes")?,
-        uploading_objects: row.try_get("uploading_objects")?,
-        available_objects: row.try_get("available_objects")?,
-        available_bytes: row.try_get("available_bytes")?,
-        missing_objects: row.try_get("missing_objects")?,
-        conflict_objects: row.try_get("conflict_objects")?,
-        oldest_backlog_seconds: row.try_get("oldest_backlog_seconds")?,
+        pending_objects: row.pending_objects,
+        pending_bytes: row.pending_bytes,
+        uploading_objects: row.uploading_objects,
+        available_objects: row.available_objects,
+        available_bytes: row.available_bytes,
+        missing_objects: row.missing_objects,
+        conflict_objects: row.conflict_objects,
+        oldest_backlog_seconds: row.oldest_backlog_seconds,
     })
 }
 
 pub(crate) async fn eligible_status(pool: &Pool<Postgres>) -> Result<EligibleStatus, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT
-             (SELECT count(*)::bigint FROM audio_files WHERE end_ts IS NOT NULL) AS recordings,
-             (SELECT count(*)::bigint FROM clips
-               WHERE saved_file_name IS NOT NULL AND btrim(saved_file_name) <> '') AS clips,
-             (SELECT count(*)::bigint FROM media_objects) AS tracked",
+    let row = sqlx::query!(
+        r#"SELECT
+              (SELECT count(*)::bigint FROM audio_files WHERE end_ts IS NOT NULL) AS "recordings!",
+              (SELECT count(*)::bigint FROM clips
+                WHERE saved_file_name IS NOT NULL AND btrim(saved_file_name) <> '') AS "clips!",
+              (SELECT count(*)::bigint FROM media_objects) AS "tracked!""#,
     )
     .fetch_one(pool)
     .await?;
     Ok(EligibleStatus {
-        recordings: row.try_get("recordings")?,
-        clips: row.try_get("clips")?,
-        tracked: row.try_get("tracked")?,
+        recordings: row.recordings,
+        clips: row.clips,
+        tracked: row.tracked,
     })
 }
 
 pub(crate) async fn next_retry_at(
     pool: &Pool<Postgres>,
 ) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT min(retry_at)
-           FROM media_objects
-          WHERE state = 'pending'",
-    )
-    .fetch_one(pool)
-    .await
+    sqlx::query_scalar!("SELECT min(retry_at) FROM media_objects WHERE state = 'pending'")
+        .fetch_one(pool)
+        .await
 }
 
 pub(crate) async fn requeue_missing(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query(
+    Ok(sqlx::query!(
         "UPDATE media_objects
             SET state = 'pending',
                 retry_at = now(),
@@ -691,33 +754,28 @@ async fn source_path(
     let roots = DataRoots::from_env();
     match source {
         SourceId::Recording(audio_file_id) => {
-            let row = sqlx::query(
+            let row = sqlx::query!(
                 "SELECT guild_id, channel_id, year, month, file_name
                    FROM audio_files
                   WHERE id = $1 AND end_ts IS NOT NULL",
+                audio_file_id
             )
-            .bind(audio_file_id)
             .fetch_optional(pool)
             .await?;
             row.map(|row| {
-                let month: i32 = row.try_get("month")?;
-                let month = u32::try_from(month).map_err(|_| AppError::InternalError)?;
-                Ok(RecordingKey::new(
-                    row.try_get("guild_id")?,
-                    row.try_get("channel_id")?,
-                    row.try_get("year")?,
-                    month,
-                    row.try_get::<String, _>("file_name")?,
+                let month = u32::try_from(row.month).map_err(|_| AppError::InternalError)?;
+                Ok(
+                    RecordingKey::new(row.guild_id, row.channel_id, row.year, month, row.file_name)
+                        .recording_path(&roots.recordings_str()),
                 )
-                .recording_path(&roots.recordings_str()))
             })
             .transpose()
         }
         SourceId::Clip(clip_id) => {
-            let saved = sqlx::query_scalar::<_, Option<String>>(
+            let saved = sqlx::query_scalar!(
                 "SELECT saved_file_name FROM clips WHERE clip_id = $1",
+                clip_id
             )
-            .bind(clip_id)
             .fetch_optional(pool)
             .await?
             .flatten();
@@ -728,14 +786,14 @@ async fn source_path(
     }
 }
 
-fn optional_bytes(row: &sqlx::postgres::PgRow, column: &str) -> Result<Option<u64>, AppError> {
-    row.try_get::<Option<i64>, _>(column)?
+fn optional_bytes(bytes: Option<i64>) -> Result<Option<u64>, AppError> {
+    bytes
         .map(|bytes| u64::try_from(bytes).map_err(|_| AppError::InternalError))
         .transpose()
 }
 
-fn required_bytes(row: &sqlx::postgres::PgRow, column: &str) -> Result<u64, AppError> {
-    optional_bytes(row, column)?.ok_or(AppError::InternalError)
+fn required_bytes(bytes: i64) -> Result<u64, AppError> {
+    u64::try_from(bytes).map_err(|_| AppError::InternalError)
 }
 
 #[cfg(test)]
@@ -772,7 +830,21 @@ mod tests {
         seed_sources(&pool).await?;
         reconcile(&pool).await?;
         sqlx::query("UPDATE media_objects SET state = 'available', object_key = 'test', bytes = 1, sha256 = repeat('a',64), uploaded_at = now(), verified_at = now(), local_delete_after = now() WHERE clip_id = 'media-saved-clip'").execute(&pool).await?;
-        let row = sqlx::query("SELECT id, audio_file_id, clip_id, clip_saved_file_name, object_key, bytes, sha256, local_delete_after FROM media_objects WHERE clip_id = 'media-saved-clip'").fetch_one(&pool).await?;
+        let row = sqlx::query_as!(
+            AvailableMediaRow,
+            r#"SELECT id,
+                      audio_file_id,
+                      clip_id,
+                      clip_saved_file_name,
+                      object_key AS "object_key!",
+                      bytes AS "bytes!",
+                      sha256 AS "sha256!",
+                      local_delete_after AS "local_delete_after!"
+                 FROM media_objects
+                WHERE clip_id = 'media-saved-clip'"#
+        )
+        .fetch_one(&pool)
+        .await?;
         sqlx::query("UPDATE clips SET saved_file_name = 'replacement.ogg' WHERE clip_id = 'media-saved-clip'").execute(&pool).await?;
         let stale_cleanup_snapshot = available_from_row(&pool, row).await?;
         assert!(

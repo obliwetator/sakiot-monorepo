@@ -1,12 +1,9 @@
 use actix_web::{HttpRequest, HttpResponse, delete, get, put, web};
 use serde::{Deserialize, Serialize};
-use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
 use crate::permissions::require_guild_manager;
-
-type DisplayFromstr = As<DisplayFromStr>;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct GuildCooldown {
@@ -23,7 +20,7 @@ pub struct UserOverride {
     /// Discord snowflakes exceed 2^53, so the id must travel as a decimal
     /// string: a JSON number would be rounded by the browser before the
     /// delete request could send it back.
-    #[serde(with = "DisplayFromstr")]
+    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
     #[schema(value_type = String, example = "9007199254740993")]
     pub user_id: i64,
     pub cooldown_seconds: i32,

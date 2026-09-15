@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n              count(*) FILTER (WHERE state = 'pending')::bigint AS \"pending_objects!\",\n              COALESCE(sum(bytes) FILTER (WHERE state IN ('pending', 'uploading')), 0)::bigint AS \"pending_bytes!\",\n              count(*) FILTER (WHERE state = 'uploading')::bigint AS \"uploading_objects!\",\n              count(*) FILTER (WHERE state = 'available')::bigint AS \"available_objects!\",\n              COALESCE(sum(bytes) FILTER (WHERE state = 'available'), 0)::bigint AS \"available_bytes!\",\n              count(*) FILTER (WHERE state = 'missing')::bigint AS \"missing_objects!\",\n              count(*) FILTER (WHERE state = 'conflict')::bigint AS \"conflict_objects!\",\n              COALESCE(\n                  EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (\n                      WHERE state IN ('pending', 'uploading')\n                  )))::bigint,\n                  0\n              ) AS \"oldest_backlog_seconds!\"\n            FROM media_objects",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pending_objects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "pending_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "uploading_objects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "available_objects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "available_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "missing_objects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "conflict_objects!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "oldest_backlog_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "3e16e17975ce56ee08c6b783d911f83ee9df538d07e21bc45f4c4b9824b39e36"
+}

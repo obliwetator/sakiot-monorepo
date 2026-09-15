@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH candidate AS (\n        SELECT id FROM composition_jobs WHERE renderer_version = $2 AND attempts < $3\n        AND ((state = 'queued' AND retry_at <= now()) OR (state = 'running' AND lease_expires_at < now()))\n        ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1\n        ) UPDATE composition_jobs j SET state = 'running', stage = 'preparing', progress = 0,\n        attempts = attempts + 1, attempt_token = $1, lease_expires_at = now() + interval '60 seconds',\n        error = NULL, updated_at = now() FROM candidate WHERE j.id = candidate.id RETURNING j.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "composition_jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "abae77637336302cdae5b657b9970e30a2db8afafba87229b2681163adecb7d1"
+}

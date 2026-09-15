@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_sessions\n            (guild_id, user_id, starting_channel_id, current_channel_id, state,\n             started_at, owner_instance_id)\n         VALUES\n            ($1, $2, $3, $3, 'active',\n             to_timestamp($4::double precision / 1000.0), $5)\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2ad6466b30d2244ac4a027ebfa545b13770b76fbaa6b05929a1752b76c80b87e"
+}

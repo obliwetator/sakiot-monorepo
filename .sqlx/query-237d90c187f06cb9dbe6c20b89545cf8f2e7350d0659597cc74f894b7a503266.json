@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH listed AS (\n            SELECT rs.id AS listing_id,\n                   TRUE AS logical,\n                   rs.user_id,\n                   rs.starting_channel_id,\n                   rs.state,\n                   (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS started_at_ms,\n                   af.channel_id AS fragment_channel_id,\n                   af.file_name,\n                   af.segment_index,\n                   af.id AS audio_file_id\n              FROM recording_sessions rs\n              LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n             WHERE rs.guild_id = $1\n            UNION ALL\n            SELECT -af.id AS listing_id,\n                   FALSE AS logical,\n                   af.user_id,\n                   af.channel_id AS starting_channel_id,\n                   CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END AS state,\n                   COALESCE(af.start_ts, 0) AS started_at_ms,\n                   af.channel_id AS fragment_channel_id,\n                   af.file_name,\n                   0 AS segment_index,\n                   af.id AS audio_file_id\n              FROM audio_files af\n             WHERE af.guild_id = $1 AND af.recording_session_id IS NULL\n        )\n        SELECT listing_id AS \"listing_id!\",\n               logical AS \"logical!\",\n               user_id AS \"user_id!\",\n               starting_channel_id AS \"starting_channel_id!\",\n               state AS \"state!\",\n               started_at_ms AS \"started_at_ms!\",\n               fragment_channel_id,\n               file_name,\n               segment_index,\n               audio_file_id\n          FROM listed\n         ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "listing_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "logical!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "starting_channel_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "state!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "fragment_channel_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "file_name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "segment_index",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "audio_file_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "237d90c187f06cb9dbe6c20b89545cf8f2e7350d0659597cc74f894b7a503266"
+}

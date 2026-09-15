@@ -11,6 +11,7 @@ import {
 import { useAppSelector } from "../../app/hooks";
 import type { AudioParams, UserGuilds } from "../../Constants";
 import { setHasSilence } from "../../reducers/silence";
+import { attachHlsAudio } from "../../shared/attachHls";
 import { deepLinkSeekSeconds } from "./deepLinkSeek";
 import { RangeSlider } from "./RangeSlider";
 
@@ -184,38 +185,17 @@ export function AudioInterface(props: {
 		audio.addEventListener("canplay", onCanPlay);
 		audio.addEventListener("error", () => fallback("audio element error"));
 
-		// Safari natively decodes HLS and returns "probably" — skip the
-		// hls.js download. Some Chromium builds return "maybe" without
-		// actually being able to decode HLS, which lands in the native
-		// path and immediately fails; require "probably" so those
-		// browsers fall through to hls.js.
-		if (audio.canPlayType("application/vnd.apple.mpegurl") === "probably") {
-			audio.src = hlsUrl;
-		} else {
-			// Code-split hls.js so it doesn't bloat the initial bundle. Loaded
-			// only when an HLS-eligible recording is opened.
-			import("hls.js")
-				.then(({ default: Hls }) => {
-					if (!isActive) return;
-					if (!Hls.isSupported()) {
-						fallback("hls not supported in this browser");
-						return;
-					}
-					hls = new Hls({
-						xhrSetup: (xhr) => {
-							xhr.withCredentials = true;
-						},
-						liveSyncDuration: 2,
-						liveMaxLatencyDuration: Number.MAX_SAFE_INTEGER,
-					});
-					hls.on(Hls.Events.ERROR, (_e, data) => {
-						if (data.fatal) fallback(`hls fatal: ${data.type}/${data.details}`);
-					});
-					hls.loadSource(hlsUrl);
-					hls.attachMedia(audio);
-				})
-				.catch((e) => fallback(`hls.js import failed: ${e}`));
-		}
+		// Native-Safari vs hls.js selection, config, and the code-split
+		// import live in the shared helper.
+		void attachHlsAudio({
+			audio,
+			playlistUrl: hlsUrl,
+			isActive: () => isActive,
+			onFatal: fallback,
+			unlimitedMaxLatency: true,
+		}).then((result) => {
+			hls = result.hls;
+		});
 
 		return () => {
 			isActive = false;

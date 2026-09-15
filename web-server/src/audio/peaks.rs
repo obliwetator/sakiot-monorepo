@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, HttpResponse, get, web};
 use base64::prelude::*;
 use serde_json::json;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -14,7 +14,7 @@ use crate::waveform::{PeakDensity, generate_peaks_background};
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path, waveform_path};
 use super::serve::AudioQuery;
 use super::types::WaveformProgressContainer;
-use super::util::{file_exists, get_file_path_root, is_stale};
+use super::util::{file_exists, get_file_path_root, is_stale, is_valid_file_segment};
 
 const LIVE_WAVEFORM_READY: i16 = 100;
 const FINAL_WAVEFORM_WRITTEN: i16 = 101;
@@ -107,6 +107,7 @@ async fn waveform_response_with_progress(
     responses(
         (status = 200, description = "Base64 waveform peaks"),
         (status = 202, description = "Waveform is still being generated"),
+        (status = 400, description = "Invalid file name", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 404, description = "Recording not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
@@ -124,6 +125,9 @@ pub async fn get_waveform_data(
     media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
+    if !is_valid_file_segment(&path.4) {
+        return Err(AppError::BadRequest("Invalid file name".into()));
+    }
     let token = token.ok_or(AppError::Unauthorized)?;
     super::sessions::require_recording_access(
         &pool,
@@ -352,6 +356,7 @@ fn clip_waveform_key(clip_id: &str, input: &std::path::Path) -> String {
     responses(
         (status = 200, description = "Base64 waveform peaks"),
         (status = 202, description = "Waveform is still being generated"),
+        (status = 400, description = "Invalid clip id", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 404, description = "Clip not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
@@ -367,30 +372,29 @@ pub async fn get_clip_waveform_data(
     media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, clip_id) = path.into_inner();
+    if !is_valid_file_segment(&clip_id) {
+        return Err(AppError::BadRequest("Invalid clip id".into()));
+    }
     let token = token.ok_or(AppError::Unauthorized)?;
 
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT saved_file_name, channel_id, recording_session_id
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
     )
-    .bind(guild_id)
-    .bind(&clip_id)
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    if let Some(session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
+    if let Some(session_id) = row.recording_session_id {
         super::sessions::require_session_access(&pool, session_id, token.user_id).await?;
     } else {
-        let channel_id = row
-            .try_get::<Option<i64>, _>("channel_id")?
-            .ok_or(AppError::ClipNotFound)?;
+        let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
         require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
     }
 
-    let saved_file_name = row
-        .try_get::<Option<String>, _>("saved_file_name")?
-        .ok_or(AppError::ClipNotFound)?;
+    let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let input_path = crate::media_archive::clip_local_path(&saved_file_name)?;
     let input_file = input_path.to_string_lossy().into_owned();
 

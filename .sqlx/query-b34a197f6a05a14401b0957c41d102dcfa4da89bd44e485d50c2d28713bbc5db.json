@@ -1,0 +1,244 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id,\n               s.guild_id,\n               s.channel_id,\n               s.target_user_id,\n               s.stamper_user_id,\n               s.stamp_ts,\n               s.offset_ms,\n               s.audio_file_id,\n               s.note,\n               s.created_at,\n               COALESCE(tn.nickname, tu.global_name, tu.username) as target_name,\n               COALESCE(sn.nickname, su.global_name, su.username) as stamper_name,\n               c.name                   as channel_name,\n               af.file_name             as \"file_name?\",\n               af.year                  as \"year?\",\n               af.month                 as \"month?\",\n               af.start_ts              as start_ts,\n               rs.id                    as \"recording_session_id?\",\n               CASE WHEN rs.id IS NULL THEN NULL ELSE af.segment_index END\n                                           as segment_index,\n               (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint\n                                           as session_started_at_ms,\n               CASE\n                   WHEN rs.id IS NULL THEN NULL\n                   ELSE (\n                       SELECT COUNT(*)\n                         FROM audio_files sibling\n                        WHERE sibling.recording_session_id = rs.id\n                   )\n               END                         as session_fragment_count\n        FROM stamps s\n        LEFT JOIN user_names      tu ON tu.user_id = s.target_user_id\n        LEFT JOIN user_nicknames  tn ON tn.user_id = s.target_user_id  AND tn.guild_id = s.guild_id\n        LEFT JOIN user_names      su ON su.user_id = s.stamper_user_id\n        LEFT JOIN user_nicknames  sn ON sn.user_id = s.stamper_user_id AND sn.guild_id = s.guild_id\n        LEFT JOIN channels        c  ON c.channel_id = s.channel_id\n        LEFT JOIN audio_files     af ON af.id = s.audio_file_id\n        LEFT JOIN recording_sessions rs\n          ON rs.id = COALESCE(s.recording_session_id, af.recording_session_id)\n         AND rs.guild_id = s.guild_id\n         AND rs.user_id = s.target_user_id\n         AND NOT EXISTS (\n                 SELECT 1\n                   FROM audio_files restricted\n                  WHERE restricted.recording_session_id = rs.id\n                    AND NOT (restricted.channel_id = ANY($2))\n             )\n        WHERE s.guild_id = $1\n          AND s.channel_id = ANY($2)\n        ORDER BY s.stamp_ts DESC\n        LIMIT 500\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "guild_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "target_user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "target_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "stamper_user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "stamper_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "stamp_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "stamp_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "offset_ms",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "offset_ms"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "audio_file_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "audio_file_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "stamps",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "target_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "stamper_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "channel_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "channels",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "file_name?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "year?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "year"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "month?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "month"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "start_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "start_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "recording_session_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "segment_index",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 19,
+        "name": "session_started_at_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 20,
+        "name": "session_fragment_count",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      null,
+      null,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "b34a197f6a05a14401b0957c41d102dcfa4da89bd44e485d50c2d28713bbc5db"
+}

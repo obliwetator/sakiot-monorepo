@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO composition_jobs (id, guild_id, user_id, idempotency_key, request, snapshot, result_clip_id, renderer_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "253ff23c5f3b10e2c480df4ddecdac4eace9f61fa454bc48323456ebadfa2447"
+}

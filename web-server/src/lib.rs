@@ -14,6 +14,7 @@ pub mod members;
 pub mod openapi;
 pub mod permissions;
 pub mod proto;
+pub mod snowflake_serde;
 pub mod stamps;
 pub mod telemetry;
 pub mod user;

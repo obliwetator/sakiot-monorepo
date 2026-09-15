@@ -9,7 +9,7 @@ use base64::prelude::*;
 use chrono::Datelike;
 use sakiot_paths::RecordingKey;
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};

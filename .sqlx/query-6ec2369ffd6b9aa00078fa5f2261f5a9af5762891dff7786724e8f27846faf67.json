@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT un.user_id AS \"user_id!\",\n                COALESCE(nn.nickname, un.global_name, un.username) AS display_name\n           FROM user_names un\n           LEFT JOIN user_nicknames nn\n             ON nn.user_id = un.user_id AND nn.guild_id = $1\n          WHERE un.user_id = ANY($2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_names",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "6ec2369ffd6b9aa00078fa5f2261f5a9af5762891dff7786724e8f27846faf67"
+}

@@ -10,15 +10,15 @@ pub async fn insert_receiver_voice_event(
     event_type_id: i32,
     details: &str,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO voice_events (guild_id, user_id, ssrc, event_type_id, details)
          VALUES ($1, $2, $3, $4, $5)",
+        guild_id,
+        user_id,
+        ssrc,
+        event_type_id,
+        details
     )
-    .bind(guild_id)
-    .bind(user_id)
-    .bind(ssrc)
-    .bind(event_type_id)
-    .bind(details)
     .execute(pool)
     .await?;
 
@@ -33,16 +33,16 @@ pub async fn insert_voice_state_event(
     event_type_id: i32,
     previous_channel_id: Option<i64>,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO voice_state_events
             (guild_id, channel_id, previous_channel_id, user_id, event_type_id)
          VALUES ($1, $2, $3, $4, $5)",
+        guild_id,
+        channel_id,
+        previous_channel_id,
+        user_id,
+        event_type_id
     )
-    .bind(guild_id)
-    .bind(channel_id)
-    .bind(previous_channel_id)
-    .bind(user_id)
-    .bind(event_type_id)
     .execute(pool)
     .await?;
 
@@ -71,7 +71,7 @@ pub async fn insert_voice_connection_event(
     pool: &Pool<Postgres>,
     event: VoiceConnectionEvent<'_>,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO voice_connection_events
             (operation_id, guild_id, owner_instance_id, release_id, trigger,
              started_at, completed_at, from_channel_id, to_channel_id,
@@ -81,21 +81,21 @@ pub async fn insert_voice_connection_event(
              to_timestamp($6::double precision / 1000.0),
              to_timestamp($7::double precision / 1000.0),
              $8, $9, $10::jsonb, $11, $12, $13, $14)",
+        event.operation_id,
+        event.guild_id,
+        event.owner_instance_id,
+        event.release_id,
+        event.trigger,
+        event.started_at_ms as f64,
+        event.completed_at_ms.max(event.started_at_ms) as f64,
+        event.from_channel_id,
+        event.to_channel_id,
+        event.population_snapshot,
+        event.outcome,
+        event.error,
+        event.fallback_outcome,
+        event.fallback_error
     )
-    .bind(event.operation_id)
-    .bind(event.guild_id)
-    .bind(event.owner_instance_id)
-    .bind(event.release_id)
-    .bind(event.trigger)
-    .bind(event.started_at_ms)
-    .bind(event.completed_at_ms.max(event.started_at_ms))
-    .bind(event.from_channel_id)
-    .bind(event.to_channel_id)
-    .bind(event.population_snapshot.to_string())
-    .bind(event.outcome)
-    .bind(event.error)
-    .bind(event.fallback_outcome)
-    .bind(event.fallback_error)
     .execute(pool)
     .await?;
     Ok(())

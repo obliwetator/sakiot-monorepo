@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT clips.name, clips.clip_id\n           FROM clips\n          CROSS JOIN LATERAL (\n              SELECT CASE\n                  WHEN clips.recording_session_id IS NOT NULL THEN COALESCE(\n                      (\n                          SELECT array_agg(DISTINCT audio_files.channel_id ORDER BY audio_files.channel_id)\n                            FROM audio_files\n                           WHERE audio_files.recording_session_id = clips.recording_session_id\n                      ),\n                      (\n                          SELECT ARRAY[recording_sessions.starting_channel_id]::bigint[]\n                            FROM recording_sessions\n                           WHERE recording_sessions.id = clips.recording_session_id\n                      ),\n                      ARRAY[]::bigint[]\n                  )\n                  WHEN clips.channel_id IS NOT NULL THEN ARRAY[clips.channel_id]::bigint[]\n                  ELSE ARRAY[]::bigint[]\n              END AS channel_ids\n          ) source\n          WHERE clips.guild_id = $1\n            AND clips.name ILIKE $2\n            AND clips.deleted_at IS NULL\n            AND cardinality(source.channel_ids) > 0\n            AND source.channel_ids <@ $3::bigint[]\n          ORDER BY clips.name, clips.clip_id\n          LIMIT 25",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "clip_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "6a423a7235c565626e964eb465dee92c9f2afd7b35b00a72ba740d68365f3d7c"
+}

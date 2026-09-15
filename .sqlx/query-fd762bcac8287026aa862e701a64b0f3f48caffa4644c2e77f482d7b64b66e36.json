@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET object_key = $3,\n                bytes = $4,\n                sha256 = $5,\n                lease_expires_at = now() + interval '5 minutes',\n                updated_at = now()\n          WHERE id = $1\n            AND state = 'uploading'\n            AND lease_owner = $2\n            AND (object_key IS NULL OR object_key = $3)\n            AND (bytes IS NULL OR bytes = $4)\n            AND (sha256 IS NULL OR sha256 = $5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8",
+        "Bpchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fd762bcac8287026aa862e701a64b0f3f48caffa4644c2e77f482d7b64b66e36"
+}

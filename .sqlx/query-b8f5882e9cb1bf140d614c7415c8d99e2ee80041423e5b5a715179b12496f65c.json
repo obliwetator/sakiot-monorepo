@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$6,'compose',$7,$8,0,$9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Float4",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b8f5882e9cb1bf140d614c7415c8d99e2ee80041423e5b5a715179b12496f65c"
+}

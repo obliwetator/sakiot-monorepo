@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions rs\n            SET state = 'finalized',\n                ended_at = COALESCE(\n                    (\n                        SELECT to_timestamp(COALESCE(MAX(af.end_ts), MAX(af.start_ts))::double precision / 1000.0)\n                          FROM audio_files af\n                         WHERE af.recording_session_id = rs.id\n                    ),\n                    rs.started_at\n                ),\n                owner_instance_id = NULL,\n                end_reason = 'owner_lost',\n                updated_at = now()\n          WHERE rs.state = 'active'\n            AND rs.owner_instance_id IS NOT NULL\n            AND (\n                ($2::text IS NOT NULL AND rs.owner_instance_id = $2\n                    AND EXISTS (\n                        SELECT 1 FROM audio_files af\n                         WHERE af.recording_session_id = rs.id\n                           AND af.recording_owner_instance_id = rs.owner_instance_id\n                           AND (af.end_ts IS NULL OR af.reaped IS TRUE)\n                    )\n                    AND NOT EXISTS (\n                        SELECT 1 FROM audio_files af\n                         WHERE af.recording_session_id = rs.id\n                           AND af.recording_owner_instance_id = rs.owner_instance_id\n                           AND af.end_ts IS NULL\n                           AND af.recording_heartbeat_at\n                               > now() - ($1::double precision * interval '1 second')\n                    ))\n                OR NOT EXISTS (\n                    SELECT 1\n                      FROM bot_instances bi\n                     WHERE bi.instance_id = rs.owner_instance_id\n                       AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')\n                       AND bi.state <> 'stopped'\n                )\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a7c6d7dae21c3254a1acc4d54ab7874d60affa843c3cabfc80c0d8cab1a8076b"
+}

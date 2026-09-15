@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id\n           FROM recording_sessions\n          WHERE guild_id = $1 AND user_id = $2 AND state = 'pending'\n          ORDER BY started_at DESC, id DESC\n          LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f31f6ca7a6f5f92fd80d0cf7db2ace5f30da1bb9a396d6a0ea48bfd0fd1e8bcc"
+}

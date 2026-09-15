@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET state = 'available',\n                etag = COALESCE($3, etag),\n                uploaded_at = COALESCE(uploaded_at, now()),\n                verified_at = now(),\n                local_delete_after = now() + ($4::bigint * interval '1 day'),\n                lease_owner = NULL,\n                lease_expires_at = NULL,\n                retry_at = now(),\n                last_error = NULL,\n                updated_at = now()\n          WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b89c9a84a91fd79f600af6ee44089ee545072dc501011c82842cf98a6046c603"
+}

@@ -15,6 +15,7 @@ use crate::media_archive::{MediaArchive, RemoteDisposition};
 use sakiot_paths::RecordingKey;
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
+use super::util::is_valid_file_segment;
 
 fn audio_leaf(file_name: &str, silence_free: bool) -> String {
     let file_name = if file_name.ends_with(".ogg") {
@@ -79,7 +80,7 @@ pub async fn get_audio(
 ) -> Result<impl Responder, AppError> {
     let (guild_id, channel_id, year, month, file_name) = path.into_inner();
 
-    if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
+    if !is_valid_file_segment(&file_name) {
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
 
@@ -170,10 +171,7 @@ pub async fn download_audio(
 ) -> Result<actix_web::HttpResponse, AppError> {
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
 
-    if file_name_from_url.contains("..")
-        || file_name_from_url.contains('/')
-        || file_name_from_url.contains('\\')
-    {
+    if !is_valid_file_segment(&file_name_from_url) {
         return Err(AppError::BadRequest("Invalid file name".to_string()));
     }
 

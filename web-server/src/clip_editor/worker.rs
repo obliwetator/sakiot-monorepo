@@ -320,19 +320,27 @@ async fn workspace_bytes(path: &Path) -> Result<u64, AppError> {
 /// Only managed attempt directories and immutable composition outputs are
 /// eligible. Never remove a file referenced by any clip, even a soft-deleted one.
 async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
-    let old_paths: Vec<String> = sqlx::query_scalar("SELECT DISTINCT snapshot->'overwrite'->>'old_saved_file_name' FROM composition_jobs WHERE state = 'ready' AND finished_at < now() - interval '1 hour' AND snapshot->'overwrite'->>'old_saved_file_name' IS NOT NULL")
-        .fetch_all(pool).await?;
-    for saved in old_paths {
-        let used: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM clips WHERE saved_file_name = $1)")
-                .bind(&saved)
-                .fetch_one(pool)
-                .await?;
+    let old_paths: Vec<Option<String>> = sqlx::query_scalar!(
+        "SELECT DISTINCT snapshot->'overwrite'->>'old_saved_file_name' FROM composition_jobs WHERE state = 'ready' AND finished_at < now() - interval '1 hour' AND snapshot->'overwrite'->>'old_saved_file_name' IS NOT NULL"
+    )
+    .fetch_all(pool)
+    .await?;
+    for saved in old_paths.into_iter().flatten() {
+        let used = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM clips WHERE saved_file_name = $1) AS "exists!""#,
+            saved
+        )
+        .fetch_one(pool)
+        .await?;
         if !used {
             let _ = tokio::fs::remove_file(crate::media_archive::clip_local_path(&saved)?).await;
         }
     }
-    sqlx::query("DELETE FROM composition_jobs WHERE state IN ('ready', 'failed') AND finished_at < now() - interval '30 days'").execute(pool).await?;
+    sqlx::query!(
+        "DELETE FROM composition_jobs WHERE state IN ('ready', 'failed') AND finished_at < now() - interval '30 days'"
+    )
+    .execute(pool)
+    .await?;
     let root = PathBuf::from(clips_path());
     let work = root.join(".composition-jobs");
     if let Ok(mut jobs) = tokio::fs::read_dir(&work).await {
@@ -347,8 +355,13 @@ async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
                     continue;
                 }
                 let token = attempt.file_name().to_string_lossy().into_owned();
-                let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now())")
-                    .bind(&id).bind(&token).fetch_one(pool).await?;
+                let active = sqlx::query_scalar!(
+                    r#"SELECT EXISTS(SELECT 1 FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()) AS "exists!""#,
+                    id,
+                    token
+                )
+                .fetch_one(pool)
+                .await?;
                 if !active {
                     let _ = tokio::fs::remove_dir_all(attempt.path()).await;
                 }
@@ -362,11 +375,12 @@ async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
                 continue;
             }
             let saved = format!("compositions/{}", file.file_name().to_string_lossy());
-            let used: bool =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM clips WHERE saved_file_name = $1)")
-                    .bind(&saved)
-                    .fetch_one(pool)
-                    .await?;
+            let used = sqlx::query_scalar!(
+                r#"SELECT EXISTS(SELECT 1 FROM clips WHERE saved_file_name = $1) AS "exists!""#,
+                saved
+            )
+            .fetch_one(pool)
+            .await?;
             if !used {
                 let _ = tokio::fs::remove_file(file.path()).await;
             }

@@ -118,11 +118,11 @@ pub async fn get_role_members(
     let (guild_id, role_id) = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
 
-    let belongs_to_guild = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+    let belongs_to_guild = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
+        role_id,
+        guild_id
     )
-    .bind(role_id)
-    .bind(guild_id)
     .fetch_one(pool.get_ref())
     .await?;
     if !belongs_to_guild {
@@ -199,11 +199,11 @@ pub async fn get_role_view(
     let (guild_id, role_id) = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
 
-    let belongs_to_guild = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+    let belongs_to_guild = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
+        role_id,
+        guild_id
     )
-    .bind(role_id)
-    .bind(guild_id)
     .fetch_one(pool.get_ref())
     .await?;
     if !belongs_to_guild {

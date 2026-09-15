@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_voice_settings\n            (guild_id, pending_cap_seconds, updated_by, updated_at)\n         VALUES ($1, $2, $3, now())\n         ON CONFLICT (guild_id) DO UPDATE\n            SET pending_cap_seconds = EXCLUDED.pending_cap_seconds,\n                updated_by = EXCLUDED.updated_by,\n                updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9ea0a5f76af06c3ea9d0f71e9fd4fb4bc8c4e3cb5a9eb678e449ca5a3ea4f1e"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n                        SET state = $2,\n                            last_error = left($3, 4000),\n                            updated_at = now()\n                      WHERE id = $1 AND state = 'available'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8cdca82e89188defaa8f78f5147a8fb89eeadac370809fe289bfd4919a3fc6e8"
+}

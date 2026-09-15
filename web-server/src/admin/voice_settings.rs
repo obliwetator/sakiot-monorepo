@@ -40,10 +40,10 @@ pub async fn get_voice_settings(
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
-    let configured = sqlx::query_scalar::<_, i32>(
+    let configured = sqlx::query_scalar!(
         "SELECT pending_cap_seconds FROM guild_voice_settings WHERE guild_id = $1",
+        guild_id
     )
-    .bind(guild_id)
     .fetch_optional(pool.get_ref())
     .await?;
     Ok(HttpResponse::Ok().json(GuildVoiceSettings {
@@ -82,7 +82,7 @@ pub async fn put_voice_settings(
         )));
     }
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO guild_voice_settings
             (guild_id, pending_cap_seconds, updated_by, updated_at)
          VALUES ($1, $2, $3, now())
@@ -90,10 +90,10 @@ pub async fn put_voice_settings(
             SET pending_cap_seconds = EXCLUDED.pending_cap_seconds,
                 updated_by = EXCLUDED.updated_by,
                 updated_at = now()",
+        guild_id,
+        body.pending_cap_seconds,
+        user_id
     )
-    .bind(guild_id)
-    .bind(body.pending_cap_seconds)
-    .bind(user_id)
     .execute(pool.get_ref())
     .await?;
 
@@ -124,10 +124,12 @@ pub async fn delete_voice_settings(
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
-    sqlx::query("DELETE FROM guild_voice_settings WHERE guild_id = $1")
-        .bind(guild_id)
-        .execute(pool.get_ref())
-        .await?;
+    sqlx::query!(
+        "DELETE FROM guild_voice_settings WHERE guild_id = $1",
+        guild_id
+    )
+    .execute(pool.get_ref())
+    .await?;
     Ok(HttpResponse::Ok().json(GuildVoiceSettings {
         pending_cap_seconds: DEFAULT_PENDING_CAP_SECONDS,
         is_default: true,

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET state = 'pending',\n                retry_at = now() + ($4::bigint * interval '1 second'),\n                lease_owner = NULL,\n                lease_expires_at = NULL,\n                last_error = left($3, 4000),\n                updated_at = now()\n          WHERE id = $1 AND state = 'uploading' AND lease_owner = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97990091ac23afa0db18c5758389b4d634213a4dca0269313f5ee0fa0c306977"
+}

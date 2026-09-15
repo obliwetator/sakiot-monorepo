@@ -233,8 +233,8 @@ pub async fn get_combined_perm_for_user(
     // `delete_live_member` drops the row when a member leaves — and the local
     // seed / fixture tooling writes it to grant the dev account full access to
     // imported guilds whose real owner is somebody else.
-    let owner = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
+    let owner = sqlx::query_scalar!(
+        r#"SELECT (EXISTS (
              SELECT 1
                FROM guilds
               WHERE id = $1 AND owner_id = $2
@@ -242,10 +242,10 @@ pub async fn get_combined_perm_for_user(
              SELECT 1
                FROM user_guilds
               WHERE id = $1 AND user_id = $2 AND owner
-         )",
+         )) AS "owner!""#,
+        guild_id,
+        user_id
     )
-    .bind(guild_id)
-    .bind(user_id)
     .fetch_one(pool.get_ref())
     .await?;
     if owner {
@@ -256,15 +256,15 @@ pub async fn get_combined_perm_for_user(
     // always includes `@everyone` (`role_id = guild_id`), so without this check
     // a stranger who was never in the guild would inherit `@everyone`'s bits —
     // including ADMINISTRATOR when a guild grants it there.
-    let member = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (
+    let member = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
              SELECT 1
                FROM user_guilds
               WHERE id = $1 AND user_id = $2
-         )",
+         ) AS "member!""#,
+        guild_id,
+        user_id
     )
-    .bind(guild_id)
-    .bind(user_id)
     .fetch_one(pool.get_ref())
     .await?;
     if !member {
@@ -274,7 +274,7 @@ pub async fn get_combined_perm_for_user(
     // The OAuth guild list stores a combined permission snapshot from login.
     // Build the value from the agent-maintained role cache instead so role and
     // membership revocations take effect without requiring a new login.
-    let permissions = sqlx::query_scalar::<_, Option<i64>>(
+    let permissions = sqlx::query_scalar!(
         "SELECT bit_or(r.permission)
            FROM roles r
           WHERE r.guild_id = $1
@@ -287,9 +287,9 @@ pub async fn get_combined_perm_for_user(
                        AND ur.role_id = r.role_id
                 )
             )",
+        guild_id,
+        user_id
     )
-    .bind(guild_id)
-    .bind(user_id)
     .fetch_one(pool.get_ref())
     .await?
     .unwrap_or(0);
@@ -306,14 +306,14 @@ pub async fn get_combined_perm_for_role(
     guild_id: i64,
     role_id: i64,
 ) -> Result<Permissions, AppError> {
-    let permissions = sqlx::query_scalar::<_, Option<i64>>(
+    let permissions = sqlx::query_scalar!(
         "SELECT bit_or(r.permission)
            FROM roles r
           WHERE r.guild_id = $1
             AND (r.role_id = $1 OR r.role_id = $2)",
+        guild_id,
+        role_id
     )
-    .bind(guild_id)
-    .bind(role_id)
     .fetch_one(pool.get_ref())
     .await?
     .unwrap_or(0);
@@ -426,11 +426,11 @@ pub async fn listing_channels_for(
     match as_role {
         None => visible_channels_for_user(pool, guild_id, user_id).await,
         Some(role_id) => {
-            let belongs_to_guild = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+            let belongs_to_guild = sqlx::query_scalar!(
+                r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
+                role_id,
+                guild_id
             )
-            .bind(role_id)
-            .bind(guild_id)
             .fetch_one(pool.get_ref())
             .await?;
             if !belongs_to_guild {
@@ -456,11 +456,11 @@ pub async fn role_access_for_preview(
     guild_id: i64,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
-    let belongs_to_guild = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2)",
+    let belongs_to_guild = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
+        role_id,
+        guild_id
     )
-    .bind(role_id)
-    .bind(guild_id)
     .fetch_one(pool.get_ref())
     .await?;
     if !belongs_to_guild {
@@ -695,11 +695,11 @@ async fn require_guild_permission(
         {
             return Ok(user_id);
         }
-        let trusted_owner = sqlx::query_scalar::<_, bool>(
+        let trusted_owner = sqlx::query_scalar!(
             "SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2",
+            guild_id,
+            user_id
         )
-        .bind(guild_id)
-        .bind(user_id)
         .fetch_optional(pool.get_ref())
         .await?
         .unwrap_or(false);

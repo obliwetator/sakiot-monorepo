@@ -1,6 +1,21 @@
 use actix_web::HttpRequest;
 use tracing::error;
 
+/// Whether a request-supplied file, stem, or segment name is safe to
+/// interpolate into a filesystem path or a process argument: non-empty, no
+/// parent-directory or path-separator sequences, no quotes, and no control
+/// characters. Every audio handler that builds a path or command line from a
+/// URL segment must gate it through this predicate.
+pub fn is_valid_file_segment(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains("..")
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains('\'')
+        && !s.contains('"')
+        && !s.chars().any(char::is_control)
+}
+
 pub fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
     let key = sakiot_paths::RecordingKey::new(path.0, path.1, path.2, path.3 as u32, &path.4);
     key.recording_dir(base_path).to_string_lossy().into_owned()
@@ -64,8 +79,35 @@ pub fn handle_idempotency_key(req: &HttpRequest) -> Result<String, crate::errors
 
 #[cfg(test)]
 mod tests {
-    use super::handle_idempotency_key;
+    use super::{handle_idempotency_key, is_valid_file_segment};
     use actix_web::test::TestRequest;
+
+    #[test]
+    fn file_segment_accepts_generated_names() {
+        assert!(is_valid_file_segment("1786473460682-183931044829986817"));
+        assert!(is_valid_file_segment(
+            "1786473460682-183931044829986817.ogg"
+        ));
+        assert!(is_valid_file_segment("seg_00001.m4s"));
+    }
+
+    #[test]
+    fn file_segment_rejects_traversal_and_separators() {
+        assert!(!is_valid_file_segment(""));
+        assert!(!is_valid_file_segment(".."));
+        assert!(!is_valid_file_segment("../secret"));
+        assert!(!is_valid_file_segment("a..b"));
+        assert!(!is_valid_file_segment("dir/file"));
+        assert!(!is_valid_file_segment("dir\\file"));
+    }
+
+    #[test]
+    fn file_segment_rejects_shell_metacharacters() {
+        assert!(!is_valid_file_segment("bad'name"));
+        assert!(!is_valid_file_segment("bad\"name"));
+        assert!(!is_valid_file_segment("bad\nname"));
+        assert!(!is_valid_file_segment("bad\tname"));
+    }
 
     #[test]
     fn idempotency_key_is_trimmed() -> Result<(), Box<dyn std::error::Error>> {

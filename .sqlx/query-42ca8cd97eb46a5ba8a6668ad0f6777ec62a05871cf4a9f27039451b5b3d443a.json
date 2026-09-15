@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions\n            SET state = 'pending',\n                pause_started_at = COALESCE(pause_started_at, to_timestamp($2::bigint / 1000.0)),\n                pending_deadline_at = CASE\n                    WHEN $3::bigint IS NULL THEN pending_deadline_at\n                    ELSE to_timestamp($3::bigint / 1000.0)\n                END,\n                absolute_cap_deadline_at = CASE\n                    WHEN $4::bigint IS NULL THEN absolute_cap_deadline_at\n                    ELSE to_timestamp($4::bigint / 1000.0)\n                END,\n                next_fragment_start_at = NULL,\n                pending_reason = $5,\n                pending_from_channel_id = COALESCE(pending_from_channel_id, $6),\n                pending_to_channel_id = $7,\n                owner_instance_id = $8,\n                updated_at = now()\n          WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "42ca8cd97eb46a5ba8a6668ad0f6777ec62a05871cf4a9f27039451b5b3d443a"
+}

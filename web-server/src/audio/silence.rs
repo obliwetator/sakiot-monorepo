@@ -12,7 +12,9 @@ use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
-use super::util::{file_exists, get_file_path_root, handle_idempotency_key, is_stale};
+use super::util::{
+    file_exists, get_file_path_root, handle_idempotency_key, is_stale, is_valid_file_segment,
+};
 
 const IDEMPOTENCY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
@@ -247,7 +249,7 @@ fn replay_job_result(
     responses(
         (status = 200, description = "Silence removal file exists or processing started", body = RemoveSilenceResponse),
         (status = 202, description = "Existing processing request completed", body = RemoveSilenceResponse),
-        (status = 400, description = "Missing idempotency key", body = crate::errors::ApiError),
+        (status = 400, description = "Invalid file name or missing idempotency key", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),
         (status = 409, description = "Idempotency key reused for another request", body = crate::errors::ApiError),
@@ -266,6 +268,9 @@ pub async fn remove_silence(
     token: Option<web::ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
+    if !is_valid_file_segment(&path.4) {
+        return Err(AppError::BadRequest("Invalid file name".into()));
+    }
     let token = token.ok_or(AppError::Unauthorized)?;
     super::sessions::require_recording_access(
         &pool,

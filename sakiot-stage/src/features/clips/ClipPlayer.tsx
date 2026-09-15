@@ -8,12 +8,8 @@ import {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
-import { API_ROUTES, apiUrl } from "../../api/routes";
-import {
-	BASE_API_URL,
-	type ClipData,
-	useRenameClipMutation,
-} from "../../app/apiSlice";
+import { API_ROUTES, absoluteMediaUrl, apiUrl } from "../../api/routes";
+import { type ClipData, useRenameClipMutation } from "../../app/apiSlice";
 import {
 	authedFetch,
 	refreshForMediaRetry,
@@ -42,13 +38,6 @@ import { isComposedClip } from "./composedClip";
 
 const ARROW_SEEK_SECONDS = 5;
 const CTRL_ARROW_SEEK_SECONDS = 30;
-
-function absoluteMediaUrl(path: string): string {
-	return new URL(
-		path,
-		new URL(BASE_API_URL, window.location.origin),
-	).toString();
-}
 
 function formatClipSize(bytes: number | null | undefined): string {
 	if (bytes == null) return "Unknown";

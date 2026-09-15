@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions rs\n            SET state = 'finalized',\n                ended_at = COALESCE(\n                    (\n                        SELECT to_timestamp(COALESCE(MAX(af.end_ts), MAX(af.start_ts))::double precision / 1000.0)\n                          FROM audio_files af\n                         WHERE af.recording_session_id = rs.id\n                    ),\n                    rs.started_at\n                ),\n                owner_instance_id = NULL,\n                end_reason = COALESCE(end_reason, 'instance_stopped'),\n                updated_at = now()\n          WHERE rs.owner_instance_id = $1 AND rs.state = 'active'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dac33da67d84adba6ce175b7eacfcd2760153bcba81981e85c1d572fc740779a"
+}

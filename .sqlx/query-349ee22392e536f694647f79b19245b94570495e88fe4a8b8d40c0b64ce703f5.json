@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_objects (audio_file_id)\n         SELECT af.id\n           FROM audio_files af\n          WHERE af.end_ts IS NOT NULL\n          ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "349ee22392e536f694647f79b19245b94570495e88fe4a8b8d40c0b64ce703f5"
+}

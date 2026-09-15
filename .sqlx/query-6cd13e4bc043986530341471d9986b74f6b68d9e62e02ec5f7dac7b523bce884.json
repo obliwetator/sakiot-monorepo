@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE composition_jobs SET state = 'failed', stage = 'failed', error = 'Export worker stopped repeatedly. Please submit the export again.', attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE state = 'running' AND lease_expires_at < now() AND attempts >= $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6cd13e4bc043986530341471d9986b74f6b68d9e62e02ec5f7dac7b523bce884"
+}

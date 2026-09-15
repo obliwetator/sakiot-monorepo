@@ -1,0 +1,164 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT outcome,\n                trigger,\n                owner_instance_id,\n                release_id,\n                ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint - $2) AS \"started_offset_ms!\",\n                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint - $2) AS \"offset_ms!\",\n                from_channel_id,\n                to_channel_id,\n                operation_id,\n                error,\n                fallback_outcome,\n                fallback_error,\n                population_snapshot\n           FROM voice_connection_events\n          WHERE guild_id = $1\n            AND completed_at >= to_timestamp($2::double precision / 1000.0)\n            AND started_at <= to_timestamp($3::double precision / 1000.0)\n          ORDER BY completed_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "trigger",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "trigger"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_instance_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "owner_instance_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "release_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "release_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "started_offset_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "offset_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "from_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "from_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "to_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "to_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "operation_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "fallback_outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "fallback_outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "fallback_error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "fallback_error"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "population_snapshot",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "population_snapshot"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null,
+      null,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "429d5eadba06dd88f45608134800b6feef41d5048149e17f79ec9c6e0ccae556"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE composition_jobs SET lease_expires_at = now() + interval '60 seconds', updated_at = now() WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3bfb82ac8ffa383488ac5ba79424dadd92cede100b715b4f316bdf8249551170"
+}

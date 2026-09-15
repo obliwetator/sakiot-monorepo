@@ -1,15 +1,16 @@
 import type Hls from "hls.js";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { absoluteMediaUrl } from "../../api/routes";
 import type {
 	ChannelMixParticipantSettings,
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
-import { BASE_API_URL } from "../../app/apiSlice";
 import {
 	refreshForMediaRetry,
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
+import { attachHlsAudio, prefersNativeHls } from "../../shared/attachHls";
 import { commonLiveSeekPosition } from "./channelMixState";
 
 const CHANNEL_MIX_SAMPLE_RATE = 48_000;
@@ -44,13 +45,6 @@ interface ChannelMixPlaybackOptions {
 	volume: number;
 	playbackRate: number;
 	onSourceError?: (segmentId: string, message: string | null) => void;
-}
-
-function absoluteMediaUrl(path: string): string {
-	return new URL(
-		path,
-		new URL(BASE_API_URL, window.location.origin),
-	).toString();
 }
 
 function gainForParticipant(
@@ -316,30 +310,18 @@ export function useChannelMixPlayback(options: ChannelMixPlaybackOptions) {
 			source.audio.addEventListener("error", retrySource);
 			if (source.segment.live && source.segment.hls_playlist_url) {
 				const hlsUrl = absoluteMediaUrl(source.segment.hls_playlist_url);
-				if (
-					source.audio.canPlayType("application/vnd.apple.mpegurl") ===
-					"probably"
-				) {
+				if (prefersNativeHls(source.audio)) {
 					source.audio.src = hlsUrl;
 				} else {
-					void import("hls.js").then(({ default: HlsClass }) => {
+					void attachHlsAudio({
+						audio: source.audio,
+						playlistUrl: hlsUrl,
+						fallbackUrl: absoluteMediaUrl(source.segment.media_url),
+						isActive: () => source.audio !== null,
+						onFatal: () => retrySource(),
+					}).then((result) => {
 						if (!source.audio) return;
-						if (!HlsClass.isSupported()) {
-							source.audio.src = absoluteMediaUrl(source.segment.media_url);
-							return;
-						}
-						const hls = new HlsClass({
-							xhrSetup: (request) => {
-								request.withCredentials = true;
-							},
-							liveSyncDuration: 2,
-						});
-						source.hls = hls;
-						hls.on(HlsClass.Events.ERROR, (_event, data) => {
-							if (data.fatal) retrySource();
-						});
-						hls.loadSource(hlsUrl);
-						hls.attachMedia(source.audio);
+						source.hls = result.hls;
 					});
 				}
 			} else {

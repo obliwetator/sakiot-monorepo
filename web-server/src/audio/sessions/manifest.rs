@@ -264,10 +264,10 @@ pub(super) async fn build_manifest(
             channel_journey.push(channel_id);
         }
     }
-    let current_channel_id = sqlx::query_scalar::<_, Option<i64>>(
+    let current_channel_id = sqlx::query_scalar!(
         "SELECT current_channel_id FROM recording_sessions WHERE id = $1",
+        access.session_id
     )
-    .bind(access.session_id)
     .fetch_optional(pool.get_ref())
     .await?
     .flatten();
@@ -298,8 +298,9 @@ pub(super) async fn load_fragments(
     pool: &web::Data<Pool<Postgres>>,
     session_id: i64,
 ) -> Result<Vec<AudioFragment>, AppError> {
-    let rows = sqlx::query(
-        "SELECT af.id,
+    let rows = sqlx::query_as!(
+        AudioFragment,
+        r#"SELECT af.id,
                 af.guild_id,
                 af.channel_id,
                 af.user_id,
@@ -307,7 +308,7 @@ pub(super) async fn load_fragments(
                 af.file_name,
                 af.year,
                 af.month,
-                COALESCE(af.start_ts, 0) AS start_ms,
+                COALESCE(af.start_ts, 0) AS "start_ms!",
                 af.end_ts AS end_ms,
                 af.segment_index,
                 (
@@ -321,33 +322,15 @@ pub(super) async fn load_fragments(
                            AND bi.heartbeat_at > now() - interval '120 seconds'
                            AND bi.state <> 'stopped'
                     )
-                ) AS live
+                ) AS "live!"
            FROM audio_files af
           WHERE af.recording_session_id = $1
-          ORDER BY af.segment_index NULLS LAST, af.start_ts, af.id",
+          ORDER BY af.segment_index NULLS LAST, af.start_ts, af.id"#,
+        session_id
     )
-    .bind(session_id)
     .fetch_all(pool.get_ref())
     .await?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(AudioFragment {
-                id: row.try_get("id")?,
-                guild_id: row.try_get("guild_id")?,
-                channel_id: row.try_get("channel_id")?,
-                user_id: row.try_get("user_id")?,
-                recording_session_id: row.try_get("recording_session_id")?,
-                file_name: row.try_get("file_name")?,
-                year: row.try_get("year")?,
-                month: row.try_get("month")?,
-                start_ms: row.try_get("start_ms")?,
-                end_ms: row.try_get("end_ms")?,
-                segment_index: row.try_get("segment_index")?,
-                live: row.try_get::<Option<bool>, _>("live")?.unwrap_or(false),
-            })
-        })
-        .collect::<Result<_, sqlx::Error>>()
-        .map_err(AppError::DbError)
+    Ok(rows)
 }
 
 pub(super) async fn load_fragment(
@@ -366,31 +349,21 @@ pub(super) async fn load_gaps(
     pool: &web::Data<Pool<Postgres>>,
     session_id: i64,
 ) -> Result<Vec<Gap>, AppError> {
-    let rows = sqlx::query(
-        "SELECT (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS start_ms,
-                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS end_ms,
+    let rows = sqlx::query_as!(
+        Gap,
+        r#"SELECT (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS "start_ms!",
+                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS "end_ms!",
                 reason,
                 from_channel_id,
                 to_channel_id
            FROM recording_gaps
           WHERE recording_session_id = $1
-          ORDER BY started_at, id",
+          ORDER BY started_at, id"#,
+        session_id
     )
-    .bind(session_id)
     .fetch_all(pool.get_ref())
     .await?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(Gap {
-                start_ms: row.try_get("start_ms")?,
-                end_ms: row.try_get("end_ms")?,
-                reason: row.try_get("reason")?,
-                from_channel_id: row.try_get("from_channel_id")?,
-                to_channel_id: row.try_get("to_channel_id")?,
-            })
-        })
-        .collect::<Result<_, sqlx::Error>>()
-        .map_err(AppError::DbError)
+    Ok(rows)
 }
 
 pub(super) async fn load_events(
@@ -399,38 +372,34 @@ pub(super) async fn load_events(
     timeline_end_ms: i64,
 ) -> Result<Vec<SessionTimelineEventDto>, AppError> {
     let mut events = Vec::new();
-    let session_rows = sqlx::query(
-        "SELECT event_type,
-                ((EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint - $2) AS offset_ms,
+    let session_rows = sqlx::query!(
+        r#"SELECT event_type,
+                ((EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint - $2) AS "offset_ms!",
                 channel_id,
                 previous_channel_id,
                 details
            FROM recording_session_events
           WHERE recording_session_id = $1
-          ORDER BY occurred_at, id",
+          ORDER BY occurred_at, id"#,
+        access.session_id,
+        access.started_at_ms
     )
-    .bind(access.session_id)
-    .bind(access.started_at_ms)
     .fetch_all(pool.get_ref())
     .await?;
     for row in session_rows {
         events.push(SessionTimelineEventDto {
             source: "recording".to_string(),
-            event_type: row.try_get("event_type")?,
-            offset_ms: row.try_get("offset_ms")?,
-            channel_id: row
-                .try_get::<Option<i64>, _>("channel_id")?
-                .map(|id| id.to_string()),
-            previous_channel_id: row
-                .try_get::<Option<i64>, _>("previous_channel_id")?
-                .map(|id| id.to_string()),
-            details: row.try_get("details")?,
+            event_type: row.event_type,
+            offset_ms: row.offset_ms,
+            channel_id: row.channel_id.map(|id| id.to_string()),
+            previous_channel_id: row.previous_channel_id.map(|id| id.to_string()),
+            details: row.details,
         });
     }
 
-    let voice_rows = sqlx::query(
-        "SELECT t.name AS event_type,
-                ((EXTRACT(EPOCH FROM v.occurred_at) * 1000)::bigint - $2) AS offset_ms,
+    let voice_rows = sqlx::query!(
+        r#"SELECT t.name AS event_type,
+                ((EXTRACT(EPOCH FROM v.occurred_at) * 1000)::bigint - $2) AS "offset_ms!",
                 v.channel_id,
                 v.previous_channel_id
            FROM voice_state_events v
@@ -439,36 +408,32 @@ pub(super) async fn load_events(
             AND v.user_id = $3
             AND v.occurred_at >= to_timestamp($2::double precision / 1000.0)
             AND v.occurred_at <= to_timestamp($4::double precision / 1000.0)
-          ORDER BY v.occurred_at, v.id",
+          ORDER BY v.occurred_at, v.id"#,
+        access.guild_id,
+        access.started_at_ms,
+        access.user_id,
+        timeline_end_ms as f64
     )
-    .bind(access.guild_id)
-    .bind(access.started_at_ms)
-    .bind(access.user_id)
-    .bind(timeline_end_ms)
     .fetch_all(pool.get_ref())
     .await?;
     for row in voice_rows {
         events.push(SessionTimelineEventDto {
             source: "voice_state".to_string(),
-            event_type: row.try_get("event_type")?,
-            offset_ms: row.try_get("offset_ms")?,
-            channel_id: row
-                .try_get::<Option<i64>, _>("channel_id")?
-                .map(|id| id.to_string()),
-            previous_channel_id: row
-                .try_get::<Option<i64>, _>("previous_channel_id")?
-                .map(|id| id.to_string()),
+            event_type: row.event_type,
+            offset_ms: row.offset_ms,
+            channel_id: row.channel_id.map(|id| id.to_string()),
+            previous_channel_id: row.previous_channel_id.map(|id| id.to_string()),
             details: serde_json::json!({}),
         });
     }
 
-    let connection_rows = sqlx::query(
-        "SELECT outcome,
+    let connection_rows = sqlx::query!(
+        r#"SELECT outcome,
                 trigger,
                 owner_instance_id,
                 release_id,
-                ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint - $2) AS started_offset_ms,
-                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint - $2) AS offset_ms,
+                ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint - $2) AS "started_offset_ms!",
+                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint - $2) AS "offset_ms!",
                 from_channel_id,
                 to_channel_id,
                 operation_id,
@@ -480,35 +445,29 @@ pub(super) async fn load_events(
           WHERE guild_id = $1
             AND completed_at >= to_timestamp($2::double precision / 1000.0)
             AND started_at <= to_timestamp($3::double precision / 1000.0)
-          ORDER BY completed_at, id",
+          ORDER BY completed_at, id"#,
+        access.guild_id,
+        access.started_at_ms,
+        timeline_end_ms as f64
     )
-    .bind(access.guild_id)
-    .bind(access.started_at_ms)
-    .bind(timeline_end_ms)
     .fetch_all(pool.get_ref())
     .await?;
     for row in connection_rows {
-        let trigger: String = row.try_get("trigger")?;
-        let outcome: String = row.try_get("outcome")?;
         events.push(SessionTimelineEventDto {
             source: "voice_connection".to_string(),
-            event_type: format!("{trigger}:{outcome}"),
-            offset_ms: row.try_get("offset_ms")?,
-            channel_id: row
-                .try_get::<Option<i64>, _>("to_channel_id")?
-                .map(|id| id.to_string()),
-            previous_channel_id: row
-                .try_get::<Option<i64>, _>("from_channel_id")?
-                .map(|id| id.to_string()),
+            event_type: format!("{}:{}", row.trigger, row.outcome),
+            offset_ms: row.offset_ms,
+            channel_id: row.to_channel_id.map(|id| id.to_string()),
+            previous_channel_id: row.from_channel_id.map(|id| id.to_string()),
             details: serde_json::json!({
-                "operation_id": row.try_get::<String, _>("operation_id")?,
-                "owner_instance_id": row.try_get::<Option<String>, _>("owner_instance_id")?,
-                "release_id": row.try_get::<Option<String>, _>("release_id")?,
-                "started_offset_ms": row.try_get::<i64, _>("started_offset_ms")?,
-                "error": row.try_get::<Option<String>, _>("error")?,
-                "fallback_outcome": row.try_get::<Option<String>, _>("fallback_outcome")?,
-                "fallback_error": row.try_get::<Option<String>, _>("fallback_error")?,
-                "population_snapshot": row.try_get::<serde_json::Value, _>("population_snapshot")?,
+                "operation_id": row.operation_id,
+                "owner_instance_id": row.owner_instance_id,
+                "release_id": row.release_id,
+                "started_offset_ms": row.started_offset_ms,
+                "error": row.error,
+                "fallback_outcome": row.fallback_outcome,
+                "fallback_error": row.fallback_error,
+                "population_snapshot": row.population_snapshot,
             }),
         });
     }

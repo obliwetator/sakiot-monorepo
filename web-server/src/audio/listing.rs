@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{HttpResponse, get, web};
 use chrono::Datelike;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -246,8 +246,8 @@ async fn get_session_tree(
     permitted: &HashSet<i64>,
     channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
 ) -> Result<Vec<Channels>, AppError> {
-    let rows = sqlx::query(
-        "WITH listed AS (
+    let rows = sqlx::query!(
+        r#"WITH listed AS (
             SELECT rs.id AS listing_id,
                    TRUE AS logical,
                    rs.user_id,
@@ -275,26 +275,35 @@ async fn get_session_tree(
               FROM audio_files af
              WHERE af.guild_id = $1 AND af.recording_session_id IS NULL
         )
-        SELECT *
+        SELECT listing_id AS "listing_id!",
+               logical AS "logical!",
+               user_id AS "user_id!",
+               starting_channel_id AS "starting_channel_id!",
+               state AS "state!",
+               started_at_ms AS "started_at_ms!",
+               fragment_channel_id,
+               file_name,
+               segment_index,
+               audio_file_id
           FROM listed
-         ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id",
+         ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id"#,
+        guild_id
     )
-    .bind(guild_id)
     .fetch_all(pool)
     .await?;
 
     let mut listings: HashMap<i64, SessionListing> = HashMap::new();
     for row in rows {
-        let listing_id: i64 = row.try_get("listing_id")?;
-        let fragment_channel_id: Option<i64> = row.try_get("fragment_channel_id")?;
-        let file_name: Option<String> = row.try_get("file_name")?;
-        let starting_channel_id: i64 = row.try_get("starting_channel_id")?;
+        let listing_id = row.listing_id;
+        let fragment_channel_id = row.fragment_channel_id;
+        let file_name = row.file_name;
+        let starting_channel_id = row.starting_channel_id;
         let entry = listings.entry(listing_id).or_insert(SessionListing {
-            logical: row.try_get("logical")?,
-            user_id: row.try_get("user_id")?,
+            logical: row.logical,
+            user_id: row.user_id,
             starting_channel_id,
-            started_at_ms: row.try_get("started_at_ms")?,
-            state: row.try_get("state")?,
+            started_at_ms: row.started_at_ms,
+            state: row.state,
             first_file_name: None,
             channel_journey: vec![starting_channel_id],
         });
@@ -432,7 +441,7 @@ pub async fn get_live_stems(
     let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         "SELECT af.file_name, af.channel_id
            FROM audio_files af
           WHERE af.guild_id = $1
@@ -455,21 +464,16 @@ pub async fn get_live_stems(
                        AND NOT (sibling.channel_id = ANY($2))
                 )
             )",
+        guild_id,
+        &permitted_channels
     )
-    .bind(guild_id)
-    .bind(&permitted_channels)
     .fetch_all(pool.get_ref())
     .await?;
 
     let stems: Vec<String> = rows
         .into_iter()
-        .filter_map(|row| {
-            let channel_id = row.try_get::<i64, _>("channel_id").ok()?;
-            permitted
-                .contains(&channel_id)
-                .then(|| row.try_get::<String, _>("file_name").ok())
-                .flatten()
-        })
+        .filter(|row| permitted.contains(&row.channel_id))
+        .map(|row| row.file_name)
         .collect();
 
     Ok(HttpResponse::Ok().json(stems))

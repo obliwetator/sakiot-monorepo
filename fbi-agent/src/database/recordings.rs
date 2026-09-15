@@ -1,4 +1,4 @@
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::database::error::expect_rows;
 use crate::database::{DbError, DbResult};
@@ -77,15 +77,15 @@ pub async fn heartbeat_active_recordings(
         return Ok(0);
     }
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE audio_files
             SET recording_heartbeat_at = now()
           WHERE id = ANY($1)
             AND recording_owner_instance_id = $2
             AND end_ts IS NULL",
+        audio_file_ids,
+        owner_instance_id
     )
-    .bind(audio_file_ids)
-    .bind(owner_instance_id)
     .execute(pool)
     .await?;
 
@@ -103,7 +103,7 @@ pub async fn mark_recording_setup_failed(
     finalize_reason_id: i32,
 ) -> DbResult<()> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = COALESCE(end_ts, start_ts),
                 reaped = TRUE,
@@ -113,10 +113,10 @@ pub async fn mark_recording_setup_failed(
             AND recording_owner_instance_id = $2
             AND end_ts IS NULL
          RETURNING recording_session_id, segment_index, channel_id, end_ts",
+        audio_file_id,
+        owner_instance_id,
+        finalize_reason_id
     )
-    .bind(audio_file_id)
-    .bind(owner_instance_id)
-    .bind(finalize_reason_id)
     .fetch_optional(&mut *tx)
     .await?;
     let row = row.ok_or(DbError::UnexpectedRows {
@@ -124,22 +124,21 @@ pub async fn mark_recording_setup_failed(
         expected: 1,
         actual: 0,
     })?;
-    if let Some(recording_session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
-        let end_ts = row.try_get::<Option<i64>, _>("end_ts")?.unwrap_or(0);
+    if let Some(recording_session_id) = row.recording_session_id {
         crate::database::logical_recordings::insert_fragment_close_event(
             &mut tx,
             recording_session_id,
-            end_ts,
-            row.try_get("channel_id")?,
+            row.end_ts.unwrap_or(0),
+            row.channel_id,
             audio_file_id,
-            row.try_get("segment_index")?,
+            row.segment_index,
             "setup_failed",
         )
         .await?;
         crate::database::logical_recordings::finalize_setup_failed_session(
             &mut tx,
             recording_session_id,
-            end_ts,
+            row.end_ts.unwrap_or(0),
         )
         .await?;
     }
@@ -156,7 +155,7 @@ pub async fn finalize_recording(
 ) -> DbResult<()> {
     let duration_ms = duration_ms.max(0);
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = audio_files.start_ts + $1,
                 recording_heartbeat_at = NULL,
@@ -165,11 +164,11 @@ pub async fn finalize_recording(
             AND recording_owner_instance_id = $3
             AND end_ts IS NULL
          RETURNING recording_session_id, segment_index, channel_id, end_ts",
+        duration_ms,
+        audio_file_id,
+        owner_instance_id,
+        finalize_reason_id
     )
-    .bind(duration_ms)
-    .bind(audio_file_id)
-    .bind(owner_instance_id)
-    .bind(finalize_reason_id)
     .fetch_optional(&mut *tx)
     .await?;
     let row = row.ok_or(DbError::UnexpectedRows {
@@ -177,14 +176,14 @@ pub async fn finalize_recording(
         expected: 1,
         actual: 0,
     })?;
-    if let Some(recording_session_id) = row.try_get::<Option<i64>, _>("recording_session_id")? {
+    if let Some(recording_session_id) = row.recording_session_id {
         crate::database::logical_recordings::insert_fragment_close_event(
             &mut tx,
             recording_session_id,
-            row.try_get::<Option<i64>, _>("end_ts")?.unwrap_or(0),
-            row.try_get("channel_id")?,
+            row.end_ts.unwrap_or(0),
+            row.channel_id,
             audio_file_id,
-            row.try_get("segment_index")?,
+            row.segment_index,
             finalize_reason_name(finalize_reason_id),
         )
         .await?;

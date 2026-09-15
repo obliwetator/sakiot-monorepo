@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE clips SET name = $3 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "36d01edea9cdec3a84600c36b3ca3f7b2702f932e83fc8e6f4a59cf5ec914a2b"
+}

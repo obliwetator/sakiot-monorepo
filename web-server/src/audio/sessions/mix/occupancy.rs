@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use actix_web::web;
 use chrono::Utc;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
 
@@ -159,30 +159,20 @@ pub(super) async fn load_bot_occupancy_windows(
     selected_timeline_end_ms: i64,
 ) -> Result<Vec<MixWindow>, AppError> {
     let now_ms = Utc::now().timestamp_millis();
-    let rows = sqlx::query(
-        "SELECT ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint) AS started_ms,
-                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint) AS completed_ms,
+    let events = sqlx::query_as!(
+        BotConnectionEvent,
+        r#"SELECT ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint) AS "started_ms!",
+                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint) AS "completed_ms!",
                 to_channel_id,
                 outcome
            FROM voice_connection_events
           WHERE guild_id = $1
             AND completed_at <= now()
-          ORDER BY completed_at, id",
+          ORDER BY completed_at, id"#,
+        access.guild_id
     )
-    .bind(access.guild_id)
     .fetch_all(pool.get_ref())
     .await?;
-    let events = rows
-        .into_iter()
-        .map(|row| {
-            Ok(BotConnectionEvent {
-                started_ms: row.try_get("started_ms")?,
-                completed_ms: row.try_get("completed_ms")?,
-                to_channel_id: row.try_get("to_channel_id")?,
-                outcome: row.try_get("outcome")?,
-            })
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
     let occupancy = build_occupancy_windows(&events, now_ms.max(selected_timeline_end_ms));
     let selected_start_ms = access.started_at_ms;
     let selected_channels = selected_fragments

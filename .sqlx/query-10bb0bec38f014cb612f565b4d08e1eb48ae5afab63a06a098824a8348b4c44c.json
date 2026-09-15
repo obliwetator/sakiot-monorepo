@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Varchar",
+        "Float4",
+        "Int8",
+        "Varchar",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10bb0bec38f014cb612f565b4d08e1eb48ae5afab63a06a098824a8348b4c44c"
+}

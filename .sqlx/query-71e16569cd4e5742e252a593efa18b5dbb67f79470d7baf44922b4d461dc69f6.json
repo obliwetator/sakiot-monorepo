@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "user_guilds",
+            "name": "owner"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "71e16569cd4e5742e252a593efa18b5dbb67f79470d7baf44922b4d461dc69f6"
+}

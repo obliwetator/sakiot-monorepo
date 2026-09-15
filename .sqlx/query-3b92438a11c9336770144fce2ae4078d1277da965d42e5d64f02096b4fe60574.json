@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_objects (clip_id, clip_saved_file_name) VALUES ($1,$2)\n        ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO UPDATE SET\n        clip_saved_file_name = EXCLUDED.clip_saved_file_name, state = 'pending', retry_at = now(),\n        lease_owner = NULL, lease_expires_at = NULL, object_key = NULL, bytes = NULL, sha256 = NULL,\n        etag = NULL, attempts = 0, last_error = NULL, uploaded_at = NULL, verified_at = NULL,\n        local_delete_after = NULL, updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3b92438a11c9336770144fce2ae4078d1277da965d42e5d64f02096b4fe60574"
+}

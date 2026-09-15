@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions\n            SET state = 'active',\n                current_channel_id = $2,\n                resumed_at = to_timestamp($3::double precision / 1000.0),\n                next_fragment_start_at = to_timestamp($3::double precision / 1000.0),\n                pause_started_at = NULL,\n                pending_deadline_at = NULL,\n                absolute_cap_deadline_at = NULL,\n                pending_reason = NULL,\n                pending_from_channel_id = NULL,\n                pending_to_channel_id = NULL,\n                owner_instance_id = $4,\n                updated_at = now()\n          WHERE id = $1 AND state = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "837a08b9c7de9993dad3a8d7621fbf3c77096212f1f283573e8223998b26d70e"
+}

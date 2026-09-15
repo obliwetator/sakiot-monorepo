@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ((EXTRACT(EPOCH FROM started_at) * 1000)::bigint) AS \"started_ms!\",\n                ((EXTRACT(EPOCH FROM completed_at) * 1000)::bigint) AS \"completed_ms!\",\n                to_channel_id,\n                outcome\n           FROM voice_connection_events\n          WHERE guild_id = $1\n            AND completed_at <= now()\n          ORDER BY completed_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "started_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "completed_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "to_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "to_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "voice_connection_events",
+            "name": "outcome"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      false
+    ]
+  },
+  "hash": "691c752f172e7a37daf9d6abddbc878d6fa726dcc328ffbd9b57499a7137aea9"
+}

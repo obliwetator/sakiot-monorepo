@@ -13,7 +13,7 @@ struct HealthResponse<'a> {
 #[get("/healthz")]
 pub async fn healthz(pool: web::Data<Pool<Postgres>>) -> HttpResponse {
     let release_id = std::env::var("RELEASE_ID").unwrap_or_else(|_| "development".to_string());
-    let probe = sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool.get_ref());
+    let probe = sqlx::query_scalar!("SELECT 1").fetch_one(pool.get_ref());
     match tokio::time::timeout(Duration::from_secs(2), probe).await {
         Ok(Ok(_)) => HttpResponse::Ok().json(HealthResponse {
             status: "ok",

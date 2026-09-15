@@ -104,3 +104,16 @@ export function apiAbsoluteUrl(
 	const base = BASE_API_URL.endsWith("/") ? BASE_API_URL : `${BASE_API_URL}/`;
 	return `${base}${apiUrl(route, params)}`;
 }
+
+/**
+ * Resolves an already-built media path (from an API payload, e.g. a session
+ * manifest's `media_url` or `hls_playlist_url`) against the API origin. The
+ * backend stores deployment-relative paths, while media elements and HLS
+ * loaders need absolute URLs.
+ */
+export function absoluteMediaUrl(path: string): string {
+	return new URL(
+		path,
+		new URL(BASE_API_URL, window.location.origin),
+	).toString();
+}

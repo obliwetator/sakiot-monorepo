@@ -79,7 +79,7 @@ pub async fn get_stamps(
     }
     let permitted: Vec<i64> = permitted.into_iter().collect();
 
-    #[derive(Debug, sqlx::FromRow)]
+    #[derive(Debug)]
     struct Row {
         id: i64,
         guild_id: i64,
@@ -104,7 +104,8 @@ pub async fn get_stamps(
         session_fragment_count: Option<i64>,
     }
 
-    let rows = sqlx::query_as::<_, Row>(
+    let rows = sqlx::query_as!(
+        Row,
         r#"
         SELECT s.id,
                s.guild_id,
@@ -119,11 +120,11 @@ pub async fn get_stamps(
                COALESCE(tn.nickname, tu.global_name, tu.username) as target_name,
                COALESCE(sn.nickname, su.global_name, su.username) as stamper_name,
                c.name                   as channel_name,
-               af.file_name             as file_name,
-               af.year                  as year,
-               af.month                 as month,
+               af.file_name             as "file_name?",
+               af.year                  as "year?",
+               af.month                 as "month?",
                af.start_ts              as start_ts,
-               rs.id                    as recording_session_id,
+               rs.id                    as "recording_session_id?",
                CASE WHEN rs.id IS NULL THEN NULL ELSE af.segment_index END
                                            as segment_index,
                (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint
@@ -158,9 +159,9 @@ pub async fn get_stamps(
         ORDER BY s.stamp_ts DESC
         LIMIT 500
         "#,
+        guild_id,
+        &permitted
     )
-    .bind(guild_id)
-    .bind(&permitted)
     .fetch_all(pool.get_ref())
     .await?;
 

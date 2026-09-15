@@ -9,7 +9,7 @@ use sakiot_storage::{
     Archive, ArchiveConfig, ArchiveMode, FileDigest, StorageError, StorageErrorKind,
 };
 use serenity::prelude::TypeMapKey;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 #[derive(Clone)]
 pub struct MediaArchive {
@@ -42,22 +42,24 @@ impl MediaArchive {
             return Ok(path);
         }
         let archive = self.archive.as_ref().ok_or(MediaArchiveError::Missing)?;
-        let row = sqlx::query(
-            "SELECT id, object_key, bytes, sha256
+        let row = sqlx::query!(
+            r#"SELECT id,
+                      object_key AS "object_key!",
+                      bytes AS "bytes!",
+                      sha256 AS "sha256!"
                FROM media_objects
               WHERE clip_id = $1
                 AND state = 'available'
-                AND verified_at IS NOT NULL",
+                AND verified_at IS NOT NULL"#,
+            clip_id
         )
-        .bind(clip_id)
         .fetch_optional(pool)
         .await?
         .ok_or(MediaArchiveError::Missing)?;
-        let id: i64 = row.try_get("id")?;
-        let object_key: String = row.try_get("object_key")?;
-        let bytes = u64::try_from(row.try_get::<i64, _>("bytes")?)
-            .map_err(|_| MediaArchiveError::InvalidMetadata)?;
-        let sha256: String = row.try_get("sha256")?;
+        let id = row.id;
+        let object_key = row.object_key;
+        let bytes = u64::try_from(row.bytes).map_err(|_| MediaArchiveError::InvalidMetadata)?;
+        let sha256 = row.sha256;
         let started = Instant::now();
         if let Err(error) = archive
             .download_verified(&object_key, &path, &FileDigest { bytes, sha256 })
@@ -70,16 +72,16 @@ impl MediaArchive {
                 _ => None,
             };
             if let Some(state) = state {
-                sqlx::query(
+                sqlx::query!(
                     "UPDATE media_objects
                         SET state = $2,
                             last_error = left($3, 4000),
                             updated_at = now()
                       WHERE id = $1 AND state = 'available'",
+                    id,
+                    state,
+                    error.to_string()
                 )
-                .bind(id)
-                .bind(state)
-                .bind(error.to_string())
                 .execute(pool)
                 .await?;
             }
@@ -93,14 +95,14 @@ impl MediaArchive {
             .map_or(7, |config| config.local_retention_days);
         let retention_days =
             i64::try_from(retention_days).map_err(|_| MediaArchiveError::InvalidMetadata)?;
-        let retention_update = sqlx::query(
+        let retention_update = sqlx::query!(
             "UPDATE media_objects
                 SET local_delete_after = now() + ($2::bigint * interval '1 day'),
                     updated_at = now()
               WHERE id = $1 AND state = 'available' AND verified_at IS NOT NULL",
+            id,
+            retention_days
         )
-        .bind(id)
-        .bind(retention_days)
         .execute(pool)
         .await;
         if let Err(error) = retention_update {

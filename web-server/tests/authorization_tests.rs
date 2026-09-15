@@ -15,12 +15,12 @@ use web_server::admin::voice_settings::{
 use web_server::audio::{
     LiveContainer, SessionMixContainer, SilenceJobContainer, WaveformProgressContainer,
     create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
-    get_recording_events, get_session_channel_mix, get_session_channel_mix_media,
-    get_session_events, get_session_manifest, get_session_segment, get_session_silence_free,
-    get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
-    get_waveform_data, live_playlist, live_segment, live_state,
-    rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
-    remove_silence, session_live_playlist, session_live_segment,
+    get_clip_waveform_data, get_recording_events, get_session_channel_mix,
+    get_session_channel_mix_media, get_session_events, get_session_manifest, get_session_segment,
+    get_session_silence_free, get_session_silence_free_waveform,
+    get_session_silence_removal_status, get_session_waveform, get_waveform_data, live_playlist,
+    live_segment, live_state, rebuild_session_silence_free_waveform, rebuild_session_waveform,
+    remove_session_silence, remove_silence, session_live_playlist, session_live_segment,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
@@ -236,6 +236,107 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
         let response = test::call_service(&app, request).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
     }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn traversal_file_names_are_rejected_by_every_audio_handler(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Segment validation runs before authorization or any filesystem access,
+    // so no seed data is needed: a traversal-shaped name must answer 400 no
+    // matter what exists on disk or in the database. `%2F`/`%5C` matter
+    // because actix percent-decodes captured path parameters, so the handlers
+    // really receive `..`-with-separators here.
+    let cookie = access_cookie_value()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
+                HashMap::new(),
+            ))))
+            .app_data(web::Data::new(LiveContainer::default()))
+            .app_data(web::Data::new(SessionMixContainer::default()))
+            .app_data(web::Data::new(SilenceJobContainer::default()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_audio)
+                    .service(download_audio)
+                    .service(get_waveform_data)
+                    .service(get_clip_waveform_data)
+                    .service(get_recording_events)
+                    .service(remove_silence)
+                    .service(live_playlist)
+                    .service(live_state)
+                    .service(live_segment)
+                    .service(create_clip),
+            ),
+    )
+    .await;
+
+    for name in [
+        "..%2F..%2Fsecret",
+        "..",
+        "..%5Csecret",
+        "bad%27name",
+        "bad%00name",
+    ] {
+        let get_uris = [
+            format!("/api/audio/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!("/api/download/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!("/api/audio/waveform/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!("/api/audio/events/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!(
+                "/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}/playlist.m3u8"
+            ),
+            format!("/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}/state"),
+            format!(
+                "/api/audio/live/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}/seg_00000.m4s"
+            ),
+        ];
+        for uri in get_uris {
+            let request = test::TestRequest::get()
+                .uri(&uri)
+                .insert_header(("Cookie", cookie.clone()))
+                .to_request();
+            let response = test::call_service(&app, request).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        }
+
+        let post_uris = [
+            format!("/api/remove_silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!(
+                "/api/audio/clips/create/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"
+            ),
+        ];
+        for uri in post_uris {
+            let request = test::TestRequest::post()
+                .uri(&uri)
+                .insert_header(("Cookie", cookie.clone()))
+                .insert_header(("X-CSRF-Token", CSRF))
+                .insert_header(("Idempotency-Key", "traversal-test"))
+                .set_json(json!({"start": 0.0, "end": 1.0}))
+                .to_request();
+            let response = test::call_service(&app, request).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        }
+    }
+
+    // Clip ids are interpolated into derived-artifact paths too.
+    let request = test::TestRequest::get()
+        .uri(&format!(
+            "/api/audio/clips/waveform/{ALLOWED_GUILD_ID}/..%2F..%2Fsecret"
+        ))
+        .insert_header(("Cookie", cookie.clone()))
+        .to_request();
+    let response = test::call_service(&app, request).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
     Ok(())
 }
 

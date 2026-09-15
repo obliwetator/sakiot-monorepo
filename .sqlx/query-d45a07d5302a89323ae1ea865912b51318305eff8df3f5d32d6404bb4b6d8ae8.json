@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bit_or(r.permission)\n           FROM roles r\n          WHERE r.guild_id = $1\n            AND (\n                r.role_id = $1\n                OR EXISTS (\n                    SELECT 1\n                      FROM user_roles ur\n                     WHERE ur.user_id = $2\n                       AND ur.role_id = r.role_id\n                )\n            )",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bit_or",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d45a07d5302a89323ae1ea865912b51318305eff8df3f5d32d6404bb4b6d8ae8"
+}

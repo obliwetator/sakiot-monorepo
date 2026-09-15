@@ -67,34 +67,28 @@ pub async fn compose_clip(
     } = resolve_composition(&pool, None, guild_id, user_id, validated).await?;
     let overwrite = match body.overwrite_clip_id.as_deref() {
         Some(target_id) => {
-            let row = sqlx::query(
+            let row = sqlx::query!(
                 "SELECT original_file_name, user_id, saved_file_name, name
                    FROM clips
                   WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+                guild_id,
+                target_id
             )
-            .bind(guild_id)
-            .bind(target_id)
             .fetch_optional(pool.get_ref())
             .await?
             .ok_or(AppError::ClipNotFound)?;
-            if row
-                .try_get::<Option<String>, _>("original_file_name")?
-                .as_deref()
-                != Some("compose")
-            {
+            if row.original_file_name.as_deref() != Some("compose") {
                 return Err(AppError::BadRequest(
                     "Only composed clips can be overwritten".into(),
                 ));
             }
-            if row.try_get::<Option<i64>, _>("user_id")? != Some(user_id) {
+            if row.user_id != Some(user_id) {
                 require_guild_manager(&req, &pool, guild_id).await?;
             }
             Some(ComposeOverwrite {
                 clip_id: target_id.to_string(),
-                old_saved_file_name: row
-                    .try_get::<Option<String>, _>("saved_file_name")?
-                    .ok_or(AppError::ClipNotFound)?,
-                fallback_name: row.try_get::<Option<String>, _>("name")?,
+                old_saved_file_name: row.saved_file_name.ok_or(AppError::ClipNotFound)?,
+                fallback_name: row.name,
             })
         }
         None => None,

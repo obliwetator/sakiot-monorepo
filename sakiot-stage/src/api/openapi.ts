@@ -2134,6 +2134,15 @@ export interface operations {
 				};
 				content?: never;
 			};
+			/** @description Invalid clip id */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Missing or invalid access token */
 			401: {
 				headers: {
@@ -3897,6 +3906,15 @@ export interface operations {
 				};
 				content?: never;
 			};
+			/** @description Invalid file name */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
 			/** @description Missing or invalid access token */
 			401: {
 				headers: {
@@ -4477,7 +4495,7 @@ export interface operations {
 					"application/json": components["schemas"]["RemoveSilenceResponse"];
 				};
 			};
-			/** @description Missing idempotency key */
+			/** @description Invalid file name or missing idempotency key */
 			400: {
 				headers: {
 					[name: string]: unknown;

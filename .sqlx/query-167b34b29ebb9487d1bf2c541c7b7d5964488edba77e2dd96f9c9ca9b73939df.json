@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions\n            SET state = 'active',\n                current_channel_id = $2,\n                owner_instance_id = $3,\n                last_segment_index = $4,\n                next_fragment_start_at = NULL,\n                resumed_at = NULL,\n                updated_at = now()\n          WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "167b34b29ebb9487d1bf2c541c7b7d5964488edba77e2dd96f9c9ca9b73939df"
+}

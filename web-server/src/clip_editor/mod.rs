@@ -4,7 +4,7 @@ use std::{fs::File, io::BufWriter, io::Write};
 
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};

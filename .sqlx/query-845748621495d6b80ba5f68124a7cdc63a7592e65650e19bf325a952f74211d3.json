@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions\n            SET owner_instance_id = NULL, updated_at = now()\n          WHERE owner_instance_id = $1 AND state = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "845748621495d6b80ba5f68124a7cdc63a7592e65650e19bf325a952f74211d3"
+}

@@ -1,10 +1,11 @@
 import type Hls from "hls.js";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BASE_API_URL } from "../../app/apiSlice";
+import { absoluteMediaUrl } from "../../api/routes";
 import {
 	refreshForMediaRetry,
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
+import { attachHlsAudio, prefersNativeHls } from "../../shared/attachHls";
 import {
 	clampPlaybackPosition,
 	isSameMediaSegment,
@@ -27,13 +28,6 @@ interface SegmentedPlaybackOptions {
 	playbackRate: number;
 	onError: (message: string | null) => void;
 	onLoopDisabled: () => void;
-}
-
-function absoluteMediaUrl(path: string): string {
-	return new URL(
-		path,
-		new URL(BASE_API_URL, window.location.origin),
-	).toString();
 }
 
 export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
@@ -257,31 +251,24 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 			audio.addEventListener("error", retryOrFail);
 			if (segment.kind === "active_hls" && segment.hls_playlist_url) {
 				const hlsUrl = absoluteMediaUrl(segment.hls_playlist_url);
-				if (audio.canPlayType("application/vnd.apple.mpegurl") === "probably") {
+				if (prefersNativeHls(audio)) {
 					audio.src = hlsUrl;
 					audio.addEventListener("loadedmetadata", begin, { once: true });
 				} else {
-					void import("hls.js").then(({ default: HlsClass }) => {
+					void attachHlsAudio({
+						audio,
+						playlistUrl: hlsUrl,
+						fallbackUrl: absoluteMediaUrl(mediaUrl),
+						isActive: () => generationRef.current === generation,
+						onFatal: () => retryOrFail(),
+						onManifestParsed: begin,
+						unlimitedMaxLatency: true,
+					}).then((result) => {
 						if (generationRef.current !== generation) return;
-						if (!HlsClass.isSupported()) {
-							audio.src = absoluteMediaUrl(mediaUrl);
+						if (result.kind === "direct") {
 							audio.addEventListener("loadedmetadata", begin, { once: true });
-							return;
 						}
-						const hls = new HlsClass({
-							xhrSetup: (request) => {
-								request.withCredentials = true;
-							},
-							liveSyncDuration: 2,
-							liveMaxLatencyDuration: Number.MAX_SAFE_INTEGER,
-						});
-						hlsRef.current = hls;
-						hls.on(HlsClass.Events.MANIFEST_PARSED, begin);
-						hls.on(HlsClass.Events.ERROR, (_event, data) => {
-							if (data.fatal) retryOrFail();
-						});
-						hls.loadSource(hlsUrl);
-						hls.attachMedia(audio);
+						hlsRef.current = result.hls;
 					});
 				}
 			} else {

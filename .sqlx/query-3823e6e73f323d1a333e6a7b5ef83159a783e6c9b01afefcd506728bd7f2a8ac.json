@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT saved_file_name, channel_id, recording_session_id\n           FROM clips\n          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "saved_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "saved_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "recording_session_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "3823e6e73f323d1a333e6a7b5ef83159a783e6c9b01afefcd506728bd7f2a8ac"
+}

@@ -6,11 +6,14 @@ use sqlx::{Pool, Postgres};
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
+use super::util::is_valid_file_segment;
+
 fn validate_stem(s: &str) -> Result<(), AppError> {
-    if s.is_empty() || s.contains('/') || s.contains("..") || s.contains('\\') || s.contains('\'') {
-        return Err(AppError::BadRequest("Invalid stem".into()));
+    if is_valid_file_segment(s) {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest("Invalid stem".into()))
     }
-    Ok(())
 }
 
 #[serde_as]

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use chrono::{Datelike, TimeZone, Utc};
 use sakiot_paths::{DataRoots, RecordingKey};
-use sqlx::{Pool, Postgres, Row, Transaction};
+use sqlx::{Pool, Postgres, Transaction};
 
 use crate::database::DbResult;
 use crate::database::recordings::RecordingHandle;
@@ -63,10 +63,10 @@ pub struct RecoveryReport {
 }
 
 pub async fn pending_cap_seconds(pool: &Pool<Postgres>, guild_id: i64) -> DbResult<i64> {
-    let value = sqlx::query_scalar::<_, i32>(
+    let value = sqlx::query_scalar!(
         "SELECT pending_cap_seconds FROM guild_voice_settings WHERE guild_id = $1",
+        guild_id
     )
-    .bind(guild_id)
     .fetch_optional(pool)
     .await?
     .map(i64::from)
@@ -137,12 +137,12 @@ pub async fn create_fragment_in(
         }
     };
 
-    let previous_start_ms = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(start_ts), -1)
+    let previous_start_ms = sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(start_ts), -1) AS "value!"
            FROM audio_files
-          WHERE recording_session_id = $1",
+          WHERE recording_session_id = $1"#,
+        session.id
     )
-    .bind(session.id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -165,7 +165,7 @@ pub async fn create_fragment_in(
     std::fs::create_dir_all(&dir_path)?;
     let combined_path = dir_path.join(&file_name);
 
-    let audio_file_id = sqlx::query_scalar::<_, i64>(
+    let audio_file_id = sqlx::query_scalar!(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
              recording_owner_instance_id, recording_heartbeat_at,
@@ -173,21 +173,21 @@ pub async fn create_fragment_in(
          VALUES
             ($1, $2, $3, $4, $5, $6, $7, NULL, $8, now(), $9, $10)
          RETURNING id",
+        file_name,
+        guild_id,
+        channel_id,
+        user_id,
+        fragment_start.year(),
+        fragment_start.month() as i32,
+        fragment_start_ms,
+        owner_instance_id,
+        session.id,
+        segment_index
     )
-    .bind(&file_name)
-    .bind(guild_id)
-    .bind(channel_id)
-    .bind(user_id)
-    .bind(fragment_start.year())
-    .bind(fragment_start.month() as i32)
-    .bind(fragment_start_ms)
-    .bind(owner_instance_id)
-    .bind(session.id)
-    .bind(segment_index)
     .fetch_one(&mut *tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions
             SET state = 'active',
                 current_channel_id = $2,
@@ -197,11 +197,11 @@ pub async fn create_fragment_in(
                 resumed_at = NULL,
                 updated_at = now()
           WHERE id = $1",
+        session.id,
+        channel_id,
+        owner_instance_id,
+        segment_index
     )
-    .bind(session.id)
-    .bind(channel_id)
-    .bind(owner_instance_id)
-    .bind(segment_index)
     .execute(&mut *tx)
     .await?;
 
@@ -235,29 +235,28 @@ pub async fn create_fragment_in(
 
 pub async fn pause_session(pool: &Pool<Postgres>, request: PauseRequest<'_>) -> DbResult<bool> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(
-        "SELECT state,
+    let row = sqlx::query!(
+        r#"SELECT state,
                 (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,
                 (EXTRACT(EPOCH FROM absolute_cap_deadline_at) * 1000)::bigint AS cap_ms
            FROM recording_sessions
           WHERE id = $1
-          FOR UPDATE",
+          FOR UPDATE"#,
+        request.recording_session_id
     )
-    .bind(request.recording_session_id)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(row) = row else {
         tx.commit().await?;
         return Ok(false);
     };
-    let state: String = row.try_get("state")?;
-    if state == "finalized" {
+    if row.state == "finalized" {
         tx.commit().await?;
         return Ok(false);
     }
 
-    let existing_pause_ms: Option<i64> = row.try_get("pause_ms")?;
-    let existing_cap_ms: Option<i64> = row.try_get("cap_ms")?;
+    let existing_pause_ms = row.pause_ms;
+    let existing_cap_ms = row.cap_ms;
     let pause_at_ms = existing_pause_ms.unwrap_or(request.at_ms);
     let computed = pending_deadlines(
         pause_at_ms,
@@ -278,17 +277,17 @@ pub async fn pause_session(pool: &Pool<Postgres>, request: PauseRequest<'_>) -> 
         (None, None) => None,
     };
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions
             SET state = 'pending',
-                pause_started_at = COALESCE(pause_started_at, to_timestamp($2::double precision / 1000.0)),
+                pause_started_at = COALESCE(pause_started_at, to_timestamp($2::bigint / 1000.0)),
                 pending_deadline_at = CASE
                     WHEN $3::bigint IS NULL THEN pending_deadline_at
-                    ELSE to_timestamp($3::double precision / 1000.0)
+                    ELSE to_timestamp($3::bigint / 1000.0)
                 END,
                 absolute_cap_deadline_at = CASE
                     WHEN $4::bigint IS NULL THEN absolute_cap_deadline_at
-                    ELSE to_timestamp($4::double precision / 1000.0)
+                    ELSE to_timestamp($4::bigint / 1000.0)
                 END,
                 next_fragment_start_at = NULL,
                 pending_reason = $5,
@@ -297,15 +296,15 @@ pub async fn pause_session(pool: &Pool<Postgres>, request: PauseRequest<'_>) -> 
                 owner_instance_id = $8,
                 updated_at = now()
           WHERE id = $1",
+        request.recording_session_id,
+        pause_at_ms,
+        pending_deadline_ms,
+        absolute_cap_ms,
+        request.reason,
+        request.from_channel_id,
+        request.to_channel_id,
+        request.owner_instance_id
     )
-    .bind(request.recording_session_id)
-    .bind(pause_at_ms)
-    .bind(pending_deadline_ms)
-    .bind(absolute_cap_ms)
-    .bind(request.reason)
-    .bind(request.from_channel_id)
-    .bind(request.to_channel_id)
-    .bind(request.owner_instance_id)
     .execute(&mut *tx)
     .await?;
 
@@ -366,7 +365,7 @@ pub async fn pause_active_user(
     pool: &Pool<Postgres>,
     request: PauseActiveUserRequest<'_>,
 ) -> DbResult<bool> {
-    let session_id = sqlx::query_scalar::<_, i64>(
+    let session_id = sqlx::query_scalar!(
         "SELECT id
            FROM recording_sessions
           WHERE guild_id = $1
@@ -375,10 +374,10 @@ pub async fn pause_active_user(
             AND owner_instance_id = $3
           ORDER BY started_at DESC, id DESC
           LIMIT 1",
+        request.guild_id,
+        request.user_id,
+        request.owner_instance_id
     )
-    .bind(request.guild_id)
-    .bind(request.user_id)
-    .bind(request.owner_instance_id)
     .fetch_optional(pool)
     .await?;
     let Some(recording_session_id) = session_id else {
@@ -407,33 +406,34 @@ pub async fn owned_active_sessions(
     guild_id: i64,
     owner_instance_id: &str,
 ) -> DbResult<Vec<(i64, i64)>> {
-    Ok(sqlx::query_as::<_, (i64, i64)>(
+    let rows = sqlx::query!(
         "SELECT id, user_id
            FROM recording_sessions
           WHERE guild_id = $1
             AND state = 'active'
             AND owner_instance_id = $2
           ORDER BY id",
+        guild_id,
+        owner_instance_id
     )
-    .bind(guild_id)
-    .bind(owner_instance_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.id, row.user_id)).collect())
 }
 
 pub async fn mark_pending_user_unavailable(
     pool: &Pool<Postgres>,
     request: PendingUserUnavailableRequest<'_>,
 ) -> DbResult<bool> {
-    let session_id = sqlx::query_scalar::<_, i64>(
+    let session_id = sqlx::query_scalar!(
         "SELECT id
            FROM recording_sessions
           WHERE guild_id = $1 AND user_id = $2 AND state = 'pending'
           ORDER BY started_at DESC, id DESC
           LIMIT 1",
+        request.guild_id,
+        request.user_id
     )
-    .bind(request.guild_id)
-    .bind(request.user_id)
     .fetch_optional(pool)
     .await?;
     let Some(recording_session_id) = session_id else {
@@ -481,8 +481,8 @@ pub async fn resume_pending_user(
 
 pub async fn expire_pending_sessions(pool: &Pool<Postgres>, now_ms: i64) -> DbResult<u64> {
     let mut tx = pool.begin().await?;
-    let rows = sqlx::query(
-        "SELECT id,
+    let rows = sqlx::query!(
+        r#"SELECT id,
                 (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,
                 (EXTRACT(EPOCH FROM pending_deadline_at) * 1000)::bigint AS deadline_ms,
                 (EXTRACT(EPOCH FROM absolute_cap_deadline_at) * 1000)::bigint AS cap_ms,
@@ -495,25 +495,20 @@ pub async fn expire_pending_sessions(pool: &Pool<Postgres>, now_ms: i64) -> DbRe
                 OR (absolute_cap_deadline_at IS NOT NULL
                     AND absolute_cap_deadline_at <= to_timestamp($1::double precision / 1000.0))
             )
-          FOR UPDATE",
+          FOR UPDATE"#,
+        now_ms as f64
     )
-    .bind(now_ms)
     .fetch_all(&mut *tx)
     .await?;
 
     for row in &rows {
-        let session_id: i64 = row.try_get("id")?;
-        let pause_ms: Option<i64> = row.try_get("pause_ms")?;
-        let deadline_ms: Option<i64> = row.try_get("deadline_ms")?;
-        let cap_ms: Option<i64> = row.try_get("cap_ms")?;
-        let channel_id: Option<i64> = row.try_get("current_channel_id")?;
         finalize_pending_row_in_tx(
             &mut tx,
-            session_id,
-            pause_ms.unwrap_or(now_ms),
-            deadline_ms,
-            cap_ms,
-            channel_id,
+            row.id,
+            row.pause_ms.unwrap_or(now_ms),
+            row.deadline_ms,
+            row.cap_ms,
+            row.current_channel_id,
         )
         .await?;
     }
@@ -528,7 +523,7 @@ pub async fn recover_stale_sessions(
     stale_after_seconds: i64,
     starting_instance_id: Option<&str>,
 ) -> DbResult<RecoveryReport> {
-    let stale_pending_released = sqlx::query(
+    let stale_pending_released = sqlx::query!(
         "UPDATE recording_sessions rs
             SET owner_instance_id = NULL, updated_at = now()
           WHERE rs.state = 'pending'
@@ -543,9 +538,9 @@ pub async fn recover_stale_sessions(
                        AND bi.state <> 'stopped'
                 )
             )",
+        stale_after_seconds as f64,
+        starting_instance_id
     )
-    .bind(stale_after_seconds as f64)
-    .bind(starting_instance_id)
     .execute(pool)
     .await?
     .rows_affected();
@@ -559,7 +554,7 @@ pub async fn recover_stale_sessions(
     // stale unfinished/reaped fragment as crash evidence: an active session
     // with no such fragment can be a live, silent post-handoff session and is
     // safe for the restarted process to reuse.
-    let stale_active_finalized = sqlx::query(
+    let stale_active_finalized = sqlx::query!(
         "UPDATE recording_sessions rs
             SET state = 'finalized',
                 ended_at = COALESCE(
@@ -586,7 +581,7 @@ pub async fn recover_stale_sessions(
                     AND NOT EXISTS (
                         SELECT 1 FROM audio_files af
                          WHERE af.recording_session_id = rs.id
-                          AND af.recording_owner_instance_id = rs.owner_instance_id
+                           AND af.recording_owner_instance_id = rs.owner_instance_id
                            AND af.end_ts IS NULL
                            AND af.recording_heartbeat_at
                                > now() - ($1::double precision * interval '1 second')
@@ -599,9 +594,9 @@ pub async fn recover_stale_sessions(
                        AND bi.state <> 'stopped'
                 )
             )",
+        stale_after_seconds as f64,
+        starting_instance_id
     )
-    .bind(stale_after_seconds as f64)
-    .bind(starting_instance_id)
     .execute(pool)
     .await?
     .rows_affected();
@@ -644,7 +639,7 @@ pub async fn finalize_setup_failed_session(
     recording_session_id: i64,
     at_ms: i64,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions rs
             SET state = 'finalized',
                 ended_at = to_timestamp($2::double precision / 1000.0),
@@ -658,9 +653,9 @@ pub async fn finalize_setup_failed_session(
                    AND af.end_ts IS NOT NULL
                    AND af.reaped IS FALSE
             )",
+        recording_session_id,
+        at_ms as f64
     )
-    .bind(recording_session_id)
-    .bind(at_ms)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -682,8 +677,7 @@ async fn lock_user_session(
     let key = guild_id
         .wrapping_mul(6_364_136_223_846_793_005_i64)
         .wrapping_add(user_id.rotate_left(17));
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(key)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", key)
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -694,8 +688,8 @@ async fn select_open_session(
     guild_id: i64,
     user_id: i64,
 ) -> DbResult<Option<OpenSessionRow>> {
-    let row = sqlx::query(
-        "SELECT id,
+    let row = sqlx::query!(
+        r#"SELECT id,
                 state,
                 last_segment_index,
                 (EXTRACT(EPOCH FROM next_fragment_start_at) * 1000)::bigint AS next_fragment_start_ms
@@ -703,18 +697,18 @@ async fn select_open_session(
           WHERE guild_id = $1 AND user_id = $2 AND state <> 'finalized'
           ORDER BY started_at DESC, id DESC
           LIMIT 1
-          FOR UPDATE",
+          FOR UPDATE"#,
+        guild_id,
+        user_id
     )
-    .bind(guild_id)
-    .bind(user_id)
     .fetch_optional(&mut **tx)
     .await?;
     row.map(|row| {
         Ok(OpenSessionRow {
-            id: row.try_get("id")?,
-            state: row.try_get("state")?,
-            last_segment_index: row.try_get("last_segment_index")?,
-            next_fragment_start_ms: row.try_get("next_fragment_start_ms")?,
+            id: row.id,
+            state: row.state,
+            last_segment_index: row.last_segment_index,
+            next_fragment_start_ms: row.next_fragment_start_ms,
         })
     })
     .transpose()
@@ -728,7 +722,7 @@ async fn create_session_in_tx(
     now_ms: i64,
     owner_instance_id: &str,
 ) -> DbResult<OpenSessionRow> {
-    let id = sqlx::query_scalar::<_, i64>(
+    let id = sqlx::query_scalar!(
         "INSERT INTO recording_sessions
             (guild_id, user_id, starting_channel_id, current_channel_id, state,
              started_at, owner_instance_id)
@@ -736,12 +730,12 @@ async fn create_session_in_tx(
             ($1, $2, $3, $3, 'active',
              to_timestamp($4::double precision / 1000.0), $5)
          RETURNING id",
+        guild_id,
+        user_id,
+        channel_id,
+        now_ms as f64,
+        owner_instance_id
     )
-    .bind(guild_id)
-    .bind(user_id)
-    .bind(channel_id)
-    .bind(now_ms)
-    .bind(owner_instance_id)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -770,30 +764,30 @@ async fn resume_row_in_tx(
     at_ms: i64,
     owner_instance_id: &str,
 ) -> DbResult<()> {
-    let row = sqlx::query(
-        "SELECT (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,
+    let row = sqlx::query!(
+        r#"SELECT (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,
                 pending_reason,
                 pending_from_channel_id,
                 pending_to_channel_id
            FROM recording_sessions
           WHERE id = $1 AND state = 'pending'
-          FOR UPDATE",
+          FOR UPDATE"#,
+        session_id
     )
-    .bind(session_id)
     .fetch_optional(&mut **tx)
     .await?;
     let Some(row) = row else {
         return Ok(());
     };
-    let pause_ms: Option<i64> = row.try_get("pause_ms")?;
-    let reason: Option<String> = row.try_get("pending_reason")?;
-    let from_channel_id: Option<i64> = row.try_get("pending_from_channel_id")?;
-    let planned_to_channel_id: Option<i64> = row.try_get("pending_to_channel_id")?;
+    let pause_ms = row.pause_ms;
+    let reason = row.pending_reason;
+    let from_channel_id = row.pending_from_channel_id;
+    let planned_to_channel_id = row.pending_to_channel_id;
 
     if let Some(pause_ms) = pause_ms
         && at_ms >= pause_ms
     {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO recording_gaps
                 (recording_session_id, started_at, ended_at, reason,
                  from_channel_id, to_channel_id)
@@ -802,18 +796,18 @@ async fn resume_row_in_tx(
                  to_timestamp($2::double precision / 1000.0),
                  to_timestamp($3::double precision / 1000.0),
                  $4, $5, $6)",
+            session_id,
+            pause_ms as f64,
+            at_ms as f64,
+            reason.as_deref().unwrap_or("handoff"),
+            from_channel_id,
+            Some(channel_id)
         )
-        .bind(session_id)
-        .bind(pause_ms)
-        .bind(at_ms)
-        .bind(reason.as_deref().unwrap_or("handoff"))
-        .bind(from_channel_id)
-        .bind(Some(channel_id))
         .execute(&mut **tx)
         .await?;
     }
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions
             SET state = 'active',
                 current_channel_id = $2,
@@ -828,11 +822,11 @@ async fn resume_row_in_tx(
                 owner_instance_id = $4,
                 updated_at = now()
           WHERE id = $1 AND state = 'pending'",
+        session_id,
+        channel_id,
+        at_ms as f64,
+        owner_instance_id
     )
-    .bind(session_id)
-    .bind(channel_id)
-    .bind(at_ms)
-    .bind(owner_instance_id)
     .execute(&mut **tx)
     .await?;
 
@@ -858,8 +852,8 @@ async fn expire_user_pending_in_tx(
     user_id: i64,
     now_ms: i64,
 ) -> DbResult<()> {
-    let row = sqlx::query(
-        "SELECT id,
+    let row = sqlx::query!(
+        r#"SELECT id,
                 (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_ms,
                 (EXTRACT(EPOCH FROM pending_deadline_at) * 1000)::bigint AS deadline_ms,
                 (EXTRACT(EPOCH FROM absolute_cap_deadline_at) * 1000)::bigint AS cap_ms,
@@ -868,17 +862,17 @@ async fn expire_user_pending_in_tx(
           WHERE guild_id = $1 AND user_id = $2 AND state = 'pending'
           ORDER BY started_at DESC, id DESC
           LIMIT 1
-          FOR UPDATE",
+          FOR UPDATE"#,
+        guild_id,
+        user_id
     )
-    .bind(guild_id)
-    .bind(user_id)
     .fetch_optional(&mut **tx)
     .await?;
     let Some(row) = row else {
         return Ok(());
     };
-    let deadline_ms: Option<i64> = row.try_get("deadline_ms")?;
-    let cap_ms: Option<i64> = row.try_get("cap_ms")?;
+    let deadline_ms = row.deadline_ms;
+    let cap_ms = row.cap_ms;
     let effective = match (deadline_ms, cap_ms) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (Some(a), None) => Some(a),
@@ -891,11 +885,11 @@ async fn expire_user_pending_in_tx(
 
     finalize_pending_row_in_tx(
         tx,
-        row.try_get("id")?,
-        row.try_get::<Option<i64>, _>("pause_ms")?.unwrap_or(now_ms),
+        row.id,
+        row.pause_ms.unwrap_or(now_ms),
         deadline_ms,
         cap_ms,
-        row.try_get("current_channel_id")?,
+        row.current_channel_id,
     )
     .await
 }
@@ -916,7 +910,7 @@ async fn finalize_pending_row_in_tx(
         "pending_grace_expired"
     };
 
-    sqlx::query(
+    sqlx::query!(
         "UPDATE recording_sessions
             SET state = 'finalized',
                 ended_at = to_timestamp($2::double precision / 1000.0),
@@ -927,10 +921,10 @@ async fn finalize_pending_row_in_tx(
                 owner_instance_id = NULL,
                 updated_at = now()
           WHERE id = $1 AND state = 'pending'",
+        session_id,
+        pause_ms as f64,
+        end_reason
     )
-    .bind(session_id)
-    .bind(pause_ms)
-    .bind(end_reason)
     .execute(&mut **tx)
     .await?;
 
@@ -956,19 +950,19 @@ async fn insert_session_event_in_tx(
     previous_channel_id: Option<i64>,
     details: serde_json::Value,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO recording_session_events
             (recording_session_id, occurred_at, event_type, channel_id,
              previous_channel_id, details)
          VALUES
             ($1, to_timestamp($2::double precision / 1000.0), $3, $4, $5, $6::jsonb)",
+        recording_session_id,
+        at_ms as f64,
+        event_type,
+        channel_id,
+        previous_channel_id,
+        details
     )
-    .bind(recording_session_id)
-    .bind(at_ms)
-    .bind(event_type)
-    .bind(channel_id)
-    .bind(previous_channel_id)
-    .bind(details.to_string())
     .execute(&mut **tx)
     .await?;
     Ok(())

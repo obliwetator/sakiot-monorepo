@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pending_cap_seconds FROM guild_voice_settings WHERE guild_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pending_cap_seconds",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "guild_voice_settings",
+            "name": "pending_cap_seconds"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "262256c910b0384b92f7fee2ca2d72b732a01f81192a7e5663540a94fa7ac2a7"
+}

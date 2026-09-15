@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET state = 'missing',\n                last_error = left($2, 4000),\n                updated_at = now()\n          WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa2e965145d7edab546ee28411736463766794330a8d0507c9f017690690d8fd"
+}

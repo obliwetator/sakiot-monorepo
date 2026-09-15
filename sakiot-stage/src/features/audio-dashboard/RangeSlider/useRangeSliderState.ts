@@ -165,6 +165,17 @@ export function useRangeSliderState(args: {
 		}, 1000);
 	}, [args.audioRef, args.intervalRef, advancePlayhead]);
 
+	// The interval is parent-owned (AudioInterface), so nothing else clears it
+	// when this component unmounts mid-playback; without this cleanup it would
+	// keep firing forever on a detached audio element.
+	useEffect(() => {
+		const intervalRef = args.intervalRef;
+		return () => {
+			clearInterval(intervalRef.current);
+			intervalRef.current = undefined;
+		};
+	}, [args.intervalRef]);
+
 	const togglePlay = useCallback(() => {
 		setPlaying((prev) => {
 			if (prev) {
@@ -172,7 +183,7 @@ export function useRangeSliderState(args: {
 				args.audioRef.pause();
 				return false;
 			}
-			args.audioRef.play();
+			void args.audioRef.play().catch(() => {});
 			startTimer();
 			return true;
 		});

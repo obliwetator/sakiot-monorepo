@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_objects\n            SET local_delete_after = now() + ($2::bigint * interval '1 day'),\n                updated_at = now()\n          WHERE id = $1 AND state = 'available' AND verified_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8902bfe139ab742ed757fb04ca69a4c7b2ea58272029cf8aea47cdd32f5be0d3"
+}

@@ -1,4 +1,4 @@
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::database::DbResult;
 
@@ -21,7 +21,7 @@ pub async fn playable_clip(
     clip_id: &str,
     visible_channel_ids: &[i64],
 ) -> DbResult<Option<PlayableClip>> {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT clips.clip_id, clips.saved_file_name, clips.name
            FROM clips
           CROSS JOIN LATERAL (
@@ -50,24 +50,25 @@ pub async fn playable_clip(
             AND source.channel_ids <@ $3::bigint[]
           ORDER BY (clips.clip_id = $2) DESC, clips.created_at, clips.clip_id
           LIMIT 1",
+        guild_id,
+        clip_id,
+        visible_channel_ids
     )
-    .bind(guild_id)
-    .bind(clip_id)
-    .bind(visible_channel_ids)
     .fetch_optional(pool)
     .await?;
 
     let clip = row
         .map(|record| {
-            let resolved_clip_id: String = record.try_get("clip_id")?;
             Ok::<PlayableClip, sqlx::Error>(PlayableClip {
                 display_name: record
-                    .try_get::<Option<String>, _>("name")?
-                    .unwrap_or_else(|| resolved_clip_id.clone()),
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| record.clip_id.clone()),
                 saved_file_name: record
-                    .try_get::<Option<String>, _>("saved_file_name")?
-                    .unwrap_or_else(|| format!("{resolved_clip_id}.ogg")),
-                clip_id: resolved_clip_id,
+                    .saved_file_name
+                    .clone()
+                    .unwrap_or_else(|| format!("{}.ogg", record.clip_id)),
+                clip_id: record.clip_id,
             })
         })
         .transpose()?;
@@ -123,7 +124,7 @@ pub async fn autocomplete_clip_choices(
 ) -> DbResult<Vec<ClipChoice>> {
     let query_wildcard = format!("%{}%", query);
 
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         "SELECT clips.name, clips.clip_id
            FROM clips
           CROSS JOIN LATERAL (
@@ -152,19 +153,19 @@ pub async fn autocomplete_clip_choices(
             AND source.channel_ids <@ $3::bigint[]
           ORDER BY clips.name, clips.clip_id
           LIMIT 25",
+        guild_id,
+        query_wildcard,
+        visible_channel_ids
     )
-    .bind(guild_id)
-    .bind(query_wildcard)
-    .bind(visible_channel_ids)
     .fetch_all(pool)
     .await?;
 
     let mut choices = Vec::with_capacity(rows.len());
     for row in rows {
-        if let Some(name) = row.try_get::<Option<String>, _>("name")? {
+        if let Some(name) = row.name {
             choices.push(ClipChoice {
                 name,
-                clip_id: row.try_get("clip_id")?,
+                clip_id: row.clip_id,
             });
         }
     }

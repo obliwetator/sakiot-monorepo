@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id,\n                      audio_file_id,\n                      clip_id,\n                      clip_saved_file_name,\n                      object_key AS \"object_key!\",\n                      bytes AS \"bytes!\",\n                      sha256 AS \"sha256!\",\n                      local_delete_after AS \"local_delete_after!\"\n                 FROM media_objects\n                WHERE audio_file_id = $1\n                  AND state = 'available'\n                  AND verified_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "audio_file_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "audio_file_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "clip_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "clip_saved_file_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "clip_saved_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "object_key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "object_key"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "bytes!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "sha256!",
+        "type_info": "Bpchar",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "local_delete_after!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "media_objects",
+            "name": "local_delete_after"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "17ae517eaf2cca77c6ad4eb9f2617d5302243379cf12d7b798a86166bf84dd2f"
+}

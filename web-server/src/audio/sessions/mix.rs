@@ -14,7 +14,7 @@ use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, route, web};
 use sakiot_paths::RecordingKey;
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::auth::{Access, Token};
@@ -730,8 +730,8 @@ async fn load_mix_candidates(
         });
     }
 
-    let rows = sqlx::query(
-        "SELECT af.id,
+    let rows = sqlx::query!(
+        r#"SELECT af.id,
                 af.guild_id,
                 af.channel_id,
                 af.user_id,
@@ -753,9 +753,9 @@ async fn load_mix_candidates(
                            AND bi.heartbeat_at > now() - interval '120 seconds'
                            AND bi.state <> 'stopped'
                     )
-                ) AS live,
+                ) AS "live!",
                 COALESCE(rs.state,
-                         CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END) AS session_state
+                         CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END) AS "session_state!"
            FROM audio_files af
            LEFT JOIN recording_sessions rs ON rs.id = af.recording_session_id
           WHERE af.guild_id = $1
@@ -763,30 +763,30 @@ async fn load_mix_candidates(
             AND af.start_ts IS NOT NULL
             AND af.start_ts < $4
             AND COALESCE(af.end_ts, $4) > $3
-          ORDER BY af.start_ts, af.id",
+          ORDER BY af.start_ts, af.id"#,
+        access.guild_id,
+        excluded_user_id,
+        timeline_start_ms,
+        timeline_end_ms
     )
-    .bind(access.guild_id)
-    .bind(excluded_user_id)
-    .bind(timeline_start_ms)
-    .bind(timeline_end_ms)
     .fetch_all(pool.get_ref())
     .await?;
 
     let mut candidates = Vec::new();
     for row in rows {
         let fragment = AudioFragment {
-            id: row.try_get("id")?,
-            guild_id: row.try_get("guild_id")?,
-            channel_id: row.try_get("channel_id")?,
-            user_id: row.try_get("user_id")?,
-            recording_session_id: row.try_get("recording_session_id")?,
-            file_name: row.try_get("file_name")?,
-            year: row.try_get("year")?,
-            month: row.try_get("month")?,
-            start_ms: row.try_get::<Option<i64>, _>("start_ts")?.unwrap_or(0),
-            end_ms: row.try_get("end_ts")?,
-            segment_index: row.try_get("segment_index")?,
-            live: row.try_get::<Option<bool>, _>("live")?.unwrap_or(false),
+            id: row.id,
+            guild_id: row.guild_id,
+            channel_id: row.channel_id,
+            user_id: row.user_id,
+            recording_session_id: row.recording_session_id,
+            file_name: row.file_name,
+            year: row.year,
+            month: row.month,
+            start_ms: row.start_ts.unwrap_or(0),
+            end_ms: row.end_ts,
+            segment_index: row.segment_index,
+            live: row.live,
         };
         let overlaps_window = windows.iter().any(|window| {
             if window.channel_id != fragment.channel_id {
@@ -803,7 +803,7 @@ async fn load_mix_candidates(
         if overlaps_window {
             candidates.push(CandidateRow {
                 fragment,
-                state: row.try_get("session_state")?,
+                state: row.session_state,
             });
         }
     }
@@ -959,22 +959,22 @@ async fn participant_metadata(
     }
 
     let user_ids = by_user.keys().copied().collect::<Vec<_>>();
-    let rows = sqlx::query(
-        "SELECT un.user_id,
+    let rows = sqlx::query!(
+        r#"SELECT un.user_id AS "user_id!",
                 COALESCE(nn.nickname, un.global_name, un.username) AS display_name
            FROM user_names un
            LEFT JOIN user_nicknames nn
              ON nn.user_id = un.user_id AND nn.guild_id = $1
-          WHERE un.user_id = ANY($2)",
+          WHERE un.user_id = ANY($2)"#,
+        guild_id,
+        &user_ids
     )
-    .bind(guild_id)
-    .bind(&user_ids)
     .fetch_all(pool.get_ref())
     .await?;
     for row in rows {
-        let user_id: i64 = row.try_get("user_id")?;
+        let user_id = row.user_id;
         if let Some(participant) = by_user.get_mut(&user_id) {
-            participant.display_name = row.try_get("display_name")?;
+            participant.display_name = row.display_name;
         }
     }
 

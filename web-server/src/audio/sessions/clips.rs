@@ -69,29 +69,30 @@ pub async fn create_session_clip(
         .clone()
         .unwrap_or_else(|| format!("session-{session_id}"));
 
-    let insert = sqlx::query(
+    let original_file_name = if silence_free {
+        format!("session-silence-free:{session_id}")
+    } else {
+        format!("session:{session_id}")
+    };
+    let insert = sqlx::query!(
         "INSERT INTO clips
             (clip_id, length, size, channel_id, guild_id, user_id,
              original_file_name, saved_file_name, name, start_time,
              recording_session_id, silence_free)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        clip_id,
+        (end - start) as f32,
+        size as i64,
+        access.starting_channel_id,
+        access.guild_id,
+        token.user_id,
+        original_file_name,
+        saved_file_name,
+        name,
+        start as f32,
+        session_id,
+        silence_free
     )
-    .bind(&clip_id)
-    .bind((end - start) as f32)
-    .bind(size)
-    .bind(access.starting_channel_id)
-    .bind(access.guild_id)
-    .bind(token.user_id)
-    .bind(if silence_free {
-        format!("session-silence-free:{session_id}")
-    } else {
-        format!("session:{session_id}")
-    })
-    .bind(&saved_file_name)
-    .bind(&name)
-    .bind(start as f32)
-    .bind(session_id)
-    .bind(silence_free)
     .execute(pool.get_ref())
     .await;
     if let Err(err) = insert {
