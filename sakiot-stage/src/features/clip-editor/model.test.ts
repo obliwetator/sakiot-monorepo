@@ -477,9 +477,18 @@ describe("leftEdgeFloor", () => {
 });
 
 describe("splitSegment", () => {
+	test("replaying a split preserves segment identity and its input", () => {
+		const edit = editWith(seg("a", 0, 0, 10));
+		const original = structuredClone(edit);
+		const first = splitSegment(edit, "a", 4, "b");
+		expect(splitSegment(edit, "a", 4, "b")).toEqual(first);
+		expect(first.segments.map((segment) => segment.id)).toEqual(["a", "b"]);
+		expect(edit).toEqual(original);
+	});
+
 	test("splits into a left and a right clip around the playhead", () => {
 		const a = seg("a", 0, 0, 10);
-		const next = splitSegment(editWith(a), "a", 4);
+		const next = splitSegment(editWith(a), "a", 4, "b");
 		expect(next.segments).toHaveLength(2);
 		const left = next.segments[0] as TimelineSegment;
 		const right = next.segments[1] as TimelineSegment;
@@ -497,7 +506,7 @@ describe("splitSegment", () => {
 	test("the split point follows the effective rate", () => {
 		const a = seg("a", 0, 0, 10);
 		a.effects.rate = 2; // box [0, 5]
-		const next = splitSegment(editWith(a), "a", 3);
+		const next = splitSegment(editWith(a), "a", 3, "b");
 		const left = next.segments[0] as TimelineSegment;
 		const right = next.segments[1] as TimelineSegment;
 		expect(left.sourceOut).toBe(6);
@@ -510,7 +519,7 @@ describe("splitSegment", () => {
 		const a = seg("a", 0, 0, 10);
 		a.sourceIn = 2;
 		a.sourceOut = 8; // box [0, 6]
-		const next = splitSegment(editWith(a), "a", 2);
+		const next = splitSegment(editWith(a), "a", 2, "b");
 		const left = next.segments[0] as TimelineSegment;
 		const right = next.segments[1] as TimelineSegment;
 		expect(left.sourceIn).toBe(2);
@@ -521,14 +530,14 @@ describe("splitSegment", () => {
 
 	test("a split too close to either edge is rejected", () => {
 		const a = seg("a", 0, 0, 10);
-		expect(splitSegment(editWith(a), "a", 0.01).segments).toHaveLength(1);
-		expect(splitSegment(editWith(a), "a", 9.99).segments).toHaveLength(1);
+		expect(splitSegment(editWith(a), "a", 0.01, "b").segments).toHaveLength(1);
+		expect(splitSegment(editWith(a), "a", 9.99, "b").segments).toHaveLength(1);
 	});
 
 	test("a reversed segment splits at the mirrored source position", () => {
 		const a = seg("a", 0, 0, 10);
 		a.effects.reverse = true;
-		const next = splitSegment(editWith(a), "a", 4);
+		const next = splitSegment(editWith(a), "a", 4, "b");
 		const left = next.segments[0] as TimelineSegment;
 		const right = next.segments[1] as TimelineSegment;
 		// The box plays [0, 10] backwards, so 4s in is at source second 6: the
@@ -547,7 +556,7 @@ describe("splitSegment", () => {
 	test("keeps one configured tail on the final timeline piece", () => {
 		const a = seg("a", 0, 0, 10);
 		a.effects.tailSeconds = 2;
-		const next = splitSegment(editWith(a), "a", 4);
+		const next = splitSegment(editWith(a), "a", 4, "b");
 		const left = next.segments[0] as TimelineSegment;
 		const right = next.segments[1] as TimelineSegment;
 		expect(left.effects.tailSeconds).toBe(0);

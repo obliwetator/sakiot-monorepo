@@ -54,7 +54,13 @@ test("editor keeps timeline sources when the shared PCM cache evicts them", asyn
 			return null;
 		}
 		try {
-			root.render(React.createElement(Harness));
+			root.render(
+				React.createElement(
+					React.StrictMode,
+					null,
+					React.createElement(Harness),
+				),
+			);
 			const editor = await ready;
 			await editor.loadClip("guild-123", "working-source", 1, 0);
 			const before = editor.sourceDuration("working-source");

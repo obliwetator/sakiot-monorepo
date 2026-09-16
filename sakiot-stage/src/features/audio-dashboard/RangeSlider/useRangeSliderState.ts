@@ -91,34 +91,28 @@ export function useRangeSliderState(args: {
 		args.audioRef.pause();
 	}, [args.audioRef, args.intervalRef]);
 
-	const advancePlayhead = useCallback(
-		(time: number, end: number) => {
-			if (time >= end) {
-				stopPlayback();
-				return Math.max(0, end - MinDistance);
-			}
-			return Math.min(time, actualDuration, end);
-		},
-		[actualDuration, stopPlayback],
-	);
+	const end = startEnd[1];
+	const advancePlayhead = useCallback(() => {
+		const time = args.audioRef.currentTime;
+		if (time >= end) stopPlayback();
+		const next =
+			time >= end
+				? Math.max(0, end - MinDistance)
+				: Math.min(time, actualDuration, end);
+		setStartEnd((previous) => [next, previous[1]]);
+	}, [actualDuration, args.audioRef, end, stopPlayback]);
 
 	useEffect(() => {
 		const audio = args.audioRef;
 		const onPlay = () => setPlaying(true);
 		const onPause = () => setPlaying(false);
-		const onTime = () => {
-			setStartEnd((prev) => [
-				advancePlayhead(audio.currentTime, prev[1]),
-				prev[1],
-			]);
-		};
 		audio.addEventListener("play", onPlay);
 		audio.addEventListener("pause", onPause);
-		audio.addEventListener("timeupdate", onTime);
+		audio.addEventListener("timeupdate", advancePlayhead);
 		return () => {
 			audio.removeEventListener("play", onPlay);
 			audio.removeEventListener("pause", onPause);
-			audio.removeEventListener("timeupdate", onTime);
+			audio.removeEventListener("timeupdate", advancePlayhead);
 		};
 	}, [args.audioRef, advancePlayhead]);
 
@@ -129,65 +123,51 @@ export function useRangeSliderState(args: {
 				event.preventDefault();
 				const skip =
 					event.ctrlKey || event.metaKey ? CtrlArrowKeySkip : ArrowKeySkip;
-				setStartEnd((s) => {
-					const next = Math.min(
-						s[0] + skip,
-						actualDuration,
-						s[1] - MinDistance,
-					);
-					args.audioRef.currentTime = next;
-					return [next, s[1]];
-				});
+				const next = Math.max(
+					0,
+					Math.min(startEnd[0] + skip, actualDuration, end - MinDistance),
+				);
+				args.audioRef.currentTime = next;
+				setStartEnd([next, end]);
 			} else if (event.key === "ArrowLeft") {
 				event.preventDefault();
 				const skip =
 					event.ctrlKey || event.metaKey ? CtrlArrowKeySkip : ArrowKeySkip;
-				setStartEnd((s) => {
-					const next = Math.max(s[0] - skip, 0);
-					args.audioRef.currentTime = next;
-					return [next, s[1]];
-				});
+				const next = Math.max(startEnd[0] - skip, 0);
+				args.audioRef.currentTime = next;
+				setStartEnd([next, end]);
 			} else {
 				return;
 			}
 		};
 		window.addEventListener("keydown", handleArrowKeys);
 		return () => window.removeEventListener("keydown", handleArrowKeys);
-	}, [actualDuration, args.audioRef]);
-
-	const startTimer = useCallback(() => {
-		clearInterval(args.intervalRef.current);
-		args.intervalRef.current = window.setInterval(() => {
-			setStartEnd((prev) => [
-				advancePlayhead(args.audioRef.currentTime, prev[1]),
-				prev[1],
-			]);
-		}, 1000);
-	}, [args.audioRef, args.intervalRef, advancePlayhead]);
+	}, [actualDuration, args.audioRef, end, startEnd]);
 
 	// The interval is parent-owned (AudioInterface), so nothing else clears it
 	// when this component unmounts mid-playback; without this cleanup it would
 	// keep firing forever on a detached audio element.
 	useEffect(() => {
 		const intervalRef = args.intervalRef;
+		if (playing) {
+			intervalRef.current = window.setInterval(advancePlayhead, 1000);
+		}
 		return () => {
 			clearInterval(intervalRef.current);
 			intervalRef.current = undefined;
 		};
-	}, [args.intervalRef]);
+	}, [advancePlayhead, args.intervalRef, playing]);
 
 	const togglePlay = useCallback(() => {
-		setPlaying((prev) => {
-			if (prev) {
-				clearInterval(args.intervalRef.current);
-				args.audioRef.pause();
-				return false;
-			}
-			void args.audioRef.play().catch(() => {});
-			startTimer();
-			return true;
-		});
-	}, [args.audioRef, args.intervalRef, startTimer]);
+		// React may replay state updaters; media commands belong to the event.
+		if (playing) {
+			stopPlayback();
+			setPlaying(false);
+			return;
+		}
+		setPlaying(true);
+		void args.audioRef.play().catch(() => setPlaying(false));
+	}, [args.audioRef, playing, stopPlayback]);
 
 	useEffect(() => {
 		const handleSpace = (event: KeyboardEvent) => {

@@ -9,7 +9,7 @@ import {
 	sourcePositionAt,
 } from "./model";
 import { browserPreviewLimited } from "./pcmBudget";
-import { requestSharedSegment, warmSharedDsp } from "./sharedDsp";
+import { requestSharedSegment } from "./sharedDsp";
 import {
 	createSharedDspAudioWorkletNode,
 	updateSharedDspAudioWorkletNode,
@@ -234,9 +234,7 @@ export class ClipEditorEngine {
 	constructor(
 		private readonly createAudioGraph: EditorAudioGraphFactory = (ctx) =>
 			new SharedDspEditorAudioGraph(ctx),
-	) {
-		void warmSharedDsp();
-	}
+	) {}
 
 	/**
 	 * Whether the last preparation fell back to the native graph, which cannot

@@ -14,10 +14,10 @@ const corsHeaders = {
 	"Access-Control-Expose-Headers": "Content-Range, Accept-Ranges",
 };
 
-/** A one-second mono 16-bit PCM WAV the browser can actually decode. */
-function silentWav(): Buffer {
+/** A mono 16-bit PCM WAV the browser can actually decode. */
+function silentWav(durationSeconds = 1): Buffer {
 	const sampleRate = 8_000;
-	const frames = sampleRate;
+	const frames = sampleRate * durationSeconds;
 	const dataBytes = frames * 2;
 	const wav = Buffer.alloc(44 + dataBytes);
 	wav.write("RIFF", 0);
@@ -36,7 +36,7 @@ function silentWav(): Buffer {
 	return wav;
 }
 
-async function mockRecordingApi(page: Page) {
+async function mockRecordingApi(page: Page, durationSeconds = 1) {
 	const audioPath = `${API_PREFIX}/audio/${GUILD_ID}/${CHANNEL_ID}/2026/8/${FILE_NAME}.ogg`;
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
@@ -122,7 +122,7 @@ async function mockRecordingApi(page: Page) {
 					"Accept-Ranges": "none",
 					"Content-Type": "audio/wav",
 				},
-				body: silentWav(),
+				body: silentWav(durationSeconds),
 			});
 			return;
 		}
@@ -170,4 +170,87 @@ test("a valid ?t= deep link still seeks", async ({ page }) => {
 	await expect
 		.poll(async () => Number(await position.inputValue()))
 		.toBeGreaterThan(0);
+});
+
+test("recording controls issue each media command once under StrictMode", async ({
+	page,
+}) => {
+	const errors: string[] = [];
+	page.on("pageerror", (error) => errors.push(error.message));
+	page.on("console", (message) => {
+		if (
+			message.type() === "error" &&
+			message.text().includes("Cannot update")
+		) {
+			errors.push(message.text());
+		}
+	});
+	await page.addInitScript((fileName) => {
+		const commands: string[] = [];
+		Object.defineProperty(window, "recordingMediaCommands", {
+			value: commands,
+		});
+		const prototype = HTMLMediaElement.prototype;
+		const originalPlay = prototype.play;
+		const originalPause = prototype.pause;
+		const currentTime = Object.getOwnPropertyDescriptor(
+			prototype,
+			"currentTime",
+		);
+		prototype.play = function () {
+			if (this.src.endsWith(`${fileName}.ogg`)) commands.push("play");
+			return originalPlay.call(this);
+		};
+		prototype.pause = function () {
+			if (this.src.endsWith(`${fileName}.ogg`)) commands.push("pause");
+			return originalPause.call(this);
+		};
+		Object.defineProperty(prototype, "currentTime", {
+			...currentTime,
+			set(this: HTMLMediaElement, value: number) {
+				if (this.src.endsWith(`${fileName}.ogg`)) commands.push("seek");
+				currentTime?.set?.call(this, value);
+			},
+		});
+	}, FILE_NAME);
+	await mockRecordingApi(page, 30);
+	await page.goto(
+		`/dashboard/${GUILD_ID}/audio/${CHANNEL_ID}/2026/8/${FILE_NAME}`,
+	);
+	await expect(
+		page.getByRole("button", { name: "Play", exact: true }),
+	).toBeVisible();
+	await page.evaluate(() => {
+		Reflect.get(window, "recordingMediaCommands").length = 0;
+	});
+	const commands = () =>
+		page.evaluate(
+			() => Reflect.get(window, "recordingMediaCommands") as string[],
+		);
+
+	await page.getByRole("button", { name: "Play", exact: true }).click();
+	await expect(
+		page.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+	await expect.poll(commands).toEqual(["play"]);
+	await page.getByRole("button", { name: "Pause", exact: true }).click();
+	await expect.poll(commands).toEqual(["play", "pause"]);
+
+	await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+	await page.keyboard.press("ArrowRight");
+	await expect.poll(commands).toEqual(["play", "pause", "seek"]);
+	await page.keyboard.press("ArrowLeft");
+	await expect.poll(commands).toEqual(["play", "pause", "seek", "seek"]);
+	await page.keyboard.press("Space");
+	await expect(
+		page.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+	await page.keyboard.press("Space");
+	await expect(
+		page.getByRole("button", { name: "Play", exact: true }),
+	).toBeVisible();
+	await expect
+		.poll(commands)
+		.toEqual(["play", "pause", "seek", "seek", "play", "pause"]);
+	expect(errors).toEqual([]);
 });

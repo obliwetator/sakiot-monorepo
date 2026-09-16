@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { API_ROUTES, apiUrl } from "../../api/routes";
 import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
 
@@ -87,23 +87,21 @@ export function useClipBuffer(
 		buffer: null,
 		error: null,
 	});
-	const requestRef = useRef(0);
-
 	useEffect(() => {
 		if (!clipId) {
 			setState({ status: "idle", buffer: null, error: null });
 			return;
 		}
-		const request = ++requestRef.current;
+		let active = true;
 		setState({ status: "loading", buffer: null, error: null });
 		loadClipBuffer(guildId, clipId)
 			.then((buffer) => {
-				if (requestRef.current === request) {
+				if (active) {
 					setState({ status: "ready", buffer, error: null });
 				}
 			})
 			.catch((error: unknown) => {
-				if (requestRef.current === request) {
+				if (active) {
 					setState({
 						status: "error",
 						buffer: null,
@@ -114,6 +112,11 @@ export function useClipBuffer(
 					});
 				}
 			});
+		return () => {
+			// The cached load can serve other consumers; only stop this effect
+			// from publishing after its source changes or React replays it.
+			active = false;
+		};
 	}, [clipId, guildId]);
 
 	return state;

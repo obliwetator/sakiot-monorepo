@@ -472,6 +472,7 @@ export function splitSegment(
 	edit: ClipEdit,
 	id: string,
 	atSec: number,
+	secondId: string,
 ): ClipEdit {
 	const segment = edit.segments.find((s) => s.id === id);
 	if (!segment) return edit;
@@ -496,13 +497,13 @@ export function splitSegment(
 	const second: TimelineSegment = segment.effects.reverse
 		? {
 				...segment,
-				id: newSegmentId(),
+				id: secondId,
 				sourceOut: splitSource,
 				timelineStart: atSec,
 			}
 		: {
 				...segment,
-				id: newSegmentId(),
+				id: secondId,
 				sourceIn: splitSource,
 				timelineStart: atSec,
 			};

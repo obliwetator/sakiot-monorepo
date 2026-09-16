@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClipEditorEngine } from "./engine";
 import { isInspectorFeatureDisabled } from "./inspectorFeaturePolicy";
 import {
@@ -13,6 +13,7 @@ import {
 	makeSegment,
 	mergeBlockReason,
 	mergeSegments,
+	newSegmentId,
 	removeTrack as removeTrackFromEdit,
 	segmentDuration,
 	segmentsForCopy,
@@ -22,7 +23,7 @@ import {
 	toggleTrackMute as toggleTrackMuteInEdit,
 	unmergeSegments,
 } from "./model";
-import { sharedDspPreprocessKey } from "./sharedDsp";
+import { sharedDspPreprocessKey, warmSharedDsp } from "./sharedDsp";
 import { loadClipBuffer } from "./useClipBuffer";
 import { useEditHistory } from "./useEditHistory";
 
@@ -63,7 +64,7 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		new Map(),
 	);
 
-	const engineRef = useRef<ClipEditorEngine | null>(null);
+	const [engine] = useState(() => new ClipEditorEngine());
 	// The editor owns these sources for its timeline, clipboard and undo history.
 	// Shared-cache eviction must not remove them: playback requires every source
 	// synchronously, including sources restored by undo after cache pressure.
@@ -94,23 +95,20 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		);
 	}, [viewMaxStartSec]);
 
-	const engine = useMemo(() => {
-		if (!engineRef.current) engineRef.current = new ClipEditorEngine();
-		return engineRef.current;
-	}, []);
-
-	useEffect(
-		() => () => {
-			if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+	useEffect(() => {
+		void warmSharedDsp();
+		return () => {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
 			if (playbackRefreshRef.current !== null) {
 				clearTimeout(playbackRefreshRef.current);
+				playbackRefreshRef.current = null;
 			}
-			engineRef.current?.dispose();
-		},
-		// Engine is created once per mount via the useMemo guard.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[],
-	);
+			engine.dispose();
+		};
+	}, [engine]);
 
 	const tick = useCallback(() => {
 		if (!engine.isPlaying) {
@@ -242,13 +240,13 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 			track: number,
 			timelineStart?: number,
 		) => {
+			// Allocate identity once for the action, outside replayable updaters.
+			const segment = makeSegment("clip", clipId, 0, lengthSec, 0, track);
 			if (buffersRef.current.has(clipId)) {
 				apply((current) =>
 					addSegmentAt(
 						current,
-						clipId,
-						lengthSec,
-						track,
+						segment,
 						timelineStart ?? endOfTrack(current, track),
 					),
 				);
@@ -261,9 +259,7 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 					apply((current) =>
 						addSegmentAt(
 							current,
-							clipId,
-							lengthSec,
-							track,
+							segment,
 							timelineStart ?? endOfTrack(current, track),
 						),
 					);
@@ -425,7 +421,9 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 		if (selectedSegmentIds.length !== 1) return;
 		const id = selectedSegmentIds[0];
 		if (!id) return;
-		apply((current) => splitSegment(current, id, positionRef.current));
+		const atSec = positionRef.current;
+		const secondId = newSegmentId();
+		apply((current) => splitSegment(current, id, atSec, secondId));
 	}, [apply, selectedSegmentIds]);
 
 	/**
@@ -703,22 +701,12 @@ function endOfTrack(edit: ClipEdit, track: number): number {
 
 function addSegmentAt(
 	edit: ClipEdit,
-	clipId: string,
-	lengthSec: number,
-	track: number,
+	segment: TimelineSegment,
 	timelineStart: number,
 ): ClipEdit {
-	const segment = makeSegment(
-		"clip",
-		clipId,
-		0,
-		lengthSec,
-		timelineStart,
-		track,
-	);
 	return {
 		...edit,
-		segments: [...edit.segments, segment],
-		tracks: Math.max(edit.tracks, track + 1),
+		segments: [...edit.segments, { ...segment, timelineStart }],
+		tracks: Math.max(edit.tracks, segment.track + 1),
 	};
 }

@@ -23,18 +23,16 @@ export function useChannelMixDraft(
 
 	useEffect(() => {
 		if (trackKey.length === 0) return;
-		setSettings((current) => {
-			const merged = mergeChannelMixDraft(
-				sessionId,
-				tracks,
-				serverSettings,
-				current,
-			);
-			if (channelMixRenderSettingsEqual(current, merged)) return current;
-			writeChannelMixDraft(sessionId, merged);
-			return merged;
-		});
-	}, [serverSettings, sessionId, trackKey, tracks]);
+		const merged = mergeChannelMixDraft(
+			sessionId,
+			tracks,
+			serverSettings,
+			settings,
+		);
+		if (channelMixRenderSettingsEqual(settings, merged)) return;
+		writeChannelMixDraft(sessionId, merged);
+		setSettings(merged);
+	}, [serverSettings, sessionId, settings, trackKey, tracks]);
 
 	const update = (next: ChannelMixParticipantSettings[]) => {
 		setSettings(next);
