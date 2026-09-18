@@ -341,6 +341,30 @@ fn clip_waveform_key(clip_id: &str, input: &std::path::Path) -> String {
     format!("clip-{clip_id}-{:016x}", hash.finish())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ClipWaveformProgress {
+    Vacant,
+    Building(i16),
+    Failed,
+}
+
+fn take_clip_waveform_progress(
+    progress: &mut std::collections::HashMap<String, i16>,
+    cache_key: &str,
+) -> ClipWaveformProgress {
+    match progress.get(cache_key).copied() {
+        Some(-1) => {
+            // The client treats this settled result as terminal and stops
+            // polling. Removing it makes the explicit Retry action's next
+            // request eligible to claim a fresh generation slot.
+            progress.remove(cache_key);
+            ClipWaveformProgress::Failed
+        }
+        Some(pct) => ClipWaveformProgress::Building(pct.clamp(0, 99)),
+        None => ClipWaveformProgress::Vacant,
+    }
+}
+
 // A clip is its own trimmed, immutable .ogg — no live/end_ts logic. Generate
 // peaks straight from the clip file, keyed by clip_id, mirroring the simple
 // silence-free path. On-disk existence is the cache (the file never changes).
@@ -414,12 +438,17 @@ pub async fn get_clip_waveform_data(
     // Claim the generation slot (or report an in-flight one) under one lock.
     {
         let mut progress = progress_map.0.write().await;
-        if let Some(&pct) = progress.get(&cache_key) {
-            if pct == -1 {
-                progress.remove(&cache_key);
-                return Err(AppError::InternalError);
+        match take_clip_waveform_progress(&mut progress, &cache_key) {
+            ClipWaveformProgress::Failed => {
+                return Ok(HttpResponse::Ok().json(json!({
+                    "progress": 0,
+                    "error": "Waveform generation failed"
+                })));
             }
-            return Ok(HttpResponse::Ok().json(json!({ "progress": pct.clamp(0, 99) })));
+            ClipWaveformProgress::Building(pct) => {
+                return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
+            }
+            ClipWaveformProgress::Vacant => {}
         }
         if !file_exists(&input_file).await {
             return Err(AppError::FileNotFound);
@@ -493,4 +522,37 @@ pub fn spawn_clip_waveform(
             progress.0.write().await.insert(cache_key, -1);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{ClipWaveformProgress, take_clip_waveform_progress};
+
+    #[test]
+    fn failed_clip_waveform_is_terminal_once_and_then_retryable() {
+        let mut progress = HashMap::from([("clip-key".to_string(), -1)]);
+
+        assert_eq!(
+            take_clip_waveform_progress(&mut progress, "clip-key"),
+            ClipWaveformProgress::Failed
+        );
+        assert!(!progress.contains_key("clip-key"));
+        assert_eq!(
+            take_clip_waveform_progress(&mut progress, "clip-key"),
+            ClipWaveformProgress::Vacant
+        );
+    }
+
+    #[test]
+    fn active_clip_waveform_reports_bounded_progress_without_clearing_it() {
+        let mut progress = HashMap::from([("clip-key".to_string(), 140)]);
+
+        assert_eq!(
+            take_clip_waveform_progress(&mut progress, "clip-key"),
+            ClipWaveformProgress::Building(99)
+        );
+        assert_eq!(progress.get("clip-key"), Some(&140));
+    }
 }

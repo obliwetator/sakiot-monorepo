@@ -89,33 +89,35 @@ function ClipList(props: {
 						</span>
 					</div>
 				</DisclosureTrigger>
-				<DisclosurePanel>
-					<div className="flex flex-col gap-1">
-						{isComposedClip(el) ? (
-							<span className="text-muted text-xs leading-5">
-								Composed in the clip editor
-							</span>
-						) : (
-							<>
-								<p className="text-sm">
-									Channel {el.channel_id} · source offset{" "}
-									{formatDuration(el.start_time)}
-								</p>
-								<span className="text-muted text-xs leading-5 [overflow-wrap:anywhere]">
-									{el.original_file_name || "Unknown source recording"}
+				{expanded === el.clip_id && (
+					<DisclosurePanel data-testid={`clip-details-${el.clip_id}`}>
+						<div className="flex flex-col gap-1">
+							{isComposedClip(el) ? (
+								<span className="text-muted text-xs leading-5">
+									Composed in the clip editor
 								</span>
-							</>
-						)}
-						<AlertDialog
-							clip_id={el.clip_id}
-							canDelete={canDeleteClip(
-								props.guildSelected,
-								props.currentUserId,
-								el.user_id,
+							) : (
+								<>
+									<p className="text-sm">
+										Channel {el.channel_id} · source offset{" "}
+										{formatDuration(el.start_time)}
+									</p>
+									<span className="text-muted text-xs leading-5 [overflow-wrap:anywhere]">
+										{el.original_file_name || "Unknown source recording"}
+									</span>
+								</>
 							)}
-						/>
-					</div>
-				</DisclosurePanel>
+							<AlertDialog
+								clip_id={el.clip_id}
+								canDelete={canDeleteClip(
+									props.guildSelected,
+									props.currentUserId,
+									el.user_id,
+								)}
+							/>
+						</div>
+					</DisclosurePanel>
+				)}
 			</Disclosure>
 		);
 	});

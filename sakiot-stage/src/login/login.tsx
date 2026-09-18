@@ -1,4 +1,5 @@
 import type React from "react";
+import { useState } from "react";
 import { API_ROUTES, apiAbsoluteUrl } from "../api/routes";
 import { BASE_API_URL, useLogoutMutation } from "../app/apiSlice";
 import { captureCsrfToken, setCsrfToken } from "../app/authedFetch";
@@ -8,6 +9,8 @@ export default function Login(props: {
 	setIsLoggedIn: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
 	const [logout] = useLogoutMutation();
+	const [devLoginPending, setDevLoginPending] = useState(false);
+	const [devLoginError, setDevLoginError] = useState<string | null>(null);
 
 	const handleLogin = () => {
 		const origin = encodeURIComponent(window.location.origin);
@@ -42,21 +45,39 @@ export default function Login(props: {
 		// mints dev sessions.
 		const secret = window.prompt("Dev login secret:") ?? "";
 		if (!secret) return;
+		setDevLoginError(null);
+		setDevLoginPending(true);
 		// Not part of the documented API: the endpoint only exists in
 		// dev-login builds, so it cannot come from API_ROUTES.
-		const res = await fetch(
-			`${BASE_API_URL}dev_login?t=${Date.now()}`, // raw-url-ok
-			{
-				credentials: "include",
-				headers: { "X-Dev-Login-Secret": secret },
-			},
-		);
-		if (!res.ok) {
-			console.error("dev login failed", res.status);
-			return;
+		try {
+			const res = await fetch(
+				`${BASE_API_URL}dev_login?t=${Date.now()}`, // raw-url-ok
+				{
+					credentials: "include",
+					headers: { "X-Dev-Login-Secret": secret },
+				},
+			);
+			if (!res.ok) {
+				console.error("dev login failed", res.status);
+				setDevLoginError(
+					res.status === 403
+						? "Invalid dev login secret."
+						: res.status === 404
+							? "Dev login is unavailable in this server build."
+							: `Dev login failed (${res.status}).`,
+				);
+				return;
+			}
+			captureCsrfToken(res);
+			window.location.reload();
+		} catch (error) {
+			console.error("dev login request failed", error);
+			setDevLoginError(
+				"Could not reach the local API. Start it with cargo dev up and try again.",
+			);
+		} finally {
+			setDevLoginPending(false);
 		}
-		captureCsrfToken(res);
-		window.location.reload();
 	};
 
 	return props.isLoggedIn ? (
@@ -71,28 +92,36 @@ export default function Login(props: {
 			Log out
 		</Button>
 	) : (
-		<div className="flex gap-4">
-			<Button
-				className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
-				variant="ghost"
-				size="sm"
-				onPress={() => {
-					handleLogin();
-				}}
-			>
-				Login
-			</Button>
-			{isDevOrStaging && (
+		<div>
+			<div className="flex gap-4">
 				<Button
 					className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
 					variant="ghost"
 					size="sm"
 					onPress={() => {
-						handleDevLogin();
+						handleLogin();
 					}}
 				>
-					Dev Login
+					Login
 				</Button>
+				{isDevOrStaging && (
+					<Button
+						className="my-2 rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
+						variant="ghost"
+						size="sm"
+						isDisabled={devLoginPending}
+						onPress={() => {
+							void handleDevLogin();
+						}}
+					>
+						{devLoginPending ? "Signing in…" : "Dev Login"}
+					</Button>
+				)}
+			</div>
+			{devLoginError && (
+				<p className="mb-2 max-w-72 text-sm text-danger" role="alert">
+					{devLoginError}
+				</p>
 			)}
 		</div>
 	);

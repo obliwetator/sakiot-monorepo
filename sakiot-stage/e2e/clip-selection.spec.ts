@@ -14,6 +14,9 @@ for (const interaction of ["title click", "keyboard"] as const) {
 				.click();
 		const row = page.getByRole("button", { name: /Working source.*User/ });
 		await expect(row).toBeVisible();
+		await expect(page.getByTestId("clip-details-working-source")).toHaveCount(
+			0,
+		);
 		if (interaction === "title click") {
 			await row.getByText("Working source", { exact: true }).click();
 		} else {
@@ -31,7 +34,12 @@ for (const interaction of ["title click", "keyboard"] as const) {
 			page.getByRole("button", { name: "Play", exact: true }),
 		).toBeEnabled();
 		if (isMobile) await expect(page.getByRole("dialog")).toHaveCount(0);
-		else await expect(row).toHaveAttribute("aria-expanded", "true");
+		else {
+			await expect(row).toHaveAttribute("aria-expanded", "true");
+			await expect(
+				page.getByTestId("clip-details-working-source"),
+			).toBeVisible();
+		}
 	});
 }
 

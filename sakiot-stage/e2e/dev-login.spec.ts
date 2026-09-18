@@ -70,3 +70,22 @@ test("a dismissed dev-login prompt sends no request", async ({
 	await expect(page.getByText("You are not logged in")).toBeVisible();
 	expect(devLoginRequests).toEqual([]);
 });
+
+test("an invalid dev-login secret reports the failure", async ({
+	page,
+}, testInfo) => {
+	await page.route(`${API_ORIGIN}/**`, async (route) => {
+		const url = new URL(route.request().url());
+		await route.fulfill({
+			status: url.pathname === "/api/dev_login" ? 403 : 401,
+			body: "",
+		});
+	});
+	page.on("dialog", (dialog) => dialog.accept("wrong-secret"));
+
+	await page.goto("/");
+	const devLogin = await openDevLogin(page, testInfo.project.name);
+	await devLogin.click();
+
+	await expect(page.getByRole("alert")).toHaveText("Invalid dev login secret.");
+});
