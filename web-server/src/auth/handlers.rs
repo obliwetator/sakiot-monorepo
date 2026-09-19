@@ -234,32 +234,7 @@ pub async fn discord_login(
     let (access_token, refresh_token) =
         create_jwt_tokens(user.id, AuthKind::Discord, csrf_token.clone(), &keys).await?;
 
-    let escaped_origin = opener_origin
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('<', "\\u003c");
-
-    let body = format!(
-        r#"<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Logging in...</title></head>
-<body><script>
-(function () {{
-    var target = "{escaped_origin}";
-    if (window.opener && target) {{
-        window.opener.postMessage({{ type: "sakiot-auth", success: 1, csrf: "{csrf_token}" }}, target);
-    }}
-    window.close();
-}})();
-</script></body></html>"#
-    );
-
-    let mut html = HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .insert_header((
-            actix_web::http::header::CACHE_CONTROL,
-            "no-store, no-cache, must-revalidate, max-age=0",
-        ))
-        .body(body);
+    let mut html = oauth_completion_page(&opener_origin, &csrf_token);
 
     let d = cfg.cookie_domain.as_str();
     html.add_cookie(&clear_legacy_access_cookie(d))?;
@@ -272,6 +247,40 @@ pub async fn discord_login(
     html.add_cookie(&clear_opener_origin_cookie(d))?;
 
     Ok(html)
+}
+
+fn oauth_completion_page(opener_origin: &str, csrf_token: &str) -> HttpResponse {
+    let escaped_origin = opener_origin
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('<', "\\u003c");
+
+    let script_nonce = Uuid::new_v4().simple().to_string();
+    let body = format!(
+        r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Logging in...</title></head>
+<body><script nonce="{script_nonce}">
+(function () {{
+    var target = "{escaped_origin}";
+    if (window.opener && target) {{
+        window.opener.postMessage({{ type: "sakiot-auth", success: 1, csrf: "{csrf_token}" }}, target);
+    }}
+    window.close();
+}})();
+</script></body></html>"#
+    );
+
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .insert_header((
+            actix_web::http::header::HeaderName::from_static("content-security-policy"),
+            format!("default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'nonce-{script_nonce}'"),
+        ))
+        .insert_header((
+            actix_web::http::header::CACHE_CONTROL,
+            "no-store, no-cache, must-revalidate, max-age=0",
+        ))
+        .body(body)
 }
 
 #[cfg(feature = "dev-login")]
@@ -456,8 +465,8 @@ pub async fn logout(req: HttpRequest) -> Result<impl Responder, AppError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CSRF_COOKIE, RefreshTokenResponse, is_allowed_opener_origin, oauth_state,
-        origin_from_oauth_state, require_cookie_csrf, require_csrf,
+        CSRF_COOKIE, RefreshTokenResponse, is_allowed_opener_origin, oauth_completion_page,
+        oauth_state, origin_from_oauth_state, require_cookie_csrf, require_csrf,
     };
     use crate::config::Config;
     use actix_web::{cookie::Cookie, test as actix_test};
@@ -533,6 +542,30 @@ mod tests {
             Some("https://staging.patrykstyla.com")
         );
         assert!(origin_from_oauth_state("invalid").is_none());
+    }
+
+    #[actix_web::test]
+    async fn oauth_callback_csp_nonce_matches_its_only_script() {
+        let response = oauth_completion_page("https://app.example.test", "csrf-token");
+        let policy = response
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let nonce = policy
+            .split("script-src 'nonce-")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches('\'');
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains(&format!("<script nonce=\"{nonce}\">")));
+        assert!(!policy.contains("unsafe-inline"));
+        assert!(body.contains("window.opener.postMessage"));
     }
 
     #[test]

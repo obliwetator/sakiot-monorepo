@@ -17,13 +17,16 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(60);
 const UPLOAD_CONCURRENCY: i64 = 2;
 
-pub fn spawn_archive_worker(pool: Pool<Postgres>, media: MediaArchive) {
+pub fn spawn_archive_worker(
+    pool: Pool<Postgres>,
+    media: MediaArchive,
+) -> Vec<tokio::task::JoinHandle<()>> {
     if !media.enabled() {
         info!("media archive disabled; filesystem-only mode active");
-        return;
+        return Vec::new();
     }
     let reconcile_pool = pool.clone();
-    tokio::spawn(async move {
+    let reconcile = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(RECONCILE_INTERVAL);
         loop {
             ticker.tick().await;
@@ -36,7 +39,7 @@ pub fn spawn_archive_worker(pool: Pool<Postgres>, media: MediaArchive) {
             }
         }
     });
-    tokio::spawn(async move {
+    let upload = tokio::spawn(async move {
         let owner = lease_owner();
         loop {
             let work = match repository::claim_batch(&pool, &owner, UPLOAD_CONCURRENCY).await {
@@ -61,6 +64,7 @@ pub fn spawn_archive_worker(pool: Pool<Postgres>, media: MediaArchive) {
             record_status(&pool).await;
         }
     });
+    vec![reconcile, upload]
 }
 
 pub fn spawn_local_cleanup(pool: Pool<Postgres>, media: MediaArchive) {

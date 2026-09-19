@@ -7,6 +7,14 @@ set -euo pipefail
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${test_dir}/../.." && pwd)"
 script="${repo_root}/ops/preview-slot.sh"
+vhost="${repo_root}/ops/nginx/preview-slot.conf.example"
+
+# Nginx locations with their own add_header do not inherit the catch-all
+# location's policy. Keep the static route, HTML, and version manifest covered.
+for header in Content-Security-Policy Strict-Transport-Security X-Frame-Options Referrer-Policy Permissions-Policy; do
+  count="$(grep -c "add_header ${header} " "${vhost}")"
+  [[ "${count}" -eq 3 ]] || { echo "${header} must cover all three static locations" >&2; exit 1; }
+done
 
 temporary="$(mktemp -d)"
 trap 'rm -rf "${temporary}"' EXIT

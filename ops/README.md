@@ -1,5 +1,8 @@
 # Production deployment
 
+Readiness, media-job alert thresholds, and the tracked security-header policy
+are documented in [READINESS_AND_HEADERS.md](READINESS_AND_HEADERS.md).
+
 Production deploys run from GitHub-hosted Actions runners when a new `v*` tag
 is pushed. The runner has read-only repository permission and sends the tag,
 commit SHA, and its short-lived repository token through a forced SSH command.

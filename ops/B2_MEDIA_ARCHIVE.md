@@ -134,8 +134,10 @@ is disabled, and lifecycle retains every version in Backblaze console.
    removal, physical/logical clips, logical-session composition, `/jam`, and
    gRPC jam playback.
 5. Temporarily block B2 endpoint. Recording must continue locally; remote-only
-   media must return 503; `/healthz` must continue reflecting database health.
-   Restore connectivity and confirm backlog resumes.
+   media must return 503. `/livez` must remain healthy; `/healthz` now reflects
+   both database and archive backlog, so it should become unready if due
+   archive work waits more than one hour. Restore connectivity and confirm
+   backlog and readiness recover.
 6. Restore moved files or run `media restore --all`. Only after all tests pass,
    enable pruning in staging.
 
