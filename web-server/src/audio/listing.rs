@@ -260,7 +260,7 @@ async fn get_session_tree(
                    af.id AS audio_file_id
               FROM recording_sessions rs
               LEFT JOIN audio_files af ON af.recording_session_id = rs.id
-             WHERE rs.guild_id = $1
+             WHERE rs.guild_id = $1 AND rs.deletion_requested_at IS NULL
             UNION ALL
             SELECT -af.id AS listing_id,
                    FALSE AS logical,

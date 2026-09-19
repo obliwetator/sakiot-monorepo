@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
 	useCreateSessionClipMutation,
+	useDeleteRecordingMutation,
 	useGenerateSessionChannelMixMutation,
+	useGetAuthDetailsQuery,
+	useGetRecordingDeletionQuery,
 	useGetSessionChannelMixQuery,
 	useGetSessionManifestQuery,
 } from "../../app/apiSlice";
+import { isGuildAdmin } from "../../shared/permissions";
 import {
 	Badge,
 	Button,
@@ -58,6 +62,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const channelMixPreferences = useChannelMixPreferences();
 	const channelMixScope = channelMixPreferences.options.scope;
 	const location = useLocation();
+	const navigate = useNavigate();
+	const { data: authDetails } = useGetAuthDetailsQuery();
+	const [deleteRecording, deleteRecordingState] = useDeleteRecordingMutation();
+	const [deletion, setDeletion] = useState<{
+		guild_id: string;
+		job_id: string;
+	} | null>(null);
+	const { data: deletionStatus } = useGetRecordingDeletionQuery(
+		deletion ?? { guild_id: "", job_id: "" },
+		{ skip: !deletion, pollingInterval: deletion ? 2_000 : 0 },
+	);
 	const deepLink = useMemo(
 		() => parseSessionDeepLink(location.search),
 		[location.search],
@@ -358,6 +373,51 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		}
 	};
 
+	if (deletion) {
+		return (
+			<div className="p-4 space-y-3">
+				<Notice
+					tone={deletionStatus?.state === "failed" ? "error" : "info"}
+					announce="status"
+				>
+					{deletionStatus?.state === "ready"
+						? "Recording and its media were permanently deleted."
+						: deletionStatus?.state === "failed"
+							? "Deletion needs attention. The recording remains hidden; retry from this page or contact an administrator."
+							: "Recording hidden. Permanent deletion is in progress."}
+				</Notice>
+				{deletionStatus?.state === "failed" && (
+					<Button
+						variant="danger"
+						onPress={() => {
+							void deleteRecording({
+								guild_id: deletion.guild_id,
+								recording_session_id: props.sessionId,
+							})
+								.unwrap()
+								.then((job) =>
+									setDeletion({ guild_id: deletion.guild_id, job_id: job.id }),
+								)
+								.catch(() => {});
+						}}
+					>
+						Retry deletion
+					</Button>
+				)}
+				{deleteRecordingState.isError && (
+					<Notice tone="error" announce="alert">
+						Could not retry deletion.
+					</Notice>
+				)}
+				<Button
+					variant="outline"
+					onPress={() => navigate(`/dashboard/${deletion.guild_id}/audio`)}
+				>
+					Back to recordings
+				</Button>
+			</div>
+		);
+	}
 	if (isLoading) return <p className="leading-6">Loading logical recording…</p>;
 	if (isError || !manifest) {
 		return (
@@ -396,6 +456,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		mixRenderDirty,
 	);
 	const mixProcessing = mixStatus === "processing";
+	const canDeleteRecording = isGuildAdmin(
+		authDetails?.guilds?.find((guild) => guild.id === manifest.guild_id) ??
+			null,
+	);
 
 	return (
 		<div className="pb-8">
@@ -432,6 +496,38 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				physicalCount={physicalFragments.length}
 				currentSegment={currentSegment}
 			/>
+			{canDeleteRecording && manifest.state === "finalized" && (
+				<div className="mb-4 space-y-2">
+					<Button
+						variant="danger"
+						isDisabled={deleteRecordingState.isLoading}
+						onPress={() => {
+							if (
+								!window.confirm(
+									"Permanently delete this recording, its clips, and archived media? This cannot be undone.",
+								)
+							)
+								return;
+							void deleteRecording({
+								guild_id: manifest.guild_id,
+								recording_session_id: props.sessionId,
+							})
+								.unwrap()
+								.then((job) =>
+									setDeletion({ guild_id: manifest.guild_id, job_id: job.id }),
+								)
+								.catch(() => {});
+						}}
+					>
+						Delete recording
+					</Button>
+					{deleteRecordingState.isError && (
+						<Notice tone="error" announce="alert">
+							Could not queue deletion. Try again.
+						</Notice>
+					)}
+				</div>
+			)}
 
 			<PlaybackActionsPanel>
 				<Tabs

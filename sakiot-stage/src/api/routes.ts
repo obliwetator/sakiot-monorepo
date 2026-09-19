@@ -56,6 +56,11 @@ export const API_ROUTES = {
 	userOverrides: "/api/admin/guilds/{guild_id}/cooldown/overrides",
 	userOverride: "/api/admin/guilds/{guild_id}/cooldown/overrides/{user_id}",
 	guildVoiceSettings: "/api/admin/guilds/{guild_id}/voice-settings",
+	guildRecordingPolicy: "/api/admin/guilds/{guild_id}/recording-policy",
+	deleteRecording:
+		"/api/admin/guilds/{guild_id}/recordings/{recording_session_id}",
+	recordingDeletion:
+		"/api/admin/guilds/{guild_id}/recording-deletions/{job_id}",
 	guildRoles: "/api/admin/guilds/{guild_id}/roles",
 	roleMembers: "/api/admin/guilds/{guild_id}/roles/{role_id}/members",
 	roleChannels: "/api/admin/guilds/{guild_id}/roles/{role_id}/channels",

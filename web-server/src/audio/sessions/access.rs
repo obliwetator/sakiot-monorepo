@@ -15,7 +15,7 @@ pub(crate) async fn require_session_access(
                 (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS ended_at_ms,
                 (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_started_at_ms
            FROM recording_sessions
-          WHERE id = $1"#,
+          WHERE id = $1 AND deletion_requested_at IS NULL"#,
         recording_session_id
     )
     .fetch_optional(pool.get_ref())

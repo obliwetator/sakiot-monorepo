@@ -14,6 +14,7 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
+use web_server::admin::recording_policy::{get_recording_policy, put_recording_policy};
 use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
@@ -47,6 +48,9 @@ use web_server::media_jobs::{
     get_media_job, get_media_job_result, spawn_worker as spawn_media_worker,
 };
 use web_server::members::{get_guild_roles, get_role_members, get_role_view};
+use web_server::recording_deletion::{
+    delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
+};
 use web_server::security_headers::SecurityHeaders;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
@@ -138,11 +142,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());
+    let deletion_worker = spawn_deletion_worker(pool.clone(), media_archive.clone());
     let archive_workers = spawn_archive_worker(pool.clone(), media_archive.clone());
     spawn_local_cleanup(pool.clone(), media_archive.clone());
     let mut worker_handles = vec![
         ("composition", compose_worker.abort_handle()),
         ("media", media_worker.abort_handle()),
+        ("recording_deletion", deletion_worker.abort_handle()),
     ];
     for (index, worker) in archive_workers.iter().enumerate() {
         worker_handles.push((
@@ -275,7 +281,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let api_scope = api_scope
             .service(get_voice_settings)
             .service(put_voice_settings)
-            .service(delete_voice_settings);
+            .service(delete_voice_settings)
+            .service(get_recording_policy)
+            .service(put_recording_policy);
+        let api_scope = api_scope
+            .service(delete_recording)
+            .service(get_recording_deletion);
 
         App::new()
             .app_data(web::Data::new(pool.clone()))
@@ -321,6 +332,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = compose_worker.await;
     media_worker.abort();
     let _ = media_worker.await;
+    deletion_worker.abort();
+    let _ = deletion_worker.await;
     for worker in archive_workers {
         worker.abort();
         let _ = worker.await;

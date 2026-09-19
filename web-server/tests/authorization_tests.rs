@@ -9,6 +9,7 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
+use web_server::admin::recording_policy::{get_recording_policy, put_recording_policy};
 use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
@@ -26,6 +27,7 @@ use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
 use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
+use web_server::recording_deletion::{delete_recording, get_recording_deletion};
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -434,6 +436,129 @@ async fn voice_settings_require_manager_and_restore_default(
         test::call_service(&app, request).await.status(),
         StatusCode::FORBIDDEN
     );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn recording_policy_and_deletion_require_live_manager_permission(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS | (1_i64 << 5))
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
+    let session_id: i64 = sqlx::query_scalar("INSERT INTO recording_sessions (guild_id,user_id,starting_channel_id,state,started_at,ended_at) VALUES ($1,$2,$3,'finalized',now()-interval '2 days',now()-interval '1 day') RETURNING id")
+        .bind(ALLOWED_GUILD_ID).bind(USER_ID).bind(ALLOWED_CHANNEL_ID).fetch_one(&pool).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_recording_policy)
+                    .service(put_recording_policy)
+                    .service(delete_recording)
+                    .service(get_recording_deletion),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_value()?;
+    let policy_uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/recording-policy");
+    let default: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        test::TestRequest::get()
+            .uri(&policy_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(default["retention_days"], serde_json::Value::Null);
+    assert_eq!(default["is_default"], true);
+    assert!(
+        default["channels"]
+            .as_array()
+            .is_some_and(|channels| !channels.is_empty())
+    );
+    let invalid = test::TestRequest::put()
+        .uri(&policy_uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"retention_days":0,"excluded_channel_ids":[]}))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, invalid).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let updated: serde_json::Value = test::call_and_read_body_json(&app,
+        test::TestRequest::put().uri(&policy_uri)
+            .insert_header(("Cookie",cookie.clone())).insert_header(("X-CSRF-Token",CSRF))
+            .set_json(json!({"retention_days":30,"excluded_channel_ids":[ALLOWED_CHANNEL_ID.to_string()]})).to_request()).await;
+    assert_eq!(updated["retention_days"], 30);
+    assert_eq!(
+        updated["excluded_channel_ids"][0],
+        ALLOWED_CHANNEL_ID.to_string()
+    );
+
+    let deletion_uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/recordings/{session_id}");
+    let accepted = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&deletion_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    let job: serde_json::Value = test::read_body_json(accepted).await;
+    assert_eq!(job["recording_session_id"], session_id.to_string());
+    let status_uri = job["status_url"].as_str().expect("status url");
+    let status: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        test::TestRequest::get()
+            .uri(status_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(status["state"], "queued");
+    let hidden: bool = sqlx::query_scalar(
+        "SELECT deletion_requested_at IS NOT NULL FROM recording_sessions WHERE id=$1",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(hidden);
+
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS)
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
+    for uri in [&policy_uri, status_uri] {
+        let response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(uri)
+                .insert_header(("Cookie", cookie.clone()))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    let response = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&deletion_uri)
+            .insert_header(("Cookie", cookie))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     Ok(())
 }
 

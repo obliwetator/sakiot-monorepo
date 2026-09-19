@@ -150,6 +150,18 @@ async function mockApi(
 			await fulfillJson({ pending_cap_seconds: 21_600, is_default: true });
 			return;
 		}
+		if (
+			path === `/admin/guilds/${GUILD_ID}/recording-policy` &&
+			method === "GET"
+		) {
+			await fulfillJson({
+				retention_days: null,
+				excluded_channel_ids: [],
+				channels: [],
+				is_default: true,
+			});
+			return;
+		}
 
 		if (options.mutationDelayMs && method !== "GET") {
 			await new Promise((resolve) =>

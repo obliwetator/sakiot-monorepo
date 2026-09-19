@@ -88,6 +88,7 @@ pub(crate) async fn reconcile(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error>
          SELECT af.id
            FROM audio_files af
           WHERE af.end_ts IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=af.recording_session_id AND rs.deletion_requested_at IS NOT NULL)
           ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
     )
     .execute(pool)
@@ -99,6 +100,8 @@ pub(crate) async fn reconcile(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error>
            FROM clips c
           WHERE c.saved_file_name IS NOT NULL
             AND btrim(c.saved_file_name) <> ''
+            AND c.deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=c.recording_session_id AND rs.deletion_requested_at IS NOT NULL)
           ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO NOTHING",
     )
     .execute(pool)
@@ -122,6 +125,8 @@ pub(crate) async fn claim_batch(
                      OR (state = 'uploading' AND lease_expires_at < now())
                     )
                 AND (lease_expires_at IS NULL OR lease_expires_at < now())
+                AND NOT EXISTS (SELECT 1 FROM audio_files af JOIN recording_sessions rs ON rs.id=af.recording_session_id WHERE af.id=media_objects.audio_file_id AND rs.deletion_requested_at IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM clips c WHERE c.clip_id=media_objects.clip_id AND (c.deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=c.recording_session_id AND rs.deletion_requested_at IS NOT NULL)))
               ORDER BY retry_at, created_at, id
               FOR UPDATE SKIP LOCKED
               LIMIT $2

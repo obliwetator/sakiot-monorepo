@@ -27,22 +27,30 @@ pub struct QueueHealth {
     pub media_running: i64,
     pub composition_queued: i64,
     pub composition_running: i64,
+    pub deletion_queued: i64,
+    pub deletion_running: i64,
+    pub deletion_failed: i64,
     pub archive_pending: i64,
     pub archive_uploading: i64,
     pub archive_problem: i64,
     pub oldest_media_queued_seconds: i64,
     pub oldest_composition_queued_seconds: i64,
+    pub oldest_deletion_queued_seconds: i64,
     pub oldest_archive_pending_seconds: i64,
     pub expired_media_leases: i64,
     pub expired_composition_leases: i64,
+    pub expired_deletion_leases: i64,
 }
 
 impl QueueHealth {
     fn unhealthy(&self, archive_enabled: bool) -> bool {
         self.oldest_media_queued_seconds > MAX_QUEUE_AGE_SECONDS
             || self.oldest_composition_queued_seconds > MAX_QUEUE_AGE_SECONDS
+            || self.oldest_deletion_queued_seconds > MAX_QUEUE_AGE_SECONDS
             || self.expired_media_leases > 0
             || self.expired_composition_leases > 0
+            || self.expired_deletion_leases > 0
+            || self.deletion_failed > 0
             || (archive_enabled && self.oldest_archive_pending_seconds > MAX_ARCHIVE_AGE_SECONDS)
     }
 }
@@ -75,28 +83,38 @@ async fn queue_health(pool: &Pool<Postgres>) -> Result<QueueHealth, sqlx::Error>
             (SELECT count(*) FROM media_jobs WHERE state='running') AS media_running, \
             (SELECT count(*) FROM composition_jobs WHERE state='queued') AS composition_queued, \
             (SELECT count(*) FROM composition_jobs WHERE state='running') AS composition_running, \
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='queued') AS deletion_queued, \
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running') AS deletion_running, \
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='failed') AS deletion_failed, \
             (SELECT count(*) FROM media_objects WHERE state='pending') AS archive_pending, \
             (SELECT count(*) FROM media_objects WHERE state='uploading') AS archive_uploading, \
             (SELECT count(*) FROM media_objects WHERE state IN ('missing','conflict')) AS archive_problem, \
             (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_media_queued_seconds, \
             (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM composition_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_composition_queued_seconds, \
+            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM recording_deletion_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_deletion_queued_seconds, \
             (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_objects WHERE state IN ('pending','uploading') AND retry_at <= now()) AS oldest_archive_pending_seconds, \
             (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_media_leases, \
-            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_composition_leases",
+            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_composition_leases, \
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_deletion_leases",
     ).fetch_one(pool).await?;
     Ok(QueueHealth {
         media_queued: row.try_get("media_queued")?,
         media_running: row.try_get("media_running")?,
         composition_queued: row.try_get("composition_queued")?,
         composition_running: row.try_get("composition_running")?,
+        deletion_queued: row.try_get("deletion_queued")?,
+        deletion_running: row.try_get("deletion_running")?,
+        deletion_failed: row.try_get("deletion_failed")?,
         archive_pending: row.try_get("archive_pending")?,
         archive_uploading: row.try_get("archive_uploading")?,
         archive_problem: row.try_get("archive_problem")?,
         oldest_media_queued_seconds: row.try_get("oldest_media_queued_seconds")?,
         oldest_composition_queued_seconds: row.try_get("oldest_composition_queued_seconds")?,
+        oldest_deletion_queued_seconds: row.try_get("oldest_deletion_queued_seconds")?,
         oldest_archive_pending_seconds: row.try_get("oldest_archive_pending_seconds")?,
         expired_media_leases: row.try_get("expired_media_leases")?,
         expired_composition_leases: row.try_get("expired_composition_leases")?,
+        expired_deletion_leases: row.try_get("expired_deletion_leases")?,
     })
 }
 
@@ -136,6 +154,12 @@ fn record_metrics(queues: &QueueHealth, failed: &[&'static str], ready: bool) {
             queues.composition_queued,
             queues.composition_running,
             queues.oldest_composition_queued_seconds,
+        ),
+        (
+            "recording_deletion",
+            queues.deletion_queued,
+            queues.deletion_running,
+            queues.oldest_deletion_queued_seconds,
         ),
         (
             "archive",
@@ -244,6 +268,12 @@ mod tests {
         let mut queues = QueueHealth::default();
         assert!(!queues.unhealthy(false));
         queues.oldest_media_queued_seconds = MAX_QUEUE_AGE_SECONDS + 1;
+        assert!(queues.unhealthy(false));
+        queues = QueueHealth::default();
+        queues.oldest_deletion_queued_seconds = MAX_QUEUE_AGE_SECONDS + 1;
+        assert!(queues.unhealthy(false));
+        queues = QueueHealth::default();
+        queues.deletion_failed = 1;
         assert!(queues.unhealthy(false));
         queues = QueueHealth::default();
         queues.oldest_archive_pending_seconds = MAX_ARCHIVE_AGE_SECONDS + 1;

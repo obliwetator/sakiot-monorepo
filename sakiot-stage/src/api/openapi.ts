@@ -52,6 +52,54 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/recording-deletions/{job_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_recording_deletion"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/recording-policy": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_recording_policy"];
+		put: operations["put_recording_policy"];
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/recordings/{recording_session_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		delete: operations["delete_recording"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/roles": {
 		parameters: {
 			query?: never;
@@ -1181,6 +1229,21 @@ export interface components {
 			/** @example 268435456 */
 			permissions: string;
 		};
+		GuildRecordingPolicy: {
+			channels: components["schemas"]["VoiceChannel"][];
+			excluded_channel_ids: string[];
+			is_default: boolean;
+			/** Format: int32 */
+			retention_days?: number | null;
+		};
+		GuildRecordingPolicyBody: {
+			excluded_channel_ids: string[];
+			/**
+			 * Format: int32
+			 * @description Null disables automatic deletion. Existing recordings are untouched by default.
+			 */
+			retention_days?: number | null;
+		};
 		GuildRole: {
 			/**
 			 * Format: int64
@@ -1246,6 +1309,16 @@ export interface components {
 			result_url?: string | null;
 			stage: string;
 			status: string;
+		};
+		RecordingDeletionStatus: {
+			/** Format: int32 */
+			attempts: number;
+			error?: string | null;
+			id: string;
+			recording_session_id: string;
+			stage: string;
+			state: string;
+			status_url: string;
 		};
 		RefreshTokenError: {
 			error: string;
@@ -1443,6 +1516,10 @@ export interface components {
 			 * @example 9007199254740993
 			 */
 			user_id: string;
+		};
+		VoiceChannel: {
+			id: string;
+			name: string;
 		};
 		VoiceEventDto: {
 			channel_id?: string | null;
@@ -1725,6 +1802,147 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_recording_deletion: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				guild_id: number;
+				job_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Audited deletion status */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingDeletionStatus"];
+				};
+			};
+		};
+	};
+	get_recording_policy: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Guild recording policy */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildRecordingPolicy"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_recording_policy: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["GuildRecordingPolicyBody"];
+			};
+		};
+		responses: {
+			/** @description Updated recording policy */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["GuildRecordingPolicy"];
+				};
+			};
+			/** @description Invalid retention or channel policy */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	delete_recording: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				guild_id: number;
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Recording hidden and deletion queued */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingDeletionStatus"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Recording not found */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

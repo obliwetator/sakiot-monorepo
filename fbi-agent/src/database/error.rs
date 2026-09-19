@@ -4,6 +4,8 @@ pub type DbResult<T> = Result<T, DbError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
+    #[error("recording is excluded in this voice channel")]
+    RecordingExcluded,
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]

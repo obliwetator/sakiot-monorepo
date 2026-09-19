@@ -4,8 +4,8 @@ use chrono::{Datelike, TimeZone, Utc};
 use sakiot_paths::{DataRoots, RecordingKey};
 use sqlx::{Pool, Postgres, Transaction};
 
-use crate::database::DbResult;
 use crate::database::recordings::RecordingHandle;
+use crate::database::{DbError, DbResult};
 
 pub const DEFAULT_PENDING_CAP_SECONDS: i64 = 6 * 60 * 60;
 pub const USER_UNAVAILABLE_GRACE_SECONDS: i64 = 60;
@@ -106,6 +106,21 @@ pub async fn create_fragment_in(
 ) -> DbResult<RecordingHandle> {
     let now_ms = now.timestamp_millis();
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(guild_id)
+        .execute(&mut *tx)
+        .await?;
+    let excluded: bool = sqlx::query_scalar(
+        "SELECT COALESCE($2 = ANY(excluded_channel_ids), false) FROM guild_recording_policy WHERE guild_id=$1",
+    )
+    .bind(guild_id)
+    .bind(channel_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
+    if excluded {
+        return Err(DbError::RecordingExcluded);
+    }
     lock_user_session(&mut tx, guild_id, user_id).await?;
     expire_user_pending_in_tx(&mut tx, guild_id, user_id, now_ms).await?;
 
@@ -970,7 +985,27 @@ async fn insert_session_event_in_tx(
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_PENDING_CAP_SECONDS, USER_UNAVAILABLE_GRACE_SECONDS, pending_deadlines};
+    use super::{
+        DEFAULT_PENDING_CAP_SECONDS, USER_UNAVAILABLE_GRACE_SECONDS, create_fragment_in,
+        pending_deadlines,
+    };
+    use crate::database::DbError;
+    use sqlx::PgPool;
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn excluded_channel_cannot_create_recording(pool: PgPool) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids) VALUES (1,ARRAY[2::bigint])")
+            .execute(&pool).await?;
+        let root = tempfile::tempdir().unwrap();
+        let result =
+            create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await;
+        assert!(matches!(result, Err(DbError::RecordingExcluded)));
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM audio_files")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(rows, 0);
+        Ok(())
+    }
 
     #[test]
     fn default_cap_starts_at_departure() {

@@ -176,6 +176,13 @@ impl MediaArchive {
 }
 
 pub(crate) fn clip_local_path(saved_file_name: &str) -> Result<std::path::PathBuf, AppError> {
+    clip_local_path_in(&sakiot_paths::DataRoots::from_env().clips, saved_file_name)
+}
+
+pub(crate) fn clip_local_path_in(
+    root: &Path,
+    saved_file_name: &str,
+) -> Result<std::path::PathBuf, AppError> {
     let relative = Path::new(saved_file_name);
     if relative.is_absolute()
         || relative.components().any(|component| {
@@ -189,5 +196,5 @@ pub(crate) fn clip_local_path(saved_file_name: &str) -> Result<std::path::PathBu
     {
         return Err(AppError::InternalError);
     }
-    Ok(sakiot_paths::DataRoots::from_env().clips.join(relative))
+    Ok(root.join(relative))
 }

@@ -66,6 +66,7 @@ struct RecorderActor {
     /// Set when the guild's voice call has been removed; the run loop exits
     /// after the current command is handled.
     voice_session_ended: bool,
+    last_recording_policy_check_ms: i64,
     /// Registry entry for this guild; the actor removes itself on exit so a
     /// later reconnect starts with fresh state. `None` for unregistered actors.
     registry: Option<Arc<super::RecordingCoordinatorRegistry>>,
@@ -110,6 +111,7 @@ impl RecorderActor {
                         break;
                     };
                     self.handle_command(command).await;
+                    if self.voice_session_ended { break; }
                 }
                 _ = heartbeat.tick() => {
                     self.heartbeat_active_recordings().await;

@@ -108,6 +108,8 @@ export type SessionManifest = ApiSchema["SessionManifestDto"];
 export type SessionSegment = ApiSchema["SessionSegmentDto"];
 export type SessionTimelineEvent = ApiSchema["SessionTimelineEventDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
+export type GuildRecordingPolicy = ApiSchema["GuildRecordingPolicy"];
+export type RecordingDeletionStatus = ApiSchema["RecordingDeletionStatus"];
 
 export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
 export type ChannelMixResponse = ApiSchema["ChannelMixResponse"];
@@ -143,6 +145,8 @@ export const apiSlice = createApi({
 		"GuildCooldown",
 		"UserOverrides",
 		"GuildVoiceSettings",
+		"GuildRecordingPolicy",
+		"Recordings",
 	],
 	endpoints: (builder) => ({
 		jamIt: builder.mutation<
@@ -205,6 +209,9 @@ export const apiSlice = createApi({
 		>({
 			query: ({ guild_id, as_role }) =>
 				`${apiUrl(API_ROUTES.currentGuildDirs, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
+			providesTags: (_r, _e, { guild_id }) => [
+				{ type: "Recordings", id: guild_id },
+			],
 		}),
 		getLiveStems: builder.query<
 			string[],
@@ -587,6 +594,53 @@ export const apiSlice = createApi({
 				{ type: "GuildVoiceSettings", id: guild_id },
 			],
 		}),
+		getGuildRecordingPolicy: builder.query<GuildRecordingPolicy, string>({
+			query: (guild_id) =>
+				apiUrl(API_ROUTES.guildRecordingPolicy, { guild_id }),
+			providesTags: (_r, _e, guild_id) => [
+				{ type: "GuildRecordingPolicy", id: guild_id },
+			],
+		}),
+		setGuildRecordingPolicy: builder.mutation<
+			GuildRecordingPolicy,
+			{
+				guild_id: string;
+				retention_days: number | null;
+				excluded_channel_ids: string[];
+			}
+		>({
+			query: ({ guild_id, retention_days, excluded_channel_ids }) => ({
+				url: apiUrl(API_ROUTES.guildRecordingPolicy, { guild_id }),
+				method: "PUT",
+				body: { retention_days, excluded_channel_ids },
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				{ type: "GuildRecordingPolicy", id: guild_id },
+			],
+		}),
+		deleteRecording: builder.mutation<
+			RecordingDeletionStatus,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.deleteRecording, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "DELETE",
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				{ type: "Recordings", id: guild_id },
+				"Clips",
+			],
+		}),
+		getRecordingDeletion: builder.query<
+			RecordingDeletionStatus,
+			{ guild_id: string; job_id: string }
+		>({
+			query: ({ guild_id, job_id }) =>
+				apiUrl(API_ROUTES.recordingDeletion, { guild_id, job_id }),
+		}),
 		getGuildRoles: builder.query<GuildRole[], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildRoles, { guild_id }),
 		}),
@@ -670,6 +724,10 @@ export const {
 	useGetGuildVoiceSettingsQuery,
 	useSetGuildVoiceSettingsMutation,
 	useDeleteGuildVoiceSettingsMutation,
+	useGetGuildRecordingPolicyQuery,
+	useSetGuildRecordingPolicyMutation,
+	useDeleteRecordingMutation,
+	useGetRecordingDeletionQuery,
 	useGetGuildRolesQuery,
 	useGetRoleMembersQuery,
 	useGetRoleViewQuery,

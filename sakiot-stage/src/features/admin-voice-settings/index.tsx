@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
 	useDeleteGuildVoiceSettingsMutation,
+	useGetGuildRecordingPolicyQuery,
 	useGetGuildVoiceSettingsQuery,
+	useSetGuildRecordingPolicyMutation,
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
 import { Button, Notice, TextField } from "../../shared/ui";
@@ -19,10 +21,41 @@ export function GuildVoiceSettingsPage() {
 	const [reset, resetState] = useDeleteGuildVoiceSettingsMutation();
 	const [seconds, setSeconds] = useState("21600");
 	const [validation, setValidation] = useState<string | null>(null);
+	const { data: recordingPolicy, isError: recordingPolicyError } =
+		useGetGuildRecordingPolicyQuery(guildId, { skip: !guildId });
+	const [saveRecordingPolicy, recordingSaveState] =
+		useSetGuildRecordingPolicyMutation();
+	const [retentionDays, setRetentionDays] = useState("");
+	const [excludedChannels, setExcludedChannels] = useState<string[]>([]);
+	const [recordingValidation, setRecordingValidation] = useState<string | null>(
+		null,
+	);
 
 	useEffect(() => {
 		if (data) setSeconds(String(data.pending_cap_seconds));
 	}, [data]);
+	useEffect(() => {
+		if (recordingPolicy) {
+			setRetentionDays(recordingPolicy.retention_days?.toString() ?? "");
+			setExcludedChannels(recordingPolicy.excluded_channel_ids);
+		}
+	}, [recordingPolicy]);
+
+	const handleRecordingPolicySave = async () => {
+		const days = retentionDays.trim() === "" ? null : Number(retentionDays);
+		if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) {
+			setRecordingValidation(
+				"Retention must be blank or between 1 and 3650 days.",
+			);
+			return;
+		}
+		setRecordingValidation(null);
+		await saveRecordingPolicy({
+			guild_id: guildId,
+			retention_days: days,
+			excluded_channel_ids: excludedChannels,
+		});
+	};
 
 	const handleSave = async () => {
 		const parsed = Number(seconds);
@@ -54,7 +87,7 @@ export function GuildVoiceSettingsPage() {
 	if (!guildId) return <div className="p-4">Missing guild id.</div>;
 
 	return (
-		<div className="p-4 max-w-190">
+		<div className="p-4 max-w-190 space-y-5">
 			<h5 className="font-semibold tracking-tight text-2xl mb-2">
 				Voice Settings
 			</h5>
@@ -128,6 +161,82 @@ export function GuildVoiceSettingsPage() {
 						{resetState.isError && (
 							<Notice tone={"error"} announce="alert">
 								Could not restore the default. Try again.
+							</Notice>
+						)}
+					</div>
+				)}
+			</div>
+			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-6">
+				<h6 className="font-medium tracking-[0.001em] text-xl mb-2">
+					Recording privacy and retention
+				</h6>
+				<p className="leading-6 text-muted mb-4">
+					Retention is off by default. When enabled, finalized recordings older
+					than the chosen period are queued for permanent deletion, including
+					clips and archived media. Excluded voice channels will not start new
+					recordings.
+				</p>
+				{recordingPolicyError && (
+					<Notice tone="error" announce="alert">
+						Could not load recording policy.
+					</Notice>
+				)}
+				{recordingPolicy && (
+					<div className="flex flex-col gap-4">
+						<TextField
+							label="Delete recordings after (days)"
+							type="number"
+							value={retentionDays}
+							onChange={setRetentionDays}
+							description="Leave blank to keep recordings indefinitely."
+							min={1}
+							max={3650}
+						/>
+						<fieldset className="space-y-2">
+							<legend className="font-medium">
+								Channels excluded from recording
+							</legend>
+							{recordingPolicy.channels.length === 0 && (
+								<p className="text-muted">No voice channels found.</p>
+							)}
+							{recordingPolicy.channels.map((channel) => (
+								<label key={channel.id} className="flex items-center gap-2">
+									<input
+										type="checkbox"
+										checked={excludedChannels.includes(channel.id)}
+										onChange={(event) => {
+											const checked = event.currentTarget.checked;
+											setExcludedChannels((current) =>
+												checked
+													? [...current, channel.id]
+													: current.filter((id) => id !== channel.id),
+											);
+										}}
+									/>
+									<span>{channel.name}</span>
+								</label>
+							))}
+						</fieldset>
+						<Button
+							variant="primary"
+							isDisabled={recordingSaveState.isLoading}
+							onPress={handleRecordingPolicySave}
+						>
+							Save recording policy
+						</Button>
+						{recordingValidation && (
+							<Notice tone="warning" announce="status">
+								{recordingValidation}
+							</Notice>
+						)}
+						{recordingSaveState.isSuccess && (
+							<Notice tone="success" announce="status">
+								Recording policy saved.
+							</Notice>
+						)}
+						{recordingSaveState.isError && (
+							<Notice tone="error" announce="alert">
+								Could not save recording policy.
 							</Notice>
 						)}
 					</div>

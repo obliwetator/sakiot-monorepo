@@ -10,10 +10,14 @@ const corsHeaders = {
 	"Access-Control-Allow-Origin": "http://127.0.0.1:4173",
 };
 
-test("a failed restore reports an error instead of failing silently", async ({
+test("a failed restore reports an error and recording policy can be saved", async ({
 	page,
 	consoleAudit,
 }) => {
+	let savedPolicy: {
+		retention_days: number;
+		excluded_channel_ids: string[];
+	} | null = null;
 	consoleAudit.allow(
 		/status of 500.*\/api\/admin\/guilds\/guild-123\/voice-settings/,
 	);
@@ -61,6 +65,31 @@ test("a failed restore reports an error instead of failing silently", async ({
 			await json({ detail: "reset failed" }, 500);
 			return;
 		}
+		if (
+			path === `/api/admin/guilds/${GUILD_ID}/recording-policy` &&
+			request.method() === "GET"
+		) {
+			await json({
+				retention_days: null,
+				excluded_channel_ids: [],
+				channels: [{ id: "channel-321", name: "Private voice" }],
+				is_default: true,
+			});
+			return;
+		}
+		if (
+			path === `/api/admin/guilds/${GUILD_ID}/recording-policy` &&
+			request.method() === "PUT"
+		) {
+			const body = request.postDataJSON() as NonNullable<typeof savedPolicy>;
+			savedPolicy = body;
+			await json({
+				...body,
+				channels: [{ id: "channel-321", name: "Private voice" }],
+				is_default: false,
+			});
+			return;
+		}
 		await json(
 			{ detail: `Unhandled mock route: ${request.method()} ${path}` },
 			404,
@@ -77,4 +106,14 @@ test("a failed restore reports an error instead of failing silently", async ({
 	await expect(
 		page.getByText("Could not restore the default. Try again."),
 	).toBeVisible();
+	await page
+		.getByRole("spinbutton", { name: "Delete recordings after (days)" })
+		.fill("30");
+	await page.getByRole("checkbox", { name: "Private voice" }).check();
+	await page.getByRole("button", { name: "Save recording policy" }).click();
+	await expect(page.getByText("Recording policy saved.")).toBeVisible();
+	expect(savedPolicy).toEqual({
+		retention_days: 30,
+		excluded_channel_ids: ["channel-321"],
+	});
 });

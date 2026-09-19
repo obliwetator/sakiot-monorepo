@@ -168,6 +168,22 @@ async fn process_item_inner(
     owner: &str,
     item: &WorkItem,
 ) -> Result<(), ProcessingError> {
+    // Serialize the complete transfer with a recording deletion. A claim made
+    // just before the tombstone waits for this lock and then declines to
+    // upload; a deletion waits for a transfer already in progress.
+    let mut transfer_lock = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1,$2)")
+        .bind(crate::recording_deletion::ARCHIVE_LOCK_NAMESPACE)
+        .bind(item.id as i32)
+        .execute(&mut *transfer_lock)
+        .await?;
+    let deleting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audio_files af JOIN recording_sessions rs ON rs.id=af.recording_session_id WHERE af.id=$1 AND rs.deletion_requested_at IS NOT NULL) OR EXISTS(SELECT 1 FROM clips c WHERE c.clip_id=$2 AND c.deleted_at IS NOT NULL)")
+        .bind(match &item.source { SourceId::Recording(id) => Some(*id), _ => None })
+        .bind(match &item.source { SourceId::Clip(id) => Some(id.as_str()), _ => None })
+        .fetch_one(&mut *transfer_lock).await?;
+    if deleting {
+        return Ok(());
+    }
     let archive = media
         .archive()
         .ok_or_else(|| ProcessingError::Local("archive disabled".to_owned()))?;

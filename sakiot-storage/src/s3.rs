@@ -137,6 +137,63 @@ impl Archive {
         }
     }
 
+    /// Permanently remove every stored version and hide marker under one
+    /// source-owned prefix. A plain DeleteObject only hides the latest version.
+    /// Re-listing the first page after each batch makes retry safe even if a
+    /// previous attempt stopped between the list and delete calls.
+    pub async fn purge_versions(&self, prefix: &str) -> Result<u64, StorageError> {
+        if !prefix.starts_with("media/v1/") || !prefix.ends_with('/') || prefix.contains("..") {
+            return Err(StorageError::invalid("invalid media purge prefix"));
+        }
+        let mut deleted = 0u64;
+        loop {
+            let page = self
+                .client
+                .list_object_versions()
+                .bucket(&self.bucket)
+                .prefix(prefix)
+                .max_keys(1000)
+                .send()
+                .await
+                .map_err(|error| StorageError::unavailable("LIST VERSIONS", error))?;
+            let entries = page
+                .versions()
+                .iter()
+                .map(|version| (version.key(), version.version_id()))
+                .chain(
+                    page.delete_markers()
+                        .iter()
+                        .map(|marker| (marker.key(), marker.version_id())),
+                );
+            let mut batch = Vec::new();
+            for (key, version_id) in entries {
+                let key = key.ok_or_else(|| StorageError::invalid("B2 version has no key"))?;
+                let version_id =
+                    version_id.ok_or_else(|| StorageError::invalid("B2 version has no id"))?;
+                if !key.starts_with(prefix) {
+                    return Err(StorageError::invalid(
+                        "B2 returned a version outside the purge prefix",
+                    ));
+                }
+                batch.push((key.to_owned(), version_id.to_owned()));
+            }
+            if batch.is_empty() {
+                return Ok(deleted);
+            }
+            for (key, version_id) in batch {
+                self.client
+                    .delete_object()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .version_id(version_id)
+                    .send()
+                    .await
+                    .map_err(|error| StorageError::unavailable("DELETE VERSION", error))?;
+                deleted += 1;
+            }
+        }
+    }
+
     pub async fn head(&self, key: &str) -> Result<Option<ObjectHead>, StorageError> {
         match self
             .client

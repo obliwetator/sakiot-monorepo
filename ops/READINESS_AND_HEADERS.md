@@ -2,8 +2,9 @@
 
 `/livez` is a dependency-free process check. `/readyz` and the deployer's
 existing `/healthz` endpoint return 503 when PostgreSQL cannot answer within
-two seconds, a required in-process media/composition/archive worker exits, a
-media or composition lease remains expired for two minutes, or the oldest due
+two seconds, a required in-process media/composition/archive/recording-deletion
+worker exits, a media, composition, or deletion lease remains expired for two
+minutes, a recording deletion has exhausted its retries, or the oldest due
 queued job is over one hour old. When B2 archiving is enabled, archive work
 over one hour old also makes the instance unready. A missing/conflicted archive
 object is reported but does not by itself remove the whole API from service.
@@ -16,7 +17,8 @@ so scheduled retries do not trip readiness before their retry time.
 The web process records OTLP gauges every 30 seconds, independent of health
 probes: `web_server_ready`, `media_worker_failed`, and per-queue
 `media_queue_queued_jobs`, `media_queue_active_processes` (leased running
-attempts), and `media_queue_oldest_age_seconds`. The existing archive metrics
+attempts), and `media_queue_oldest_age_seconds`. The recording-deletion queue
+uses the `recording_deletion` queue label. The existing archive metrics
 continue to report pending bytes, upload failures, and verification failures.
 Alert on `web_server_ready == 0`, `media_worker_failed > 0`, or queue age
 approaching the readiness threshold. Readiness transitions also log an error

@@ -94,9 +94,20 @@ impl RecorderActor {
         info!("New writer for ssrc {}", ssrc);
         let now = chrono::Utc::now();
 
-        let Some(recording_handle) = self.create_recording(now, user_id).await else {
-            error!("Failed to create recording path for ssrc {}", ssrc);
-            return;
+        let recording_handle = match self.create_recording(now, user_id).await {
+            Ok(handle) => handle,
+            Err(crate::database::DbError::RecordingExcluded) => {
+                debug!(
+                    guild_id = self.guild_id.get(),
+                    channel_id = self.channel_id.get(),
+                    "recording excluded by guild policy"
+                );
+                return;
+            }
+            Err(_) => {
+                error!("Failed to create recording path for ssrc {}", ssrc);
+                return;
+            }
         };
 
         let file = match File::create(format!("{}.ogg", recording_handle.path)) {
@@ -198,6 +209,32 @@ impl RecorderActor {
         packets: Vec<VoicePacket>,
         silence_ticks: u32,
     ) {
+        if at_ms.saturating_sub(self.last_recording_policy_check_ms) >= 1_000 {
+            self.last_recording_policy_check_ms = at_ms;
+            let excluded = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM guild_recording_policy WHERE guild_id=$1 AND $2=ANY(excluded_channel_ids))",
+            )
+            .bind(self.guild_id.to_i64())
+            .bind(self.channel_id.to_i64())
+            .fetch_one(&self.pool)
+            .await;
+            match excluded {
+                Ok(true) => {
+                    info!(guild_id=%self.guild_id,channel_id=%self.channel_id,"recording stopped by channel policy");
+                    self.handle_voice_session_ended(at_ms).await;
+                    return;
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "recording policy check failed; stopping recording to preserve privacy"
+                    );
+                    self.handle_voice_session_ended(at_ms).await;
+                    return;
+                }
+                Ok(false) => {}
+            }
+        }
         let packet_map: HashMap<u32, Vec<u8>> = packets
             .into_iter()
             .filter(|packet| !packet.opus.is_empty())
@@ -345,7 +382,7 @@ impl RecorderActor {
         &self,
         now: chrono::DateTime<chrono::Utc>,
         user_id: u64,
-    ) -> Option<crate::database::recordings::RecordingHandle> {
+    ) -> crate::database::DbResult<crate::database::recordings::RecordingHandle> {
         match crate::database::recordings::create_recording(
             &self.pool,
             self.guild_id.to_i64(),
@@ -356,14 +393,15 @@ impl RecorderActor {
         )
         .await
         {
-            Ok(handle) => Some(handle),
+            Ok(handle) => Ok(handle),
+            Err(err @ crate::database::DbError::RecordingExcluded) => Err(err),
             Err(err) => {
                 error!("failed to create recording db/path handle: {}", err);
                 self.metrics
                     .db_insert_failures
                     .fetch_add(1, Ordering::Relaxed);
                 self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
-                None
+                Err(err)
             }
         }
     }

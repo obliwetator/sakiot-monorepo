@@ -156,3 +156,17 @@ FROM composition_jobs WHERE state <> 'ready' ORDER BY created_at;
 Tests use SQLx disposable databases and temporary media roots. The integration
 suite runs the actual worker binary and FFmpeg, including process termination
 and recovery. No test should use the runtime database.
+
+## Recording lifecycle
+
+Guild managers configure opt-in retention and voice-channel exclusions at
+`/api/admin/guilds/{guild_id}/recording-policy`. Retention is disabled by
+default. The manager-only
+`DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}`
+returns `202` and a durable, auditable status URL. The session is hidden as soon
+as deletion is accepted; the worker removes local and archived media and then
+its database rows. Failed attempts remain hidden and can be requeued by
+repeating the DELETE. The same worker processes expired sessions. See the
+[media archive runbook](../ops/B2_MEDIA_ARCHIVE.md#recording-lifecycle-deletion)
+for rollout order, B2 version deletion, monitoring, and the legacy provenance
+limit. Apply the lifecycle migration before starting this release.

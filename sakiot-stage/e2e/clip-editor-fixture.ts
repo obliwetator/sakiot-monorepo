@@ -96,6 +96,10 @@ export async function mockClipEditorApi(page: Page) {
 			]);
 			return;
 		}
+		if (path === "/refresh" && request.method() === "POST") {
+			await fulfillJson({});
+			return;
+		}
 		if (path === `/audio/clips/${GUILD_ID}`) {
 			await fulfillJson(clips);
 			return;

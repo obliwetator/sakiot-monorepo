@@ -703,7 +703,7 @@ pub async fn create_clip(
     }
     let size = size as i64;
 
-    sqlx::query!(
+    let insert = sqlx::query!(
         "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         clip_id,
         length as f32,
@@ -717,11 +717,12 @@ pub async fn create_clip(
         start as f32
     )
     .execute(pool.get_ref())
-    .await
-    .map_err(|e| {
+    .await;
+    if let Err(e) = insert {
         error!("Database error inserting clip: {:?}", e);
-        AppError::InternalError
-    })?;
+        discard_clip_output(&full_save_path).await;
+        return Err(AppError::InternalError);
+    }
 
     Ok(HttpResponse::Ok().json(CreateClipResponse {
         status: "success",

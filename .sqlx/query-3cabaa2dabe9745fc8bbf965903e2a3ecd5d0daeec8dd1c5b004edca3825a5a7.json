@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_objects (clip_id)\n         SELECT c.clip_id\n           FROM clips c\n          WHERE c.saved_file_name IS NOT NULL\n            AND btrim(c.saved_file_name) <> ''\n            AND c.deleted_at IS NULL\n            AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=c.recording_session_id AND rs.deletion_requested_at IS NOT NULL)\n          ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "3cabaa2dabe9745fc8bbf965903e2a3ecd5d0daeec8dd1c5b004edca3825a5a7"
+}

@@ -156,6 +156,11 @@ pub async fn get_stamps(
              )
         WHERE s.guild_id = $1
           AND s.channel_id = ANY($2)
+          AND NOT EXISTS (
+              SELECT 1 FROM recording_sessions hidden
+               WHERE hidden.id = COALESCE(s.recording_session_id, af.recording_session_id)
+                 AND hidden.deletion_requested_at IS NOT NULL
+          )
         ORDER BY s.stamp_ts DESC
         LIMIT 500
         "#,
