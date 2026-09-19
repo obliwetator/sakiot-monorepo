@@ -22,7 +22,6 @@ pub async fn create_session_clip(
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
     media: web::Data<MediaArchive>,
-    progress: web::Data<WaveformProgressContainer>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -99,8 +98,6 @@ pub async fn create_session_clip(
         let _ = tokio::fs::remove_file(&full_path).await;
         return Err(AppError::DbError(err));
     }
-
-    super::super::peaks::spawn_clip_waveform(clip_id.clone(), full_path, progress);
 
     Ok(HttpResponse::Ok().json(crate::clips::CreateClipResponse {
         status: "success",

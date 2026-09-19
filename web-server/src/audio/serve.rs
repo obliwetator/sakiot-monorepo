@@ -33,6 +33,8 @@ fn audio_leaf(file_name: &str, silence_free: bool) -> String {
 #[derive(Deserialize, Debug)]
 pub struct AudioQuery {
     pub silence: Option<bool>,
+    /// Explicit cache-busting retry token used by waveform requests.
+    pub t: Option<u64>,
 }
 
 impl AudioQuery {
@@ -262,16 +264,24 @@ mod tests {
     fn silence_free_variant_requires_an_explicit_true() {
         assert!(
             AudioQuery {
-                silence: Some(true)
+                silence: Some(true),
+                t: None,
             }
             .wants_silence_free()
         );
         assert!(
             !AudioQuery {
-                silence: Some(false)
+                silence: Some(false),
+                t: None,
             }
             .wants_silence_free()
         );
-        assert!(!AudioQuery { silence: None }.wants_silence_free());
+        assert!(
+            !AudioQuery {
+                silence: None,
+                t: None
+            }
+            .wants_silence_free()
+        );
     }
 }

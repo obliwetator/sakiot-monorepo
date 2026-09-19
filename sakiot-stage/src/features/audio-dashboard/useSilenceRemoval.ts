@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_ROUTES, apiUrl } from "../../api/routes";
 import { BASE_API_URL } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
+import { type MediaJobStatus, waitForMediaJob } from "../../app/mediaJobs";
 import {
 	parseSilenceRemovalStatus,
 	type SilenceRemovalStatus,
@@ -146,15 +147,22 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		setError(null);
 		setMessage(null);
 		try {
-			const response = await authedFetch(
+			const accepted = await authedFetch(
 				apiUrl(API_ROUTES.sessionDownload, {
 					recording_session_id: options.sessionId,
 				}),
+				{ headers: { "Idempotency-Key": crypto.randomUUID() } },
 			);
-			if (!response.ok) {
-				setError(`Session download failed (${response.status}).`);
+			if (!accepted.ok) {
+				setError(`Session download failed (${accepted.status}).`);
 				return;
 			}
+			const job = await waitForMediaJob(
+				(await accepted.json()) as MediaJobStatus,
+			);
+			if (!job.result_url) throw new Error("Download result missing");
+			const response = await authedFetch(job.result_url);
+			if (!response.ok) throw new Error(`Download failed (${response.status})`);
 			saveBlob(await response.blob(), `session-${options.sessionId}.ogg`);
 		} catch {
 			setError("Session download failed.");

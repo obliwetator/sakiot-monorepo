@@ -657,6 +657,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/media-jobs/{job_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_media_job"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/media-jobs/{job_id}/result": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_media_job_result"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/oauth/start": {
 		parameters: {
 			query?: never;
@@ -1204,6 +1236,16 @@ export interface components {
 			clip_name: string;
 			/** Format: int64 */
 			guild_id: number;
+		};
+		MediaJobStatus: {
+			error?: string | null;
+			id: string;
+			kind: string;
+			/** Format: int32 */
+			progress: number;
+			result_url?: string | null;
+			stage: string;
+			status: string;
 		};
 		RefreshTokenError: {
 			error: string;
@@ -3109,13 +3151,13 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Composed Ogg/Opus download */
-			200: {
+			/** @description Download composition durably queued */
+			202: {
 				headers: {
 					[name: string]: unknown;
 				};
 				content: {
-					"audio/ogg": unknown;
+					"application/json": components["schemas"]["MediaJobStatus"];
 				};
 			};
 			/** @description Invalid range */
@@ -4379,6 +4421,47 @@ export interface operations {
 			};
 		};
 	};
+	get_media_job: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				job_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["MediaJobStatus"];
+				};
+			};
+		};
+	};
+	get_media_job_result: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				job_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Completed media job result */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+		};
+	};
 	oauth_start: {
 		parameters: {
 			query: {
@@ -4477,7 +4560,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Silence removal file exists or processing started */
+			/** @description Silence-free file already exists */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -4486,13 +4569,13 @@ export interface operations {
 					"application/json": components["schemas"]["RemoveSilenceResponse"];
 				};
 			};
-			/** @description Existing processing request completed */
+			/** @description Silence removal durably queued */
 			202: {
 				headers: {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["RemoveSilenceResponse"];
+					"application/json": components["schemas"]["MediaJobStatus"];
 				};
 			};
 			/** @description Invalid file name or missing idempotency key */

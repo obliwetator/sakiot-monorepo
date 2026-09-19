@@ -13,6 +13,8 @@ export const API_ROUTES = {
 	oauthStart: "/api/oauth/start",
 	removeSilence:
 		"/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+	mediaJob: "/api/media-jobs/{job_id}",
+	mediaJobResult: "/api/media-jobs/{job_id}/result",
 	refresh: "/api/refresh",
 	logout: "/api/logout",
 	currentGuildDirs: "/api/current/{guild_id}",

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
 
 use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, route, web};
@@ -121,7 +120,7 @@ struct Gap {
     to_channel_id: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct SessionDownloadQuery {
     pub start: Option<f64>,
     pub end: Option<f64>,

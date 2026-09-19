@@ -14,6 +14,7 @@ import {
 	ensureRefreshed,
 	getCsrfToken,
 } from "./authedFetch";
+import type { MediaJobStatus } from "./mediaJobs";
 
 export { BASE_API_URL };
 
@@ -28,7 +29,9 @@ export type AuthDetails = {
 
 export type UserOverride = ApiSchema["UserOverride"];
 
-export type RemoveSilenceResponse = ApiSchema["RemoveSilenceResponse"];
+export type RemoveSilenceResponse =
+	| ApiSchema["RemoveSilenceResponse"]
+	| MediaJobStatus;
 
 export type CreateClipResponse = ApiSchema["CreateClipResponse"];
 
@@ -222,7 +225,7 @@ export const apiSlice = createApi({
 				`${apiUrl(API_ROUTES.sessionChannelMix, { recording_session_id })}?scope=${scope}`,
 		}),
 		generateSessionChannelMix: builder.mutation<
-			ChannelMixResponse,
+			ChannelMixResponse | MediaJobStatus,
 			{
 				recording_session_id: string;
 				scope?: ChannelMixScope;
@@ -248,7 +251,7 @@ export const apiSlice = createApi({
 					recording_session_id,
 				}),
 		}),
-		rebuildSessionWaveform: builder.mutation<SessionWaveformResponse, string>({
+		rebuildSessionWaveform: builder.mutation<MediaJobStatus, string>({
 			query: (recording_session_id) => ({
 				url: apiUrl(API_ROUTES.sessionWaveformRebuild, {
 					recording_session_id,
@@ -256,17 +259,16 @@ export const apiSlice = createApi({
 				method: "POST",
 			}),
 		}),
-		rebuildSilenceFreeSessionWaveform: builder.mutation<
-			SessionWaveformResponse,
-			string
-		>({
-			query: (recording_session_id) => ({
-				url: apiUrl(API_ROUTES.sessionSilenceFreeWaveformRebuild, {
-					recording_session_id,
+		rebuildSilenceFreeSessionWaveform: builder.mutation<MediaJobStatus, string>(
+			{
+				query: (recording_session_id) => ({
+					url: apiUrl(API_ROUTES.sessionSilenceFreeWaveformRebuild, {
+						recording_session_id,
+					}),
+					method: "POST",
 				}),
-				method: "POST",
-			}),
-		}),
+			},
+		),
 		createSessionClip: builder.mutation<
 			CreateClipResponse,
 			{

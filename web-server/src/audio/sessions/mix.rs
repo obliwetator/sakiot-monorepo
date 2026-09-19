@@ -35,7 +35,6 @@ use cache::{
     mix_source_fingerprint,
 };
 use occupancy::{MixWindow, fallback_mix_windows, load_bot_occupancy_windows};
-use render::start_mix_job;
 
 #[cfg(test)]
 use cache::{MixCacheMetadata, cache_is_valid};
@@ -178,47 +177,11 @@ type MixJobs = HashMap<MixJobKey, MixJobHandle>;
 #[derive(Default, Debug)]
 pub struct SessionMixContainer {
     jobs: RwLock<MixJobs>,
-    locks: Mutex<HashMap<i64, Arc<Mutex<()>>>>,
 }
 
 impl SessionMixContainer {
-    async fn key_lock(&self, session_id: i64) -> Arc<Mutex<()>> {
-        let mut locks = self.locks.lock().await;
-        locks
-            .entry(session_id)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    }
-
     async fn job(&self, session_id: i64, scope: ChannelMixScope) -> Option<Arc<Mutex<MixJob>>> {
         self.jobs.read().await.get(&(session_id, scope)).cloned()
-    }
-
-    async fn remove_if_same(
-        &self,
-        session_id: i64,
-        scope: ChannelMixScope,
-        expected: &Arc<Mutex<MixJob>>,
-    ) {
-        let mut jobs = self.jobs.write().await;
-        if jobs
-            .get(&(session_id, scope))
-            .is_some_and(|current| Arc::ptr_eq(current, expected))
-        {
-            jobs.remove(&(session_id, scope));
-        }
-        if !jobs.keys().any(|(id, _)| *id == session_id) {
-            // The session's creation lock is only needed while a job exists
-            // for it; dropping it keeps the lock map from growing with every
-            // session ever mixed. A waiter still holding a clone keeps it.
-            let mut locks = self.locks.lock().await;
-            if locks
-                .get(&session_id)
-                .is_some_and(|lock| Arc::strong_count(lock) == 1)
-            {
-                locks.remove(&session_id);
-            }
-        }
     }
 }
 
@@ -383,9 +346,16 @@ pub async fn get_session_channel_mix(
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, token.user_id).await?;
     let plan = build_mix_plan(&pool, &access, token.user_id, query.scope()).await?;
-    Ok(web::Json(
-        mix_response(&plan, &access, &container, true).await?,
-    ))
+    let mut response = mix_response(&plan, &access, &container, true).await?;
+    let resource = format!("session-mix:{session_id}:{}", query.scope().as_str());
+    if let Some(job) =
+        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_mix", &resource)
+            .await?
+    {
+        response.status = ChannelMixStatus::Processing;
+        response.progress = job.progress;
+    }
+    Ok(web::Json(response))
 }
 
 #[utoipa::path(
@@ -409,13 +379,13 @@ pub async fn get_session_channel_mix(
 )]
 #[post("/audio/sessions/{recording_session_id}/channel-mix")]
 pub async fn generate_session_channel_mix(
+    request: HttpRequest,
     path: web::Path<i64>,
     query: web::Query<ChannelMixQuery>,
     body: Option<web::Json<GenerateChannelMixBody>>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
     container: web::Data<SessionMixContainer>,
-    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -447,9 +417,98 @@ pub async fn generate_session_channel_mix(
         return Ok(response.json(status));
     }
 
-    start_mix_job(&pool, &container, media.get_ref(), plan.clone()).await?;
-    let response = mix_response(&plan, &access, &container, false).await?;
-    Ok(HttpResponse::Accepted().json(response))
+    let participants =
+        serde_json::to_value(&plan.settings.participants).map_err(|_| AppError::InternalError)?;
+    let job_request = crate::media_jobs::MediaJobRequest::SessionMix {
+        session_id,
+        scope: plan.scope.as_str().to_owned(),
+        participants,
+    };
+    let resource = format!("session-mix:{session_id}:{}", plan.scope.as_str());
+    let key = request
+        .headers()
+        .get("Idempotency-Key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let job = crate::media_jobs::enqueue(
+        pool.get_ref(),
+        Some(access.guild_id),
+        token.user_id,
+        &key,
+        &resource,
+        &job_request,
+    )
+    .await?;
+    Ok(HttpResponse::Accepted()
+        .insert_header((header::LOCATION, format!("/api/media-jobs/{}", job.id)))
+        .json(job))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_session_mix_job(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    user_id: i64,
+    session_id: i64,
+    scope: &str,
+    participants: serde_json::Value,
+    job_id: &str,
+    attempt_token: &str,
+) -> Result<(Option<String>, Option<PathBuf>), AppError> {
+    let scope = match scope {
+        "all_recordings" => ChannelMixScope::AllRecordings,
+        "selected_session" => ChannelMixScope::SelectedSession,
+        _ => return Err(AppError::BadRequest("Unknown channel mix scope".into())),
+    };
+    let pool_data = web::Data::new(pool.clone());
+    let access = require_session_access(&pool_data, session_id, user_id).await?;
+    let base = build_mix_plan(&pool_data, &access, user_id, scope).await?;
+    let requested: Vec<ChannelMixParticipantSettings> = serde_json::from_value(participants)
+        .map_err(|_| AppError::BadRequest("Invalid channel mix settings".into()))?;
+    let settings = canonical_generation_settings(&base, requested)?;
+    let plan = base.with_settings(settings);
+    if plan.blocking_reason(&access).is_some() {
+        return Err(AppError::Conflict(
+            "Channel mix sources are not finalized".into(),
+        ));
+    }
+    let job = Arc::new(Mutex::new(MixJob {
+        source_fingerprint: plan.source_fingerprint.clone(),
+        settings: plan.settings.clone(),
+        progress: 0,
+        failed: None,
+    }));
+    crate::media_jobs::report_progress(pool, job_id, attempt_token, "rendering", 5).await?;
+    let rendering = render::render_mix(
+        &pool_data,
+        media,
+        &plan,
+        &job,
+        Some((pool, job_id, attempt_token)),
+    );
+    tokio::pin!(rendering);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut rendering => { result?; break; }
+            _ = interval.tick() => {
+                let value = job.lock().await.progress;
+                if !crate::media_jobs::report_progress(pool, job_id, attempt_token, "rendering", value).await? {
+                    return Err(AppError::Conflict("Media job lease lost".into()));
+                }
+            }
+        }
+    }
+    Ok((
+        Some(format!(
+            "/api/audio/sessions/{session_id}/channel-mix/media?scope={}",
+            scope.as_str()
+        )),
+        None,
+    ))
 }
 
 #[utoipa::path(

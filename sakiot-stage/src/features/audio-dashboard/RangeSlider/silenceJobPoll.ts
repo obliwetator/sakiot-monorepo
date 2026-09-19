@@ -1,13 +1,18 @@
 import type { RemoveSilenceResponse } from "../../../app/apiSlice";
 
-/** The server answers the first call with this message while it spawns ffmpeg. */
+type CompletedSilenceResponse = Extract<
+	RemoveSilenceResponse,
+	{ message: string }
+>;
+
+/** Compatibility with older servers that returned a message instead of a job. */
 export const SILENCE_JOB_PENDING_MESSAGE = "Request Accepted";
 /** Gap between accepted responses. The follow-up call blocks server-side, so
  * a healthy job normally needs one retry and never reaches the gap. */
 export const SILENCE_JOB_POLL_INTERVAL_MS = 1_000;
 /** Hard bound on how long we keep asking. A server that keeps answering
  * "Request Accepted" must not spin the browser forever. */
-export const SILENCE_JOB_MAX_ATTEMPTS = 60;
+export const SILENCE_JOB_MAX_ATTEMPTS = 1_800;
 
 export class SilenceJobTimeoutError extends Error {
 	constructor(attempts: number) {
@@ -67,7 +72,7 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
  */
 export async function waitForSilenceJob(
 	options: SilenceJobPollOptions,
-): Promise<RemoveSilenceResponse> {
+): Promise<CompletedSilenceResponse> {
 	const intervalMs = options.intervalMs ?? SILENCE_JOB_POLL_INTERVAL_MS;
 	const maxAttempts = options.maxAttempts ?? SILENCE_JOB_MAX_ATTEMPTS;
 	const sleep = options.sleep ?? defaultSleep;
@@ -76,7 +81,16 @@ export async function waitForSilenceJob(
 		if (options.signal?.aborted) throw abortError();
 
 		const response = await options.request();
-		if (response.message !== SILENCE_JOB_PENDING_MESSAGE) return response;
+		if ("message" in response) {
+			if (response.message !== SILENCE_JOB_PENDING_MESSAGE) return response;
+		} else if (response.status === "ready") {
+			return {
+				message: "Success",
+				url: response.result_url ?? "",
+			};
+		} else if (response.status === "failed") {
+			throw new Error(response.error ?? "Silence removal failed");
+		}
 
 		if (attempt === maxAttempts) throw new SilenceJobTimeoutError(attempt);
 		await sleep(intervalMs, options.signal);

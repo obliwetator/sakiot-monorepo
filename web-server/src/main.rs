@@ -43,6 +43,9 @@ use web_server::health::healthz;
 use web_server::media_archive::{
     MediaArchive, run_media_command, spawn_archive_worker, spawn_local_cleanup,
 };
+use web_server::media_jobs::{
+    get_media_job, get_media_job_result, spawn_worker as spawn_media_worker,
+};
 use web_server::members::{get_guild_roles, get_role_members, get_role_view};
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
@@ -133,6 +136,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
+    let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());
     spawn_archive_worker(pool.clone(), media_archive.clone());
     spawn_local_cleanup(pool.clone(), media_archive.clone());
 
@@ -192,6 +196,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(logout)
             .service(get_current_user)
             .service(get_current_user_guilds)
+            .service(get_media_job)
+            .service(get_media_job_result)
             .service(get_live_stems)
             .service(get_current_month_permission)
             .service(remove_silence)
@@ -285,6 +291,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let result = server.await;
     compose_worker.abort();
     let _ = compose_worker.await;
+    media_worker.abort();
+    let _ = media_worker.await;
     result?;
     Ok(())
 }

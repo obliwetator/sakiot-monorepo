@@ -13,6 +13,7 @@ const SAMPLE: Record<string, string> = {
 	user_id: "5",
 	stem: "stem",
 	file: "file.ogg",
+	job_id: "job-1",
 };
 
 describe("apiUrl", () => {

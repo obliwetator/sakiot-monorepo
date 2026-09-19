@@ -3,11 +3,11 @@ use base64::prelude::*;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
+use crate::media_jobs::MediaJobRequest;
 use crate::permissions::require_channel_access;
 use crate::waveform::{PeakDensity, generate_peaks_background};
 
@@ -16,65 +16,7 @@ use super::serve::AudioQuery;
 use super::types::WaveformProgressContainer;
 use super::util::{file_exists, get_file_path_root, is_stale, is_valid_file_segment};
 
-const LIVE_WAVEFORM_READY: i16 = 100;
-const FINAL_WAVEFORM_WRITTEN: i16 = 101;
 const LIVE_WAVEFORM_MIN_REFRESH: Duration = Duration::from_secs(5);
-
-async fn silence_free_waveform(
-    path: &(i64, i64, i32, i32, String),
-    progress_map: &web::Data<WaveformProgressContainer>,
-) -> Result<HttpResponse, AppError> {
-    let base = get_file_path_root(&no_silence_recording_path(), path);
-    let input_file = format!("{}/{}{}.ogg", base, NO_SILENCE_PREFIX, path.4);
-    // Prefix the cache/progress key so it never collides with the normal one.
-    let cache_key = format!("{}{}", NO_SILENCE_PREFIX, path.4);
-    let output = format!("{}{}.dat", waveform_path(), cache_key);
-
-    // Serve the cache only if it's newer than the silence-free audio it was
-    // built from; a regenerated (e.g. post-live) source invalidates it.
-    if file_exists(&output).await && !is_stale(&input_file, &output).await {
-        return waveform_response(&output).await;
-    }
-
-    // Claim the generation slot (or report an in-flight one) under one lock.
-    {
-        let mut progress = progress_map.0.write().await;
-        if let Some(&pct) = progress.get(&cache_key) {
-            if pct == -1 {
-                progress.remove(&cache_key);
-                return Err(AppError::InternalError);
-            }
-            return Ok(HttpResponse::Ok().json(json!({ "progress": pct.clamp(0, 99) })));
-        }
-        if !file_exists(&input_file).await {
-            return Err(AppError::FileNotFound);
-        }
-        progress.insert(cache_key.clone(), 0);
-    }
-
-    let progress_map_clone = progress_map.clone();
-    tokio::spawn(async move {
-        if let Err(e) = generate_peaks_background(
-            input_file,
-            output,
-            cache_key.clone(),
-            PeakDensity::DEFAULT,
-            progress_map_clone.clone(),
-            None,
-            None,
-        )
-        .await
-        {
-            error!("Error generating silence-free peaks: {:?}", e);
-            // generate_peaks_background can fail before ever touching the
-            // slot; mark it failed so later polls surface a clean error
-            // instead of reporting "building" forever.
-            progress_map_clone.0.write().await.insert(cache_key, -1);
-        }
-    });
-
-    Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
-}
 
 async fn waveform_response(output: &str) -> Result<HttpResponse, AppError> {
     waveform_response_with_progress(output, 100).await
@@ -119,10 +61,9 @@ pub async fn get_waveform_data(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
     query: web::Query<AudioQuery>,
-    progress_map: web::Data<WaveformProgressContainer>,
+    _progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
-    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let path = path.into_inner();
     if !is_valid_file_segment(&path.4) {
@@ -144,11 +85,19 @@ pub async fn get_waveform_data(
     // distinct cache/progress key. No DB cache marker — the file is final
     // once produced, so on-disk existence is the cache.
     if query.wants_silence_free() {
-        return silence_free_waveform(&path, &progress_map).await;
+        let base = get_file_path_root(&no_silence_recording_path(), &path);
+        let input_file = format!("{base}/{NO_SILENCE_PREFIX}{}.ogg", path.4);
+        let output = format!("{}{}{}.dat", waveform_path(), NO_SILENCE_PREFIX, path.4);
+        if file_exists(&output).await && !is_stale(&input_file, &output).await {
+            return waveform_response(&output).await;
+        }
+        if !file_exists(&input_file).await {
+            return Err(AppError::FileNotFound);
+        }
+        let version = format!("final-{}", query.t.unwrap_or_default());
+        return enqueue_recording_waveform(&pool, token.user_id, &path, true, &version).await;
     }
 
-    let base_path_recording: String = get_file_path_root(&recording_path(), &path);
-    let file_path = format!("{}/{}.ogg", base_path_recording, path.4);
     let output = format!("{}{}.dat", waveform_path(), path.4);
     let file_name = path.4.clone();
 
@@ -168,57 +117,6 @@ pub async fn get_waveform_data(
         return waveform_response(&output).await;
     }
 
-    if !file_exists(&file_path).await {
-        let audio_file_id = crate::media_archive::recording_id(
-            pool.get_ref(),
-            path.0,
-            path.1,
-            path.2,
-            path.3,
-            &path.4,
-        )
-        .await?
-        .ok_or(AppError::FileNotFound)?;
-        media
-            .ensure_recording_local(
-                pool.get_ref(),
-                audio_file_id,
-                std::path::Path::new(&file_path),
-            )
-            .await?;
-    }
-
-    let pct = {
-        let progress = progress_map.0.read().await;
-        progress.get(&file_name).copied()
-    };
-    if let Some(pct) = pct {
-        if pct == -1 {
-            progress_map.0.write().await.remove(&file_name);
-            return Err(AppError::InternalError);
-        }
-        if pct == FINAL_WAVEFORM_WRITTEN {
-            return Ok(HttpResponse::Ok().json(json!({ "progress": 99 })));
-        }
-        if pct == LIVE_WAVEFORM_READY {
-            if file_exists(&output).await {
-                if end_ts.is_none() {
-                    let response = waveform_response_with_progress(&output, pct).await;
-                    progress_map.0.write().await.remove(&file_name);
-                    return response;
-                }
-                progress_map.0.write().await.remove(&file_name);
-            } else {
-                progress_map.0.write().await.remove(&file_name);
-            }
-        } else {
-            if end_ts.is_none() && file_exists(&output).await {
-                return waveform_response_with_progress(&output, pct).await;
-            }
-            return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
-        }
-    }
-
     // A live recording keeps serving its last complete atomic snapshot while
     // a refresh is in flight. Do not launch a new audiowaveform process more
     // often than the snapshot interval, even when several track rows poll at
@@ -235,101 +133,131 @@ pub async fn get_waveform_data(
         return waveform_response_with_progress(&output, 100).await;
     }
 
-    {
-        let mut progress = progress_map.0.write().await;
-        if let Some(&pct) = progress.get(&file_name) {
-            if pct == -1 {
-                progress.remove(&file_name);
-                return Err(AppError::InternalError);
-            }
-            if pct == FINAL_WAVEFORM_WRITTEN {
-                return Ok(HttpResponse::Ok().json(json!({ "progress": 99 })));
-            }
-            if pct != LIVE_WAVEFORM_READY || end_ts.is_none() {
-                return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
-            }
-            progress.remove(&file_name);
-        }
-        progress.insert(file_name.clone(), 0);
+    let version = end_ts.map_or_else(
+        || format!("live-{}", chrono::Utc::now().timestamp() / 5),
+        |value| value.to_string(),
+    );
+    let version = format!("{version}-{}", query.t.unwrap_or_default());
+    enqueue_recording_waveform(&pool, token.user_id, &path, false, &version).await
+}
+
+async fn enqueue_recording_waveform(
+    pool: &web::Data<Pool<Postgres>>,
+    user_id: i64,
+    path: &(i64, i64, i32, i32, String),
+    silence_free: bool,
+    version: &str,
+) -> Result<HttpResponse, AppError> {
+    let request = MediaJobRequest::RecordingWaveform {
+        guild_id: path.0,
+        channel_id: path.1,
+        year: path.2,
+        month: path.3,
+        file_name: path.4.clone(),
+        silence_free,
+    };
+    let variant = if silence_free { "silence" } else { "original" };
+    let resource = format!(
+        "recording-waveform:{}/{}/{}/{}/{}:{variant}",
+        path.0, path.1, path.2, path.3, path.4
+    );
+    let key = format!("waveform-{variant}-{}-{version}", path.4);
+    let status =
+        crate::media_jobs::enqueue(pool, Some(path.0), user_id, &key, &resource, &request).await?;
+    Ok(HttpResponse::Accepted()
+        .insert_header((
+            actix_web::http::header::LOCATION,
+            format!("/api/media-jobs/{}", status.id),
+        ))
+        .json(status))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_recording_waveform_job(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    guild_id: i64,
+    channel_id: i64,
+    year: i32,
+    month: i32,
+    file_name: &str,
+    silence_free: bool,
+    job_id: &str,
+    attempt_token: &str,
+) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
+    let end_ts: Option<i64> = if silence_free {
+        None
+    } else {
+        sqlx::query_scalar("SELECT end_ts FROM audio_files WHERE file_name=$1")
+            .bind(file_name)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(AppError::FileNotFound)?
+    };
+    let path = (guild_id, channel_id, year, month, file_name.to_owned());
+    let (input, cache_key) = if silence_free {
+        let base = get_file_path_root(&no_silence_recording_path(), &path);
+        (
+            format!("{base}/{NO_SILENCE_PREFIX}{file_name}.ogg"),
+            format!("{NO_SILENCE_PREFIX}{file_name}"),
+        )
+    } else {
+        let base = get_file_path_root(&recording_path(), &path);
+        let input = format!("{base}/{file_name}.ogg");
+        let audio_file_id =
+            crate::media_archive::recording_id(pool, guild_id, channel_id, year, month, file_name)
+                .await?
+                .ok_or(AppError::FileNotFound)?;
+        media
+            .ensure_recording_local(pool, audio_file_id, std::path::Path::new(&input))
+            .await?;
+        (input, file_name.to_owned())
+    };
+    if !file_exists(&input).await {
+        return Err(AppError::FileNotFound);
     }
-
-    let progress_map_clone = progress_map.clone();
-    let pool_clone = pool.clone();
-    let generation_file_name = file_name.clone();
-    tokio::spawn(async move {
-        if let Err(e) = generate_peaks_background(
-            file_path,
-            output,
-            file_name.clone(),
-            PeakDensity::DEFAULT,
-            progress_map_clone.clone(),
-            Some(FINAL_WAVEFORM_WRITTEN),
-            None,
-        )
-        .await
-        {
-            error!("Error generating peaks: {:?}", e);
-            // generate_peaks_background can fail before ever touching the
-            // slot (e.g. probe or spawn failures); mark it failed so later
-            // polls surface a clean error instead of reporting 0 forever.
-            progress_map_clone.0.write().await.insert(file_name, -1);
-            return;
-        }
-
-        let current_end_ts = match sqlx::query!(
-            "SELECT end_ts FROM audio_files WHERE file_name = $1",
-            generation_file_name
-        )
-        .fetch_optional(pool_clone.get_ref())
-        .await
-        {
-            Ok(Some(row)) => row.end_ts,
-            Ok(None) => {
-                progress_map_clone.0.write().await.insert(file_name, -1);
-                return;
-            }
-            Err(e) => {
-                error!("Error loading waveform cache state: {:?}", e);
-                progress_map_clone.0.write().await.insert(file_name, -1);
-                return;
-            }
-        };
-
-        let Some(current_end_ts) = current_end_ts else {
-            progress_map_clone
-                .0
-                .write()
-                .await
-                .insert(file_name, LIVE_WAVEFORM_READY);
-            return;
-        };
-
-        match sqlx::query!(
-            "UPDATE audio_files SET waveform_end_ts = $2 WHERE file_name = $1 AND end_ts = $2",
-            generation_file_name,
-            current_end_ts
-        )
-        .execute(pool_clone.get_ref())
-        .await
-        {
-            Ok(result) if result.rows_affected() > 0 => {
-                progress_map_clone.0.write().await.remove(&file_name);
-            }
-            Ok(_) => {
-                progress_map_clone.0.write().await.remove(&file_name);
-                info!(
-                    "Skipped waveform cache marker update because end_ts changed for {}",
-                    file_name
-                );
-            }
-            Err(e) => {
-                error!("Error updating waveform cache marker: {:?}", e);
-                progress_map_clone.0.write().await.insert(file_name, -1);
-            }
-        }
-    });
-
-    Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
+    let output = std::path::PathBuf::from(format!("{}{cache_key}.dat", waveform_path()));
+    let attempt_output = output.with_extension(format!("{job_id}.{attempt_token}.tmp.dat"));
+    let progress = web::Data::new(WaveformProgressContainer(tokio::sync::RwLock::new(
+        std::collections::HashMap::new(),
+    )));
+    crate::media_jobs::track_progress(
+        pool,
+        job_id,
+        attempt_token,
+        "waveform",
+        &progress,
+        &cache_key,
+        async {
+            generate_peaks_background(
+                input,
+                attempt_output.to_string_lossy().into_owned(),
+                cache_key.clone(),
+                PeakDensity::DEFAULT,
+                progress.clone(),
+                None,
+                None,
+            )
+            .await
+            .map_err(|error| AppError::IoError(std::io::Error::other(error.to_string())))
+        },
+    )
+    .await?;
+    let mut tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
+    tokio::fs::rename(&attempt_output, &output).await?;
+    if let Some(end_ts) = end_ts {
+        sqlx::query("UPDATE audio_files SET waveform_end_ts=$2 WHERE file_name=$1 AND end_ts=$2")
+            .bind(file_name)
+            .bind(end_ts)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let url = format!(
+        "/api/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file_name}{}",
+        if silence_free { "?silence=true" } else { "" }
+    );
+    crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
+    Ok((Some(url), None))
 }
 
 // Include the immutable file revision so an old generator cannot populate the
@@ -339,30 +267,6 @@ fn clip_waveform_key(clip_id: &str, input: &std::path::Path) -> String {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hash);
     format!("clip-{clip_id}-{:016x}", hash.finish())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ClipWaveformProgress {
-    Vacant,
-    Building(i16),
-    Failed,
-}
-
-fn take_clip_waveform_progress(
-    progress: &mut std::collections::HashMap<String, i16>,
-    cache_key: &str,
-) -> ClipWaveformProgress {
-    match progress.get(cache_key).copied() {
-        Some(-1) => {
-            // The client treats this settled result as terminal and stops
-            // polling. Removing it makes the explicit Retry action's next
-            // request eligible to claim a fresh generation slot.
-            progress.remove(cache_key);
-            ClipWaveformProgress::Failed
-        }
-        Some(pct) => ClipWaveformProgress::Building(pct.clamp(0, 99)),
-        None => ClipWaveformProgress::Vacant,
-    }
 }
 
 // A clip is its own trimmed, immutable .ogg — no live/end_ts logic. Generate
@@ -390,10 +294,10 @@ fn take_clip_waveform_progress(
 #[get("/audio/clips/waveform/{guild_id}/{clip_id}")]
 pub async fn get_clip_waveform_data(
     path: web::Path<(i64, String)>,
-    progress_map: web::Data<WaveformProgressContainer>,
+    query: web::Query<AudioQuery>,
+    _progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
-    media: web::Data<MediaArchive>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, clip_id) = path.into_inner();
     if !is_valid_file_segment(&clip_id) {
@@ -420,8 +324,6 @@ pub async fn get_clip_waveform_data(
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let input_path = crate::media_archive::clip_local_path(&saved_file_name)?;
-    let input_file = input_path.to_string_lossy().into_owned();
-
     // Prefix the cache/progress key so it never collides with recording stems
     // ({ts}-{user_id}) or the silence-free (_no_silence_) key.
     let cache_key = clip_waveform_key(&clip_id, &input_path);
@@ -431,128 +333,80 @@ pub async fn get_clip_waveform_data(
         return waveform_response(&output).await;
     }
 
-    media
-        .ensure_clip_local(pool.get_ref(), &clip_id, &input_path)
-        .await?;
-
-    // Claim the generation slot (or report an in-flight one) under one lock.
-    {
-        let mut progress = progress_map.0.write().await;
-        match take_clip_waveform_progress(&mut progress, &cache_key) {
-            ClipWaveformProgress::Failed => {
-                return Ok(HttpResponse::Ok().json(json!({
-                    "progress": 0,
-                    "error": "Waveform generation failed"
-                })));
-            }
-            ClipWaveformProgress::Building(pct) => {
-                return Ok(HttpResponse::Ok().json(json!({ "progress": pct })));
-            }
-            ClipWaveformProgress::Vacant => {}
-        }
-        if !file_exists(&input_file).await {
-            return Err(AppError::FileNotFound);
-        }
-        progress.insert(cache_key.clone(), 0);
-    }
-
-    let progress_map_clone = progress_map.clone();
-    tokio::spawn(async move {
-        if let Err(e) = generate_peaks_background(
-            input_file,
-            output,
-            cache_key.clone(),
-            PeakDensity::DEFAULT,
-            progress_map_clone.clone(),
-            None,
-            None,
-        )
-        .await
-        {
-            error!("Error generating clip peaks: {:?}", e);
-            // generate_peaks_background can fail before ever touching the
-            // slot; mark it failed so later polls surface a clean error
-            // instead of reporting "building" forever.
-            progress_map_clone.0.write().await.insert(cache_key, -1);
-        }
-    });
-
-    Ok(HttpResponse::Ok().json(json!({ "progress": 0 })))
+    let request = MediaJobRequest::ClipWaveform {
+        guild_id,
+        clip_id: clip_id.clone(),
+    };
+    let key = format!("waveform-{cache_key}-{}", query.t.unwrap_or_default());
+    let status = crate::media_jobs::enqueue(
+        pool.get_ref(),
+        Some(guild_id),
+        token.user_id,
+        &key,
+        &cache_key,
+        &request,
+    )
+    .await?;
+    Ok(HttpResponse::Accepted()
+        .insert_header((
+            actix_web::http::header::LOCATION,
+            format!("/api/media-jobs/{}", status.id),
+        ))
+        .json(status))
 }
 
-/// Spawns background generation of a clip's waveform at clip creation time, so
-/// the first viewer request finds the .dat cache already on disk instead of
-/// building it then and there. The clip file is immutable, so on-disk
-/// existence is final. Claims the shared progress slot up front so a viewer
-/// hitting the lazy endpoint mid-build reports progress instead of spawning a
-/// duplicate generation.
-pub fn spawn_clip_waveform(
-    clip_id: String,
-    input_file: std::path::PathBuf,
-    progress: web::Data<WaveformProgressContainer>,
-) {
-    let cache_key = clip_waveform_key(&clip_id, &input_file);
-    let output = format!("{}{}.dat", waveform_path(), cache_key);
-    tokio::spawn(async move {
-        if file_exists(&output).await {
-            return;
-        }
-        {
-            let mut map = progress.0.write().await;
-            if map.get(&cache_key).copied() == Some(-1) {
-                map.remove(&cache_key);
-            }
-            map.insert(cache_key.clone(), 0);
-        }
-        if let Err(error) = generate_peaks_background(
-            input_file.to_string_lossy().into_owned(),
-            output,
-            cache_key.clone(),
-            PeakDensity::DEFAULT,
-            progress.clone(),
-            None,
-            None,
-        )
-        .await
-        {
-            error!("Error generating clip peaks at creation: {:?}", error);
-            // generate_peaks_background leaves the slot on early spawn
-            // failures; mark it failed so the lazy endpoint surfaces a clean
-            // error instead of reporting "building" forever.
-            progress.0.write().await.insert(cache_key, -1);
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use super::{ClipWaveformProgress, take_clip_waveform_progress};
-
-    #[test]
-    fn failed_clip_waveform_is_terminal_once_and_then_retryable() {
-        let mut progress = HashMap::from([("clip-key".to_string(), -1)]);
-
-        assert_eq!(
-            take_clip_waveform_progress(&mut progress, "clip-key"),
-            ClipWaveformProgress::Failed
-        );
-        assert!(!progress.contains_key("clip-key"));
-        assert_eq!(
-            take_clip_waveform_progress(&mut progress, "clip-key"),
-            ClipWaveformProgress::Vacant
-        );
-    }
-
-    #[test]
-    fn active_clip_waveform_reports_bounded_progress_without_clearing_it() {
-        let mut progress = HashMap::from([("clip-key".to_string(), 140)]);
-
-        assert_eq!(
-            take_clip_waveform_progress(&mut progress, "clip-key"),
-            ClipWaveformProgress::Building(99)
-        );
-        assert_eq!(progress.get("clip-key"), Some(&140));
-    }
+pub(crate) async fn run_clip_waveform_job(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    guild_id: i64,
+    clip_id: &str,
+    job_id: &str,
+    attempt_token: &str,
+) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
+    use sqlx::Row;
+    let row = sqlx::query(
+        "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND deleted_at IS NULL",
+    )
+    .bind(guild_id)
+    .bind(clip_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
+    let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
+    let input_path =
+        crate::media_archive::clip_local_path(&saved_file_name.ok_or(AppError::ClipNotFound)?)?;
+    media.ensure_clip_local(pool, clip_id, &input_path).await?;
+    let cache_key = clip_waveform_key(clip_id, &input_path);
+    let output = std::path::PathBuf::from(format!("{}{cache_key}.dat", waveform_path()));
+    let attempt_output = output.with_extension(format!("{job_id}.{attempt_token}.tmp.dat"));
+    let progress = web::Data::new(WaveformProgressContainer(tokio::sync::RwLock::new(
+        std::collections::HashMap::new(),
+    )));
+    crate::media_jobs::track_progress(
+        pool,
+        job_id,
+        attempt_token,
+        "waveform",
+        &progress,
+        &cache_key,
+        async {
+            generate_peaks_background(
+                input_path.to_string_lossy().into_owned(),
+                attempt_output.to_string_lossy().into_owned(),
+                cache_key.clone(),
+                PeakDensity::DEFAULT,
+                progress.clone(),
+                None,
+                None,
+            )
+            .await
+            .map_err(|error| AppError::IoError(std::io::Error::other(error.to_string())))
+        },
+    )
+    .await?;
+    let tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
+    tokio::fs::rename(&attempt_output, &output).await?;
+    let url = format!("/api/audio/clips/waveform/{guild_id}/{clip_id}");
+    crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
+    Ok((Some(url), None))
 }

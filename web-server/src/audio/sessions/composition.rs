@@ -139,7 +139,8 @@ pub(super) async fn compose_session_inner(
         .arg(output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
     if track_original_timeline {
         // silenceremove compresses output timestamps, so its out_time_us cannot
@@ -377,15 +378,4 @@ pub(super) fn session_silence_free_path(access: &SessionAccess) -> Result<PathBu
             "{}-{}-{ended_at_ms}.ogg",
             access.session_id, access.started_at_ms
         )))
-}
-
-pub(super) fn temporary_ogg_path(prefix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("{prefix}-{}.ogg", uuid::Uuid::new_v4()))
-}
-
-pub(super) fn schedule_temporary_cleanup(path: PathBuf) {
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(10 * 60)).await;
-        let _ = tokio::fs::remove_file(path).await;
-    });
 }

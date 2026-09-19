@@ -11,11 +11,13 @@ export function parseSilenceRemovalStatus(
 	}
 	const candidate = value as { status?: unknown; progress?: unknown };
 	const status =
-		candidate.status === "processing" ||
-		candidate.status === "ready" ||
-		candidate.status === "failed"
-			? candidate.status
-			: "idle";
+		candidate.status === "queued" ||
+		candidate.status === "running" ||
+		candidate.status === "processing"
+			? "processing"
+			: candidate.status === "ready" || candidate.status === "failed"
+				? candidate.status
+				: "idle";
 	const progress =
 		typeof candidate.progress === "number" &&
 		Number.isFinite(candidate.progress)

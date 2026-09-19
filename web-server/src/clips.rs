@@ -582,7 +582,6 @@ pub async fn create_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     media: web::Data<MediaArchive>,
-    progress: web::Data<crate::audio::types::WaveformProgressContainer>,
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
@@ -723,12 +722,6 @@ pub async fn create_clip(
         error!("Database error inserting clip: {:?}", e);
         AppError::InternalError
     })?;
-
-    crate::audio::spawn_clip_waveform(
-        clip_id.clone(),
-        std::path::PathBuf::from(&full_save_path),
-        progress,
-    );
 
     Ok(HttpResponse::Ok().json(CreateClipResponse {
         status: "success",

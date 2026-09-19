@@ -14,71 +14,15 @@ use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
 
 use super::super::{is_ffmpeg_progress_line, milliseconds_as_seconds};
-use super::cache::{MixCacheMetadata, cache_is_valid};
-use super::{MIX_FINGERPRINT, MIX_OUTPUT, MIX_SETTINGS, MixJob, MixPlan, SessionMixContainer};
+use super::cache::MixCacheMetadata;
+use super::{MIX_FINGERPRINT, MIX_OUTPUT, MIX_SETTINGS, MixJob, MixPlan};
 
-pub(super) async fn start_mix_job(
-    pool: &web::Data<Pool<Postgres>>,
-    container: &web::Data<SessionMixContainer>,
-    media: &MediaArchive,
-    plan: MixPlan,
-) -> Result<(), AppError> {
-    let lock = container.key_lock(plan.session_id).await;
-    let _guard = lock.lock().await;
-    if let Some(existing) = container.job(plan.session_id, plan.scope).await {
-        let job = existing.lock().await;
-        if job.failed.is_none() {
-            return Ok(());
-        }
-    }
-    if cache_is_valid(&plan).await {
-        return Ok(());
-    }
-
-    let job = Arc::new(Mutex::new(MixJob {
-        source_fingerprint: plan.source_fingerprint.clone(),
-        settings: plan.settings.clone(),
-        progress: 0,
-        failed: None,
-    }));
-    container
-        .jobs
-        .write()
-        .await
-        .insert((plan.session_id, plan.scope), job.clone());
-    let pool = pool.clone();
-    let container = container.clone();
-    let media = media.clone();
-    tokio::spawn(async move {
-        let render_lock = container.key_lock(plan.session_id).await;
-        let _render_guard = render_lock.lock().await;
-        let result = render_mix(&pool, &media, &plan, &job).await;
-        match result {
-            Ok(()) => {
-                container
-                    .remove_if_same(plan.session_id, plan.scope, &job)
-                    .await
-            }
-            Err(error) => {
-                tracing::error!(
-                    session_id = plan.session_id,
-                    "channel mix render failed: {}",
-                    error
-                );
-                let mut state = job.lock().await;
-                state.progress = 0;
-                state.failed = Some("Channel mix generation failed. Try again.".into());
-            }
-        }
-    });
-    Ok(())
-}
-
-async fn render_mix(
+pub(super) async fn render_mix<'a>(
     pool: &web::Data<Pool<Postgres>>,
     media: &MediaArchive,
     plan: &MixPlan,
     job: &Arc<Mutex<MixJob>>,
+    fence: Option<(&'a Pool<Postgres>, &'a str, &'a str)>,
 ) -> Result<(), AppError> {
     if plan.duration_ms <= 0 || plan.sources.is_empty() {
         return Err(AppError::BadRequest(
@@ -133,6 +77,11 @@ async fn render_mix(
         let _ = tokio::fs::remove_file(&settings_temporary).await;
         return Err(error.into());
     }
+    let publication = if let Some((fence_pool, job_id, attempt_token)) = fence {
+        Some(crate::media_jobs::begin_publication(fence_pool, job_id, attempt_token).await?)
+    } else {
+        None
+    };
     if let Err(error) = tokio::fs::rename(&temporary, plan.cache_dir.join(MIX_OUTPUT)).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
@@ -154,6 +103,14 @@ async fn render_mix(
         let _ = tokio::fs::remove_file(plan.cache_dir.join(MIX_FINGERPRINT)).await;
         let _ = tokio::fs::remove_file(&settings_temporary).await;
         return Err(error.into());
+    }
+    if let (Some(tx), Some((_, job_id, attempt_token))) = (publication, fence) {
+        let url = format!(
+            "/api/audio/sessions/{}/channel-mix/media?scope={}",
+            plan.session_id,
+            plan.scope.as_str()
+        );
+        crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     }
     job.lock().await.progress = 100;
     Ok(())
@@ -194,7 +151,8 @@ pub(super) async fn run_mix_ffmpeg(
         .arg(output)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::ServiceUnavailable(
