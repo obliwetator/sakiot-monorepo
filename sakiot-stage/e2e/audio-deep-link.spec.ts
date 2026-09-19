@@ -1,7 +1,11 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
+test.beforeEach(({ consoleAudit }) => {
+	consoleAudit.allow(/status of 404.*\/api\/audio\/.*\?silence=true/);
+});
 const GUILD_ID = "guild-123";
 const CHANNEL_ID = "voice-123";
 const FILE_NAME = "1786460400000-Test_User";

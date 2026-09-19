@@ -1,4 +1,6 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expectAccessibleMediaRoute } from "./axe";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -12,6 +14,16 @@ const corsHeaders = {
 	"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 	"Access-Control-Allow-Origin": "http://127.0.0.1:4173",
 };
+
+test("audio session route passes Axe", async ({ page }) => {
+	await mockAudioApi(page);
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	await expect(page.getByRole("tab", { name: "Normal" })).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Audio", exact: true }),
+	).toHaveAttribute("aria-current", "page");
+	await expectAccessibleMediaRoute(page);
+});
 
 test("native controls keep focus styling, pseudo-elements, and responsive layouts", async ({
 	page,
@@ -257,6 +269,29 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 		}
 		if (path === `/audio/sessions/${SESSION_ID}/waveform`) {
 			await fulfillJson({ building: false, progress: 100 });
+			return;
+		}
+		if (
+			options.silenceFreeReady &&
+			path === `/audio/sessions/${SESSION_ID}/silence-free/waveform`
+		) {
+			await fulfillJson({ building: false, progress: 100 });
+			return;
+		}
+		if (path === `/audio/sessions/${SESSION_ID}/channel-mix`) {
+			await fulfillJson({
+				can_generate: false,
+				duration_ms: 30_000,
+				generation_settings: null,
+				media_url: null,
+				participants: [],
+				progress: 0,
+				reason: { code: "no_sources", message: "No mix sources" },
+				scope: "all_recordings",
+				source_count: 0,
+				status: "unavailable",
+				tracks: [],
+			});
 			return;
 		}
 		if (path === `/audio/sessions/${SESSION_ID}/remove-silence`) {

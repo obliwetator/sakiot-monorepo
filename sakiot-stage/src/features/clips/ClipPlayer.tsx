@@ -470,6 +470,7 @@ export function ClipPlayer(props: {
 				<div className="min-w-45 flex-1 w-full">
 					<span className="text-xs leading-5">Volume</span>
 					<Slider
+						aria-label="Clip volume"
 						step={0.05}
 						value={volume}
 						minValue={0}
@@ -482,6 +483,7 @@ export function ClipPlayer(props: {
 						Speed {playbackRate.toFixed(2)}×
 					</span>
 					<Slider
+						aria-label="Clip playback speed"
 						step={0.25}
 						value={playbackRate}
 						minValue={0.5}

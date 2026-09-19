@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import { GUILD_ID, mockClipEditorApi } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 test.beforeEach(async ({ page }, testInfo) => {
 	test.skip(
@@ -12,7 +12,11 @@ test.beforeEach(async ({ page }, testInfo) => {
 
 test("the source drawer gives the timeline room and recovers rejected additions", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/audio\/clips\/guild-123\/broken-source/,
+	);
 	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
 
 	const browse = page.getByRole("button", { name: "Browse files" });

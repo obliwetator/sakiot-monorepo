@@ -1,9 +1,9 @@
-import { expect, test } from "@playwright/test";
 import {
 	corsHeaders,
 	GUILD_ID,
 	mockClipEditorApi,
 } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 test("a terminal waveform error stops polling until manual retry", async ({
 	page,
@@ -42,7 +42,11 @@ test("a terminal waveform error stops polling until manual retry", async ({
 
 test("manual retry resumes waveform polling after exhausted errors", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/audio\/clips\/waveform\/guild-123\/working-source/,
+	);
 	await mockClipEditorApi(page);
 	let requests = 0;
 	await page.route(

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -363,7 +364,11 @@ test("validates native forms, submits with Enter, exposes pending state, and res
 
 test("announces failed saves and keeps override values available for retry", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/admin\/guilds\/guild-123\/cooldown/,
+	);
 	const state = await mockApi(page);
 	await openCooldowns(page);
 
@@ -391,7 +396,11 @@ test("announces failed saves and keeps override values available for retry", asy
 
 test("announces failed deletion and removes an override after success", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/admin\/guilds\/guild-123\/cooldown/,
+	);
 	const state = await mockApi(page);
 	await openCooldowns(page);
 

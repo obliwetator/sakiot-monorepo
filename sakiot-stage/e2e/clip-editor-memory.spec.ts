@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import { GUILD_ID, mockClipEditorApi } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 test("oversized browser preview is explained while export stays available", async ({
 	page,

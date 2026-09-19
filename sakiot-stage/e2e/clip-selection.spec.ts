@@ -1,5 +1,35 @@
-import { expect, test } from "@playwright/test";
+import { expectAccessibleMediaRoute } from "./axe";
 import { GUILD_ID, mockClipEditorApi } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
+
+test("clip library, clip player, and editor routes pass Axe", async ({
+	page,
+	isMobile,
+}) => {
+	await mockClipEditorApi(page);
+	await page.goto(`/dashboard/${GUILD_ID}/clips`);
+	if (isMobile)
+		await page.getByRole("button", { name: "Browse clips" }).click();
+	await expect(
+		page.getByRole("button", { name: /Working source/ }),
+	).toBeVisible();
+	await expectAccessibleMediaRoute(page);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/working-source`);
+	await expect(page.getByRole("slider", { name: "Clip volume" })).toBeVisible();
+	await expect(
+		page.getByRole("slider", { name: "Clip playback speed" }),
+	).toBeVisible();
+	if (isMobile)
+		await page.getByRole("button", { name: "open navigation" }).click();
+	await expect(
+		page.getByRole("button", { name: "Clips", exact: true }),
+	).toHaveAttribute("aria-current", "page");
+	if (isMobile) await page.keyboard.press("Escape");
+	await expectAccessibleMediaRoute(page);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
+	await expect(page.getByLabel("Clip editor timeline")).toBeVisible();
+	await expectAccessibleMediaRoute(page);
+});
 
 for (const interaction of ["title click", "keyboard"] as const) {
 	test(`clip ${interaction} selects the clip and loads its player`, async ({
@@ -75,7 +105,11 @@ test("clip search filters the list and restores it when cleared", async ({
 
 test("a failed clip download reports an error instead of failing silently", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/net::ERR_FAILED.*\/api\/audio\/clips\/guild-123\/working-source/,
+	);
 	await mockClipEditorApi(page);
 	// The clip's media URL serves both the player and the download; only the
 	// download may fail here.

@@ -1,6 +1,11 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
+
+test.beforeEach(({ consoleAudit }) => {
+	consoleAudit.allow(/status of 401.*\/api\//);
+});
 
 /** The login buttons live in the nav drawer on the mobile viewport. */
 async function openDevLogin(page: Page, projectName: string) {
@@ -73,7 +78,9 @@ test("a dismissed dev-login prompt sends no request", async ({
 
 test("an invalid dev-login secret reports the failure", async ({
 	page,
+	consoleAudit,
 }, testInfo) => {
+	consoleAudit.allow(/status of 403.*\/api\/dev_login/);
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const url = new URL(route.request().url());
 		await route.fulfill({

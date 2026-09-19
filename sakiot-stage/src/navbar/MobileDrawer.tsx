@@ -15,6 +15,7 @@ export function MobileDrawer(props: {
 	userGuilds: UserGuilds[] | null;
 	user: User | null;
 	visiblePages: PageName[];
+	currentPage: PageName | null;
 	onNavigate: (name: PageName) => void;
 }) {
 	const { user } = props;
@@ -49,6 +50,7 @@ export function MobileDrawer(props: {
 				{props.visiblePages.map((page) => (
 					<div key={page} className="relative flex items-center">
 						<Button
+							aria-current={page === props.currentPage ? "page" : undefined}
 							className="w-full justify-start text-left"
 							variant="ghost"
 							onPress={() => props.onNavigate(page)}

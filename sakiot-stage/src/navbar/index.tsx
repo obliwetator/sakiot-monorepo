@@ -6,7 +6,7 @@ import Login from "../login/login";
 import { GuildSelect } from "../shared/GuildSelect";
 import { isGuildAdmin } from "../shared/permissions";
 import { Button, cn, Drawer, IconButton } from "../shared/ui";
-import { type PageName, pages } from "./constants";
+import { activePage, type PageName, pages } from "./constants";
 import { MobileDrawer } from "./MobileDrawer";
 import { UserMenu } from "./UserMenu";
 
@@ -25,6 +25,7 @@ function ResponsiveAppBar(props: {
 	// narrow screens. Its file tree is part of the page flow, so a second
 	// navigation drawer would make the mobile layout needlessly indirect.
 	const useInlineNavigation = location.pathname.includes("/audio");
+	const currentPage = activePage(location.pathname);
 
 	const navigateTo = (name: PageName) => {
 		if (!props.guildSelected && name !== "Stamps") {
@@ -131,6 +132,7 @@ function ResponsiveAppBar(props: {
 						{visiblePages.map((page) => (
 							<Button
 								key={page}
+								aria-current={page === currentPage ? "page" : undefined}
 								className="my-2 shrink-0 min-w-16 whitespace-nowrap rounded-sm border-0 px-2 text-sm font-medium uppercase tracking-normal text-white"
 								variant="ghost"
 								size="sm"
@@ -188,6 +190,7 @@ function ResponsiveAppBar(props: {
 						userGuilds={props.userGuilds}
 						user={props.user}
 						visiblePages={visiblePages}
+						currentPage={currentPage}
 						onNavigate={handleDrawerNavClick}
 					/>
 				</Drawer>

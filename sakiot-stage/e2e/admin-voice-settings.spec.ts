@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const GUILD_ID = "guild-123";
@@ -12,7 +12,11 @@ const corsHeaders = {
 
 test("a failed restore reports an error instead of failing silently", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/admin\/guilds\/guild-123\/voice-settings/,
+	);
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const path = new URL(request.url()).pathname;

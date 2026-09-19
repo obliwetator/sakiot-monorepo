@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import { API_ORIGIN, corsHeaders, GUILD_ID } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 const API_PREFIX = "/api";
 const CLIP_COUNT = 40;

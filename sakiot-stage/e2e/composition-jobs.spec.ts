@@ -1,10 +1,10 @@
-import { expect, test } from "@playwright/test";
 import {
 	API_ORIGIN,
 	corsHeaders,
 	GUILD_ID,
 	mockClipEditorApi,
 } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 const storageKey = `sakiot:composition-job:current-user:${GUILD_ID}`;
 const draft = {
@@ -100,7 +100,11 @@ test("a queued export reconnects after reload and reaches a stable result", asyn
 
 test("a lost submission response retries the same request after reload", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/net::ERR_FAILED.*\/api\/audio\/clips\/guild-123\/compose/,
+	);
 	const requests: { key: string; body: unknown }[] = [];
 	await page.route(
 		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose`,
@@ -158,7 +162,11 @@ test("a lost submission response retries the same request after reload", async (
 
 test("an expired job stops polling and explains how to recover", async ({
 	page,
+	consoleAudit,
 }) => {
+	consoleAudit.allow(
+		/status of 404.*\/api\/audio\/clips\/guild-123\/compose\/expired-job/,
+	);
 	await page.addInitScript(
 		({ key, body }) => {
 			localStorage.setItem(

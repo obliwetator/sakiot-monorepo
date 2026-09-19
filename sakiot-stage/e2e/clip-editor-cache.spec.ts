@@ -1,9 +1,9 @@
-import { expect, test } from "@playwright/test";
 import {
 	corsHeaders,
 	GUILD_ID,
 	mockClipEditorApi,
 } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 test("editor keeps timeline sources when the shared PCM cache evicts them", async ({
 	page,

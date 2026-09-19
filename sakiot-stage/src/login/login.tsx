@@ -58,7 +58,6 @@ export default function Login(props: {
 				},
 			);
 			if (!res.ok) {
-				console.error("dev login failed", res.status);
 				setDevLoginError(
 					res.status === 403
 						? "Invalid dev login secret."
@@ -70,8 +69,7 @@ export default function Login(props: {
 			}
 			captureCsrfToken(res);
 			window.location.reload();
-		} catch (error) {
-			console.error("dev login request failed", error);
+		} catch {
 			setDevLoginError(
 				"Could not reach the local API. Start it with cargo dev up and try again.",
 			);

@@ -19,6 +19,24 @@ export type PageName =
 	| "Members";
 
 export const pages: PageName[] = ["Audio", "Clips", "Clip Editor", "Stamps"];
+
+export function activePage(pathname: string): PageName | null {
+	if (pathname.startsWith("/stamps")) return "Stamps";
+	const parts = pathname.split("/").filter(Boolean);
+	if (parts[0] !== "dashboard" || !parts[1]) return null;
+	switch (parts[2]) {
+		case "audio":
+			return "Audio";
+		case "clips":
+			return parts[3] === "editor" ? "Clip Editor" : "Clips";
+		case "members":
+			return "Members";
+		case "admin":
+			return parts[3] === "voice-settings" ? "Voice Settings" : "Admin";
+		default:
+			return null;
+	}
+}
 export const settings = ["Profile", "Account", "Logout"];
 
 export const pageIcons: Record<PageName, React.ReactElement> = {

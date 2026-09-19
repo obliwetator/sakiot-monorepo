@@ -1,4 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const GUILD_ID = "guild-123";
@@ -70,7 +71,9 @@ async function mockExpiredSession(page: Page) {
 
 test("a failed token refresh drops the shell back to logged out", async ({
 	page,
+	consoleAudit,
 }, testInfo) => {
+	consoleAudit.allow(/status of 401.*\/api\//);
 	const authCalls = await mockExpiredSession(page);
 	await page.goto(`/dashboard/${GUILD_ID}/clips`);
 

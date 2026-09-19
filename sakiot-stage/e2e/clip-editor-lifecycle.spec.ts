@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import { corsHeaders, mockClipEditorApi } from "./clip-editor-fixture";
+import { expect, test } from "./fixtures";
 
 test("clip buffers survive effect replay and ignore a cleared source's pending decode", async ({
 	page,
