@@ -232,10 +232,13 @@ test("account menu and server picker support keyboard dismissal and restore focu
 }, testInfo) => {
 	await mockApi(page);
 	await openCooldowns(page);
-	const trigger = page.getByRole("button", { name: "Open settings" });
+	const trigger = page.getByRole("button", { name: "Open user menu" });
 	await trigger.focus();
 	await trigger.press("Enter");
-	await expect(page.getByRole("menu", { name: "Open settings" })).toBeVisible();
+	await expect(
+		page.getByRole("menu", { name: "Open user menu" }),
+	).toBeVisible();
+	await expect(page.getByRole("menuitem")).toHaveText(["Log out"]);
 	await expect(page.getByRole("menuitem").first()).toBeFocused();
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("menu")).toHaveCount(0);

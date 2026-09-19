@@ -44,6 +44,9 @@ test("prompts for the dev-login secret and sends it as X-Dev-Login-Secret", asyn
 	});
 
 	await page.goto("/");
+	await expect(
+		page.getByRole("button", { name: "Open user menu" }),
+	).toHaveCount(0);
 	const devLogin = await openDevLogin(page, testInfo.project.name);
 	await devLogin.click();
 

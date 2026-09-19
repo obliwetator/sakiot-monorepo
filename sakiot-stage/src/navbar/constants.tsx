@@ -37,7 +37,6 @@ export function activePage(pathname: string): PageName | null {
 			return null;
 	}
 }
-export const settings = ["Profile", "Account", "Logout"];
 
 export const pageIcons: Record<PageName, React.ReactElement> = {
 	Audio: <AudiotrackIcon />,

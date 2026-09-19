@@ -100,6 +100,13 @@ export async function mockClipEditorApi(page: Page) {
 			await fulfillJson(clips);
 			return;
 		}
+		if (
+			path === `/current/${GUILD_ID}` ||
+			path === `/current/${GUILD_ID}/live-stems`
+		) {
+			await fulfillJson([]);
+			return;
+		}
 		if (path === `/audio/clips/${GUILD_ID}/working-source`) {
 			await route.fulfill({
 				status: 200,

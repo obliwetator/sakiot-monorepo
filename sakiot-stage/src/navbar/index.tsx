@@ -169,7 +169,9 @@ function ResponsiveAppBar(props: {
 						/>
 					</div>
 
-					<UserMenu user={props.user} />
+					{props.isLoggedIn && props.user ? (
+						<UserMenu user={props.user} />
+					) : null}
 				</div>
 			</div>
 

@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import type { UserGuilds } from "../Constants";
 import { Select, SelectItem } from "./ui";
 
@@ -8,7 +8,6 @@ export function GuildSelect(props: {
 	userGuilds: UserGuilds[] | null;
 }) {
 	const navigate = useNavigate();
-	const location = useLocation();
 	return (
 		<Select
 			label="Server"
@@ -19,13 +18,7 @@ export function GuildSelect(props: {
 				const guild = props.userGuilds?.find((item) => item.id === key);
 				if (!guild) return;
 				props.setGuildSelected(guild);
-				if (
-					props.guildSelected &&
-					location.pathname.includes(props.guildSelected.id)
-				) {
-					const [prefix] = location.pathname.split(props.guildSelected.id);
-					navigate(prefix + guild.id);
-				}
+				navigate(`/dashboard/${guild.id}/audio`);
 			}}
 		>
 			{props.userGuilds?.map((guild) => (

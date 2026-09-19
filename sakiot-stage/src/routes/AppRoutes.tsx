@@ -1,7 +1,9 @@
 import React, { Suspense } from "react";
-import { Route } from "react-router-dom";
+import { Navigate, Route } from "react-router-dom";
+import { GuildAccessBoundary } from "../layouts/GuildAccessBoundary";
 import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
+import { RouteState } from "./RouteState";
 
 const Clips = React.lazy(() => import("../features/clips"));
 const ClipEditor = React.lazy(() => import("../features/clip-editor"));
@@ -41,21 +43,17 @@ const lazyRoute = (node: React.ReactNode) => (
 export const appRoutesElement = (
 	<>
 		<Route path="/" element={<LayoutsWithNavbar />}>
-			<Route path="/" element={<ProtectedLayout />} />
-			<Route
-				path=":guild_id"
-				element={<div className="p-4">select from top navbar</div>}
-			/>
+			<Route index element={<ProtectedLayout />} />
 
 			<Route path="/stamps" element={lazyRoute(<Stamps />)} />
-			<Route path="/stamps/:guild_id" element={lazyRoute(<Stamps />)} />
+			<Route path="/stamps/:guild_id" element={<GuildAccessBoundary />}>
+				<Route index element={lazyRoute(<Stamps />)} />
+			</Route>
 
-			<Route path="/dashboard" element={<ProtectedLayout />}>
-				<Route path=":guild_id">
-					<Route
-						path=""
-						element={<div className="p-4">select from top navbar</div>}
-					/>
+			<Route path="/dashboard">
+				<Route index element={<ProtectedLayout />} />
+				<Route path=":guild_id" element={<GuildAccessBoundary />}>
+					<Route index element={<Navigate to="audio" replace />} />
 					<Route path="audio">
 						<Route path="" element={lazyRoute(<YearSelection />)} />
 						<Route
@@ -85,6 +83,7 @@ export const appRoutesElement = (
 					<Route path="members" element={lazyRoute(<GuildMembers />)} />
 				</Route>
 			</Route>
+			<Route path="*" element={<RouteState kind="not-found" />} />
 		</Route>
 	</>
 );

@@ -11,9 +11,8 @@ import {
 	Notice,
 	Popover,
 } from "../shared/ui";
-import { settings } from "./constants";
 
-export function UserMenu(props: { user: User | null }) {
+export function UserMenu(props: { user: User }) {
 	const { user } = props;
 	const [logout] = useLogoutMutation();
 	const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -42,21 +41,17 @@ export function UserMenu(props: { user: User | null }) {
 	return (
 		<>
 			<MenuTrigger>
-				<IconButton aria-label="Open settings" size="md" className="p-0">
+				<IconButton aria-label="Open user menu" size="md" className="p-0">
 					<Avatar
-						alt={user ? `${user.username} avatar` : ""}
+						alt={`${user.username} avatar`}
 						src={discordAvatarUrl(user) ?? undefined}
 					>
-						{user ? user.username.slice(0, 1).toUpperCase() : null}
+						{user.username.slice(0, 1).toUpperCase()}
 					</Avatar>
 				</IconButton>
 				<Popover placement="bottom end" className="z-[70]">
 					<Menu onAction={(key) => void handleAction(String(key))}>
-						{settings.map((setting) => (
-							<MenuItem key={setting} id={setting}>
-								{setting}
-							</MenuItem>
-						))}
+						<MenuItem id="Logout">Log out</MenuItem>
 					</Menu>
 				</Popover>
 			</MenuTrigger>
