@@ -274,8 +274,8 @@ SQL
     dev_account="$(sed -n 's/^DEV_ACCOUNT_ID=//p' "$ENV_FILE" | head -n1)"
     if [[ "$dev_account" =~ ^[0-9]+$ && "$dev_account" != "0" ]]; then
         sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
-            "INSERT INTO discord_auth_user (id, username, discriminator, avatar, flags, public_flags) \
-             VALUES ($dev_account, 'dev', '0', '', 0, 0) ON CONFLICT (id) DO NOTHING" >/dev/null
+            "INSERT INTO discord_auth_user (id, username, avatar) \
+             VALUES ($dev_account, 'dev', '') ON CONFLICT (id) DO NOTHING" >/dev/null
         log "seeded dev-login account ${dev_account} in ${db}"
     else
         log "warning: DEV_ACCOUNT_ID missing or invalid in ${ENV_FILE}; dev login will fail"

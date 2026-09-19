@@ -1426,12 +1426,7 @@ export interface components {
 		};
 		UserDataForFrontEnd: {
 			avatar: string;
-			email?: string | null;
-			/** Format: int32 */
-			flags?: number | null;
 			is_dev: boolean;
-			/** Format: int32 */
-			public_flags?: number | null;
 			/** @example 146638124288704513 */
 			user_id: string;
 			username: string;

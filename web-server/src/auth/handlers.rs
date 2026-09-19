@@ -177,7 +177,7 @@ pub async fn oauth_start(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
         urlencoding::encode(&cfg.client_id),
         urlencoding::encode(&cfg.discord_redirect_uri),
-        urlencoding::encode("email identify guilds"),
+        urlencoding::encode("identify guilds"),
         urlencoding::encode(&state),
     );
 

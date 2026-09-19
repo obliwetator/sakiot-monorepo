@@ -54,6 +54,10 @@ pub enum AppError {
     GrpcError(String),
     #[error("Service Unavailable: {0}")]
     ServiceUnavailable(String),
+    #[error("Discord is rate limiting requests")]
+    DiscordRateLimited { retry_after: Option<u64> },
+    #[error("Discord did not respond in time")]
+    DiscordTimeout,
     #[error("Requested range is not satisfiable")]
     RangeNotSatisfiable { total: u64 },
     #[error("Invalid or expired token")]
@@ -84,6 +88,8 @@ impl ResponseError for AppError {
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::DiscordRateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            AppError::DiscordTimeout => StatusCode::GATEWAY_TIMEOUT,
             AppError::BadGateway(_) => StatusCode::BAD_GATEWAY,
             AppError::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,6 +114,12 @@ impl ResponseError for AppError {
                 actix_web::http::header::CONTENT_RANGE,
                 format!("bytes */{total}"),
             ));
+        }
+        if let AppError::DiscordRateLimited {
+            retry_after: Some(seconds),
+        } = self
+        {
+            response.insert_header((actix_web::http::header::RETRY_AFTER, seconds.to_string()));
         }
         response.json(error_response)
     }

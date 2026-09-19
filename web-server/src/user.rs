@@ -1,3 +1,4 @@
+use crate::auth::discord::parse_discord_response;
 use crate::auth::{Access, AuthKind, BASE_URL, Token};
 use crate::errors::AppError;
 use actix_web::{
@@ -28,21 +29,9 @@ pub struct User {
     #[serde(with = "DisplayFromstr")]
     pub id: i64,
     pub username: String,
-    pub discriminator: String,
     // Discord returns `null` for accounts without an uploaded avatar; the
     // frontend resolves an empty hash to the deterministic default avatar.
     pub avatar: Option<String>,
-    pub bot: Option<bool>,
-    pub system: Option<bool>,
-    pub mfa_enabled: Option<bool>,
-    pub banner: Option<String>,
-    pub accent_color: Option<i32>,
-    pub locale: Option<String>,
-    pub verified: Option<bool>,
-    pub email: Option<String>,
-    pub flags: Option<i32>,
-    pub premium_type: Option<i32>,
-    pub public_flags: Option<i32>,
 }
 
 pub async fn get_user(
@@ -50,37 +39,27 @@ pub async fn get_user(
     access_token: &str,
     pool: &web::Data<Pool<Postgres>>,
 ) -> Result<User, AppError> {
-    let result = client
-        .get(format!("{}users/@me", BASE_URL))
-        .bearer_auth(access_token)
-        .send()
-        .await?;
-
-    let user = result.json::<User>().await?;
+    let user = parse_discord_response(
+        client
+            .get(format!("{}users/@me", BASE_URL))
+            .bearer_auth(access_token),
+        false,
+    )
+    .await?;
     insert_user_db(&user, pool).await?;
     Ok(user)
 }
 
 pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Result<(), AppError> {
-    sqlx::query!(
-		"INSERT INTO discord_auth_user (id, username, discriminator, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT DO NOTHING",
-		user.id,
-		user.username,
-		user.discriminator,
-		user.avatar.clone().unwrap_or_default(),
-		user.bot,
-		user.system,
-		user.mfa_enabled,
-		user.banner,
-		user.accent_color,
-		user.locale,
-		user.verified,
-		user.email,
-		user.flags,
-		user.premium_type,
-		user.public_flags
-	)
-	.execute(pool.get_ref()).await?;
+    sqlx::query(
+        "INSERT INTO discord_auth_user (id, username, avatar) VALUES ($1,$2,$3) \
+         ON CONFLICT (id) DO UPDATE SET username=EXCLUDED.username, avatar=EXCLUDED.avatar",
+    )
+    .bind(user.id)
+    .bind(&user.username)
+    .bind(user.avatar.as_deref().unwrap_or_default())
+    .execute(pool.get_ref())
+    .await?;
     Ok(())
 }
 
@@ -128,13 +107,13 @@ pub async fn get_user_guilds(
     user_id: i64,
     pool: &web::Data<Pool<Postgres>>,
 ) -> Result<Vec<UserGuilds>, AppError> {
-    let result = client
-        .get(format!("{}users/@me/guilds", BASE_URL))
-        .bearer_auth(access_token)
-        .send()
-        .await?;
-
-    let user_guilds = result.json::<Vec<UserGuilds>>().await?;
+    let user_guilds: Vec<UserGuilds> = parse_discord_response(
+        client
+            .get(format!("{}users/@me/guilds", BASE_URL))
+            .bearer_auth(access_token),
+        false,
+    )
+    .await?;
     insert_user_guilds_db(&user_guilds, pool, user_id).await?;
     Ok(user_guilds)
 }
@@ -146,9 +125,6 @@ pub struct UserDataForFrontEnd {
     pub user_id: i64,
     pub username: String,
     pub avatar: String,
-    pub email: Option<String>,
-    pub flags: Option<i32>,
-    pub public_flags: Option<i32>,
     pub is_dev: bool,
 }
 
@@ -177,16 +153,7 @@ pub async fn get_current_user(
         && token_data.auth_kind == AuthKind::Dev;
 
     let result = sqlx::query!(
-        "
-    	SELECT id,
-        username,
-    	avatar,
-    	email,
-    	flags,
-    	public_flags
-    	FROM discord_auth_user
-    	WHERE id = $1
-    	",
+        "SELECT id, username, avatar FROM discord_auth_user WHERE id = $1",
         token_data.user_id
     )
     .fetch_one(pool.get_ref())
@@ -196,9 +163,6 @@ pub async fn get_current_user(
         user_id: result.id,
         username: result.username,
         avatar: result.avatar,
-        email: result.email,
-        flags: result.flags,
-        public_flags: result.public_flags,
         is_dev,
     };
 
@@ -278,4 +242,55 @@ pub async fn get_current_user_guilds(
     };
 
     Ok(HttpResponse::Ok().json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn login_refreshes_minimal_profile(
+        pool: sqlx::PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let pool = web::Data::new(pool);
+        let mut user = User {
+            id: 123,
+            username: "old-name".into(),
+            avatar: Some("old-avatar".into()),
+        };
+        insert_user_db(&user, &pool).await?;
+        user.username = "new-name".into();
+        user.avatar = None;
+        insert_user_db(&user, &pool).await?;
+        let (username, avatar): (String, String) =
+            sqlx::query_as("SELECT username, avatar FROM discord_auth_user WHERE id=$1")
+                .bind(user.id)
+                .fetch_one(pool.get_ref())
+                .await?;
+        assert_eq!(username, "new-name");
+        assert_eq!(avatar, "");
+        sqlx::query(
+            "UPDATE discord_auth_user SET email='old@example.invalid', flags=7 WHERE id=$1",
+        )
+        .bind(user.id)
+        .execute(pool.get_ref())
+        .await?;
+        let (email, flags): (Option<String>, Option<i32>) =
+            sqlx::query_as("SELECT email, flags FROM discord_auth_user WHERE id=$1")
+                .bind(user.id)
+                .fetch_one(pool.get_ref())
+                .await?;
+        assert_eq!((email, flags), (None, None));
+
+        let current = UserDataForFrontEnd {
+            user_id: user.id,
+            username,
+            avatar,
+            is_dev: false,
+        };
+        let value = serde_json::to_value(current)?;
+        assert_eq!(value.as_object().unwrap().len(), 4);
+        assert!(value.get("email").is_none());
+        Ok(())
+    }
 }

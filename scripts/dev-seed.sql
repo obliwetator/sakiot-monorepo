@@ -1,8 +1,8 @@
 -- Minimal local-dev seed. Idempotent: every insert is ON CONFLICT DO NOTHING.
 -- Run via `cargo dev db up`, which substitutes <DEV_ACCOUNT_ID> atomically.
 
-INSERT INTO discord_auth_user (id, username, discriminator, avatar, email, flags, public_flags)
-VALUES (:dev_id, 'local-dev', '0', '', 'dev@localhost', 0, 0)
+INSERT INTO discord_auth_user (id, username, avatar)
+VALUES (:dev_id, 'local-dev', '')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO guilds (id, owner_id)

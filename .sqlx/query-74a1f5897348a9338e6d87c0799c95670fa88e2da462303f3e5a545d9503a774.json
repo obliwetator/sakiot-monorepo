@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, username, avatar FROM discord_auth_user WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "avatar",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "discord_auth_user",
+            "name": "avatar"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "74a1f5897348a9338e6d87c0799c95670fa88e2da462303f3e5a545d9503a774"
+}

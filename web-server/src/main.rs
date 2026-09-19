@@ -153,6 +153,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let host = cfg.host.clone();
     let port = cfg.port;
     let cfg_data = web::Data::new(cfg);
+    let discord_http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
 
     let server = HttpServer::new(move || {
         let cors_exact = cors_exact.clone();
@@ -255,7 +258,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         App::new()
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(reqwest::Client::new()))
+            .app_data(web::Data::new(discord_http_client.clone()))
             .app_data(web::Data::new(media_archive.clone()))
             .app_data(silence_jobs.clone())
             .app_data(waveform_progress.clone())
