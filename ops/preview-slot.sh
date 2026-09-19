@@ -414,9 +414,9 @@ elif [[ "$ACTION" = remove ]]; then
     # ---- B2 objects uploaded by the slot -----------------------------------
     # Purges automatically whenever a delete-capable key is configured:
     # /etc/sakiot/preview-b2-purge.env (root-only, holds B2_PURGE_KEY_ID and
-    # B2_PURGE_KEY_SECRET) or B2_PURGE_KEY_ID/SECRET env vars. The runtime
-    # media key lacks deleteFiles by design, so purge needs its own key; the
-    # web server and deploy engine never see it. Only keys present in the
+    # B2_PURGE_KEY_SECRET) or B2_PURGE_KEY_ID/SECRET env vars. This optional
+    # root-only key keeps preview teardown independent of the web process's
+    # media credentials, which now allow deletion. Only keys present in the
     # slot DB but absent from staging's media_objects were created by the
     # slot; rclone deletefile only hides the current version, so retained
     # B2 versions stay recoverable by an admin.

@@ -27,19 +27,20 @@ and egress overage rates before rollout.
    - `sakiot-media-staging-<random>`
    - `sakiot-db-backups-<random>`
 3. Enable default SSE-B2 (AES-256) before uploading anything. Keep Object Lock
-   disabled. Leave lifecycle rules unset so every object version is retained.
+   disabled. Leave bucket lifecycle rules unset; application-controlled
+   recording retention must explicitly remove all versions of deleted media.
    SSE applies only to uploads made after it is enabled:
    <https://www.backblaze.com/docs/cloud-storage-server-side-encryption>.
-4. Do not use the web console's `Read and Write` preset: it includes
-   `deleteFiles`. Create three granular, bucket-restricted keys with the B2 CLI
-   (or `b2_create_key`) from a trusted administrator workstation. The media
-   keys need `listAllBucketNames,listBuckets,listFiles,readFiles,writeFiles`.
+4. Create granular, bucket-restricted keys with the B2 CLI (or
+   `b2_create_key`) from a trusted administrator workstation. The currently
+   deployed media key allows deletion (operator-confirmed); verify each
+   environment's key before enabling lifecycle deletion. Media keys need
+   `listAllBucketNames,listBuckets,listFiles,readFiles,writeFiles,deleteFiles`.
    The native-B2 rclone backup key needs
-   `listBuckets,listFiles,readFiles,writeFiles`. Neither list includes
-   `deleteFiles`:
+   `listBuckets,listFiles,readFiles,writeFiles`; it does not need deletion:
 
    ```sh
-   media_caps=listAllBucketNames,listBuckets,listFiles,readFiles,writeFiles
+   media_caps=listAllBucketNames,listBuckets,listFiles,readFiles,writeFiles,deleteFiles
    backup_caps=listBuckets,listFiles,readFiles,writeFiles
 
    b2 key create --bucket sakiot-media-prod-<random> \
@@ -57,12 +58,14 @@ and egress overage rates before rollout.
    creation; it is shown once:
    <https://www.backblaze.com/docs/cloud-storage-application-key-capabilities>.
 
-   Important B2 limitation: `writeFiles` also permits hiding a file, so an S3
-   `DeleteObject` without a version ID may create a delete marker. Omitting
-   `deleteFiles` prevents permanent deletion of stored versions, not hiding the
-   current name. The application contains no delete-object operation, lifecycle
-   deletion remains disabled, and retained versions permit administrator
-   recovery.
+   Important B2 distinction: an S3 `DeleteObject` without a version ID adds a
+   delete marker and leaves older versions recoverable. `deleteFiles` permits
+   permanent deletion of a specific version. Recording deletion must enumerate
+   and remove every version (including delete markers) of each owned object;
+   hiding only the current name does not meet the privacy requirement. This
+   permission makes mistakes irreversible, so deletion must be manager-only,
+   narrowly keyed, audited, and retryable. Until the lifecycle feature ships,
+   no application route deletes archived recording objects.
 5. Put production/staging media credentials only in their root-owned
    `/etc/sakiot/*.env` files. Never deploy account master credentials.
 6. Configure `/etc/sakiot/rclone.conf` with a native `b2` remote using the
@@ -92,21 +95,22 @@ aws --endpoint-url "$SAKIOT_MEDIA_S3_ENDPOINT" s3 cp \
 cmp /tmp/sakiot-b2-smoke /tmp/sakiot-b2-smoke.download
 ```
 
-Capture the uploaded object's version ID, then prove permanent version deletion
-is denied. Success is a nonzero command with an access-denied response; stop if
-version deletion succeeds:
+Use a fresh, dedicated smoke object to verify the media key can delete one
+specific version. This command permanently deletes that test version; do not
+run it against a recording or a reused object name:
 
 ```sh
+delete_smoke_key="provisioning/delete-smoke-$(date +%s)-$$"
+aws --endpoint-url "$SAKIOT_MEDIA_S3_ENDPOINT" s3api put-object \
+  --bucket "$SAKIOT_MEDIA_S3_BUCKET" --key "$delete_smoke_key" \
+  --body /tmp/sakiot-b2-smoke
 version_id="$(aws --endpoint-url "$SAKIOT_MEDIA_S3_ENDPOINT" s3api head-object \
-  --bucket "$SAKIOT_MEDIA_S3_BUCKET" --key provisioning/smoke \
+  --bucket "$SAKIOT_MEDIA_S3_BUCKET" --key "$delete_smoke_key" \
   --query VersionId --output text)"
 test -n "$version_id" && test "$version_id" != None
-if aws --endpoint-url "$SAKIOT_MEDIA_S3_ENDPOINT" s3api delete-object \
-    --bucket "$SAKIOT_MEDIA_S3_BUCKET" --key provisioning/smoke \
-    --version-id "$version_id"; then
-  echo 'FATAL: runtime credential can permanently delete B2 versions' >&2
-  exit 1
-fi
+aws --endpoint-url "$SAKIOT_MEDIA_S3_ENDPOINT" s3api delete-object \
+  --bucket "$SAKIOT_MEDIA_S3_BUCKET" --key "$delete_smoke_key" \
+  --version-id "$version_id"
 ```
 
 Confirm bucket remains private, default encryption reports AES-256, Object Lock
