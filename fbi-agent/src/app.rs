@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 use serenity::{all::ApplicationId, prelude::*};
 use songbird::{Config, SerenityInit, driver::DecodeMode};
@@ -6,7 +6,7 @@ use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{error, info, warn};
 
-use crate::{BotMetrics, BotMetricsKey, Custom, HasBossMusic, deployment, event_handler::Handler};
+use crate::{BotMetrics, BotMetricsKey, Custom, deployment, event_handler::Handler};
 
 type AppResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -107,7 +107,6 @@ async fn run_registered_instance(
 
     let custom = Custom::new(
         client.cache.clone(),
-        client.http.clone(),
         client.data.clone(),
         pool.to_owned(),
         jam_cooldown,
@@ -437,7 +436,6 @@ async fn build_discord_client(
             database: pool.clone(),
             jam_cooldown,
             runtime,
-            afk_channels: Arc::new(RwLock::new(HashMap::new())),
         })
         .intents(intents)
         .register_songbird_from_config(songbird_config)
@@ -451,7 +449,6 @@ async fn insert_typemap_state(
     media_archive: crate::media_archive::MediaArchive,
 ) {
     let mut data = client.data.write().await;
-    data.insert::<HasBossMusic>(HashMap::new());
     data.insert::<BotMetricsKey>(Arc::new(BotMetrics::default()));
     data.insert::<crate::runtime::RuntimeStateKey>(runtime);
     data.insert::<crate::media_archive::MediaArchiveKey>(media_archive);

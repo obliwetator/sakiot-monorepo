@@ -2,7 +2,7 @@ mod app;
 mod app_state;
 pub mod metrics;
 pub mod reaper;
-pub use app_state::{Custom, HasBossMusic};
+pub use app_state::Custom;
 pub use metrics::*;
 
 pub mod cast;

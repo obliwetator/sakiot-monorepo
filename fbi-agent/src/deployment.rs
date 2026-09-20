@@ -8,8 +8,6 @@ use tracing::{debug, warn};
 use crate::database::{self, DbResult};
 use crate::runtime::RuntimeState;
 
-pub const LEASE_STALE_AFTER_SECONDS: i64 = crate::heartbeat::STALE_AFTER_SECONDS;
-
 pub use database::runtime::VoiceLeaseClaim;
 
 pub async fn upsert_instance(pool: &Pool<Postgres>, runtime: &RuntimeState) -> DbResult<()> {

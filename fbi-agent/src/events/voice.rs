@@ -37,13 +37,6 @@ impl serenity::prelude::TypeMapKey for VoiceContextKey {
     type Value = Context;
 }
 
-pub async fn voice_server_update(
-    _self: &Handler,
-    _ctx: Context,
-    _update: serenity::model::event::VoiceServerUpdateEvent,
-) {
-}
-
 pub async fn connect_to_voice_channel(
     pool: Pool<Postgres>,
     ctx: &Context,

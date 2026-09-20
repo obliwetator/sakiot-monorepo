@@ -13,10 +13,6 @@ pub struct Handler {
     pub(crate) database: Pool<Postgres>,
     pub(crate) jam_cooldown: crate::cooldown::JamCooldown,
     pub(crate) runtime: std::sync::Arc<crate::runtime::RuntimeState>,
-    /// Per-guild AFK channel id (`None` = no AFK channel). Seeded in
-    /// `cache_ready`, read when picking the busiest voice channel.
-    pub(crate) afk_channels:
-        std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<u64, Option<u64>>>>,
 }
 
 impl Handler {
@@ -63,32 +59,6 @@ impl EventHandler for Handler {
         Self::with_metrics(&ctx, |m| m.record_gateway_resume()).await;
     }
 
-    async fn channel_pins_update(
-        &self,
-        _ctx: Context,
-        _pin: serenity::model::event::ChannelPinsUpdateEvent,
-    ) {
-        events::channels::channel_pins_update().await;
-    }
-
-    async fn guild_ban_addition(
-        &self,
-        ctx: Context,
-        guild_id: serenity::model::id::GuildId,
-        banned_user: serenity::model::prelude::User,
-    ) {
-        events::guilds::guild_ban_addition(self, ctx, guild_id, banned_user).await;
-    }
-
-    async fn guild_ban_removal(
-        &self,
-        ctx: Context,
-        guild_id: serenity::model::id::GuildId,
-        unbanned_user: serenity::model::prelude::User,
-    ) {
-        events::guilds::guild_ban_removal(self, ctx, guild_id, unbanned_user).await;
-    }
-
     async fn guild_create(
         &self,
         ctx: Context,
@@ -105,26 +75,6 @@ impl EventHandler for Handler {
         full: Option<serenity::model::guild::Guild>,
     ) {
         events::guilds::guild_delete(self, ctx, incomplete, full).await;
-    }
-
-    async fn guild_emojis_update(
-        &self,
-        ctx: Context,
-        guild_id: serenity::model::id::GuildId,
-        current_state: std::collections::HashMap<
-            serenity::model::id::EmojiId,
-            serenity::model::guild::Emoji,
-        >,
-    ) {
-        events::emojis::guild_emojis_update(self, ctx, guild_id, current_state).await;
-    }
-
-    async fn guild_integrations_update(
-        &self,
-        ctx: Context,
-        guild_id: serenity::model::id::GuildId,
-    ) {
-        events::integrations::guild_integrations_update(self, ctx, guild_id).await;
     }
 
     async fn guild_member_addition(
@@ -203,14 +153,6 @@ impl EventHandler for Handler {
         events::guilds::guild_update(self, ctx, old_data_if_available, new_but_incomplete).await;
     }
 
-    async fn invite_create(&self, ctx: Context, data: serenity::model::event::InviteCreateEvent) {
-        events::invites::invite_create(self, ctx, data).await;
-    }
-
-    async fn invite_delete(&self, ctx: Context, data: serenity::model::event::InviteDeleteEvent) {
-        events::invites::invite_delete(self, ctx, data).await;
-    }
-
     async fn message(&self, ctx: Context, msg: Message) {
         events::messages::message(self, ctx, msg).await;
     }
@@ -252,28 +194,6 @@ impl EventHandler for Handler {
         events::messages::message_update(self, ctx, old_if_available, new, event).await;
     }
 
-    async fn reaction_add(&self, ctx: Context, add_reaction: serenity::model::channel::Reaction) {
-        events::reactions::reaction_add(self, ctx, add_reaction).await;
-    }
-
-    async fn reaction_remove(
-        &self,
-        ctx: Context,
-        removed_reaction: serenity::model::channel::Reaction,
-    ) {
-        events::reactions::reaction_remove(self, ctx, removed_reaction).await;
-    }
-
-    async fn reaction_remove_all(
-        &self,
-        ctx: Context,
-        channel_id: serenity::model::id::ChannelId,
-        removed_from_message_id: serenity::model::id::MessageId,
-    ) {
-        events::reactions::reaction_remove_all(self, ctx, channel_id, removed_from_message_id)
-            .await;
-    }
-
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
         database::update_guild_present(ready.guilds, &self.database).await;
@@ -289,14 +209,6 @@ impl EventHandler for Handler {
         info!(user_id = %new.id, username = %new.name, "bot user updated");
     }
 
-    async fn voice_server_update(
-        &self,
-        ctx: Context,
-        update: serenity::model::event::VoiceServerUpdateEvent,
-    ) {
-        events::voice::voice_server_update(self, ctx, update).await;
-    }
-
     async fn voice_state_update(
         &self,
         ctx: Context,
@@ -308,38 +220,5 @@ impl EventHandler for Handler {
 
     async fn interaction_create(&self, ctx: Context, interaction: serenity::all::Interaction) {
         events::interactions::interaction_create(self, ctx, interaction).await;
-    }
-
-    async fn integration_create(
-        &self,
-        ctx: Context,
-        integration: serenity::model::guild::Integration,
-    ) {
-        events::integrations::integration_create(self, ctx, integration).await;
-    }
-
-    async fn integration_update(
-        &self,
-        ctx: Context,
-        integration: serenity::model::guild::Integration,
-    ) {
-        events::integrations::integration_update(self, ctx, integration).await;
-    }
-
-    async fn integration_delete(
-        &self,
-        ctx: Context,
-        integration_id: serenity::model::id::IntegrationId,
-        guild_id: serenity::model::id::GuildId,
-        application_id: Option<serenity::model::id::ApplicationId>,
-    ) {
-        events::integrations::integration_delete(
-            self,
-            ctx,
-            integration_id,
-            guild_id,
-            application_id,
-        )
-        .await;
     }
 }

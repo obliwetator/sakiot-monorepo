@@ -3,22 +3,6 @@ use tracing::error;
 
 use crate::event_handler::Handler;
 
-pub async fn guild_ban_addition(
-    _self: &Handler,
-    _ctx: Context,
-    _guild_id: serenity::model::id::GuildId,
-    _banned_user: serenity::model::prelude::User,
-) {
-}
-
-pub async fn guild_ban_removal(
-    _self: &Handler,
-    _ctx: Context,
-    _guild_id: serenity::model::id::GuildId,
-    _unbanned_user: serenity::model::prelude::User,
-) {
-}
-
 pub async fn guild_create(
     handler: &Handler,
     _ctx: Context,

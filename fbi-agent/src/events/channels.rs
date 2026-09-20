@@ -3,10 +3,6 @@ use tracing::error;
 
 use crate::event_handler::Handler;
 
-pub async fn category_create() {}
-
-pub async fn category_delete() {}
-
 pub async fn channel_create(
     handler: &Handler,
     _ctx: Context,
@@ -40,8 +36,6 @@ pub async fn channel_delete(
         );
     }
 }
-
-pub async fn channel_pins_update() {}
 
 pub async fn channel_update(
     handler: &Handler,

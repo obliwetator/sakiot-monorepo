@@ -24,18 +24,6 @@ pub async fn cache_ready(handler: &Handler, ctx: Context, guilds: Vec<GuildId>) 
         })
         .collect();
 
-    {
-        // Acquire the write lock once for the entire loop instead of once per
-        // iteration. Repeatedly dropping and re-acquiring the write lock lets
-        // readers (e.g. get_channel_with_most_members) slip in between iterations
-        // and causes unnecessary contention.
-        let mut guard = handler.afk_channels.write().await;
-        for ele in &guild_cached {
-            let afk = ele.afk_metadata.as_ref().map(|m| m.afk_channel_id.get());
-            guard.insert(ele.id.get(), afk);
-        }
-    }
-
     seed_voice_presence_metrics(handler, &ctx, &guild_cached).await;
     let _ = database::update_info(handler, &ctx, &guilds).await;
     database::user_names::seed_from_guilds(&handler.database, &guild_cached).await;
