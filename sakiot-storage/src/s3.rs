@@ -30,7 +30,6 @@ pub struct Archive {
 pub struct ObjectHead {
     pub bytes: u64,
     pub etag: Option<String>,
-    pub content_type: Option<String>,
     pub sha256: Option<String>,
 }
 
@@ -129,14 +128,6 @@ impl Archive {
         }
     }
 
-    #[cfg(test)]
-    pub fn from_client(client: Client, bucket: impl Into<String>) -> Self {
-        Self {
-            client,
-            bucket: bucket.into(),
-        }
-    }
-
     /// Permanently remove every stored version and hide marker under one
     /// source-owned prefix. A plain DeleteObject only hides the latest version.
     /// Re-listing the first page after each batch makes retry safe even if a
@@ -207,7 +198,6 @@ impl Archive {
                 bytes: u64::try_from(output.content_length().unwrap_or_default())
                     .map_err(|_| StorageError::invalid("B2 returned negative content length"))?,
                 etag: output.e_tag().map(str::to_owned),
-                content_type: output.content_type().map(str::to_owned),
                 sha256: output
                     .metadata()
                     .and_then(|metadata| metadata.get("sha256"))
@@ -235,7 +225,6 @@ impl Archive {
                     head: ObjectHead {
                         bytes,
                         etag: output.e_tag().map(str::to_owned),
-                        content_type: output.content_type().map(str::to_owned),
                         sha256: output
                             .metadata()
                             .and_then(|metadata| metadata.get("sha256"))
@@ -419,37 +408,16 @@ impl Archive {
         key: &str,
         expected: &FileDigest,
     ) -> Result<ObjectHead, StorageError> {
-        let Some(head) = self.head(key).await? else {
-            return Err(StorageError {
-                kind: StorageErrorKind::NotFound,
-                message: format!("B2 object not found: {key}"),
-            });
-        };
-        validate_head(&head, expected)?;
         let remote = self.get(key, None).await?;
-        let mut reader = remote.body.into_async_read();
-        let mut hasher = Sha256::new();
-        let mut bytes = 0u64;
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            let read = reader
-                .read(&mut buffer)
-                .await
-                .map_err(|error| StorageError::unavailable("GET body", error))?;
-            if read == 0 {
-                break;
-            }
-            bytes += read as u64;
-            hasher.update(&buffer[..read]);
-        }
-        let sha256 = hex::encode(hasher.finalize());
-        if bytes != expected.bytes || sha256 != expected.sha256 {
-            return Err(StorageError::integrity(format!(
-                "B2 full verification mismatch: expected {} bytes/{}, got {bytes}/{sha256}",
-                expected.bytes, expected.sha256
-            )));
-        }
-        Ok(head)
+        validate_head(&remote.head, expected)?;
+        digest_response(
+            remote.body,
+            tokio::io::sink(),
+            expected,
+            "full verification",
+        )
+        .await?;
+        Ok(remote.head)
     }
 
     pub async fn download_verified(
@@ -495,34 +463,49 @@ impl Archive {
     ) -> Result<(), StorageError> {
         let remote = self.get(key, None).await?;
         validate_head(&remote.head, expected)?;
-        let mut reader = remote.body.into_async_read();
         let mut output = tokio::fs::File::create(temporary).await?;
-        let mut hasher = Sha256::new();
-        let mut bytes = 0u64;
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            let read = reader
-                .read(&mut buffer)
-                .await
-                .map_err(|error| StorageError::unavailable("GET body", error))?;
-            if read == 0 {
-                break;
-            }
-            output.write_all(&buffer[..read]).await?;
-            hasher.update(&buffer[..read]);
-            bytes += read as u64;
-        }
+        digest_response(remote.body, &mut output, expected, "download").await?;
         output.flush().await?;
         output.sync_all().await?;
-        let sha256 = hex::encode(hasher.finalize());
-        if bytes != expected.bytes || sha256 != expected.sha256 {
-            return Err(StorageError::integrity(format!(
-                "B2 download mismatch: expected {} bytes/{}, got {bytes}/{sha256}",
-                expected.bytes, expected.sha256
-            )));
-        }
         Ok(())
     }
+}
+
+/// Stream a GET body into `sink` (or discard it) and compare the streamed
+/// digest and length against `expected` before any caller trusts the bytes.
+async fn digest_response<W>(
+    body: ByteStream,
+    mut sink: W,
+    expected: &FileDigest,
+    label: &str,
+) -> Result<(), StorageError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut reader = body.into_async_read();
+    let mut hasher = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = vec![0u8; 1024 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|error| StorageError::unavailable("GET body", error))?;
+        if read == 0 {
+            break;
+        }
+        sink.write_all(&buffer[..read]).await?;
+        bytes += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    let sha256 = hex::encode(hasher.finalize());
+    if bytes != expected.bytes || sha256 != expected.sha256 {
+        return Err(StorageError::integrity(format!(
+            "B2 {label} mismatch: expected {} bytes/{}, got {bytes}/{sha256}",
+            expected.bytes, expected.sha256
+        )));
+    }
+    Ok(())
 }
 
 async fn cleanup_stale_partials(parent: &Path, target: &Path) {
