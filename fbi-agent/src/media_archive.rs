@@ -156,20 +156,11 @@ pub async fn from_ctx(ctx: &serenity::client::Context) -> Option<MediaArchive> {
 }
 
 fn clip_path(saved_file_name: &str) -> Result<std::path::PathBuf, MediaArchiveError> {
-    let relative = Path::new(saved_file_name);
-    if relative.is_absolute()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err(MediaArchiveError::InvalidPath);
-    }
-    Ok(crate::events::voice_receiver::clips_file_path().join(relative))
+    sakiot_paths::safe_join(
+        &crate::events::voice_receiver::clips_file_path(),
+        Path::new(saved_file_name),
+    )
+    .ok_or(MediaArchiveError::InvalidPath)
 }
 
 #[derive(Debug, thiserror::Error)]

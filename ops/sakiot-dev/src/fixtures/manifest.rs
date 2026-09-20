@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
@@ -96,14 +96,7 @@ impl ManagedManifest {
 }
 
 pub fn safe_join(base: &Path, relative: &Path) -> Result<PathBuf> {
-    if relative.is_absolute()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
+    if !sakiot_paths::is_safe_relative(relative) {
         bail!(
             "managed fixture path escapes the data directory: {}",
             relative.display()
@@ -133,12 +126,7 @@ fn validate_manifest_entry(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty() {
         bail!("empty managed fixture path")
     }
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
-    }) {
+    if !sakiot_paths::is_safe_relative(path) {
         bail!("unsafe managed fixture path: {}", path.display())
     }
     Ok(())

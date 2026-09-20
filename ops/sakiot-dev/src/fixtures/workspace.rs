@@ -90,16 +90,7 @@ pub fn build_media_lists(workspace: &FixtureWorkspace) -> Result<()> {
         let fields = line.split('\t').collect::<Vec<_>>();
         if fields.len() >= 5 && !fields[4].is_empty() {
             let saved = Path::new(fields[4]);
-            if saved.is_absolute()
-                || saved.components().any(|component| {
-                    matches!(
-                        component,
-                        std::path::Component::ParentDir
-                            | std::path::Component::RootDir
-                            | std::path::Component::Prefix(_)
-                    )
-                })
-            {
+            if !sakiot_paths::is_safe_relative(saved) {
                 bail!("unsafe clip saved_file_name {}", fields[4])
             }
             files.insert(PathBuf::from("clips").join(saved));

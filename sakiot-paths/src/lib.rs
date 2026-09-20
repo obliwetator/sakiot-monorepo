@@ -5,7 +5,7 @@
 
 use std::{
     env,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 pub const DATA_DIR_ENV: &str = "SAKIOT_DATA_DIR";
@@ -215,9 +215,42 @@ impl SessionKey {
     }
 }
 
+/// True when `path` can be joined under a base without escaping it: not
+/// absolute, and free of `..`, root, and prefix components. Every path that
+/// arrives from a database column, manifest, or URL is checked with this
+/// before it touches the filesystem.
+pub fn is_safe_relative(path: &Path) -> bool {
+    !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+}
+
+/// [`is_safe_relative`] plus the join. `None` means the path must be rejected.
+pub fn safe_join(base: &Path, relative: &Path) -> Option<PathBuf> {
+    is_safe_relative(relative).then(|| base.join(relative))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn safe_relative_rejects_escapes_and_joins_the_rest() {
+        for unsafe_path in ["/etc/passwd", "../secret", "a/../../b", ".."] {
+            assert!(!is_safe_relative(Path::new(unsafe_path)), "{unsafe_path}");
+            assert!(safe_join(Path::new("/data"), Path::new(unsafe_path)).is_none());
+        }
+        assert!(is_safe_relative(Path::new("1/2026/04/a.ogg")));
+        assert!(is_safe_relative(Path::new("./a.ogg")));
+        assert_eq!(
+            safe_join(Path::new("/data"), Path::new("a.ogg")),
+            Some(PathBuf::from("/data/a.ogg"))
+        );
+    }
 
     #[test]
     fn dir_suffix_zero_pads_month() {

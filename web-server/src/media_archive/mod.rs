@@ -183,18 +183,5 @@ pub(crate) fn clip_local_path_in(
     root: &Path,
     saved_file_name: &str,
 ) -> Result<std::path::PathBuf, AppError> {
-    let relative = Path::new(saved_file_name);
-    if relative.is_absolute()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err(AppError::InternalError);
-    }
-    Ok(root.join(relative))
+    sakiot_paths::safe_join(root, Path::new(saved_file_name)).ok_or(AppError::InternalError)
 }
