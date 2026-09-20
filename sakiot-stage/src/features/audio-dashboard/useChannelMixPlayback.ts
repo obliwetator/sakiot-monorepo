@@ -11,7 +11,7 @@ import {
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
 import { attachHlsAudio, prefersNativeHls } from "../../shared/attachHls";
-import { commonLiveSeekPosition } from "./channelMixState";
+import { commonLiveSeekPosition, shouldSeekSource } from "./channelMixState";
 
 const CHANNEL_MIX_SAMPLE_RATE = 48_000;
 const SCHEDULE_AHEAD_MS = 8_000;
@@ -237,17 +237,22 @@ export function useChannelMixPlayback(options: ChannelMixPlaybackOptions) {
 		(source: SourceState, position: number) => {
 			if (!source.audio || !source.shouldPlay || source.failed) return;
 			const desiredSeconds = liveDesiredSeconds(source, position);
+			const targetSeconds =
+				Number.isFinite(source.audio.duration) && source.audio.duration > 0
+					? Math.min(desiredSeconds, Math.max(0, source.audio.duration - 0.01))
+					: desiredSeconds;
 			try {
+				// Repositioning a playing element re-fires `canplay`. Only correct a
+				// real drift, otherwise a `canplay` re-entry feeds itself.
 				if (
-					Number.isFinite(source.audio.duration) &&
-					source.audio.duration > 0
+					shouldSeekSource(
+						source.audio.currentTime,
+						targetSeconds,
+						source.audio.paused,
+						DRIFT_LIMIT_MS,
+					)
 				) {
-					source.audio.currentTime = Math.min(
-						desiredSeconds,
-						Math.max(0, source.audio.duration - 0.01),
-					);
-				} else {
-					source.audio.currentTime = desiredSeconds;
+					source.audio.currentTime = targetSeconds;
 				}
 				source.audio.playbackRate = rateRef.current;
 				void source.audio.play().catch(() => {
@@ -303,9 +308,12 @@ export function useChannelMixPlayback(options: ChannelMixPlaybackOptions) {
 					source.audio.load();
 				});
 			};
+			// Starting from `canplay` used to seek the element, which re-fired
+			// `canplay` and looped (~500 seeks/second), stuttering every source in
+			// the mix. `updateLiveSources` already starts paused, active sources
+			// once they are ready, so this listener only clears load errors.
 			source.audio.addEventListener("canplay", () => {
 				reportError(source.segment.id, null);
-				if (source.shouldPlay) startLiveSource(source, readPosition());
 			});
 			source.audio.addEventListener("error", retrySource);
 			if (source.segment.live && source.segment.hls_playlist_url) {
@@ -328,7 +336,7 @@ export function useChannelMixPlayback(options: ChannelMixPlaybackOptions) {
 				source.audio.src = absoluteMediaUrl(source.segment.media_url);
 			}
 		},
-		[ensureMonitorGain, readPosition, reportError, startLiveSource],
+		[ensureMonitorGain, reportError],
 	);
 
 	const updateLiveSources = useCallback(

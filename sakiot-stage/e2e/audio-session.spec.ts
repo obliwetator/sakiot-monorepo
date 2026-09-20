@@ -171,6 +171,25 @@ interface MockAudioOptions {
 	 * the assertion window; a one-second clip can end before it is observed.
 	 */
 	mediaSeconds?: number;
+	/** Serve a ready-to-preview channel mix with one decodable source. */
+	channelMixReady?: boolean;
+}
+
+/** A valid audiowaveform payload with no points, so the preview renders quietly. */
+const EMPTY_WAVEFORM_PAYLOAD = Buffer.from(new Uint8Array(20)).toString(
+	"base64",
+);
+const CHANNEL_MIX_SEGMENT_PATH = `/audio/sessions/${SESSION_ID}/segments/1`;
+const CHANNEL_MIX_WAVEFORM_PATH =
+	"/audio/waveform/guild-123/voice-123/2026/8/channel-mix-source";
+
+declare global {
+	interface Window {
+		__channelMixProbe: {
+			writes: number;
+			audios: HTMLAudioElement[];
+		};
+	}
 }
 
 async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
@@ -338,19 +357,79 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 			return;
 		}
 		if (path === `/audio/sessions/${SESSION_ID}/channel-mix`) {
+			if (!options.channelMixReady) {
+				await fulfillJson({
+					can_generate: false,
+					duration_ms: 30_000,
+					generation_settings: null,
+					media_url: null,
+					participants: [],
+					progress: 0,
+					reason: { code: "no_sources", message: "No mix sources" },
+					scope: "all_recordings",
+					source_count: 0,
+					status: "unavailable",
+					tracks: [],
+				});
+				return;
+			}
 			await fulfillJson({
-				can_generate: false,
+				can_generate: true,
 				duration_ms: 30_000,
 				generation_settings: null,
 				media_url: null,
-				participants: [],
+				participants: [
+					{
+						display_name: "Test User",
+						session_ids: [SESSION_ID],
+						source_count: 1,
+						user_id: "user-123",
+					},
+				],
 				progress: 0,
-				reason: { code: "no_sources", message: "No mix sources" },
+				reason: null,
 				scope: "all_recordings",
-				source_count: 0,
-				status: "unavailable",
-				tracks: [],
+				source_count: 1,
+				status: "idle",
+				tracks: [
+					{
+						display_name: "Test User",
+						is_anchor: true,
+						segments: [
+							{
+								audio_file_id: "1",
+								end_ms: 30_000,
+								hls_playlist_url: `/api/audio/sessions/${SESSION_ID}/live/1/playlist.m3u8`,
+								id: "1:0",
+								live: false,
+								media_url: `/api/audio/sessions/${SESSION_ID}/segments/1`,
+								recording_session_id: SESSION_ID,
+								source_duration_ms: 30_000,
+								source_offset_ms: 0,
+								start_ms: 0,
+								waveform_url: `/api${CHANNEL_MIX_WAVEFORM_PATH}`,
+							},
+						],
+						user_id: "user-123",
+					},
+				],
 			});
+			return;
+		}
+		if (options.channelMixReady && path === CHANNEL_MIX_SEGMENT_PATH) {
+			await route.fulfill({
+				status: 200,
+				headers: {
+					...corsHeaders,
+					"Accept-Ranges": "none",
+					"Content-Type": "audio/wav",
+				},
+				body: silentWav(options.mediaSeconds ?? 30),
+			});
+			return;
+		}
+		if (options.channelMixReady && path === CHANNEL_MIX_WAVEFORM_PATH) {
+			await fulfillJson({ data: EMPTY_WAVEFORM_PAYLOAD, progress: 100 });
 			return;
 		}
 		if (path === `/audio/sessions/${SESSION_ID}/remove-silence`) {
@@ -747,4 +826,83 @@ test("playback shortcuts follow the visible tab after switching", async ({
 	await expect(
 		silencePanel.getByRole("button", { name: "Pause", exact: true }),
 	).toBeVisible({ timeout: 10_000 });
+});
+
+test("channel mix playback starts once and never re-seeks from canplay", async ({
+	page,
+}) => {
+	await page.addInitScript(() => {
+		const probe: Window["__channelMixProbe"] = { audios: [], writes: 0 };
+		window.__channelMixProbe = probe;
+		// A construct-trap proxy keeps `new Audio()` semantics while collecting
+		// the elements the channel mix preview builds.
+		window.Audio = new Proxy(window.Audio, {
+			construct(target, args) {
+				const element = Reflect.construct(target, args) as HTMLAudioElement;
+				probe.audios.push(element);
+				return element;
+			},
+		});
+		const descriptor = Object.getOwnPropertyDescriptor(
+			HTMLMediaElement.prototype,
+			"currentTime",
+		);
+		Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+			configurable: true,
+			get: descriptor?.get,
+			set(value: number) {
+				probe.writes += 1;
+				descriptor?.set?.call(this, value);
+			},
+		});
+	});
+	await mockAudioApi(page, { channelMixReady: true, mediaSeconds: 30 });
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+
+	const mixTab = page.getByRole("tab", { name: "Channel mix", exact: true });
+	await expect(mixTab).toBeVisible();
+	await mixTab.click();
+	const mixPanel = page.getByRole("tabpanel", {
+		name: "Channel mix",
+		exact: true,
+	});
+	await expect(mixPanel).toBeVisible();
+	await mixPanel.getByRole("button", { name: "Play", exact: true }).click();
+	await expect(
+		mixPanel.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+	const isPlaying = () =>
+		page.evaluate(() =>
+			window.__channelMixProbe.audios.some((element) => !element.paused),
+		);
+	await expect.poll(isPlaying).toBe(true);
+
+	// A `canplay` event on an already-playing source must not reposition it.
+	// Dispatching synchronously keeps the measurement free of the unrelated
+	// animation-frame drift correction, so any write counted here comes from
+	// the `canplay` handler. Seeking there re-fires `canplay`, so the old code
+	// looped at ~500 seeks a second and every mix source stuttered.
+	const canplayWrites = await page.evaluate(() => {
+		const probe = window.__channelMixProbe;
+		const playing = probe.audios.find((element) => !element.paused);
+		if (!playing) return -1;
+		const before = probe.writes;
+		for (let index = 0; index < 20; index += 1) {
+			playing.dispatchEvent(new Event("canplay"));
+		}
+		return probe.writes - before;
+	});
+	expect(canplayWrites).toBe(0);
+
+	// Steady playback stays released; the loop produced hundreds of writes per
+	// second, so a small bound still separates it from legitimate corrections.
+	const writesBefore = await page.evaluate(
+		() => window.__channelMixProbe.writes,
+	);
+	await page.waitForTimeout(1_500);
+	const writesAfter = await page.evaluate(
+		() => window.__channelMixProbe.writes,
+	);
+	expect(writesAfter - writesBefore).toBeLessThanOrEqual(10);
+	await expect.poll(isPlaying).toBe(true);
 });

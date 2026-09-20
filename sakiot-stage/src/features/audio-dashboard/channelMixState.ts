@@ -65,3 +65,24 @@ export function commonLiveSeekPosition(
 	if (finiteEdges.length === 0) return null;
 	return Math.max(0, Math.min(...finiteEdges) - behindEdgeMs);
 }
+
+/**
+ * Whether a channel-mix source element must be repositioned before (re)starting.
+ *
+ * A paused element always needs the target position. A playing element is only
+ * repositioned once it has drifted past the tolerance: writing `currentTime`
+ * on a playing element re-fires `canplay`, so seeking unconditionally from a
+ * `canplay` handler loops forever.
+ */
+export function shouldSeekSource(
+	currentSeconds: number,
+	targetSeconds: number,
+	paused: boolean,
+	toleranceMs = 150,
+): boolean {
+	if (paused) return true;
+	if (!Number.isFinite(currentSeconds) || !Number.isFinite(targetSeconds)) {
+		return false;
+	}
+	return Math.abs(currentSeconds - targetSeconds) * 1_000 > toleranceMs;
+}

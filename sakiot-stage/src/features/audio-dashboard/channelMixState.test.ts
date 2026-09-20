@@ -5,6 +5,7 @@ import {
 	clampChannelMixGain,
 	commonLiveSeekPosition,
 	parseChannelMixStatus,
+	shouldSeekSource,
 } from "./channelMixState";
 
 describe("channel mix status parsing", () => {
@@ -48,5 +49,31 @@ describe("channel mix status parsing", () => {
 		expect(clampChannelMixGain(100)).toBe(12);
 		expect(commonLiveSeekPosition([10_000, 12_000])).toBe(8_000);
 		expect(commonLiveSeekPosition([])).toBeNull();
+	});
+});
+
+describe("channel mix source seeking", () => {
+	test("a paused source always seeks to the target", () => {
+		expect(shouldSeekSource(0, 100, true)).toBe(true);
+		expect(shouldSeekSource(100, 100, true)).toBe(true);
+	});
+
+	test("a playing source within tolerance is left alone", () => {
+		// Seeking a playing element re-fires canplay; an unconditional seek
+		// from the canplay handler feeds itself.
+		expect(shouldSeekSource(10, 10, false)).toBe(false);
+		expect(shouldSeekSource(10, 10.1, false)).toBe(false);
+		expect(shouldSeekSource(10, 9.86, false)).toBe(false);
+	});
+
+	test("a playing source seeks only after drifting past the tolerance", () => {
+		expect(shouldSeekSource(10, 10.2, false)).toBe(true);
+		expect(shouldSeekSource(10, 9.8, false)).toBe(true);
+		expect(shouldSeekSource(10, 10.5, false, 1_000)).toBe(false);
+	});
+
+	test("non-finite positions never trigger a seek while playing", () => {
+		expect(shouldSeekSource(Number.NaN, 10, false)).toBe(false);
+		expect(shouldSeekSource(10, Number.NaN, false)).toBe(false);
 	});
 });
