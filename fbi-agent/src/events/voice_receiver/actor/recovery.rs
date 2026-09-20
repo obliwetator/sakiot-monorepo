@@ -193,6 +193,12 @@ impl RecorderActor {
         .await;
     }
 
+    /// Closes every open writer and pauses its logical session.
+    ///
+    /// Used both for real departures (bot leaves, network drop, handoff) and for
+    /// policy suspension, where the bot stays connected but the channel must not
+    /// be recorded. Pausing rather than finalizing keeps the session resumable
+    /// with an explicit gap when recording is allowed again.
     async fn pause_all_for_departure(
         &mut self,
         from_channel_id: ChannelId,
@@ -405,16 +411,22 @@ impl RecorderActor {
         self.recoverable_disconnect_deadline_ms = 0;
     }
 
-    pub(super) async fn handle_driver_connected(&mut self, reconnect: bool, at_ms: i64) {
+    pub(super) async fn handle_driver_connected(
+        &mut self,
+        reconnect: bool,
+        channel_id: ChannelId,
+        at_ms: i64,
+    ) {
         if reconnect {
             self.metrics
                 .driver_reconnects
                 .fetch_add(1, Ordering::Relaxed);
         }
-        let channel_id = self
-            .planned_handoff
-            .and_then(|planned| planned.to_channel_id)
-            .unwrap_or(self.channel_id);
+        // The driver reports the channel it actually connected to. An
+        // externally moved bot (a drag or force-move we did not initiate)
+        // produces no planned handoff, so trusting `self.channel_id` here left
+        // the recorder — and with it the exclusion check and every fragment's
+        // `channel_id` — pinned to the previous channel for the whole call.
         self.complete_handoff(channel_id, at_ms).await;
     }
 
@@ -428,11 +440,115 @@ impl RecorderActor {
         self.planned_handoff = None;
         self.disconnected_at_ms = 0;
         self.recoverable_disconnect_deadline_ms = 0;
+        // Re-evaluate the policy for the channel just entered before resuming
+        // anything: a handoff into an excluded channel must not reopen logical
+        // sessions, and a later tick must not skip the check because of a
+        // timestamp from the previous channel.
+        self.last_recording_policy_check_ms = 0;
+        match self.channel_is_excluded(channel_id).await {
+            Ok(false) => {
+                self.stats.set_policy_suspended(false);
+                self.resume_users_in_channel(channel_id, connected_at_ms)
+                    .await;
+            }
+            Ok(true) => {
+                self.stats.set_policy_suspended(true);
+            }
+            Err(error) => {
+                warn!(
+                    guild_id = self.guild_id.get(),
+                    channel_id = channel_id.get(),
+                    "recording policy check failed after channel change; recording stays suspended: {}",
+                    error
+                );
+                self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+                self.stats.set_policy_suspended(true);
+            }
+        }
+    }
 
+    /// Re-evaluates the guild's channel exclusion for the channel the actor is
+    /// connected to, at most once per second.
+    ///
+    /// A violation suspends recording without terminating the actor. Terminating
+    /// it here used to leave the Songbird receiver attached to a dead handle, so
+    /// the guild could not record again until the call was torn down and
+    /// rejoined from scratch.
+    pub(super) async fn refresh_recording_policy(&mut self, at_ms: i64) {
+        if at_ms.saturating_sub(self.last_recording_policy_check_ms) < 1_000 {
+            return;
+        }
+        self.last_recording_policy_check_ms = at_ms;
+        match self.channel_is_excluded(self.channel_id).await {
+            Ok(true) => self.suspend_recording_for_policy(at_ms).await,
+            Ok(false) => self.resume_recording_after_policy(at_ms).await,
+            Err(error) => {
+                warn!(
+                    guild_id = self.guild_id.get(),
+                    channel_id = self.channel_id.get(),
+                    "recording policy check failed; suspending recording to preserve privacy: {}",
+                    error
+                );
+                self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+                self.suspend_recording_for_policy(at_ms).await;
+            }
+        }
+    }
+
+    async fn channel_is_excluded(&self, channel_id: ChannelId) -> crate::database::DbResult<bool> {
+        let excluded = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM guild_recording_policy WHERE guild_id = $1 AND $2 = ANY(excluded_channel_ids))",
+            self.guild_id.to_i64(),
+            channel_id.to_i64(),
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        // `EXISTS` is NOT NULL; a NULL means the driver lost the query's shape,
+        // which must fail closed (error) rather than read as "permitted".
+        match excluded {
+            Some(excluded) => Ok(excluded),
+            None => Err(sqlx::Error::RowNotFound.into()),
+        }
+    }
+
+    async fn suspend_recording_for_policy(&mut self, at_ms: i64) {
+        if self.stats.policy_suspended() {
+            return;
+        }
+        self.stats.set_policy_suspended(true);
+        self.metrics.record_recording_policy_suspension();
+        info!(
+            guild_id = self.guild_id.get(),
+            channel_id = self.channel_id.get(),
+            "recording suspended: channel is excluded by guild policy; the voice call stays up"
+        );
+        self.pause_all_for_departure(
+            self.channel_id,
+            Some(self.channel_id),
+            "channel_excluded",
+            false,
+            at_ms,
+        )
+        .await;
+    }
+
+    async fn resume_recording_after_policy(&mut self, at_ms: i64) {
+        if !self.stats.policy_suspended() {
+            return;
+        }
+        self.stats.set_policy_suspended(false);
+        info!(
+            guild_id = self.guild_id.get(),
+            channel_id = self.channel_id.get(),
+            "recording resumed: channel is no longer excluded by guild policy"
+        );
+        self.resume_users_in_channel(self.channel_id, at_ms).await;
+    }
+
+    async fn resume_users_in_channel(&self, channel_id: ChannelId, at_ms: i64) {
         let users = self.human_users_in_channel(channel_id);
         for user_id in users {
-            self.resume_pending_user(user_id, channel_id, connected_at_ms)
-                .await;
+            self.resume_pending_user(user_id, channel_id, at_ms).await;
         }
     }
 

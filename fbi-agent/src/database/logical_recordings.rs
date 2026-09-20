@@ -481,6 +481,28 @@ pub async fn resume_pending_user(
     owner_instance_id: &str,
 ) -> DbResult<Option<i64>> {
     let mut tx = pool.begin().await?;
+    // A logical session must never be reopened in a channel the guild excludes
+    // from recording. This is the data-layer counterpart to the recorder
+    // actor's in-memory suspension flag.
+    let excluded = match sqlx::query_scalar!(
+        "SELECT COALESCE($2 = ANY(excluded_channel_ids), false) FROM guild_recording_policy WHERE guild_id = $1",
+        guild_id,
+        channel_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        // No policy row means the guild has no exclusions.
+        None => false,
+        Some(Some(excluded)) => excluded,
+        // `COALESCE(..., false)` is NOT NULL; a NULL means the driver lost the
+        // query's shape, which must fail closed rather than read as permitted.
+        Some(None) => return Err(sqlx::Error::RowNotFound.into()),
+    };
+    if excluded {
+        tx.commit().await?;
+        return Ok(None);
+    }
     lock_user_session(&mut tx, guild_id, user_id).await?;
     expire_user_pending_in_tx(&mut tx, guild_id, user_id, at_ms).await?;
     let row = select_open_session(&mut tx, guild_id, user_id).await?;
@@ -986,8 +1008,8 @@ async fn insert_session_event_in_tx(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_PENDING_CAP_SECONDS, USER_UNAVAILABLE_GRACE_SECONDS, create_fragment_in,
-        pending_deadlines,
+        DEFAULT_PENDING_CAP_SECONDS, PauseRequest, USER_UNAVAILABLE_GRACE_SECONDS,
+        create_fragment_in, pause_session, pending_deadlines, resume_pending_user,
     };
     use crate::database::DbError;
     use sqlx::PgPool;
@@ -1004,6 +1026,70 @@ mod tests {
             .fetch_one(&pool)
             .await?;
         assert_eq!(rows, 0);
+        Ok(())
+    }
+
+    /// A pending logical session must not be reopened in a channel the guild
+    /// excludes. This is the data-layer counterpart to the recorder actor's
+    /// in-memory suspension: every resume call site funnels through here.
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn excluded_channel_cannot_resume_pending_session(pool: PgPool) -> Result<(), DbError> {
+        let owner = "test-excluded-resume";
+        sqlx::query(
+            "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)
+             VALUES ($1, 'active', 'active', now(), now())
+             ON CONFLICT (instance_id) DO UPDATE SET state = 'active', heartbeat_at = now()",
+        )
+        .bind(owner)
+        .execute(&pool)
+        .await?;
+        let root = tempfile::tempdir().unwrap();
+        let handle = create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), owner, root.path())
+            .await
+            .expect("fragment");
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        pause_session(
+            &pool,
+            PauseRequest {
+                recording_session_id: handle.recording_session_id,
+                at_ms: now_ms,
+                reason: "user_moved",
+                from_channel_id: Some(2),
+                to_channel_id: Some(3),
+                has_afk_channel: false,
+                starts_grace: false,
+                pending_cap_seconds: 3_600,
+                owner_instance_id: owner,
+            },
+        )
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids) VALUES (1,ARRAY[3::bigint])",
+        )
+        .execute(&pool)
+        .await?;
+
+        assert_eq!(
+            resume_pending_user(&pool, 1, 3, 3, now_ms + 1_000, owner).await?,
+            None,
+            "an excluded channel must not reopen a logical session"
+        );
+        let state: String =
+            sqlx::query_scalar("SELECT state FROM recording_sessions WHERE id = $1")
+                .bind(handle.recording_session_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(state, "pending");
+
+        sqlx::query("DELETE FROM guild_recording_policy WHERE guild_id = 1")
+            .execute(&pool)
+            .await?;
+        assert_eq!(
+            resume_pending_user(&pool, 1, 3, 3, now_ms + 2_000, owner).await?,
+            Some(handle.recording_session_id),
+            "a permitted channel resumes the same logical session"
+        );
         Ok(())
     }
 

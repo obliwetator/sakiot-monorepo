@@ -225,6 +225,7 @@ pub(in crate::events::voice_receiver) enum RecorderCommand {
     },
     DriverConnected {
         reconnect: bool,
+        channel_id: ChannelId,
         at_ms: i64,
     },
     BeginHandoff {

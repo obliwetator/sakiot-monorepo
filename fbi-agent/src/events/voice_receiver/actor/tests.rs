@@ -30,13 +30,36 @@ fn lazy_pool() -> PgPool {
         .expect("lazy pool construction does not connect")
 }
 
+/// A pool that is already closed, so every query fails immediately and
+/// deterministically. The policy path must fail closed without reaching a real
+/// database (and without depending on one being reachable).
+async fn closed_pool() -> PgPool {
+    let pool = lazy_pool();
+    pool.close().await;
+    pool
+}
+
+/// Polls until `predicate` holds so tests do not race the actor's command loop.
+async fn wait_until(mut predicate: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + TERMINATION_TIMEOUT;
+    while !predicate() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "condition was not reached before the deadline"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// Spawns a *registered* actor. Registration matters: teardown reaches the
 /// actor through the registry, so an unregistered actor cannot reproduce the
 /// self-await this suite exists to guard.
-async fn spawn(
+async fn spawn_with_pool(
     data: &Arc<RwLock<TypeMap>>,
     metrics: Arc<crate::BotMetrics>,
     guild: u64,
+    channel: u64,
+    pool: PgPool,
 ) -> RecorderHandle {
     let registry = Arc::new(RecordingCoordinatorRegistry::default());
     {
@@ -46,13 +69,21 @@ async fn spawn(
 
     registry
         .get_or_create(
-            lazy_pool(),
+            pool,
             RecorderEnv::for_test(Arc::clone(data)),
             GuildId::new(guild),
-            ChannelId::new(1),
+            ChannelId::new(channel),
             metrics,
         )
         .await
+}
+
+async fn spawn(
+    data: &Arc<RwLock<TypeMap>>,
+    metrics: Arc<crate::BotMetrics>,
+    guild: u64,
+) -> RecorderHandle {
+    spawn_with_pool(data, metrics, guild, 1, lazy_pool()).await
 }
 
 /// A recoverable disconnect whose 60 s deadline is already in the past, so the
@@ -184,4 +215,137 @@ async fn actor_exit_releases_the_guild_operation_lock() {
     )
     .await
     .expect("teardown must release the per-guild operation lock when the actor exits");
+}
+
+/// A policy check that cannot reach the database must fail closed for privacy
+/// *without* killing the recorder actor: terminating it left the guild's
+/// Songbird receiver attached to a dead handle, so recording could not resume
+/// until the call was torn down and rejoined from scratch.
+#[tokio::test]
+async fn policy_check_failure_suspends_recording_without_killing_the_actor() {
+    let data = Arc::new(RwLock::new(TypeMap::new()));
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let handle = spawn_with_pool(
+        &data,
+        Arc::clone(&metrics),
+        GUILD_BASE + 5,
+        1,
+        closed_pool().await,
+    )
+    .await;
+
+    handle.try_send_tick(chrono::Utc::now().timestamp_millis(), vec![]);
+
+    wait_until(|| handle.stats().policy_suspended()).await;
+    assert_eq!(
+        metrics.recording_policy_suspensions.load(Ordering::Relaxed),
+        1
+    );
+    assert!(
+        !handle.is_stopping(),
+        "a policy violation must not stop the actor"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            handle.wait_terminated()
+        )
+        .await
+        .is_err(),
+        "the actor must stay alive after a failed policy check"
+    );
+}
+
+#[tokio::test]
+async fn policy_suspension_is_idempotent_and_the_actor_still_terminates() {
+    let data = Arc::new(RwLock::new(TypeMap::new()));
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let handle = spawn_with_pool(
+        &data,
+        Arc::clone(&metrics),
+        GUILD_BASE + 6,
+        1,
+        closed_pool().await,
+    )
+    .await;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    handle.try_send_tick(now, vec![]);
+    wait_until(|| handle.stats().policy_suspended()).await;
+
+    handle.try_send_tick(now + 2_000, vec![]);
+    handle.try_send_tick(now + 4_000, vec![]);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        metrics.recording_policy_suspensions.load(Ordering::Relaxed),
+        1,
+        "an already-suspended actor must not count a second suspension"
+    );
+
+    handle.request_shutdown(now + 5_000);
+    tokio::time::timeout(TERMINATION_TIMEOUT, handle.wait_terminated())
+        .await
+        .expect("a suspended actor must still terminate on shutdown");
+}
+
+/// An externally moved bot produces no planned handoff. The driver's own
+/// connect event is the only authoritative source for the channel it is in,
+/// and the recorder's policy checks and fragment metadata depend on it.
+#[tokio::test]
+async fn driver_connect_repoints_the_recorder_to_the_actual_channel() {
+    let data = Arc::new(RwLock::new(TypeMap::new()));
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let handle = spawn_with_pool(&data, metrics, GUILD_BASE + 7, 1, closed_pool().await).await;
+
+    assert_eq!(handle.current_channel_id(), ChannelId::new(1));
+    handle
+        .send_control(RecorderCommand::DriverConnected {
+            reconnect: false,
+            channel_id: ChannelId::new(99),
+            at_ms: chrono::Utc::now().timestamp_millis(),
+        })
+        .await;
+
+    wait_until(|| handle.current_channel_id() == ChannelId::new(99)).await;
+}
+
+/// End-to-end policy round trip against a real database: an excluded channel
+/// suspends recording while the actor stays alive, and removing the exclusion
+/// resumes it in the same call.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn excluded_channel_suspends_and_reenabling_resumes_without_terminating(pool: PgPool) {
+    let guild = GUILD_BASE + 8;
+    let channel = 4_242_u64;
+    sqlx::query(
+        "INSERT INTO guild_recording_policy (guild_id, excluded_channel_ids) VALUES ($1, ARRAY[$2::bigint])",
+    )
+    .bind(guild as i64)
+    .bind(channel as i64)
+    .execute(&pool)
+    .await
+    .expect("policy seed");
+
+    let data = Arc::new(RwLock::new(TypeMap::new()));
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let handle = spawn_with_pool(&data, metrics, guild, channel, pool.clone()).await;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    handle.try_send_tick(now, vec![]);
+    wait_until(|| handle.stats().policy_suspended()).await;
+    assert!(!handle.is_stopping());
+
+    sqlx::query("DELETE FROM guild_recording_policy WHERE guild_id = $1")
+        .bind(guild as i64)
+        .execute(&pool)
+        .await
+        .expect("policy removal");
+
+    handle.try_send_tick(now + 2_000, vec![]);
+    wait_until(|| !handle.stats().policy_suspended()).await;
+    assert!(!handle.is_stopping());
+
+    handle.request_shutdown(now + 3_000);
+    tokio::time::timeout(TERMINATION_TIMEOUT, handle.wait_terminated())
+        .await
+        .expect("the actor must terminate after the policy round trip");
 }

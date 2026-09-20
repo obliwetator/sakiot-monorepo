@@ -285,6 +285,11 @@ fn register_recording_counters(instruments: &Instruments) {
         |m| m.recovery_teardown_manager_missing.load(Relaxed),
     );
     instruments.counter(
+        "recording_policy_suspensions",
+        "Total times recording was suspended because the channel is excluded",
+        |m| m.recording_policy_suspensions.load(Relaxed),
+    );
+    instruments.counter(
         "audio_packets_received",
         "Total audio packets received",
         |m| m.audio_packets_received.load(Relaxed),

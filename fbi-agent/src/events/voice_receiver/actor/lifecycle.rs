@@ -31,6 +31,18 @@ impl RecorderActor {
             return;
         }
 
+        // An excluded channel must never open a new writer, even if a speaker's
+        // state event races the once-per-second policy check.
+        if self.stats.policy_suspended() {
+            debug!(
+                guild_id = self.guild_id.get(),
+                channel_id = self.channel_id.get(),
+                user_id,
+                "ignoring speaking state while recording is suspended by policy"
+            );
+            return;
+        }
+
         match self.recordings.remap_active_user(user_id, ssrc) {
             RemapOutcome::AlreadyActive => {
                 debug!("Writer already active for ssrc {}", ssrc);
@@ -209,31 +221,11 @@ impl RecorderActor {
         packets: Vec<VoicePacket>,
         silence_ticks: u32,
     ) {
-        if at_ms.saturating_sub(self.last_recording_policy_check_ms) >= 1_000 {
-            self.last_recording_policy_check_ms = at_ms;
-            let excluded = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM guild_recording_policy WHERE guild_id=$1 AND $2=ANY(excluded_channel_ids))",
-            )
-            .bind(self.guild_id.to_i64())
-            .bind(self.channel_id.to_i64())
-            .fetch_one(&self.pool)
-            .await;
-            match excluded {
-                Ok(true) => {
-                    info!(guild_id=%self.guild_id,channel_id=%self.channel_id,"recording stopped by channel policy");
-                    self.handle_voice_session_ended(at_ms).await;
-                    return;
-                }
-                Err(error) => {
-                    warn!(
-                        ?error,
-                        "recording policy check failed; stopping recording to preserve privacy"
-                    );
-                    self.handle_voice_session_ended(at_ms).await;
-                    return;
-                }
-                Ok(false) => {}
-            }
+        self.refresh_recording_policy(at_ms).await;
+        // Belt and braces: a writer opened in the window before the first
+        // policy check must not receive audio once the channel is excluded.
+        if self.stats.policy_suspended() {
+            return;
         }
         let packet_map: HashMap<u32, Vec<u8>> = packets
             .into_iter()

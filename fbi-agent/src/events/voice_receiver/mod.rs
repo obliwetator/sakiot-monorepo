@@ -191,18 +191,20 @@ impl VoiceEventHandler for Receiver {
                 );
                 self.actor.send_control(command).await;
             }
-            Ctx::DriverConnect(_) => {
+            Ctx::DriverConnect(data) => {
                 self.actor
                     .send_control(actor::RecorderCommand::DriverConnected {
                         reconnect: false,
+                        channel_id: ChannelId::new(data.channel_id.0.get()),
                         at_ms: now_ms,
                     })
                     .await;
             }
-            Ctx::DriverReconnect(_) => {
+            Ctx::DriverReconnect(data) => {
                 self.actor
                     .send_control(actor::RecorderCommand::DriverConnected {
                         reconnect: true,
+                        channel_id: ChannelId::new(data.channel_id.0.get()),
                         at_ms: now_ms,
                     })
                     .await;

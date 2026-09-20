@@ -19,7 +19,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc,
-        atomic::{AtomicI64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
     },
 };
 
@@ -31,6 +31,10 @@ use super::state::UserRecording;
 pub(super) struct RecorderStats {
     active_user_count: AtomicUsize,
     pub(super) last_voice_packet_time: AtomicI64,
+    /// True while the recorder is alive but refusing to write because the
+    /// guild's policy excludes the channel it is connected to. The voice call
+    /// stays up so recording can resume when the channel is allowed again.
+    policy_suspended: AtomicBool,
 }
 
 impl RecorderStats {
@@ -40,6 +44,14 @@ impl RecorderStats {
 
     pub(super) fn last_voice_packet_time(&self) -> i64 {
         self.last_voice_packet_time.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn policy_suspended(&self) -> bool {
+        self.policy_suspended.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn set_policy_suspended(&self, suspended: bool) {
+        self.policy_suspended.store(suspended, Ordering::Relaxed);
     }
 }
 

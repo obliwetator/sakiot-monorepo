@@ -27,6 +27,9 @@ pub struct BotMetrics {
     pub recovery_teardowns: AtomicU64,
     /// Of those teardowns, the ones that found no Songbird manager.
     pub recovery_teardown_manager_missing: AtomicU64,
+    /// Transitions into policy suspension: the recorder kept the voice call but
+    /// stopped writing because the channel is excluded from recording.
+    pub recording_policy_suspensions: AtomicU64,
     // Voice recording pipeline — per-guild breakdown
     pub guild_recording_metrics: dashmap::DashMap<u64, Arc<GuildRecordingMetrics>>,
     // Voice recording pipeline — per-channel breakdown
@@ -74,6 +77,11 @@ impl BotMetrics {
 
     pub fn record_recovery_teardown_manager_missing(&self) {
         self.recovery_teardown_manager_missing
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn record_recording_policy_suspension(&self) {
+        self.recording_policy_suspensions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -266,6 +274,7 @@ impl Default for BotMetrics {
             recording_duration_seconds: Self::recording_duration_histogram(),
             recovery_teardowns: AtomicU64::new(0),
             recovery_teardown_manager_missing: AtomicU64::new(0),
+            recording_policy_suspensions: AtomicU64::new(0),
             guild_recording_metrics: dashmap::DashMap::new(),
             channel_recording_metrics: dashmap::DashMap::new(),
             voice_users: dashmap::DashMap::new(),

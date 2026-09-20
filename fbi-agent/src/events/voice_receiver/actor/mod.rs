@@ -165,8 +165,13 @@ impl RecorderActor {
                 )
                 .await;
             }
-            RecorderCommand::DriverConnected { reconnect, at_ms } => {
-                self.handle_driver_connected(reconnect, at_ms).await;
+            RecorderCommand::DriverConnected {
+                reconnect,
+                channel_id,
+                at_ms,
+            } => {
+                self.handle_driver_connected(reconnect, channel_id, at_ms)
+                    .await;
             }
             RecorderCommand::BeginHandoff {
                 from_channel_id,
