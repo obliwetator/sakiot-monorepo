@@ -20,5 +20,3 @@ export const PARITY_APPROVED_EQ = {
 		width: 1,
 	},
 } as const;
-
-export type ParityApprovedEqId = keyof typeof PARITY_APPROVED_EQ;

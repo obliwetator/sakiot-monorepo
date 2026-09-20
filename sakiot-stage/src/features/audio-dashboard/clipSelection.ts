@@ -113,13 +113,6 @@ export function transformSelectionWithWindow(
 	];
 }
 
-export function selectionFitsWindow(
-	selection: SessionSelection,
-	windowMs: number,
-): boolean {
-	return selection[1] - selection[0] <= windowMs;
-}
-
 /** A window of `windowMs` centred on the selection, never narrower than it. */
 export function windowForSelection(
 	selection: SessionSelection,
@@ -343,18 +336,6 @@ export function setNearestSelectionEdge(
 		positionMs,
 		durationMs,
 	);
-}
-
-/** Slides the whole selection, preserving its length at either boundary. */
-export function moveSelection(
-	selection: SessionSelection,
-	deltaMs: number,
-	durationMs: number,
-): SessionSelection {
-	const length = selection[1] - selection[0];
-	const limit = Math.max(0, durationMs - length);
-	const start = Math.min(Math.max(selection[0] + deltaMs, 0), limit);
-	return [start, start + length];
 }
 
 /** Slides a selection without allowing either edge to leave the detail view. */

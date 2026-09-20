@@ -99,11 +99,6 @@ export function sharedDspAvailable(): boolean {
 	return ready && !failed;
 }
 
-/** True after initialization either succeeds or irrecoverably fails. */
-export function sharedDspSettled(): boolean {
-	return ready || failed;
-}
-
 /**
  * Render and cache reverse/pitch/rate/tail independently from live effects.
  * Geometry work has priority over queued waveform work so playback can start

@@ -497,7 +497,3 @@ export function useSessionSelectionController(
 		rememberPlayback,
 	};
 }
-
-export type SessionSelectionController = ReturnType<
-	typeof useSessionSelectionController
->;

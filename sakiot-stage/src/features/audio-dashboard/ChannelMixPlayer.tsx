@@ -499,21 +499,6 @@ export function ChannelMixPlayer(props: {
 	);
 }
 
-export function ChannelMixParticipants(props: {
-	participants: ChannelMixResponse["participants"];
-}) {
-	if (props.participants.length === 0) return null;
-	return (
-		<div className="flex flex-wrap flex-row gap-1.5 mt-2">
-			{props.participants.map((participant) => (
-				<Badge key={participant.user_id} appearance={"outline"} size={"sm"}>
-					{participant.display_name ?? `User ${participant.user_id}`}
-				</Badge>
-			))}
-		</div>
-	);
-}
-
 export function ChannelMixProgress(props: { progress: number }) {
 	return (
 		<div className="mt-2 max-w-140">

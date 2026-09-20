@@ -1,5 +1,4 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { RootState } from "../store";
 
 // Define a type for the slice state
 interface HasSilenceState {
@@ -31,8 +30,5 @@ const hasSilence = createSlice({
 });
 
 export const { setHasSilence, bumpSilenceVersion } = hasSilence.actions;
-
-// Other code such as selectors can use the imported `RootState` type
-export const selectHasSilence = (state: RootState) => state.hasSilence.value;
 
 export default hasSilence.reducer;

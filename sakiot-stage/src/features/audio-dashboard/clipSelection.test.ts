@@ -11,7 +11,6 @@ import {
 	defaultDetailWindowMs,
 	fineDragMultiplier,
 	initialDetailView,
-	moveSelection,
 	moveSelectionWithinWindow,
 	nearestSelectionEdge,
 	nudgeEdge,
@@ -20,7 +19,6 @@ import {
 	precisionZoneBounds,
 	rollingEdgeStrength,
 	rollingRulerWindow,
-	selectionFitsWindow,
 	selectionShiftedAsBand,
 	selectionWindowGeometry,
 	setNearestSelectionEdge,
@@ -263,13 +261,6 @@ describe("selectionShiftedAsBand", () => {
 	});
 });
 
-describe("selectionFitsWindow", () => {
-	test("tells a clip-sized selection from a whole-session one", () => {
-		expect(selectionFitsWindow([0, 12_000], 60_000)).toBe(true);
-		expect(selectionFitsWindow([0, SESSION_MS], 60_000)).toBe(false);
-	});
-});
-
 describe("window geometry", () => {
 	test("maps an instant to its fraction of the window", () => {
 		expect(windowFraction(130_000, { startMs: 100_000, endMs: 160_000 })).toBe(
@@ -468,26 +459,6 @@ describe("direction-aware edge controls", () => {
 		expect(setNearestSelectionEdge(selection, 18_000, SESSION_MS)).toEqual([
 			10_000, 18_000,
 		]);
-	});
-});
-
-describe("moveSelection", () => {
-	test("slides both edges together", () => {
-		expect(moveSelection([10_000, 20_000], 5_000, SESSION_MS)).toEqual([
-			15_000, 25_000,
-		]);
-	});
-
-	test("keeps the length when it hits the start", () => {
-		expect(moveSelection([10_000, 20_000], -50_000, SESSION_MS)).toEqual([
-			0, 10_000,
-		]);
-	});
-
-	test("keeps the length when it hits the end", () => {
-		expect(
-			moveSelection([SESSION_MS - 10_000, SESSION_MS], 50_000, SESSION_MS),
-		).toEqual([SESSION_MS - 10_000, SESSION_MS]);
 	});
 });
 

@@ -440,10 +440,6 @@ export function updateSegment(
 	};
 }
 
-export function removeSegment(edit: ClipEdit, id: string): ClipEdit {
-	return { ...edit, segments: edit.segments.filter((s) => s.id !== id) };
-}
-
 export function moveSegment(
 	edit: ClipEdit,
 	id: string,

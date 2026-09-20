@@ -5,12 +5,7 @@ import {
 } from "../../app/authedFetch";
 import { clampPlaybackPosition } from "./logicalSessionPlaybackState";
 import type { SessionSelection } from "./logicalSessionSelection";
-import { selectionContainsPosition } from "./logicalSessionSelection";
-
-interface PlaybackBound {
-	stopMs: number;
-	loopToMs: number | null;
-}
+import { usePlaybackBound } from "./usePlaybackBound";
 
 interface SilencePlaybackOptions {
 	mediaUrl: string | null;
@@ -28,17 +23,29 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 	const [playing, setPlaying] = useState(false);
 	const [playbackError, setPlaybackError] = useState<string | null>(null);
 	const [retryKey, setRetryKey] = useState(0);
-	const [boundActive, setBoundActive] = useState(false);
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const retryRef = useRef(false);
 	const positionRef = useRef(0);
 	const durationRef = useRef(options.initialDurationMs ?? 0);
 	const playingRef = useRef(false);
-	const boundRef = useRef<PlaybackBound | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
 	const onLoopDisabledRef = useRef(options.onLoopDisabled);
+	const stopRef = useRef<() => void>(() => {});
+	const onBeforePlayRef = useRef<() => void>(() => {});
+	onBeforePlayRef.current = () => setPlaybackError(null);
+
+	const bound = usePlaybackBound({
+		startAtRef,
+		positionRef,
+		playingRef,
+		durationRef,
+		onLoopDisabledRef,
+		stopRef,
+		onBeforePlayRef,
+		setSeekPreviewMs,
+	});
 
 	useEffect(() => {
 		onLoopDisabledRef.current = options.onLoopDisabled;
@@ -66,21 +73,16 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 		setPositionMs(0);
 		setSeekPreviewMs(null);
 		setPlaybackError(null);
-		boundRef.current = null;
-		setBoundActive(false);
-	}, [mediaUrl, options.initialDurationMs]);
-
-	const clearBound = useCallback(() => {
-		boundRef.current = null;
-		setBoundActive(false);
-	}, []);
+		bound.clearBound();
+	}, [mediaUrl, options.initialDurationMs, bound.clearBound]);
 
 	const stop = useCallback(() => {
-		clearBound();
+		bound.clearBound();
 		audioRef.current?.pause();
 		playingRef.current = false;
 		setPlaying(false);
-	}, [clearBound]);
+	}, [bound.clearBound]);
+	stopRef.current = stop;
 
 	const startAt = useCallback(
 		(requestedPosition: number, autoplay: boolean) => {
@@ -109,40 +111,19 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 			void audio.play().catch(() => {
 				playingRef.current = false;
 				setPlaying(false);
-				clearBound();
+				bound.clearBound();
 				setPlaybackError("Browser blocked or failed silence-free playback.");
 			});
 		},
-		[clearBound],
+		[bound.clearBound],
 	);
 	startAtRef.current = startAt;
-
-	const applyBound = useCallback((atMs: number): boolean => {
-		const bound = boundRef.current;
-		if (!bound || atMs < bound.stopMs) return false;
-		if (bound.loopToMs !== null) {
-			startAtRef.current(bound.loopToMs, true);
-			return true;
-		}
-		boundRef.current = null;
-		setBoundActive(false);
-		startAtRef.current(bound.stopMs, false);
-		return true;
-	}, []);
 
 	const seek = useCallback(
 		(nextPositionMs: number, selection: SessionSelection, loop: boolean) => {
 			setSeekPreviewMs(null);
 			const target = clampPlaybackPosition(nextPositionMs, durationRef.current);
-			if (loop && !selectionContainsPosition(selection, target)) {
-				clearBound();
-				onLoopDisabledRef.current();
-			} else if (boundRef.current) {
-				boundRef.current = {
-					stopMs: selection[1],
-					loopToMs: loop ? selection[0] : null,
-				};
-			}
+			bound.prepareSeek(selection, loop, target);
 			const audio = audioRef.current;
 			if (audio) {
 				try {
@@ -154,89 +135,9 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 			}
 			positionRef.current = target;
 			setPositionMs(target);
-			applyBound(target);
+			bound.applyBound(target);
 		},
-		[applyBound, clearBound],
-	);
-
-	const togglePlay = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (playingRef.current) {
-				stop();
-				return;
-			}
-			setPlaybackError(null);
-			if (loop && selection[1] > selection[0]) {
-				boundRef.current = { stopMs: selection[1], loopToMs: selection[0] };
-				setBoundActive(true);
-				startAtRef.current(
-					selectionContainsPosition(selection, positionRef.current)
-						? positionRef.current
-						: selection[0],
-					true,
-				);
-				return;
-			}
-			clearBound();
-			startAtRef.current(
-				positionRef.current >= durationRef.current ? 0 : positionRef.current,
-				true,
-			);
-		},
-		[clearBound, stop],
-	);
-
-	const togglePreview = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (boundRef.current) {
-				stop();
-				return;
-			}
-			if (selection[1] <= selection[0]) return;
-			boundRef.current = {
-				stopMs: selection[1],
-				loopToMs: loop ? selection[0] : null,
-			};
-			setBoundActive(true);
-			setSeekPreviewMs(null);
-			startAtRef.current(selection[0], true);
-		},
-		[stop],
-	);
-
-	const updateLoop = useCallback(
-		(enabled: boolean, selection: SessionSelection) => {
-			if (!enabled) {
-				if (boundRef.current) boundRef.current.loopToMs = null;
-				return;
-			}
-			if (boundRef.current) {
-				boundRef.current = { stopMs: selection[1], loopToMs: selection[0] };
-				setBoundActive(true);
-				startAtRef.current(selection[0], playingRef.current);
-				return;
-			}
-			clearBound();
-			startAtRef.current(selection[0], false);
-		},
-		[clearBound],
-	);
-
-	const syncBound = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (!boundRef.current) return;
-			if (!selectionContainsPosition(selection, positionRef.current)) {
-				clearBound();
-				if (loop) onLoopDisabledRef.current();
-				return;
-			}
-			boundRef.current = {
-				stopMs: selection[1],
-				loopToMs: loop ? selection[0] : null,
-			};
-			applyBound(positionRef.current);
-		},
-		[applyBound, clearBound],
+		[bound.applyBound, bound.prepareSeek],
 	);
 
 	const updateDuration = useCallback(
@@ -254,17 +155,17 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 	const onTimeUpdate = useCallback(
 		(audio: HTMLAudioElement) => {
 			const next = audio.currentTime * 1_000;
-			if (applyBound(next)) return;
+			if (bound.applyBound(next)) return;
 			positionRef.current = next;
 			setPositionMs(next);
 		},
-		[applyBound],
+		[bound.applyBound],
 	);
 
 	const onError = useCallback(() => {
 		playingRef.current = false;
 		setPlaying(false);
-		clearBound();
+		bound.clearBound();
 		if (retryRef.current) {
 			setPlaybackError("Silence-free audio could not be loaded.");
 			return;
@@ -278,7 +179,7 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 				setPlaybackError(SESSION_EXPIRED_MESSAGE);
 			}
 		});
-	}, [clearBound]);
+	}, [bound.clearBound]);
 
 	useEffect(() => {
 		if (!playing) return;
@@ -304,14 +205,14 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 		playing,
 		playbackError,
 		retryKey,
-		boundActive,
+		boundActive: bound.boundActive,
 		startAt,
 		seek,
-		togglePlay,
-		togglePreview,
-		updateLoop,
-		syncBound,
-		clearBound,
+		togglePlay: bound.togglePlay,
+		togglePreview: bound.togglePreview,
+		updateLoop: bound.updateLoop,
+		syncBound: bound.syncBound,
+		clearBound: bound.clearBound,
 		stop,
 		mediaHandlers: {
 			onLoadedMetadata: (audio: HTMLAudioElement) => {
@@ -331,7 +232,7 @@ export function useSilenceFreePlayback(options: SilencePlaybackOptions) {
 			onEnded: () => {
 				playingRef.current = false;
 				setPlaying(false);
-				clearBound();
+				bound.clearBound();
 			},
 			onError,
 		},

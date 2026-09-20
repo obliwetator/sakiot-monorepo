@@ -106,7 +106,6 @@ export type ClipData = ApiSchema["ClipInfo"];
 export type VoiceEvent = ApiSchema["VoiceEventDto"];
 export type SessionManifest = ApiSchema["SessionManifestDto"];
 export type SessionSegment = ApiSchema["SessionSegmentDto"];
-export type SessionTimelineEvent = ApiSchema["SessionTimelineEventDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 export type GuildRecordingPolicy = ApiSchema["GuildRecordingPolicy"];
 export type RecordingDeletionStatus = ApiSchema["RecordingDeletionStatus"];

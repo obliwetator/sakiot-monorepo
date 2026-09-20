@@ -13,13 +13,8 @@ import {
 	shouldRetryMediaLoad,
 } from "./logicalSessionPlaybackState";
 import type { SessionSelection } from "./logicalSessionSelection";
-import { selectionContainsPosition } from "./logicalSessionSelection";
 import type { PlaybackSegment } from "./logicalSessionTimeline";
-
-interface PlaybackBound {
-	stopMs: number;
-	loopToMs: number | null;
-}
+import { usePlaybackBound } from "./usePlaybackBound";
 
 interface SegmentedPlaybackOptions {
 	segments: PlaybackSegment[];
@@ -34,7 +29,6 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 	const [positionMs, setPositionMs] = useState(0);
 	const [seekPreviewMs, setSeekPreviewMs] = useState<number | null>(null);
 	const [playing, setPlaying] = useState(false);
-	const [boundActive, setBoundActive] = useState(false);
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const hlsRef = useRef<Hls | null>(null);
 	const animationRef = useRef<number | null>(null);
@@ -47,12 +41,25 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 	const segmentsRef = useRef(options.segments);
 	const rateRef = useRef(options.playbackRate);
 	const volumeRef = useRef(options.volume);
-	const boundRef = useRef<PlaybackBound | null>(null);
 	const startAtRef = useRef<(position: number, autoplay: boolean) => void>(
 		() => {},
 	);
 	const onErrorRef = useRef(options.onError);
 	const onLoopDisabledRef = useRef(options.onLoopDisabled);
+	const stopRef = useRef<() => void>(() => {});
+	const onBeforePlayRef = useRef<() => void>(() => {});
+	onBeforePlayRef.current = () => onErrorRef.current(null);
+
+	const bound = usePlaybackBound({
+		startAtRef,
+		positionRef,
+		playingRef,
+		durationRef,
+		onLoopDisabledRef,
+		stopRef,
+		onBeforePlayRef,
+		setSeekPreviewMs,
+	});
 
 	useEffect(() => {
 		onErrorRef.current = options.onError;
@@ -98,31 +105,14 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 		}
 	}, []);
 
-	const clearBound = useCallback(() => {
-		boundRef.current = null;
-		setBoundActive(false);
-	}, []);
-
 	const stop = useCallback(() => {
-		clearBound();
+		bound.clearBound();
 		generationRef.current += 1;
 		stopSource();
 		playingRef.current = false;
 		setPlaying(false);
-	}, [clearBound, stopSource]);
-
-	const applyBound = useCallback((atMs: number): boolean => {
-		const bound = boundRef.current;
-		if (!bound || atMs < bound.stopMs) return false;
-		if (bound.loopToMs !== null) {
-			startAtRef.current(bound.loopToMs, true);
-			return true;
-		}
-		boundRef.current = null;
-		setBoundActive(false);
-		startAtRef.current(bound.stopMs, false);
-		return true;
-	}, []);
+	}, [bound.clearBound, stopSource]);
+	stopRef.current = stop;
 
 	const startAt = useCallback(
 		(requestedPosition: number, autoplay: boolean) => {
@@ -144,7 +134,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 				activeSegmentRef.current = null;
 				playingRef.current = false;
 				setPlaying(false);
-				clearBound();
+				bound.clearBound();
 				return;
 			}
 			activeSegmentRef.current = segment;
@@ -158,7 +148,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 					if (generationRef.current !== generation || !playingRef.current)
 						return;
 					const next = logicalStart + (wallNow - wallStart) * rateRef.current;
-					if (applyBound(next)) return;
+					if (bound.applyBound(next)) return;
 					if (next >= segmentLimit) {
 						startAtRef.current(segmentLimit, segmentLimit < durationMs);
 						return;
@@ -172,7 +162,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 			}
 			const mediaUrl = segment.media_url;
 			if (!mediaUrl) {
-				if (!applyBound(segmentLimit)) {
+				if (!bound.applyBound(segmentLimit)) {
 					startAtRef.current(segmentLimit, segmentLimit < durationMs);
 				}
 				return;
@@ -187,7 +177,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 				onErrorRef.current(message);
 				playingRef.current = false;
 				setPlaying(false);
-				clearBound();
+				bound.clearBound();
 			};
 			const begin = () => {
 				if (generationRef.current !== generation) return;
@@ -238,9 +228,9 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 				const mediaSeconds = audio.currentTime;
 				if (!Number.isFinite(mediaSeconds)) return true;
 				const logical = segment.start_ms + mediaSeconds * 1_000;
-				if (applyBound(logical)) return false;
+				if (bound.applyBound(logical)) return false;
 				if (logical >= segmentLimit - 20) {
-					if (!applyBound(segmentLimit)) {
+					if (!bound.applyBound(segmentLimit)) {
 						startAtRef.current(segmentLimit, segmentLimit < durationMs);
 					}
 					return false;
@@ -267,7 +257,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 			});
 			audio.addEventListener("ended", () => {
 				if (generationRef.current !== generation) return;
-				if (!applyBound(segmentLimit)) {
+				if (!bound.applyBound(segmentLimit)) {
 					startAtRef.current(segmentLimit, segmentLimit < durationMs);
 				}
 			});
@@ -299,7 +289,7 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 				audio.addEventListener("loadedmetadata", begin, { once: true });
 			}
 		},
-		[applyBound, clearBound, stopSource],
+		[bound.applyBound, bound.clearBound, stopSource],
 	);
 	startAtRef.current = startAt;
 
@@ -332,99 +322,10 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 	const seek = useCallback(
 		(nextPositionMs: number, selection: SessionSelection, loop: boolean) => {
 			const target = clampPlaybackPosition(nextPositionMs, durationRef.current);
-			if (loop && !selectionContainsPosition(selection, target)) {
-				clearBound();
-				onLoopDisabledRef.current();
-			} else if (boundRef.current) {
-				boundRef.current = {
-					stopMs: selection[1],
-					loopToMs: loop ? selection[0] : null,
-				};
-			}
+			bound.prepareSeek(selection, loop, target);
 			seekWithinSource(target);
 		},
-		[clearBound, seekWithinSource],
-	);
-
-	const togglePlay = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (playingRef.current) {
-				stop();
-				return;
-			}
-			onErrorRef.current(null);
-			if (loop && selection[1] > selection[0]) {
-				boundRef.current = { stopMs: selection[1], loopToMs: selection[0] };
-				setBoundActive(true);
-				const current = positionRef.current;
-				startAtRef.current(
-					selectionContainsPosition(selection, current)
-						? current
-						: selection[0],
-					true,
-				);
-				return;
-			}
-			clearBound();
-			startAtRef.current(
-				positionRef.current >= durationRef.current ? 0 : positionRef.current,
-				true,
-			);
-		},
-		[clearBound, stop],
-	);
-
-	const togglePreview = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (boundRef.current) {
-				stop();
-				return;
-			}
-			if (selection[1] <= selection[0]) return;
-			boundRef.current = {
-				stopMs: selection[1],
-				loopToMs: loop ? selection[0] : null,
-			};
-			setBoundActive(true);
-			setSeekPreviewMs(null);
-			startAtRef.current(selection[0], true);
-		},
-		[stop],
-	);
-
-	const updateLoop = useCallback(
-		(enabled: boolean, selection: SessionSelection) => {
-			if (!enabled) {
-				if (boundRef.current) boundRef.current.loopToMs = null;
-				return;
-			}
-			if (boundRef.current) {
-				boundRef.current = { stopMs: selection[1], loopToMs: selection[0] };
-				setBoundActive(true);
-				startAtRef.current(selection[0], playingRef.current);
-				return;
-			}
-			clearBound();
-			startAtRef.current(selection[0], false);
-		},
-		[clearBound],
-	);
-
-	const syncBound = useCallback(
-		(selection: SessionSelection, loop: boolean) => {
-			if (!boundRef.current) return;
-			if (!selectionContainsPosition(selection, positionRef.current)) {
-				clearBound();
-				if (loop) onLoopDisabledRef.current();
-				return;
-			}
-			boundRef.current = {
-				stopMs: selection[1],
-				loopToMs: loop ? selection[0] : null,
-			};
-			applyBound(positionRef.current);
-		},
-		[applyBound, clearBound],
+		[bound.prepareSeek, seekWithinSource],
 	);
 
 	const restartWithSegments = useCallback((segments: PlaybackSegment[]) => {
@@ -445,14 +346,14 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 		seekPreviewMs,
 		setSeekPreviewMs,
 		playing,
-		boundActive,
+		boundActive: bound.boundActive,
 		startAt,
 		seek,
-		togglePlay,
-		togglePreview,
-		updateLoop,
-		syncBound,
-		clearBound,
+		togglePlay: bound.togglePlay,
+		togglePreview: bound.togglePreview,
+		updateLoop: bound.updateLoop,
+		syncBound: bound.syncBound,
+		clearBound: bound.clearBound,
 		stop,
 		restartWithSegments,
 	};
