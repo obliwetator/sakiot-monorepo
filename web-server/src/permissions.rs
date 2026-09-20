@@ -205,23 +205,6 @@ fn apply_overwrite(
     permissions
 }
 
-pub async fn get_everyone_permission_for_guild(
-    pool: &web::Data<Pool<Postgres>>,
-    guild_id: i64,
-) -> Result<Permissions, AppError> {
-    let res = sqlx::query!(
-        "SELECT permission FROM roles
-			WHERE guild_id =$1 AND role_id =$1",
-        guild_id
-    )
-    .fetch_optional(pool.get_ref())
-    .await?;
-
-    Ok(res
-        .map(|r| permissions_from_bits(r.permission))
-        .unwrap_or_else(Permissions::empty))
-}
-
 pub async fn get_combined_perm_for_user(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
@@ -638,14 +621,6 @@ async fn get_voice_channel_permission_states(
             )
         })
         .collect())
-}
-
-pub async fn require_guild_admin(
-    req: &actix_web::HttpRequest,
-    pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
-    guild_id: i64,
-) -> Result<i64, crate::errors::AppError> {
-    require_guild_permission(req, pool, guild_id, Permissions::ADMINISTRATOR).await
 }
 
 pub async fn require_guild_manager(

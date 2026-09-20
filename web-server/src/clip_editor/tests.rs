@@ -650,7 +650,7 @@ async fn long_segment_does_not_change_another_segments_effects_or_stereo() {
         HashMap::new(),
     )));
     let output = temp.path().join("composition.ogg");
-    super::render_compose(&[short, long], 0.0, &output, 60510, &progress, "mixed")
+    super::render_compose_shared(&[short, long], 0.0, &output, 60510, &progress, "mixed")
         .await
         .unwrap();
     assert!((probe_duration(&output).await.unwrap() - 60.51).abs() < 0.05);

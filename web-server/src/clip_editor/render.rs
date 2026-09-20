@@ -1,24 +1,5 @@
 use super::*;
 
-pub(super) async fn render_compose(
-    segments: &[SegmentRender],
-    master_volume_db: f32,
-    output: &Path,
-    expected_total_ms: i64,
-    progress: &web::Data<WaveformProgressContainer>,
-    cache_key: &str,
-) -> Result<(), AppError> {
-    render_compose_shared(
-        segments,
-        master_volume_db,
-        output,
-        expected_total_ms,
-        progress,
-        cache_key,
-    )
-    .await
-}
-
 pub(super) async fn render_compose_shared(
     segments: &[SegmentRender],
     master_volume_db: f32,
@@ -65,15 +46,9 @@ async fn run_ffmpeg(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            AppError::ServiceUnavailable(
-                "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
-            )
-        } else {
-            AppError::IoError(error)
-        }
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
     let stderr = child
         .stderr
         .take()
@@ -320,36 +295,12 @@ pub(super) fn is_ffmpeg_progress_line(line: &str) -> bool {
 }
 
 pub(super) async fn probe_duration(path: &Path) -> Result<f64, AppError> {
-    let probe = tokio::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::ServiceUnavailable(
-                    "ffprobe executable is unavailable; install FFmpeg on the web server".into(),
-                )
-            } else {
-                AppError::IoError(error)
-            }
-        })?;
+    let probe = crate::ffmpeg::run_ffprobe(path).await?;
     if !probe.status.success() {
         return Err(AppError::FfmpegError(
             String::from_utf8_lossy(&probe.stderr).into_owned(),
         ));
     }
-    String::from_utf8_lossy(&probe.stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|duration| duration.is_finite() && *duration > 0.0)
+    crate::ffmpeg::parse_probe_duration(&probe.stdout)
         .ok_or_else(|| AppError::FfmpegError("ffprobe returned no audio duration".into()))
 }

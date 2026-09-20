@@ -6,7 +6,6 @@ use actix_web::{
 
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Deserialize_repr, Serialize_repr};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
@@ -265,15 +264,6 @@ pub struct JamItBody {
     clip_name: String,
 }
 
-#[derive(Serialize_repr, Deserialize_repr, PartialEq, Debug)]
-#[repr(u8)]
-#[serde(tag = "code")]
-pub enum JamItResponse {
-    OK,
-    NotPresentInChannel,
-    Unknown,
-}
-
 #[utoipa::path(
     post,
     path = "/api/jamit",
@@ -484,64 +474,27 @@ fn validate_clip_fits_recording(end: f32, recording_duration: f64) -> Result<(),
     Ok(())
 }
 
-/// Parse the `format=duration` value emitted by ffprobe. `None` covers the
-/// non-numeric (`N/A`), non-finite, and non-positive outputs that all mean "no
-/// usable audio in this file".
-fn parse_probe_duration(stdout: &[u8]) -> Option<f64> {
-    String::from_utf8_lossy(stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|duration| duration.is_finite() && *duration > 0.0)
-}
-
-/// Run ffprobe for a container duration. Only process-level failures are
-/// errors here; a non-zero exit is returned to the caller as a failed status.
-async fn run_ffprobe(path: &Path) -> Result<std::process::Output, AppError> {
-    tokio::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::ServiceUnavailable(
-                    "ffprobe executable is unavailable; install FFmpeg on the web server".into(),
-                )
-            } else {
-                AppError::IoError(error)
-            }
-        })
-}
-
 /// Duration of the localized source recording, in seconds. A source we cannot
 /// measure is a bad gateway, not a client error: the request itself may be fine.
 async fn probe_source_duration(path: &Path) -> Result<f64, AppError> {
-    let probe = run_ffprobe(path).await?;
+    let probe = crate::ffmpeg::run_ffprobe(path).await?;
     if !probe.status.success() {
         return Err(AppError::BadGateway(
             "ffprobe could not read the recording duration".into(),
         ));
     }
-    parse_probe_duration(&probe.stdout)
+    crate::ffmpeg::parse_probe_duration(&probe.stdout)
         .ok_or_else(|| AppError::BadGateway("ffprobe returned no audio duration".into()))
 }
 
 /// Duration of a clip ffmpeg just wrote. `None` means the output carries no
 /// audio (header-only container), which must not be recorded as a clip.
 async fn probe_rendered_duration(path: &Path) -> Result<Option<f64>, AppError> {
-    let probe = run_ffprobe(path).await?;
+    let probe = crate::ffmpeg::run_ffprobe(path).await?;
     if !probe.status.success() {
         return Ok(None);
     }
-    Ok(parse_probe_duration(&probe.stdout))
+    Ok(crate::ffmpeg::parse_probe_duration(&probe.stdout))
 }
 
 async fn discard_clip_output(path: &str) {
@@ -868,11 +821,11 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_unusable_clip_output, normalized_clip_name, parse_probe_duration,
-        probe_rendered_duration, probe_source_duration, validate_clip_fits_recording,
-        validate_clip_range,
+        is_unusable_clip_output, normalized_clip_name, probe_rendered_duration,
+        probe_source_duration, validate_clip_fits_recording, validate_clip_range,
     };
     use crate::errors::AppError;
+    use crate::ffmpeg::parse_probe_duration;
 
     #[test]
     fn validates_and_trims_clip_names() {

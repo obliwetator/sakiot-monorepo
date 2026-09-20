@@ -103,14 +103,14 @@ pub(crate) async fn run_download_job(
         "composing",
         &progress,
         job_id,
-        compose_session_with_progress(
+        compose_session_inner(
             &pool_data,
             &access,
             start,
             end,
             remove_silence,
             &output,
-            composition_progress,
+            Some(composition_progress),
             media,
         ),
     )
@@ -327,14 +327,14 @@ pub(crate) async fn run_session_silence_job(
         "removing_silence",
         &progress,
         &composition_progress.cache_key,
-        compose_session_with_progress(
+        compose_session_inner(
             &pool_data,
             &access,
             None,
             None,
             true,
             &temporary,
-            composition_progress.clone(),
+            Some(composition_progress.clone()),
             media,
         ),
     )

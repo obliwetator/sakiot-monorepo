@@ -1,56 +1,10 @@
 use super::*;
 
-pub(super) async fn compose_session(
-    pool: &web::Data<Pool<Postgres>>,
-    access: &SessionAccess,
-    range_start_seconds: Option<f64>,
-    range_end_seconds: Option<f64>,
-    remove_silence: bool,
-    output: &Path,
-    media: &MediaArchive,
-) -> Result<(), AppError> {
-    compose_session_inner(
-        pool,
-        access,
-        range_start_seconds,
-        range_end_seconds,
-        remove_silence,
-        output,
-        None,
-        media,
-    )
-    .await
-}
-
 #[derive(Clone)]
 pub(super) struct CompositionProgress {
     pub(super) cache_key: String,
     pub(super) progress: web::Data<WaveformProgressContainer>,
     pub(super) completed: i16,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn compose_session_with_progress(
-    pool: &web::Data<Pool<Postgres>>,
-    access: &SessionAccess,
-    range_start_seconds: Option<f64>,
-    range_end_seconds: Option<f64>,
-    remove_silence: bool,
-    output: &Path,
-    progress: CompositionProgress,
-    media: &MediaArchive,
-) -> Result<(), AppError> {
-    compose_session_inner(
-        pool,
-        access,
-        range_start_seconds,
-        range_end_seconds,
-        remove_silence,
-        output,
-        Some(progress),
-        media,
-    )
-    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,15 +106,9 @@ pub(super) async fn compose_session_inner(
         command.args(["-progress", "pipe:2", "-nostats"]);
     }
 
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            AppError::ServiceUnavailable(
-                "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
-            )
-        } else {
-            AppError::IoError(error)
-        }
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
     let stderr = child
         .stderr
         .take()

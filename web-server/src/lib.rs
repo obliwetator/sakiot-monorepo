@@ -6,6 +6,7 @@ pub mod clips;
 pub mod config;
 pub mod errors;
 pub mod fbi_agent_registry;
+pub mod ffmpeg;
 pub mod grpc_client;
 pub mod health;
 pub mod http_metrics;

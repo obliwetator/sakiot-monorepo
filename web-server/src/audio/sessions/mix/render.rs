@@ -153,15 +153,9 @@ pub(super) async fn run_mix_ffmpeg(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            AppError::ServiceUnavailable(
-                "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
-            )
-        } else {
-            AppError::IoError(error)
-        }
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
     let stderr = child
         .stderr
         .take()

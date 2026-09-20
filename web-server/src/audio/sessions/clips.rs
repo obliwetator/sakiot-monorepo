@@ -50,13 +50,14 @@ pub async fn create_session_clip(
         let source = session_silence_free_path(&access)?;
         crop_silence_free_session(&source, start, end, &full_path).await?;
     } else {
-        compose_session(
+        compose_session_inner(
             &pool,
             &access,
             Some(start),
             Some(end),
             false,
             &full_path,
+            None,
             media.get_ref(),
         )
         .await?;
@@ -116,37 +117,13 @@ pub(super) async fn crop_silence_free_session(
     if !tokio::fs::try_exists(source).await? {
         return Err(AppError::FileNotFound);
     }
-    let probe = tokio::process::Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(source)
-        .output()
-        .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::ServiceUnavailable(
-                    "ffprobe executable is unavailable; install FFmpeg on the web server".into(),
-                )
-            } else {
-                AppError::IoError(error)
-            }
-        })?;
+    let probe = crate::ffmpeg::run_ffprobe(source).await?;
     if !probe.status.success() {
         return Err(AppError::FfmpegError(
             String::from_utf8_lossy(&probe.stderr).into_owned(),
         ));
     }
-    let duration = String::from_utf8_lossy(&probe.stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|duration| duration.is_finite() && *duration > 0.0)
+    let duration = crate::ffmpeg::parse_probe_duration(&probe.stdout)
         .ok_or_else(|| AppError::FfmpegError("ffprobe returned no audio duration".into()))?;
     if end > duration + 0.02 {
         return Err(AppError::BadRequest(
@@ -173,15 +150,7 @@ pub(super) async fn crop_silence_free_session(
         .stderr(Stdio::piped())
         .output()
         .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                AppError::ServiceUnavailable(
-                    "ffmpeg executable is unavailable; install FFmpeg on the web server".into(),
-                )
-            } else {
-                AppError::IoError(error)
-            }
-        })?;
+        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
     if !result.status.success() {
         let _ = tokio::fs::remove_file(output).await;
         return Err(AppError::FfmpegError(

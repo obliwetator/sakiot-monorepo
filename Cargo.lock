@@ -6707,7 +6707,6 @@ dependencies = [
  "sakiot-storage",
  "serde",
  "serde_json",
- "serde_repr",
  "serde_with",
  "sqlx",
  "subtle",

@@ -229,14 +229,14 @@ pub(crate) async fn run_session_waveform_job(
             "composing",
             &progress,
             &cache_key,
-            compose_session_with_progress(
+            compose_session_inner(
                 &pool_data,
                 &access,
                 None,
                 None,
                 false,
                 &composite,
-                composition_progress,
+                Some(composition_progress),
                 media,
             ),
         )

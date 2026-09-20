@@ -273,7 +273,7 @@ async fn execute(
         });
     }
     let output = directory.join("render.ogg");
-    render_compose(
+    render_compose_shared(
         &segments,
         job.snapshot.body.master_volume_db,
         &output,

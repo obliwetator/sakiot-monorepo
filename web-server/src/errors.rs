@@ -16,8 +16,6 @@ pub enum AppError {
     RoleNotFound,
     #[error("File not found on disk")]
     FileNotFound,
-    #[error("File could not be deleted from disk")]
-    FileDeleteFailed,
     #[error("Forbidden")]
     Forbidden,
     #[error("Unauthorized")]
@@ -80,7 +78,6 @@ impl ResponseError for AppError {
             AppError::ClipNotFound => StatusCode::NOT_FOUND,
             AppError::RoleNotFound => StatusCode::NOT_FOUND,
             AppError::FileNotFound => StatusCode::NOT_FOUND,
-            AppError::FileDeleteFailed => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::InvalidToken => StatusCode::UNAUTHORIZED,
