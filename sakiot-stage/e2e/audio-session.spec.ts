@@ -906,3 +906,50 @@ test("channel mix playback starts once and never re-seeks from canplay", async (
 	expect(writesAfter - writesBefore).toBeLessThanOrEqual(10);
 	await expect.poll(isPlaying).toBe(true);
 });
+
+test("the playhead glides over audio instead of stepping on timeupdate", async ({
+	page,
+}) => {
+	await mockAudioApi(page, { silenceFreeReady: true, mediaSeconds: 30 });
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+
+	const normalPanel = page.getByRole("tabpanel", {
+		name: "Normal",
+		exact: true,
+	});
+	await expect(normalPanel).toBeVisible();
+	await normalPanel.getByRole("button", { name: "Play", exact: true }).click();
+	await expect(
+		normalPanel.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+	const positionSlider = page.getByRole("slider", {
+		name: "Logical playback position",
+	});
+	await expect
+		.poll(async () => Number(await positionSlider.inputValue()))
+		.toBeGreaterThan(0);
+
+	// Sample the playhead every animation frame. `timeupdate` alone advances it
+	// only a few times a second, which is what made the head step over audio
+	// while the (per-frame) silence branches glided.
+	const distinctPositions = await positionSlider.evaluate((element) => {
+		const input = element as HTMLInputElement;
+		const seen = new Set<string>();
+		const deadline = performance.now() + 600;
+		return new Promise<number>((resolve) => {
+			const sample = () => {
+				seen.add(input.value);
+				if (performance.now() >= deadline) {
+					resolve(seen.size);
+					return;
+				}
+				requestAnimationFrame(sample);
+			};
+			requestAnimationFrame(sample);
+		});
+	});
+	expect(distinctPositions).toBeGreaterThan(10);
+	await expect(
+		normalPanel.getByRole("button", { name: "Pause", exact: true }),
+	).toBeVisible();
+});

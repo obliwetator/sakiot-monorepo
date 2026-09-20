@@ -229,18 +229,41 @@ export function useSegmentedSessionPlayback(options: SegmentedPlaybackOptions) {
 				playingRef.current = false;
 				setPlaying(false);
 			});
-			audio.addEventListener("timeupdate", () => {
-				if (generationRef.current !== generation) return;
-				const logical = segment.start_ms + audio.currentTime * 1_000;
-				if (applyBound(logical)) return;
+			// `timeupdate` only fires a few times a second, so a playhead driven
+			// by it alone steps over audio while the silence branches, advanced
+			// per animation frame, glide. Read the media clock every frame and
+			// keep `timeupdate` as the fallback for throttled or hidden tabs.
+			const syncFromAudio = () => {
+				if (generationRef.current !== generation) return false;
+				const mediaSeconds = audio.currentTime;
+				if (!Number.isFinite(mediaSeconds)) return true;
+				const logical = segment.start_ms + mediaSeconds * 1_000;
+				if (applyBound(logical)) return false;
 				if (logical >= segmentLimit - 20) {
 					if (!applyBound(segmentLimit)) {
 						startAtRef.current(segmentLimit, segmentLimit < durationMs);
 					}
-					return;
+					return false;
 				}
 				positionRef.current = logical;
 				setPositionMs(logical);
+				return true;
+			};
+			const tickFromAudio = () => {
+				animationRef.current = null;
+				if (generationRef.current !== generation || !playingRef.current) return;
+				if (!syncFromAudio()) return;
+				animationRef.current = requestAnimationFrame(tickFromAudio);
+			};
+			const startAudioTicker = () => {
+				if (generationRef.current !== generation) return;
+				if (animationRef.current !== null) return;
+				animationRef.current = requestAnimationFrame(tickFromAudio);
+			};
+			audio.addEventListener("playing", startAudioTicker);
+			audio.addEventListener("timeupdate", () => {
+				if (generationRef.current !== generation) return;
+				syncFromAudio();
 			});
 			audio.addEventListener("ended", () => {
 				if (generationRef.current !== generation) return;
