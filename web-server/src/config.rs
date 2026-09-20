@@ -33,6 +33,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub db_max_connections: u32,
+    pub recording_permanent_delete_enabled: bool,
 }
 
 fn require(key: &'static str) -> Result<String, ConfigError> {
@@ -100,6 +101,10 @@ impl Config {
             host: optional("HOST", "127.0.0.1"),
             port: parse("PORT", 8900u16)?,
             db_max_connections: parse("DB_MAX_CONNECTIONS", 20u32)?,
+            recording_permanent_delete_enabled: parse(
+                "SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED",
+                false,
+            )?,
         })
     }
 }

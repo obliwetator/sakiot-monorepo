@@ -107,7 +107,7 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 		page.getByText("Could not restore the default. Try again."),
 	).toBeVisible();
 	await page
-		.getByRole("spinbutton", { name: "Delete recordings after (days)" })
+		.getByRole("spinbutton", { name: "Hide recordings after (days)" })
 		.fill("30");
 	await page.getByRole("checkbox", { name: "Private voice" }).check();
 	await page.getByRole("button", { name: "Save recording policy" }).click();

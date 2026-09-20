@@ -377,38 +377,23 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		return (
 			<div className="p-4 space-y-3">
 				<Notice
-					tone={deletionStatus?.state === "failed" ? "error" : "info"}
+					tone={
+						deletionStatus?.state === "failed" ||
+						deletionStatus?.state === "paused"
+							? "error"
+							: "info"
+					}
 					announce="status"
 				>
-					{deletionStatus?.state === "ready"
-						? "Recording and its media were permanently deleted."
-						: deletionStatus?.state === "failed"
-							? "Deletion needs attention. The recording remains hidden; retry from this page or contact an administrator."
-							: "Recording hidden. Permanent deletion is in progress."}
+					{deletionStatus?.state === "soft_deleted"
+						? "Recording removed from view. Its media and metadata are retained."
+						: deletionStatus?.state === "ready"
+							? "Recording and its media were permanently deleted."
+							: deletionStatus?.state === "failed" ||
+									deletionStatus?.state === "paused"
+								? "A previous permanent deletion needs administrator review. The recording remains hidden."
+								: "Recording hidden. Permanent deletion is in progress."}
 				</Notice>
-				{deletionStatus?.state === "failed" && (
-					<Button
-						variant="danger"
-						onPress={() => {
-							void deleteRecording({
-								guild_id: deletion.guild_id,
-								recording_session_id: props.sessionId,
-							})
-								.unwrap()
-								.then((job) =>
-									setDeletion({ guild_id: deletion.guild_id, job_id: job.id }),
-								)
-								.catch(() => {});
-						}}
-					>
-						Retry deletion
-					</Button>
-				)}
-				{deleteRecordingState.isError && (
-					<Notice tone="error" announce="alert">
-						Could not retry deletion.
-					</Notice>
-				)}
 				<Button
 					variant="outline"
 					onPress={() => navigate(`/dashboard/${deletion.guild_id}/audio`)}
@@ -504,7 +489,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						onPress={() => {
 							if (
 								!window.confirm(
-									"Permanently delete this recording, its clips, and archived media? This cannot be undone.",
+									"Remove this recording and its clips from view? Media and metadata will be retained.",
 								)
 							)
 								return;
@@ -519,11 +504,11 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 								.catch(() => {});
 						}}
 					>
-						Delete recording
+						Remove recording from view
 					</Button>
 					{deleteRecordingState.isError && (
 						<Notice tone="error" announce="alert">
-							Could not queue deletion. Try again.
+							Could not remove the recording. Try again.
 						</Notice>
 					)}
 				</div>

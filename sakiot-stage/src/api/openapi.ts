@@ -1315,6 +1315,7 @@ export interface components {
 			attempts: number;
 			error?: string | null;
 			id: string;
+			mode: string;
 			recording_session_id: string;
 			stage: string;
 			state: string;
@@ -1913,7 +1914,10 @@ export interface operations {
 	};
 	delete_recording: {
 		parameters: {
-			query?: never;
+			query?: {
+				/** @description Defaults to soft. Permanent requires the server feature flag. */
+				mode?: string | null;
+			};
 			header?: never;
 			path: {
 				guild_id: number;
@@ -1923,7 +1927,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Recording hidden and deletion queued */
+			/** @description Recording hidden; soft deletion is complete, permanent deletion may be queued */
 			202: {
 				headers: {
 					[name: string]: unknown;
@@ -1932,7 +1936,7 @@ export interface operations {
 					"application/json": components["schemas"]["RecordingDeletionStatus"];
 				};
 			};
-			/** @description Manage Guild required */
+			/** @description Manage Guild required or permanent deletion disabled */
 			403: {
 				headers: {
 					[name: string]: unknown;

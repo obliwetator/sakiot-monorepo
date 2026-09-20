@@ -3,9 +3,11 @@
 `/livez` is a dependency-free process check. `/readyz` and the deployer's
 existing `/healthz` endpoint return 503 when PostgreSQL cannot answer within
 two seconds, a required in-process media/composition/archive/recording-deletion
-worker exits, a media, composition, or deletion lease remains expired for two
-minutes, a recording deletion has exhausted its retries, or the oldest due
-queued job is over one hour old. When B2 archiving is enabled, archive work
+worker exits, a media, composition, or permanent-deletion lease remains expired
+for two minutes, a permanent deletion has exhausted its retries, or the oldest
+due queued job is over one hour old. Soft deletion completes in the request and
+does not occupy the purge queue; paused legacy jobs require operator review.
+When B2 archiving is enabled, archive work
 over one hour old also makes the instance unready. A missing/conflicted archive
 object is reported but does not by itself remove the whole API from service.
 

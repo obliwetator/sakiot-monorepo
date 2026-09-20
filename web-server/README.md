@@ -163,10 +163,12 @@ Guild managers configure opt-in retention and voice-channel exclusions at
 `/api/admin/guilds/{guild_id}/recording-policy`. Retention is disabled by
 default. The manager-only
 `DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}`
-returns `202` and a durable, auditable status URL. The session is hidden as soon
-as deletion is accepted; the worker removes local and archived media and then
-its database rows. Failed attempts remain hidden and can be requeued by
-repeating the DELETE. The same worker processes expired sessions. See the
+returns `202` and a durable, auditable status URL. By default it immediately
+soft-deletes: the session and related clips disappear from view, while their
+database records and media remain. Retention uses this same soft mode.
+Permanent purging requires both `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`
+and an explicit `?mode=permanent` request; the flag alone never upgrades old
+soft deletions. The current UI offers only soft deletion. See the
 [media archive runbook](../ops/B2_MEDIA_ARCHIVE.md#recording-lifecycle-deletion)
-for rollout order, B2 version deletion, monitoring, and the legacy provenance
-limit. Apply the lifecycle migration before starting this release.
+for rollout order, paused legacy jobs, monitoring, and the legacy provenance
+limit. Apply both lifecycle migrations before starting this release.

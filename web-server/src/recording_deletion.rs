@@ -1,5 +1,5 @@
-//! Audited, retryable removal of finalized logical recordings and their media.
-//! A tombstone hides the session before any potentially slow archive request.
+//! Audited recording removal. Soft deletion is immediate and retains all data;
+//! permanent purging needs an explicit request and an enabled server policy.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -8,7 +8,7 @@ use std::time::Duration;
 use actix_web::{HttpRequest, HttpResponse, delete, get, web};
 use chrono::{DateTime, Datelike, Utc};
 use sakiot_paths::{DataRoots, RecordingKey, SessionKey};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 
 use crate::errors::AppError;
@@ -18,6 +18,33 @@ use crate::permissions::require_guild_manager;
 const MAX_ATTEMPTS: i32 = 10;
 pub(crate) const ARCHIVE_LOCK_NAMESPACE: i32 = 0x53414b41;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DeletionPolicy {
+    pub allow_permanent: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum DeletionMode {
+    #[default]
+    Soft,
+    Permanent,
+}
+
+impl DeletionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Permanent => "permanent",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+struct DeleteRecordingQuery {
+    /// Defaults to soft. Permanent requires the server feature flag.
+    mode: Option<String>,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecordingDeletionStatus {
     pub id: String,
@@ -25,6 +52,7 @@ pub struct RecordingDeletionStatus {
     pub status_url: String,
     pub state: String,
     pub stage: String,
+    pub mode: String,
     pub attempts: i32,
     pub error: Option<String>,
 }
@@ -34,7 +62,7 @@ async fn load_status(
     guild_id: i64,
     id: &str,
 ) -> Result<RecordingDeletionStatus, AppError> {
-    let row = sqlx::query("SELECT recording_session_id,state,stage,attempts,error FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2")
+    let row = sqlx::query("SELECT recording_session_id,state,stage,mode,attempts,error FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2")
         .bind(guild_id).bind(id).fetch_optional(pool).await?.ok_or(AppError::FileNotFound)?;
     Ok(RecordingDeletionStatus {
         id: id.to_owned(),
@@ -42,6 +70,7 @@ async fn load_status(
         status_url: format!("/api/admin/guilds/{guild_id}/recording-deletions/{id}"),
         state: row.try_get("state")?,
         stage: row.try_get("stage")?,
+        mode: row.try_get("mode")?,
         attempts: row.try_get("attempts")?,
         error: row.try_get("error")?,
     })
@@ -51,10 +80,10 @@ async fn load_status(
     delete,
     path = "/api/admin/guilds/{guild_id}/recordings/{recording_session_id}",
     tag = "admin",
-    params(("guild_id" = i64, Path), ("recording_session_id" = i64, Path)),
+    params(("guild_id" = i64, Path), ("recording_session_id" = i64, Path), DeleteRecordingQuery),
     responses(
-        (status = 202, description = "Recording hidden and deletion queued", body = RecordingDeletionStatus),
-        (status = 403, description = "Manage Guild required", body = crate::errors::ApiError),
+        (status = 202, description = "Recording hidden; soft deletion is complete, permanent deletion may be queued", body = RecordingDeletionStatus),
+        (status = 403, description = "Manage Guild required or permanent deletion disabled", body = crate::errors::ApiError),
         (status = 404, description = "Recording not found", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -64,10 +93,24 @@ pub async fn delete_recording(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<(i64, i64)>,
+    query: web::Query<DeleteRecordingQuery>,
+    policy: web::Data<DeletionPolicy>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, session_id) = path.into_inner();
     let user_id = require_guild_manager(&req, &pool, guild_id).await?;
-    let id = enqueue(&pool, guild_id, session_id, Some(user_id), "manager").await?;
+    let mode = match query.mode.as_deref() {
+        None | Some("soft") => DeletionMode::Soft,
+        Some("permanent") => DeletionMode::Permanent,
+        Some(_) => {
+            return Err(AppError::BadRequest(
+                "Unknown recording deletion mode".into(),
+            ));
+        }
+    };
+    if mode == DeletionMode::Permanent && !policy.allow_permanent {
+        return Err(AppError::Forbidden);
+    }
+    let id = enqueue(&pool, guild_id, session_id, Some(user_id), "manager", mode).await?;
     Ok(HttpResponse::Accepted().json(load_status(&pool, guild_id, &id).await?))
 }
 
@@ -96,6 +139,7 @@ async fn enqueue(
     session_id: i64,
     actor: Option<i64>,
     reason: &str,
+    mode: DeletionMode,
 ) -> Result<String, AppError> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -115,15 +159,24 @@ async fn enqueue(
             "Only finalized recordings can be deleted".into(),
         ));
     }
-    let existing: Option<String> =
-        sqlx::query_scalar("SELECT id FROM recording_deletion_jobs WHERE recording_session_id=$1")
-            .bind(session_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let id = if let Some(id) = existing {
-        // A failed job may be explicitly resubmitted without losing its audit history.
-        sqlx::query("UPDATE recording_deletion_jobs SET state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,updated_at=now() WHERE id=$1 AND state='failed'")
-            .bind(&id).execute(&mut *tx).await?;
+    let existing = sqlx::query(
+        "SELECT id,mode,state FROM recording_deletion_jobs WHERE recording_session_id=$1 FOR UPDATE",
+    )
+    .bind(session_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let id = if let Some(existing) = existing {
+        let id: String = existing.try_get("id")?;
+        let existing_mode: String = existing.try_get("mode")?;
+        let existing_state: String = existing.try_get("state")?;
+        // Merely repeating the default soft request never advances a job to
+        // irreversible deletion, even if a feature flag later changes.
+        if mode == DeletionMode::Permanent
+            && (existing_mode == "soft" || matches!(existing_state.as_str(), "failed" | "paused"))
+        {
+            sqlx::query("UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2 IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1")
+                .bind(&id).bind(actor).execute(&mut *tx).await?;
+        }
         id
     } else {
         let id = uuid::Uuid::new_v4().to_string();
@@ -137,15 +190,27 @@ async fn enqueue(
         sqlx::query("UPDATE clips SET deleted_at=COALESCE(deleted_at,now()) WHERE guild_id=$1 AND clip_id=ANY($2)")
             .bind(guild_id).bind(clips.iter().map(|clip| clip.id.as_str()).collect::<Vec<_>>())
             .execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason) VALUES ($1,$2,$3,$4,$5)")
-            .bind(&id).bind(session_id).bind(guild_id).bind(actor).bind(reason).execute(&mut *tx).await?;
+        match mode {
+            DeletionMode::Soft => {
+                sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now())")
+                    .bind(&id).bind(session_id).bind(guild_id).bind(actor).bind(reason).execute(&mut *tx).await?;
+            }
+            DeletionMode::Permanent => {
+                sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,permanent_requested_by,permanent_requested_at) VALUES ($1,$2,$3,$4,$5,$6,$4,now())")
+                    .bind(&id).bind(session_id).bind(guild_id).bind(actor).bind(reason).bind(mode.as_str()).execute(&mut *tx).await?;
+            }
+        }
         id
     };
     tx.commit().await?;
     Ok(id)
 }
 
-pub fn spawn_worker(pool: Pool<Postgres>, media: MediaArchive) -> tokio::task::JoinHandle<()> {
+pub fn spawn_worker(
+    pool: Pool<Postgres>,
+    media: MediaArchive,
+    policy: DeletionPolicy,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut retention = tokio::time::interval(Duration::from_secs(60));
         loop {
@@ -157,7 +222,9 @@ pub fn spawn_worker(pool: Pool<Postgres>, media: MediaArchive) -> tokio::task::J
                 }
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
-            if let Err(error) = run_one(&pool, &media).await {
+            if policy.allow_permanent
+                && let Err(error) = run_one(&pool, &media).await
+            {
                 tracing::error!(?error, "recording deletion worker failed");
             }
         }
@@ -165,14 +232,23 @@ pub fn spawn_worker(pool: Pool<Postgres>, media: MediaArchive) -> tokio::task::J
 }
 
 async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
-    // One small page per sweep. The queue is durable and subsequent passes
-    // pick up the rest without a long transaction or an unbounded delete burst.
+    // One small page per sweep. Retention only hides data; it never authorizes
+    // permanent destruction, regardless of the permanent-delete feature flag.
     let rows = sqlx::query("SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL ORDER BY rs.ended_at,rs.id LIMIT 25")
         .fetch_all(pool).await?;
     for row in rows {
         let guild_id: i64 = row.try_get("guild_id")?;
         let session_id: i64 = row.try_get("id")?;
-        if let Err(error) = enqueue(pool, guild_id, session_id, None, "retention").await {
+        if let Err(error) = enqueue(
+            pool,
+            guild_id,
+            session_id,
+            None,
+            "retention",
+            DeletionMode::Soft,
+        )
+        .await
+        {
             tracing::warn!(guild_id, session_id, ?error, "retention enqueue skipped");
         }
     }
@@ -188,7 +264,7 @@ struct Claimed {
 
 async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppError> {
     let token = uuid::Uuid::new_v4().to_string();
-    let row = sqlx::query("WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.guild_id")
+    let row = sqlx::query("WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.guild_id")
         .bind(MAX_ATTEMPTS).bind(&token).fetch_optional(pool).await?;
     row.map(|row| {
         Ok(Claimed {
@@ -869,10 +945,26 @@ mod tests {
             tokio::fs::create_dir_all(path.parent().unwrap()).await?;
             tokio::fs::write(path, b"test-media").await?;
         }
-        let job_id = enqueue(&pool, 1, session_id, Some(200), "manager").await?;
+        let job_id = enqueue(
+            &pool,
+            1,
+            session_id,
+            Some(200),
+            "manager",
+            DeletionMode::Soft,
+        )
+        .await?;
         assert_eq!(
             job_id,
-            enqueue(&pool, 1, session_id, Some(200), "manager").await?
+            enqueue(
+                &pool,
+                1,
+                session_id,
+                Some(200),
+                "manager",
+                DeletionMode::Soft
+            )
+            .await?
         );
         let hidden: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM clips WHERE guild_id=1 AND deleted_at IS NOT NULL",
@@ -880,6 +972,38 @@ mod tests {
         .fetch_one(&pool)
         .await?;
         assert_eq!(hidden, 2);
+        let soft_status = load_status(&pool, 1, &job_id).await?;
+        assert_eq!(soft_status.state, "soft_deleted");
+        assert_eq!(soft_status.mode, "soft");
+        assert!(claim(&pool).await?.is_none());
+        for path in paths {
+            assert!(path.exists(), "soft deletion removed {}", path.display());
+        }
+        let retained_files: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM audio_files WHERE id=$1")
+                .bind(audio_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(retained_files, 1);
+        let retained_archive_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM media_objects WHERE audio_file_id=$1 OR clip_id IN ('lifecycle-source','lifecycle-compose')",
+        )
+        .bind(audio_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(retained_archive_rows, 3);
+        assert_eq!(
+            job_id,
+            enqueue(
+                &pool,
+                1,
+                session_id,
+                Some(200),
+                "manager",
+                DeletionMode::Permanent
+            )
+            .await?
+        );
         let claim = claim(&pool).await?.unwrap();
         assert_eq!(claim.id, job_id);
         process_with_roots(&pool, &MediaArchive::disabled(), &claim, &roots).await?;
@@ -909,6 +1033,7 @@ mod tests {
         assert_eq!(stamps, 0);
         let status = load_status(&pool, 1, &job_id).await?;
         assert_eq!(status.state, "ready");
+        assert_eq!(status.mode, "permanent");
         assert_eq!(status.recording_session_id, session_id.to_string());
         Ok(())
     }
@@ -920,6 +1045,30 @@ mod tests {
             .execute(&pool)
             .await?;
         enqueue_expired(&pool).await?;
+        let retention: (String, String) = sqlx::query_as(
+            "SELECT mode,state FROM recording_deletion_jobs WHERE recording_session_id=$1",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(retention, ("soft".into(), "soft_deleted".into()));
+        assert!(claim(&pool).await?.is_none());
+        enqueue(
+            &pool,
+            1,
+            session_id,
+            Some(200),
+            "manager",
+            DeletionMode::Permanent,
+        )
+        .await?;
+        let authorization: (String, Option<i64>, Option<i64>, bool) = sqlx::query_as(
+            "SELECT reason,requested_by,permanent_requested_by,permanent_requested_at IS NOT NULL FROM recording_deletion_jobs WHERE recording_session_id=$1",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(authorization, ("retention".into(), None, Some(200), true));
         let first = claim(&pool).await?.unwrap();
         assert_eq!(first.session_id, session_id);
         sqlx::query("UPDATE recording_deletion_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=$1")
@@ -942,10 +1091,27 @@ mod tests {
     #[sqlx::test(migrations = "../sakiot-db/migrations")]
     async fn tombstone_rejects_late_clip_publication(pool: PgPool) -> TestResult {
         let (session_id, _) = seed_session(&pool, "late-clip-recording").await?;
-        enqueue(&pool, 1, session_id, Some(200), "manager").await?;
+        enqueue(
+            &pool,
+            1,
+            session_id,
+            Some(200),
+            "manager",
+            DeletionMode::Soft,
+        )
+        .await?;
         let insert = sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,user_id,start_time,original_file_name,recording_session_id) VALUES ('late-clip',1,10,100,0,'session',$1)")
             .bind(session_id).execute(&pool).await;
         assert!(insert.is_err());
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn database_rejects_a_soft_job_in_the_purge_queue(pool: PgPool) -> TestResult {
+        let unsafe_job = sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,reason) VALUES ('unsafe-soft-job',1,1,'manager')")
+            .execute(&pool).await;
+        assert!(unsafe_job.is_err());
+        assert!(claim(&pool).await?.is_none());
         Ok(())
     }
 }

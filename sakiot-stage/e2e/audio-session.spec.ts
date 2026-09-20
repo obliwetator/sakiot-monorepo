@@ -11,7 +11,7 @@ const RECORDING_FILE = "1786460400000-Test_User.ogg";
 const corsHeaders = {
 	"Access-Control-Allow-Credentials": "true",
 	"Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
-	"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+	"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 	"Access-Control-Allow-Origin": "http://127.0.0.1:4173",
 };
 
@@ -23,6 +23,30 @@ test("audio session route passes Axe", async ({ page }) => {
 		page.getByRole("button", { name: "Audio", exact: true }),
 	).toHaveAttribute("aria-current", "page");
 	await expectAccessibleMediaRoute(page);
+});
+
+test("recording removal is soft and explains retained media", async ({
+	page,
+}) => {
+	await mockAudioApi(page);
+	page.on("dialog", (dialog) => dialog.accept());
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	const request = page.waitForRequest(
+		(url) =>
+			url.method() === "DELETE" &&
+			url
+				.url()
+				.endsWith(`/api/admin/guilds/${GUILD_ID}/recordings/${SESSION_ID}`),
+	);
+	await page
+		.getByRole("button", { name: "Remove recording from view" })
+		.click();
+	await request;
+	await expect(
+		page.getByText(
+			"Recording removed from view. Its media and metadata are retained.",
+		),
+	).toBeVisible();
 });
 
 test("native controls keep focus styling, pseudo-elements, and responsive layouts", async ({
@@ -186,6 +210,41 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 					permissions: "8",
 				},
 			]);
+			return;
+		}
+		if (
+			path === `/admin/guilds/${GUILD_ID}/recordings/${SESSION_ID}` &&
+			request.method() === "DELETE"
+		) {
+			await fulfillJson(
+				{
+					id: "soft-job",
+					recording_session_id: SESSION_ID,
+					status_url: `/api/admin/guilds/${GUILD_ID}/recording-deletions/soft-job`,
+					mode: "soft",
+					state: "soft_deleted",
+					stage: "soft_deleted",
+					attempts: 0,
+					error: null,
+				},
+				202,
+			);
+			return;
+		}
+		if (
+			path === `/admin/guilds/${GUILD_ID}/recording-deletions/soft-job` &&
+			request.method() === "GET"
+		) {
+			await fulfillJson({
+				id: "soft-job",
+				recording_session_id: SESSION_ID,
+				status_url: `/api/admin/guilds/${GUILD_ID}/recording-deletions/soft-job`,
+				mode: "soft",
+				state: "soft_deleted",
+				stage: "soft_deleted",
+				attempts: 0,
+				error: null,
+			});
 			return;
 		}
 		if (path === `/current/${GUILD_ID}`) {

@@ -172,9 +172,9 @@ export function GuildVoiceSettingsPage() {
 				</h6>
 				<p className="leading-6 text-muted mb-4">
 					Retention is off by default. When enabled, finalized recordings older
-					than the chosen period are queued for permanent deletion, including
-					clips and archived media. Excluded voice channels will not start new
-					recordings.
+					than the chosen period are hidden from view, along with their clips.
+					Media and metadata are retained. Excluded voice channels will not
+					start new recordings.
 				</p>
 				{recordingPolicyError && (
 					<Notice tone="error" announce="alert">
@@ -184,7 +184,7 @@ export function GuildVoiceSettingsPage() {
 				{recordingPolicy && (
 					<div className="flex flex-col gap-4">
 						<TextField
-							label="Delete recordings after (days)"
+							label="Hide recordings after (days)"
 							type="number"
 							value={retentionDays}
 							onChange={setRetentionDays}

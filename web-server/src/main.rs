@@ -49,7 +49,7 @@ use web_server::media_jobs::{
 };
 use web_server::members::{get_guild_roles, get_role_members, get_role_view};
 use web_server::recording_deletion::{
-    delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
+    DeletionPolicy, delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
 };
 use web_server::security_headers::SecurityHeaders;
 use web_server::stamps::get_stamps;
@@ -123,8 +123,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
     let cfg = Config::from_env()?;
+    let deletion_policy = DeletionPolicy {
+        allow_permanent: cfg.recording_permanent_delete_enabled,
+    };
     let media_archive = MediaArchive::from_env().await?;
     init_telemetry(cfg.port);
+    if deletion_policy.allow_permanent {
+        tracing::warn!(
+            "permanent recording deletion enabled; explicit mode=permanent still required"
+        );
+    }
 
     // Periodically delete stale per-recording HLS caches (dead after live).
     spawn_hls_reaper();
@@ -142,7 +150,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());
-    let deletion_worker = spawn_deletion_worker(pool.clone(), media_archive.clone());
+    let deletion_worker =
+        spawn_deletion_worker(pool.clone(), media_archive.clone(), deletion_policy);
     let archive_workers = spawn_archive_worker(pool.clone(), media_archive.clone());
     spawn_local_cleanup(pool.clone(), media_archive.clone());
     let mut worker_handles = vec![
@@ -292,6 +301,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(discord_http_client.clone()))
             .app_data(web::Data::new(media_archive.clone()))
+            .app_data(web::Data::new(deletion_policy))
             .app_data(silence_jobs.clone())
             .app_data(waveform_progress.clone())
             .app_data(live_container.clone())

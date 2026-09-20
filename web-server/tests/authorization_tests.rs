@@ -27,7 +27,7 @@ use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
 use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
-use web_server::recording_deletion::{delete_recording, get_recording_deletion};
+use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -455,6 +455,7 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(DeletionPolicy::default()))
             .service(
                 web::scope("/api")
                     .wrap(AuthMiddleware)
@@ -503,6 +504,16 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     );
 
     let deletion_uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/recordings/{session_id}");
+    let forbidden_permanent = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("{deletion_uri}?mode=permanent"))
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(forbidden_permanent.status(), StatusCode::FORBIDDEN);
     let accepted = test::call_service(
         &app,
         test::TestRequest::delete()
@@ -524,7 +535,8 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
             .to_request(),
     )
     .await;
-    assert_eq!(status["state"], "queued");
+    assert_eq!(status["state"], "soft_deleted");
+    assert_eq!(status["mode"], "soft");
     let hidden: bool = sqlx::query_scalar(
         "SELECT deletion_requested_at IS NOT NULL FROM recording_sessions WHERE id=$1",
     )
@@ -532,6 +544,38 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     .fetch_one(&pool)
     .await?;
     assert!(hidden);
+    let retained: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_sessions WHERE id=$1")
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+    assert!(retained > 0);
+
+    let enabled_app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(DeletionPolicy {
+                allow_permanent: true,
+            }))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(delete_recording),
+            ),
+    )
+    .await;
+    let explicit: serde_json::Value = test::call_and_read_body_json(
+        &enabled_app,
+        test::TestRequest::delete()
+            .uri(&format!("{deletion_uri}?mode=permanent"))
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(explicit["id"], job["id"]);
+    assert_eq!(explicit["state"], "queued");
+    assert_eq!(explicit["mode"], "permanent");
 
     sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
         .bind(BASE_VOICE_PERMISSIONS)

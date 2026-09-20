@@ -490,6 +490,7 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 8900,
             db_max_connections: 20,
+            recording_permanent_delete_enabled: false,
         }
     }
 

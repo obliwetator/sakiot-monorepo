@@ -63,9 +63,9 @@ and egress overage rates before rollout.
    permanent deletion of a specific version. Recording deletion must enumerate
    and remove every version (including delete markers) of each owned object;
    hiding only the current name does not meet the privacy requirement. This
-   permission makes mistakes irreversible, so deletion is manager-only,
-   narrowly keyed, audited, and retryable. The recording lifecycle worker uses
-   version-ID deletes; a plain S3 delete is not sufficient.
+   permission makes mistakes irreversible, so the optional permanent mode is
+   manager-only, narrowly keyed, audited, retryable, and disabled by default.
+   That mode uses version-ID deletes; a plain S3 delete is not sufficient.
 5. Put production/staging media credentials only in their root-owned
    `/etc/sakiot/*.env` files. Never deploy account master credentials.
 6. Configure `/etc/sakiot/rclone.conf` with a native `b2` remote using the
@@ -118,39 +118,57 @@ is disabled, and lifecycle retains every version in Backblaze console.
 
 ## Recording lifecycle deletion
 
-Apply `20260920000000_recording_lifecycle.sql` before deploying matching web
-and FBI-agent binaries. Deploy both binaries before allowing managers to change
-recording policy; an older bot will not enforce channel exclusions, and an
-older archive worker does not take the deletion/upload fence. Do not roll back
-to those older binaries while recording deletion jobs are running. Production
-retention stays off until a guild manager explicitly sets `retention_days`.
+Apply both the recording-lifecycle and recording-soft-delete migrations before
+deploying matching web and FBI-agent binaries. Stop the old web deletion worker
+before the soft-delete migration: it does not honor modes. Existing unfinished
+permanent jobs are moved to `paused`, never resumed automatically, because an
+earlier attempt may already have removed media. Review them individually.
+Deploy both binaries before allowing managers to change recording policy; an
+older bot will not enforce channel exclusions. Do not roll back to older web
+binaries while soft-deleted sessions exist. Production retention stays off
+until a guild manager explicitly sets `retention_days`.
 
 Guild managers set retention (1–3650 days, or null/off) and excluded voice
 channels on the Voice Settings page. New fragments in an excluded channel are
 rejected; an already-running recorder checks policy each second and stops when
 the channel becomes excluded. Retention considers only finalized sessions and
-uses their `ended_at` timestamp. It queues at most 25 expired sessions per
-minute, using the same durable deletion path as a manager action.
+uses their `ended_at` timestamp. It soft-deletes at most 25 expired sessions per
+minute. Soft deletion hides sessions and related clips, but does not itself
+remove database records, local files, archive versions, or backups. Normal
+archive cache pruning may still evict a local copy; archived bytes remain.
+Soft deletion does not reduce durable storage usage. A restoration action is
+not yet exposed.
 
 `DELETE /api/admin/guilds/{guild_id}/recordings/{session_id}` requires a live
-Manage Guild grant and returns `202` with a stable `status_url`. It immediately
-hides the session and related clips, then the worker waits for admitted media
-work, fences archive uploads, permanently deletes every B2 version and delete
-marker under each recording/clip source prefix, removes local originals and
-derivatives, and finally removes metadata in one transaction. The surviving
-`recording_deletion_jobs` row records the actor or retention reason, attempts,
-stage, and outcome. A failed job remains hidden; repeat the DELETE to requeue
-it. The status URL is manager-only and remains available after completion.
+Manage Guild grant and returns `202` with a stable `status_url`. By default its
+status is immediately `soft_deleted`; the session and related clips are hidden
+and the media is untouched. The surviving `recording_deletion_jobs` row records
+the original actor or retention reason, mode, stage, and outcome. Repeating the default
+DELETE is idempotent and cannot trigger permanent purging.
+
+Permanent deletion is reserved for a separately approved operation: set
+`SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true` on the web server **and** make
+an explicit manager-authorized `DELETE .../recordings/{session_id}?mode=permanent`
+request. The flag alone never upgrades soft-deleted jobs or resumes paused
+legacy jobs. Permanent mode queues the existing fenced worker, which removes
+every B2 version and delete marker under each source prefix, local originals
+and derivatives, then database records. Separate audit fields record who
+authorized permanent purging and when, even if retention hid the recording
+first. Its audit row remains. This operation
+is irreversible, and is not offered in the current UI. A failed or paused
+permanent job remains hidden and needs explicit review before the same
+`mode=permanent` request requeues it. The status URL is manager-only.
 
 Check work and failures without changing state:
 
 ```sql
-SELECT id, guild_id, recording_session_id, reason, state, stage,
+SELECT id, guild_id, recording_session_id, reason, requested_by,
+       permanent_requested_by, permanent_requested_at, mode, state, stage,
        attempts, error, created_at, finished_at
 FROM recording_deletion_jobs ORDER BY created_at DESC LIMIT 50;
 ```
 
-Before enabling retention on a guild with old clip-editor overwrites, audit
+Before invoking permanent mode on a guild with old clip-editor overwrites, audit
 historical derivatives: the migration backfills provenance from current clip
 composition and retained composition jobs, but versions overwritten before
 the oldest retained job cannot be linked retrospectively. Investigate those
