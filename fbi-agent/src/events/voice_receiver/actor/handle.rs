@@ -80,6 +80,7 @@ impl RecorderHandle {
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
             voice_session_ended: false,
             last_recording_policy_check_ms: 0,
+            suspended_speakers: super::SuspendedSpeakers::default(),
             registry,
             actor_id: Arc::clone(&actor_id),
         };

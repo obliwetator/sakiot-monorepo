@@ -303,7 +303,10 @@ impl RecorderActor {
         self.recordings.clear();
     }
 
-    async fn resume_pending_user(&self, user_id: u64, channel_id: ChannelId, at_ms: i64) {
+    /// Resumes the user's pending logical session in `channel_id`, returning
+    /// whether one was actually reopened (a user with no pending session, or an
+    /// excluded channel, resumes nothing).
+    async fn resume_pending_user(&self, user_id: u64, channel_id: ChannelId, at_ms: i64) -> bool {
         match crate::database::logical_recordings::resume_pending_user(
             &self.pool,
             self.guild_id.to_i64(),
@@ -337,9 +340,13 @@ impl RecorderActor {
                     channel_id = channel_id.get(),
                     "logical recording resumed"
                 );
+                true
             }
-            Ok(None) => {}
-            Err(err) => warn!(user_id, "failed to resume logical recording: {}", err),
+            Ok(None) => false,
+            Err(err) => {
+                warn!(user_id, "failed to resume logical recording: {}", err);
+                false
+            }
         }
     }
 
@@ -440,6 +447,8 @@ impl RecorderActor {
         self.planned_handoff = None;
         self.disconnected_at_ms = 0;
         self.recoverable_disconnect_deadline_ms = 0;
+        // SSRCs learned in the previous channel are meaningless here.
+        self.suspended_speakers.clear();
         // Re-evaluate the policy for the channel just entered before resuming
         // anything: a handoff into an excluded channel must not reopen logical
         // sessions, and a later tick must not skip the check because of a
@@ -516,10 +525,15 @@ impl RecorderActor {
             return;
         }
         self.stats.set_policy_suspended(true);
+        // Keep the users with an open writer so their writers can be reopened
+        // the moment the channel is allowed again.
+        self.suspended_speakers
+            .seed(self.recordings.user_ssrc_pairs());
         self.metrics.record_recording_policy_suspension();
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
+            speakers = self.suspended_speakers.count(),
             "recording suspended: channel is excluded by guild policy; the voice call stays up"
         );
         self.pause_all_for_departure(
@@ -537,19 +551,61 @@ impl RecorderActor {
             return;
         }
         self.stats.set_policy_suspended(false);
+        let resumed_sessions = self.resume_users_in_channel(self.channel_id, at_ms).await;
+        let reopened_writers = self.reopen_suspended_speakers().await;
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
+            resumed_sessions,
+            reopened_writers,
             "recording resumed: channel is no longer excluded by guild policy"
         );
-        self.resume_users_in_channel(self.channel_id, at_ms).await;
     }
 
-    async fn resume_users_in_channel(&self, channel_id: ChannelId, at_ms: i64) {
-        let users = self.human_users_in_channel(channel_id);
-        for user_id in users {
-            self.resume_pending_user(user_id, channel_id, at_ms).await;
+    /// Reopens a writer for every user still in the channel who was speaking
+    /// around the suspension.
+    ///
+    /// Discord does not repeat a speaking update while an utterance continues,
+    /// so a speaker whose writer was closed by the suspension would otherwise
+    /// stay unrecorded until their next transition - and the timeline would show
+    /// synthetic silence for the whole remainder of that utterance.
+    async fn reopen_suspended_speakers(&mut self) -> usize {
+        let speakers = self.suspended_speakers.take_all();
+        if speakers.is_empty() {
+            return 0;
         }
+        let present = self.human_users_in_channel(self.channel_id);
+        let mut reopened = 0;
+        for (user_id, ssrc) in speakers {
+            if !present.contains(&user_id) {
+                continue;
+            }
+            let Some(member) = self.resolve_member(user_id).await else {
+                continue;
+            };
+            if member.user.bot {
+                self.recordings.insert_bot(user_id, ssrc);
+                continue;
+            }
+            if self.recordings.has_active_ssrc(ssrc) {
+                continue;
+            }
+            self.open_user_recording(user_id, ssrc, &member).await;
+            if self.recordings.has_active_ssrc(ssrc) {
+                reopened += 1;
+            }
+        }
+        reopened
+    }
+
+    async fn resume_users_in_channel(&self, channel_id: ChannelId, at_ms: i64) -> usize {
+        let mut resumed = 0;
+        for user_id in self.human_users_in_channel(channel_id) {
+            if self.resume_pending_user(user_id, channel_id, at_ms).await {
+                resumed += 1;
+            }
+        }
+        resumed
     }
 
     /// Returns the departure timestamp when the actor must exit, or `None` to
@@ -689,8 +745,17 @@ impl RecorderActor {
                 if voice.channel_id != Some(channel_id) {
                     return None;
                 }
-                let member = guild.members.get(user_id)?;
-                (!member.user.bot).then_some(user_id.get())
+                // `voice.member` travels with the voice-state payload. The guild
+                // member cache can lack users the bot never chunked, and treating
+                // a present user as absent silently skipped the resume, so an
+                // unknown bot flag counts as human (resuming a bot's session is a
+                // no-op because bots have none).
+                let is_bot = voice
+                    .member
+                    .as_ref()
+                    .map(|member| member.user.bot)
+                    .or_else(|| guild.members.get(user_id).map(|member| member.user.bot));
+                (is_bot != Some(true)).then_some(user_id.get())
             })
             .collect()
     }

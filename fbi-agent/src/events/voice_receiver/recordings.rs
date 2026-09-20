@@ -55,6 +55,43 @@ impl RecorderStats {
     }
 }
 
+/// Users seen speaking while recording was suspended by policy, keyed by user
+/// id with their latest SSRC.
+///
+/// Suspension closes every writer, so without this a user who is mid-utterance
+/// when the channel is allowed again is not recorded until their next speaking
+/// transition - an entire utterance can be lost, and the timeline shows only
+/// synthetic silence.
+#[derive(Default)]
+pub(super) struct SuspendedSpeakers(HashMap<u64, u32>);
+
+impl SuspendedSpeakers {
+    /// Remembers (or refreshes) the user's current SSRC.
+    pub(super) fn observe(&mut self, user_id: u64, ssrc: u32) {
+        self.0.insert(user_id, ssrc);
+    }
+
+    /// Remembers every user that had an open writer when suspension began.
+    pub(super) fn seed(&mut self, pairs: impl IntoIterator<Item = (u64, u32)>) {
+        for (user_id, ssrc) in pairs {
+            self.observe(user_id, ssrc);
+        }
+    }
+
+    /// Removes and returns every remembered speaker.
+    pub(super) fn take_all(&mut self) -> Vec<(u64, u32)> {
+        self.0.drain().collect()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub(super) fn count(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// Bot SSRCs we deliberately do not record. Kept as a pair so a bot's `user_id`
 /// and its SSRC can never disagree.
 #[derive(Default)]
@@ -366,5 +403,29 @@ mod tests {
 
         assert_eq!(rec.remove_bot_user(42), Some(101));
         assert!(!rec.is_bot_ssrc(101));
+    }
+
+    #[test]
+    fn suspended_speakers_keep_the_latest_ssrc_per_user() {
+        let mut speakers = SuspendedSpeakers::default();
+        speakers.seed([(7, 100), (8, 200)]);
+        assert_eq!(speakers.count(), 2);
+
+        // A user who re-speaks on a new SSRC must not be remembered twice.
+        speakers.observe(7, 300);
+        assert_eq!(speakers.count(), 2);
+
+        let mut remembered = speakers.take_all();
+        remembered.sort_unstable();
+        assert_eq!(remembered, vec![(7, 300), (8, 200)]);
+        assert_eq!(speakers.count(), 0, "take_all drains the map");
+    }
+
+    #[test]
+    fn clearing_suspended_speakers_drops_stale_channels() {
+        let mut speakers = SuspendedSpeakers::default();
+        speakers.observe(7, 100);
+        speakers.clear();
+        assert_eq!(speakers.count(), 0);
     }
 }

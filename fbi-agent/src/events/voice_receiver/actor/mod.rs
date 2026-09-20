@@ -34,7 +34,7 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 
 use super::{
-    recordings::{RecorderStats, Recordings},
+    recordings::{RecorderStats, Recordings, SuspendedSpeakers},
     state::VoiceEventType,
 };
 
@@ -67,6 +67,8 @@ struct RecorderActor {
     /// after the current command is handled.
     voice_session_ended: bool,
     last_recording_policy_check_ms: i64,
+    /// Speakers to reopen writers for when a policy suspension ends.
+    suspended_speakers: SuspendedSpeakers,
     /// Registry entry for this guild; the actor removes itself on exit so a
     /// later reconnect starts with fresh state. `None` for unregistered actors.
     registry: Option<Arc<super::RecordingCoordinatorRegistry>>,

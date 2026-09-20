@@ -32,13 +32,17 @@ impl RecorderActor {
         }
 
         // An excluded channel must never open a new writer, even if a speaker's
-        // state event races the once-per-second policy check.
+        // state event races the once-per-second policy check. Remember the
+        // speaker instead: Discord does not repeat a speaking update while an
+        // utterance continues, so the writer has to be reopened on resume.
         if self.stats.policy_suspended() {
+            self.suspended_speakers.observe(user_id, ssrc);
             debug!(
                 guild_id = self.guild_id.get(),
                 channel_id = self.channel_id.get(),
                 user_id,
-                "ignoring speaking state while recording is suspended by policy"
+                ssrc,
+                "speaker remembered while recording is suspended by policy"
             );
             return;
         }
@@ -75,7 +79,7 @@ impl RecorderActor {
         self.open_user_recording(user_id, ssrc, &member).await;
     }
 
-    async fn resolve_member(&self, user_id: u64) -> Option<Member> {
+    pub(super) async fn resolve_member(&self, user_id: u64) -> Option<Member> {
         let guild = match self.env.cache.guild(self.guild_id) {
             Some(guild) => guild.to_owned(),
             None => {
@@ -102,7 +106,7 @@ impl RecorderActor {
         }
     }
 
-    async fn open_user_recording(&mut self, user_id: u64, ssrc: u32, member: &Member) {
+    pub(super) async fn open_user_recording(&mut self, user_id: u64, ssrc: u32, member: &Member) {
         info!("New writer for ssrc {}", ssrc);
         let now = chrono::Utc::now();
 
