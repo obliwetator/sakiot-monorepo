@@ -33,10 +33,6 @@ impl ManagedManifest {
         Ok(Self { files, recordings })
     }
 
-    pub fn count(&self) -> usize {
-        self.files.len()
-    }
-
     pub fn clear(&self, data_dir: &Path) -> Result<usize> {
         let mut removed = 0;
         let mut parents = BTreeSet::new();

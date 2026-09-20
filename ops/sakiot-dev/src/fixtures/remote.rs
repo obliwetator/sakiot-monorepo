@@ -136,10 +136,6 @@ impl<'a, R: CommandRunner + ?Sized> RemoteSql<'a, R> {
         self.runner
             .run_capture(&remote_shell(Some(&self.ssh), command))
     }
-
-    pub fn remote_ok(&self, command: &str) -> bool {
-        self.runner.run_ok(&remote_shell(Some(&self.ssh), command))
-    }
 }
 
 pub fn hydrate_remote_media<R: CommandRunner + ?Sized>(

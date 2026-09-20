@@ -11,7 +11,7 @@ use crate::cli::Source;
 use crate::config::Config;
 use crate::db::{DatabaseFactory, LocalDatabase};
 use crate::environment::prepare_media_dirs;
-use crate::fixtures::export::FixtureBundle;
+use crate::fixtures::export::{FixtureBundle, sql_number_list};
 use crate::fixtures::import::{build_import_batch, build_prune_batch};
 use crate::fixtures::manifest::ManagedManifest;
 use crate::fixtures::remote::{RemoteSql, quote_shell};
@@ -96,7 +96,7 @@ pub async fn import_staging<R: CommandRunner + ?Sized>(
     destination.execute(&batch.render_psql())?;
 
     let account = staging_account_id(config, &destination)?;
-    let guilds = numeric_list(&bundle.guild_ids);
+    let guilds = sql_number_list(&bundle.guild_ids);
     let access_sql = if let Some(account) = account {
         format!(
             "INSERT INTO guilds_present (guild_id)
@@ -141,7 +141,7 @@ async fn grant_local_access(
     if guilds.is_empty() {
         return Ok(());
     }
-    let guilds = numeric_list(guilds);
+    let guilds = sql_number_list(guilds);
     database
         .execute(&format!(
             "INSERT INTO guilds_present (guild_id)
@@ -506,35 +506,35 @@ async fn verify_staging<R: CommandRunner + ?Sized>(
             "guilds_present",
             format!(
                 "SELECT count(*) FROM guilds_present WHERE guild_id IN ({})",
-                numeric_list(&bundle.guild_ids)
+                sql_number_list(&bundle.guild_ids)
             ),
         ),
         (
             "everyone roles",
             format!(
                 "SELECT count(*) FROM roles WHERE guild_id IN ({}) AND role_id = guild_id",
-                numeric_list(&bundle.guild_ids)
+                sql_number_list(&bundle.guild_ids)
             ),
         ),
         (
             "voice channels",
             format!(
                 "SELECT count(*) FROM channels WHERE guild_id IN ({}) AND type = 2",
-                numeric_list(&bundle.guild_ids)
+                sql_number_list(&bundle.guild_ids)
             ),
         ),
         (
             "channel permissions",
             format!(
                 "SELECT count(*) FROM channel_permissions cp JOIN channels c ON c.channel_id = cp.channel_id WHERE c.guild_id IN ({})",
-                numeric_list(&bundle.guild_ids)
+                sql_number_list(&bundle.guild_ids)
             ),
         ),
         (
             "member roles",
             format!(
                 "SELECT count(*) FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id WHERE r.guild_id IN ({})",
-                numeric_list(&bundle.guild_ids)
+                sql_number_list(&bundle.guild_ids)
             ),
         ),
     ] {
@@ -545,7 +545,7 @@ async fn verify_staging<R: CommandRunner + ?Sized>(
     if let Some(account) = account {
         let count = destination.scalar(&format!(
             "SELECT count(*) FROM user_guilds WHERE user_id = {account} AND id IN ({})",
-            numeric_list(&bundle.guild_ids)
+            sql_number_list(&bundle.guild_ids)
         ))?;
         if count.parse::<usize>().unwrap_or(0) < bundle.guild_ids.len() {
             failures.push(format!(
@@ -559,18 +559,6 @@ async fn verify_staging<R: CommandRunner + ?Sized>(
         Ok(())
     } else {
         bail!("{}", failures.join("; "))
-    }
-}
-
-fn numeric_list(values: &[i64]) -> String {
-    if values.is_empty() {
-        "-1".into()
-    } else {
-        values
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
     }
 }
 

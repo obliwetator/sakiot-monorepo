@@ -21,23 +21,6 @@ impl CountSelection {
     pub fn is_none(self) -> bool {
         matches!(self, Self::None | Self::Limit(0))
     }
-
-    pub fn sql_limit(self) -> Option<u64> {
-        match self {
-            Self::All | Self::None => None,
-            Self::Limit(value) => Some(value),
-        }
-    }
-}
-
-impl Display for CountSelection {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::All => f.write_str("all"),
-            Self::None => f.write_str("none"),
-            Self::Limit(value) => value.fmt(f),
-        }
-    }
 }
 
 impl FromStr for CountSelection {

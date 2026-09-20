@@ -281,7 +281,7 @@ pub fn export_bundle<R: CommandRunner + ?Sized>(
     session_ids.extend(read_numbers(&workspace, "audio_session_ids.tsv")?);
     session_ids.sort_unstable();
     session_ids.dedup();
-    write_numbers(&workspace, "session_ids.list", &session_ids)?;
+    write_list(&workspace, "session_ids.list", &session_ids)?;
     let sessions_sql = sql_number_list(&session_ids);
     export_tsv(
         &remote,
@@ -325,7 +325,7 @@ pub fn export_bundle<R: CommandRunner + ?Sized>(
         ),
     )?;
     clip_ids = read_strings(&workspace, "clip-ids.list")?;
-    write_strings(&workspace, "clip-ids.list", &clip_ids)?;
+    write_list(&workspace, "clip-ids.list", &clip_ids)?;
     let all_clip_sql = sql_text_list(&clip_ids);
     export_tsv(
         &remote,
@@ -339,7 +339,7 @@ pub fn export_bundle<R: CommandRunner + ?Sized>(
         ),
     )?;
     stamp_ids = read_numbers(&workspace, "stamp-ids.list")?;
-    write_numbers(&workspace, "stamp-ids.list", &stamp_ids)?;
+    write_list(&workspace, "stamp-ids.list", &stamp_ids)?;
     let all_stamp_sql = sql_number_list(&stamp_ids);
 
     export_tsv(
@@ -765,32 +765,20 @@ fn read_numbers(workspace: &FixtureWorkspace, name: &str) -> Result<Vec<i64>> {
     Ok(values)
 }
 
-fn write_numbers(workspace: &FixtureWorkspace, name: &str, values: &[i64]) -> Result<()> {
+/// One newline-terminated list file. An empty selection writes an empty file
+/// rather than a lone newline, which callers rely on to mean "nothing".
+fn write_list<T: ToString>(workspace: &FixtureWorkspace, name: &str, values: &[T]) -> Result<()> {
+    let body = values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
     workspace.write(
         name,
-        if values.is_empty() {
+        if body.is_empty() {
             String::new()
         } else {
-            format!(
-                "{}\n",
-                values
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        },
-    )?;
-    Ok(())
-}
-
-fn write_strings(workspace: &FixtureWorkspace, name: &str, values: &[String]) -> Result<()> {
-    workspace.write(
-        name,
-        if values.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", values.join("\n"))
+            format!("{body}\n")
         },
     )?;
     Ok(())
@@ -876,7 +864,7 @@ fn event_span(margin: &str, audio_sql: &str, sessions_sql: &str) -> String {
     )
 }
 
-fn sql_number_list(values: &[i64]) -> String {
+pub(super) fn sql_number_list(values: &[i64]) -> String {
     if values.is_empty() {
         "-1".into()
     } else {
