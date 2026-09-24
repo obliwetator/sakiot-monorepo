@@ -7,6 +7,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { fractionInTarget } from "../../shared/geometry";
 import { palette } from "../../shared/palette";
 import {
 	Button,
@@ -390,11 +391,7 @@ export function AudioEventTimeline(props: {
 															type="button"
 															aria-label={`${interval.label}, ${formatTimelineOffset(interval.startMs)} to ${formatTimelineOffset(interval.endMs)}`}
 															onClick={(event) => {
-																const bounds =
-																	event.currentTarget.getBoundingClientRect();
-																const fraction =
-																	(event.clientX - bounds.left) /
-																	Math.max(1, bounds.width);
+																const fraction = fractionInTarget(event);
 																props.onSeek(
 																	interval.startMs +
 																		fraction *

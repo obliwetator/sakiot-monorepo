@@ -5,6 +5,7 @@ import { useCreateClipMutation } from "../../../app/apiSlice";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
 import { BaseDialog } from "../../../shared/BaseDialog";
+import { saveBlob } from "../../../shared/download";
 import { Button, TextField } from "../../../shared/ui";
 
 export function ClipDialog(props: {
@@ -51,15 +52,10 @@ export function ClipDialog(props: {
 					}),
 				);
 				if (!fileRes.ok) throw new Error(`download failed: ${fileRes.status}`);
-				const blob = await fileRes.blob();
-				const objectUrl = URL.createObjectURL(blob);
-				const a = document.createElement("a");
-				a.href = objectUrl;
-				a.download = response.name
-					? `${response.name}.ogg`
-					: `${response.id}.ogg`;
-				a.click();
-				URL.revokeObjectURL(objectUrl);
+				saveBlob(
+					await fileRes.blob(),
+					response.name ? `${response.name}.ogg` : `${response.id}.ogg`,
+				);
 			}
 
 			setOpen(false);

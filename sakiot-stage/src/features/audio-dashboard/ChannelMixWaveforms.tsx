@@ -1,18 +1,14 @@
-import { useMemo } from "react";
 import type {
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
 import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
+import { fractionInTarget } from "../../shared/geometry";
 import { Button } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { layoutChannelMixSegment } from "./channelMixWaveform";
 import { WaveformCanvas } from "./WaveformCanvas";
-import {
-	decodeWaveformPeaks,
-	EMPTY_WAVEFORM_ENVELOPE,
-	type WaveformEnvelope,
-} from "./waveformPeaks";
+import { useDecodedPeaks, type WaveformEnvelope } from "./waveformPeaks";
 
 const TRACK_WAVEFORM_HEIGHT = 54;
 const SOURCE_WAVEFORM_HEIGHT = 42;
@@ -37,10 +33,7 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 		pollingInterval: cachedError || cachedData ? 0 : 1_000,
 	});
 	const encoded = query.currentData?.data;
-	const peaks = useMemo(
-		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
-		[encoded],
-	);
+	const peaks = useDecodedPeaks(encoded);
 	const hasData = Boolean(encoded);
 	const error = query.isError || Boolean(query.currentData?.error);
 	const loading = query.isLoading && !hasData;
@@ -148,15 +141,7 @@ function TimelineWaveform(props: {
 				);
 			}}
 			onClick={(event) => {
-				const bounds = event.currentTarget.getBoundingClientRect();
-				const fraction = Math.max(
-					0,
-					Math.min(
-						1,
-						(event.clientX - bounds.left) / Math.max(1, bounds.width),
-					),
-				);
-				props.onSeek(fraction * props.durationMs);
+				props.onSeek(fractionInTarget(event) * props.durationMs);
 			}}
 			className="relative rounded-[1px] bg-purple-500/12 overflow-hidden cursor-pointer"
 			style={{ height: props.height }}

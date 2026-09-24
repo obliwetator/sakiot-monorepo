@@ -3,6 +3,7 @@ import { API_ROUTES, apiUrl } from "../../api/routes";
 import { BASE_API_URL } from "../../app/apiSlice";
 import { authedFetch } from "../../app/authedFetch";
 import { type MediaJobStatus, waitForMediaJob } from "../../app/mediaJobs";
+import { downloadAsFile, saveBlob } from "../../shared/download";
 import {
 	parseSilenceRemovalStatus,
 	type SilenceRemovalStatus,
@@ -17,22 +18,6 @@ interface SilenceRemovalOptions {
 	onReady: () => void;
 	onUnavailable: () => void;
 	onActionError: (message: string | null) => void;
-}
-
-function saveBlob(blob: Blob, fileName: string) {
-	const url = URL.createObjectURL(blob);
-	try {
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = fileName;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-	} catch {
-		window.open(url, "_blank");
-	} finally {
-		window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-	}
 }
 
 export function useSilenceRemoval(options: SilenceRemovalOptions) {
@@ -212,21 +197,13 @@ export function useSilenceRemoval(options: SilenceRemovalOptions) {
 		setAction("silence-download");
 		setError(null);
 		try {
-			const response = await authedFetch(
+			await downloadAsFile(
 				`${apiUrl(API_ROUTES.sessionSilenceFree, {
 					recording_session_id: options.sessionId,
 				})}?download=true`,
-			);
-			if (!response.ok) {
-				setError(`Silence-free download failed (${response.status}).`);
-				return;
-			}
-			saveBlob(
-				await response.blob(),
 				`session-${options.sessionId}-silence-free.ogg`,
+				{ label: "Silence-free download", onError: setError },
 			);
-		} catch {
-			setError("Silence-free download failed.");
 		} finally {
 			setAction(null);
 		}

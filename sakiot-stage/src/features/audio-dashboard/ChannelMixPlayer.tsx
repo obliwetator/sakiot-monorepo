@@ -6,7 +6,7 @@ import type {
 	ChannelMixScope,
 } from "../../app/apiSlice";
 import { BASE_API_URL } from "../../app/apiSlice";
-import { authedFetch } from "../../app/authedFetch";
+import { downloadAsFile } from "../../shared/download";
 import {
 	Badge,
 	Button,
@@ -33,20 +33,6 @@ import type { PlaybackShortcutTarget } from "./playbackShortcuts";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { useChannelMixPlayback } from "./useChannelMixPlayback";
 import { useSilenceFreePlayback } from "./useSilenceFreePlayback";
-
-function saveBlob(blob: Blob, fileName: string) {
-	const url = URL.createObjectURL(blob);
-	try {
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = fileName;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-	} finally {
-		window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-	}
-}
 
 export function ChannelMixPlayer(props: {
 	sessionId: string;
@@ -230,23 +216,13 @@ export function ChannelMixPlayer(props: {
 
 	const download = async () => {
 		setDownloadError(null);
-		try {
-			const response = await authedFetch(
-				`${apiUrl(API_ROUTES.sessionChannelMixMedia, {
-					recording_session_id: props.sessionId,
-				})}?download=true&scope=${props.mix.scope}`,
-			);
-			if (!response.ok) {
-				setDownloadError(`Download failed (${response.status}).`);
-				return;
-			}
-			saveBlob(
-				await response.blob(),
-				`session-${props.sessionId}-channel-mix.ogg`,
-			);
-		} catch {
-			setDownloadError("Download failed.");
-		}
+		await downloadAsFile(
+			`${apiUrl(API_ROUTES.sessionChannelMixMedia, {
+				recording_session_id: props.sessionId,
+			})}?download=true&scope=${props.mix.scope}`,
+			`session-${props.sessionId}-channel-mix.ogg`,
+			{ label: "Download", onError: setDownloadError },
+		);
 	};
 
 	return (
