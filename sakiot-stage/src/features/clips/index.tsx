@@ -2,7 +2,6 @@ import {
 	Scissors as ContentCutIcon,
 	ChevronDown as ExpandMoreIcon,
 	Film as MovieIcon,
-	Search,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -27,6 +26,7 @@ import {
 	DisclosureTrigger,
 	Drawer,
 	Notice,
+	SearchInput,
 	Tab,
 	TabList,
 	TabPanel,
@@ -265,20 +265,13 @@ function ClipsLayout(props: {
 	const list = (
 		<>
 			<div className="p-2 pb-0 shrink-0">
-				<label htmlFor="clip-search" className="relative block">
-					<Search
-						aria-hidden="true"
-						className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-					/>
-					<input
-						id="clip-search"
-						aria-label="Search clips"
-						value={searchQuery}
-						onChange={(event) => setSearchQuery(event.currentTarget.value)}
-						placeholder="Search clips..."
-						className="h-9 w-full rounded-md border border-ui-border bg-canvas pl-9 pr-3 text-sm text-fg outline-hidden placeholder:text-muted focus:border-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-1"
-					/>
-				</label>
+				<SearchInput
+					id="clip-search"
+					label="Search clips"
+					placeholder="Search clips..."
+					value={searchQuery}
+					onChange={setSearchQuery}
+				/>
 			</div>
 			<div className="p-2 shrink-0">
 				<Button

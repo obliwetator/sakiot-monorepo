@@ -33,6 +33,7 @@ export {
 	type NoticeTone,
 } from "./Notice";
 export { ProgressBar, Spinner } from "./Progress";
+export { SearchInput } from "./SearchInput";
 export { Select, SelectItem, type SelectProps } from "./Select";
 export { Radio, RadioGroup, Switch } from "./Selection";
 export { Slider, type SliderProps } from "./Slider";
