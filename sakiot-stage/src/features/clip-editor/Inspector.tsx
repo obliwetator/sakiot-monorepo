@@ -14,13 +14,11 @@ import {
 	Disclosure,
 	DisclosurePanel,
 	DisclosureTrigger,
-	IconButton,
 	Button as InspectorButton,
 	Slider,
 	Switch,
 	TextField,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
@@ -218,18 +216,11 @@ function SegmentInspectorContent(props: {
 				<p className="leading-6 text-muted">
 					{multi ? `${segments.length} segments selected` : "Selected segment"}
 				</p>
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Adjust the effect limits (volume, pitch, speed, EQ)"}
-						size="sm"
-						onPress={props.onOpenLimits}
-					>
-						<SettingsIcon size={16} />
-					</IconButton>
-					<Tooltip>
-						{"Adjust the effect limits (volume, pitch, speed, EQ)"}
-					</Tooltip>
-				</TooltipTrigger>
+				<TooltipIconButton
+					label="Adjust the effect limits (volume, pitch, speed, EQ)"
+					icon={<SettingsIcon size={16} />}
+					onPress={props.onOpenLimits}
+				/>
 			</div>
 			<h6
 				title={

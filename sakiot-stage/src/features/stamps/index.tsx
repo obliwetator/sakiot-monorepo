@@ -10,8 +10,7 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-	Tooltip,
-	TooltipTrigger,
+	WithTooltip,
 } from "../../shared/ui";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
@@ -113,7 +112,13 @@ export function Stamps() {
 										<TableCell>{formatTimestamp(s.stamp_ts)}</TableCell>
 										<TableCell>
 											{playbackTarget ? (
-												<TooltipTrigger delay={400}>
+												<WithTooltip
+													tip={
+														playbackTarget.scope === "session"
+															? "Open complete logical session"
+															: "Open legacy physical fragment"
+													}
+												>
 													<Button
 														variant="ghost"
 														size="sm"
@@ -121,12 +126,7 @@ export function Stamps() {
 													>
 														{formatDuration(playbackTarget.relativeSeconds)}
 													</Button>
-													<Tooltip>
-														{playbackTarget.scope === "session"
-															? "Open complete logical session"
-															: "Open legacy physical fragment"}
-													</Tooltip>
-												</TooltipTrigger>
+												</WithTooltip>
 											) : (
 												<span style={{ opacity: 0.5 }}>—</span>
 											)}

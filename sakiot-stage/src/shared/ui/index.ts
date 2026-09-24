@@ -46,5 +46,11 @@ export {
 } from "./Table";
 export { Tab, TabList, TabPanel, Tabs } from "./Tabs";
 export { TextArea, TextField, type TextFieldProps } from "./TextField";
-export { Focusable, Tooltip, TooltipTrigger } from "./Tooltip";
+export {
+	Focusable,
+	Tooltip,
+	TooltipIconButton,
+	TooltipTrigger,
+	WithTooltip,
+} from "./Tooltip";
 export { Tree, TreeItem, TreeItemContent } from "./TreeView";

@@ -20,12 +20,10 @@ import { downloadAsFile } from "../../shared/download";
 import {
 	Badge,
 	Button,
-	IconButton,
 	Notice,
 	Slider,
 	TextField,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import {
@@ -99,12 +97,11 @@ function RenameClipButton(props: { clip: ClipData }) {
 
 	return (
 		<>
-			<TooltipTrigger delay={400}>
-				<IconButton aria-label="Rename clip" size="sm" onPress={handleOpen}>
-					<EditIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Rename clip"}</Tooltip>
-			</TooltipTrigger>
+			<TooltipIconButton
+				label="Rename clip"
+				icon={<EditIcon size={16} />}
+				onPress={handleOpen}
+			/>
 			<BaseDialog
 				open={open}
 				onClose={handleClose}

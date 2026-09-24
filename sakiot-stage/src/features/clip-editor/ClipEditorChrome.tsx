@@ -12,11 +12,10 @@ import {
 import {
 	Badge,
 	Button,
-	IconButton,
 	Notice,
 	Slider,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
+	WithTooltip,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { addTrack } from "./model";
@@ -40,43 +39,27 @@ export function ClipEditorToolbar(props: {
 			<h6 className="font-medium tracking-[0.001em] text-xl truncate flex-1 min-w-0">
 				Clip Editor
 			</h6>
-			<TooltipTrigger delay={400}>
-				<IconButton
-					aria-label={"Undo (Ctrl+Z)"}
-					size="sm"
-					isDisabled={!editor.canUndo}
-					onPress={editor.undo}
-				>
-					<UndoIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Undo (Ctrl+Z)"}</Tooltip>
-			</TooltipTrigger>
-			<TooltipTrigger delay={400}>
-				<IconButton
-					aria-label={"Redo (Ctrl+Shift+Z)"}
-					size="sm"
-					isDisabled={!editor.canRedo}
-					onPress={editor.redo}
-				>
-					<RedoIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Redo (Ctrl+Shift+Z)"}</Tooltip>
-			</TooltipTrigger>
+			<TooltipIconButton
+				label="Undo (Ctrl+Z)"
+				icon={<UndoIcon size={16} />}
+				isDisabled={!editor.canUndo}
+				onPress={editor.undo}
+			/>
+			<TooltipIconButton
+				label="Redo (Ctrl+Shift+Z)"
+				icon={<RedoIcon size={16} />}
+				isDisabled={!editor.canRedo}
+				onPress={editor.redo}
+			/>
 			{props.canRestore && (
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label="Restore original clip"
-						size="sm"
-						onPress={props.onRestore}
-					>
-						<RestoreIcon size={16} />
-					</IconButton>
-					<Tooltip>
-						{"Restore the clip to its original version (can be undone)"}
-					</Tooltip>
-				</TooltipTrigger>
+				<TooltipIconButton
+					label="Restore original clip"
+					tip="Restore the clip to its original version (can be undone)"
+					icon={<RestoreIcon size={16} />}
+					onPress={props.onRestore}
+				/>
 			)}
-			<TooltipTrigger delay={400}>
+			<WithTooltip tip="Add track">
 				<Button
 					variant="outline"
 					size="sm"
@@ -84,19 +67,13 @@ export function ClipEditorToolbar(props: {
 				>
 					+ Track
 				</Button>
-				<Tooltip>{"Add track"}</Tooltip>
-			</TooltipTrigger>
-			<TooltipTrigger delay={400}>
-				<IconButton
-					aria-label={"Fit edit in view"}
-					size="sm"
-					onPress={editor.fitView}
-				>
-					<FitScreenIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Fit edit in view"}</Tooltip>
-			</TooltipTrigger>
-			<TooltipTrigger delay={400}>
+			</WithTooltip>
+			<TooltipIconButton
+				label="Fit edit in view"
+				icon={<FitScreenIcon size={16} />}
+				onPress={editor.fitView}
+			/>
+			<WithTooltip tip="Export the composition as a new clip or overwrite the combined clip">
 				<Button
 					variant="primary"
 					size="sm"
@@ -106,22 +83,12 @@ export function ClipEditorToolbar(props: {
 					<ContentCopyIcon />
 					Export
 				</Button>
-				<Tooltip>
-					{
-						"Export the composition as a new clip or overwrite the combined clip"
-					}
-				</Tooltip>
-			</TooltipTrigger>
-			<TooltipTrigger delay={400}>
-				<IconButton
-					aria-label={"Editor options (Ctrl+,)"}
-					size="sm"
-					onPress={props.onOpenOptions}
-				>
-					<SettingsIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Editor options (Ctrl+,)"}</Tooltip>
-			</TooltipTrigger>
+			</WithTooltip>
+			<TooltipIconButton
+				label="Editor options (Ctrl+,)"
+				icon={<SettingsIcon size={16} />}
+				onPress={props.onOpenOptions}
+			/>
 		</div>
 	);
 }
@@ -144,17 +111,12 @@ export function ClipEditorMonitor(props: {
 				{editor.playing ? <PauseIcon /> : <PlayArrowIcon />}
 				{editor.playing ? "Pause" : "Play"}
 			</Button>
-			<TooltipTrigger delay={400}>
-				<IconButton
-					aria-label={"Loop the edit while playing"}
-					aria-pressed={editor.loop}
-					size="sm"
-					onPress={() => editor.setLooping(!editor.loop)}
-				>
-					<RepeatIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Loop the edit while playing"}</Tooltip>
-			</TooltipTrigger>
+			<TooltipIconButton
+				label="Loop the edit while playing"
+				aria-pressed={editor.loop}
+				icon={<RepeatIcon size={16} />}
+				onPress={() => editor.setLooping(!editor.loop)}
+			/>
 			<p className="text-sm tabular-nums">
 				{formatDuration(editor.positionSec)} / {formatDuration(props.duration)}
 			</p>

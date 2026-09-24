@@ -11,9 +11,8 @@ import {
 	Badge,
 	Button,
 	cn,
-	IconButton,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
+	WithTooltip,
 } from "../../shared/ui";
 import { formatDuration, formatDurationPrecise } from "../../utils/formatTime";
 import { ClipRangePrecisionOverlay } from "./ClipRangePrecisionOverlay";
@@ -463,35 +462,27 @@ export function ClipRangeEditorView({
 						ruler. E sets the nearest edge · R resets the selection.
 					</span>
 					<div className="flex-1" />
-					<TooltipTrigger delay={400}>
-						<IconButton
-							aria-label={"Zoom out (ctrl + scroll)"}
-							size="sm"
-							onPress={() => zoom(-1)}
-						>
-							<ZoomOutIcon size={16} />
-						</IconButton>
-						<Tooltip>{"Zoom out (ctrl + scroll)"}</Tooltip>
-					</TooltipTrigger>
+					<TooltipIconButton
+						label="Zoom out (ctrl + scroll)"
+						icon={<ZoomOutIcon size={16} />}
+						onPress={() => zoom(-1)}
+					/>
 					<span className="text-muted text-xs leading-5 tabular-nums">
 						{formatDuration((view.endMs - view.startMs) / 1_000)}
 					</span>
-					<TooltipTrigger delay={400}>
-						<IconButton
-							aria-label={"Zoom in (ctrl + scroll)"}
-							size="sm"
-							onPress={() => zoom(1)}
-						>
-							<ZoomInIcon size={16} />
-						</IconButton>
-						<Tooltip>{"Zoom in (ctrl + scroll)"}</Tooltip>
-					</TooltipTrigger>
+					<TooltipIconButton
+						label="Zoom in (ctrl + scroll)"
+						icon={<ZoomInIcon size={16} />}
+						onPress={() => zoom(1)}
+					/>
 				</div>
 			</TimelineRow>
 
 			<TimelineRow className="mt-2">
 				<div className="flex items-center flex-wrap flex-row gap-2">
-					<TooltipTrigger delay={400}>
+					<WithTooltip
+						tip={`Set the ${suggestedEdge === "start" ? "left" : "right"} edge nearest the playhead (E)`}
+					>
 						<Button
 							variant="primary"
 							size="sm"
@@ -499,11 +490,16 @@ export function ClipRangeEditorView({
 						>
 							Set nearest: {suggestedEdge === "start" ? "left" : "right"} (E)
 						</Button>
-						<Tooltip>{`Set the ${suggestedEdge === "start" ? "left" : "right"} edge nearest the playhead (E)`}</Tooltip>
-					</TooltipTrigger>
+					</WithTooltip>
 					{(["start", "end"] as const).map((edge) => (
 						<div key={edge} className="flex items-center flex-row gap-1">
-							<TooltipTrigger delay={400}>
+							<WithTooltip
+								tip={
+									(edge === "start" ? canSetStart : canSetEnd)
+										? `Set the ${edge === "start" ? "left" : "right"} edge to the playhead (${edge === "start" ? "I" : "O"})`
+										: `Move the playhead ${edge === "start" ? "left of the right" : "right of the left"} edge first`
+								}
+							>
 								<Button
 									variant="outline"
 									size="sm"
@@ -512,12 +508,7 @@ export function ClipRangeEditorView({
 								>
 									Set {edge === "start" ? "left edge (I)" : "right edge (O)"}
 								</Button>
-								<Tooltip>
-									{(edge === "start" ? canSetStart : canSetEnd)
-										? `Set the ${edge === "start" ? "left" : "right"} edge to the playhead (${edge === "start" ? "I" : "O"})`
-										: `Move the playhead ${edge === "start" ? "left of the right" : "right of the left"} edge first`}
-								</Tooltip>
-							</TooltipTrigger>
+							</WithTooltip>
 							{[-1_000, -100, 100, 1_000].map((deltaMs) => (
 								<Button
 									key={deltaMs}
@@ -542,13 +533,12 @@ export function ClipRangeEditorView({
 						</span>
 					)}
 					<div className="flex-1" />
-					<TooltipTrigger delay={400}>
+					<WithTooltip tip={"Reset clip selection (R)"}>
 						<Button variant="outline" size="sm" onPress={props.onReset}>
 							<RestartAltIcon />
 							Reset
 						</Button>
-						<Tooltip>{"Reset clip selection (R)"}</Tooltip>
-					</TooltipTrigger>
+					</WithTooltip>
 					<Button variant="primary" size="sm" onPress={props.onPreview}>
 						{props.previewing ? <StopIcon /> : <PlayArrowIcon />}
 						{props.previewing ? "Stop" : "Preview"}
