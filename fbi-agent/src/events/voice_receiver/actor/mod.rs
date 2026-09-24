@@ -4,6 +4,7 @@
 //! Split by concern:
 //! - [`handle`]: the cloneable handle, command types, and queue accounting
 //! - [`lifecycle`]: opening, writing, heartbeating, and finalizing recordings
+//! - [`link`]: the voice connection state machine (handoffs, reconnect windows)
 //! - [`recovery`]: pause/resume, disconnect recovery, deadlines, stale reaping
 //! - [`packets`]: RTP payload extraction and disconnect command mapping
 //! - [`env`]: the narrow Discord client surface the actor depends on
@@ -11,6 +12,7 @@
 mod env;
 mod handle;
 mod lifecycle;
+mod link;
 mod packets;
 mod recovery;
 
@@ -33,6 +35,8 @@ use serenity::model::id::{ChannelId, GuildId};
 use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 
+use link::{Link, PlannedHandoff};
+
 use super::{
     recordings::{RecorderStats, Recordings, SuspendedSpeakers},
     state::VoiceEventType,
@@ -53,19 +57,14 @@ struct RecorderActor {
     recording_owner_instance_id: String,
     stats: Arc<RecorderStats>,
     recordings: Recordings,
-    disconnected_at_ms: i64,
-    recoverable_disconnect_deadline_ms: i64,
+    link: Link,
     current_channel_id: Arc<AtomicU64>,
     /// Shared with [`RecorderHandle`]: set as soon as this actor commits to
     /// exiting, so `get_or_create` waits for termination instead of handing the
     /// dying actor to a reconnect.
     stopping: Arc<AtomicBool>,
-    planned_handoff: Option<PlannedHandoff>,
     has_afk_channel: bool,
     pending_cap_seconds: i64,
-    /// Set when the guild's voice call has been removed; the run loop exits
-    /// after the current command is handled.
-    voice_session_ended: bool,
     last_recording_policy_check_ms: i64,
     /// Speakers to reopen writers for when a policy suspension ends.
     suspended_speakers: SuspendedSpeakers,
@@ -75,12 +74,6 @@ struct RecorderActor {
     /// Stable identity prevents an exiting actor from removing a newer
     /// registry generation after a panic/recovery race.
     actor_id: Arc<()>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PlannedHandoff {
-    from_channel_id: ChannelId,
-    to_channel_id: Option<ChannelId>,
 }
 
 impl RecorderActor {
@@ -113,7 +106,6 @@ impl RecorderActor {
                         break;
                     };
                     self.handle_command(command).await;
-                    if self.voice_session_ended { break; }
                 }
                 _ = heartbeat.tick() => {
                     self.heartbeat_active_recordings().await;
@@ -133,7 +125,7 @@ impl RecorderActor {
 
         self.finalize_all_active_recordings(VoiceEventType::WriterClose, chrono::Utc::now())
             .await;
-        self.clear_receiver_state();
+        self.recordings.clear();
         self.remove_from_registry().await;
         terminated_tx.send_replace(true);
     }
@@ -183,13 +175,13 @@ impl RecorderActor {
             } => {
                 self.has_afk_channel = has_afk_channel;
                 self.pending_cap_seconds = pending_cap_seconds;
-                self.planned_handoff = Some(PlannedHandoff {
+                self.link.begin_handoff(PlannedHandoff {
                     from_channel_id,
                     to_channel_id,
                 });
             }
             RecorderCommand::CancelHandoff => {
-                self.planned_handoff = None;
+                self.link.cancel_handoff();
             }
             RecorderCommand::CompleteHandoff {
                 channel_id,
@@ -218,11 +210,5 @@ impl RecorderActor {
                 .await;
             }
         }
-    }
-
-    fn clear_receiver_state(&mut self) {
-        self.recordings.clear();
-        self.disconnected_at_ms = 0;
-        self.recoverable_disconnect_deadline_ms = 0;
     }
 }
