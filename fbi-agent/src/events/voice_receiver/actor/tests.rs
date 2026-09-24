@@ -2,7 +2,7 @@
 //!
 //! These drive the real run loop against a [`RecorderEnv`] built from an empty
 //! cache and a dummy HTTP client, so they need neither a live Discord gateway
-//! nor a database. They exist because the actor used to be untestable, which is
+//! nor a database: queries go to an already-closed pool and fail immediately. They exist because the actor used to be untestable, which is
 //! why a teardown that awaited its own termination shipped unnoticed.
 
 use std::sync::{Arc, atomic::Ordering};
@@ -22,8 +22,7 @@ use crate::events::voice_receiver::{
 const GUILD_BASE: u64 = 9_000_000_000_000_000;
 const TERMINATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The manager-missing path never reaches the database, so a lazy pool keeps
-/// these tests hermetic.
+/// Never connected; only [`closed_pool`] hands it out.
 fn lazy_pool() -> PgPool {
     PgPoolOptions::new()
         .connect_lazy("postgres://postgres:password@127.0.0.1:54320/sakiot_rouvas")
@@ -31,8 +30,10 @@ fn lazy_pool() -> PgPool {
 }
 
 /// A pool that is already closed, so every query fails immediately and
-/// deterministically. The policy path must fail closed without reaching a real
-/// database (and without depending on one being reachable).
+/// deterministically. Departure bookkeeping (pausing sessions, recording voice
+/// events) and the policy check both query the database; an open lazy pool
+/// would instead retry an unreachable server past every test deadline, and
+/// against a reachable one the tests would depend on its state.
 async fn closed_pool() -> PgPool {
     let pool = lazy_pool();
     pool.close().await;
@@ -83,7 +84,7 @@ async fn spawn(
     metrics: Arc<crate::BotMetrics>,
     guild: u64,
 ) -> RecorderHandle {
-    spawn_with_pool(data, metrics, guild, 1, lazy_pool()).await
+    spawn_with_pool(data, metrics, guild, 1, closed_pool().await).await
 }
 
 /// A recoverable disconnect whose 60 s deadline is already in the past, so the
@@ -157,7 +158,7 @@ async fn reconnect_after_shutdown_gets_a_fresh_actor() {
 
     let first = registry
         .get_or_create(
-            lazy_pool(),
+            closed_pool().await,
             RecorderEnv::for_test(Arc::clone(&data)),
             guild,
             ChannelId::new(1),
@@ -173,7 +174,7 @@ async fn reconnect_after_shutdown_gets_a_fresh_actor() {
 
     let second = registry
         .get_or_create(
-            lazy_pool(),
+            closed_pool().await,
             RecorderEnv::for_test(Arc::clone(&data)),
             guild,
             ChannelId::new(1),
