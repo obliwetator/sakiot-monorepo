@@ -148,11 +148,11 @@ jobs:
           path: |
             ~/.cargo/bin/sqlx
             ~/.cargo/bin/cargo-sqlx
-          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}-postgres-native-tls-${{ runner.os }}
+          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}-postgres-rustls-${{ runner.os }}
 
       - name: Install SQLx CLI
         if: steps.cache-sqlx.outputs.cache-hit != 'true'
-        run: cargo install sqlx-cli --version "${SQLX_CLI_VERSION}" --locked --no-default-features --features postgres,native-tls
+        run: cargo install sqlx-cli --version "${SQLX_CLI_VERSION}" --locked --no-default-features --features postgres,rustls
 
       - name: Apply database migrations
         run: SQLX_OFFLINE=false cargo sqlx migrate run --source sakiot-db/migrations

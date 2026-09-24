@@ -7,11 +7,16 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["io-util", "process"] }
-actix-web = { version = "4", features = ["openssl"] }
+actix-web = "4"
 actix-rt = "2.9.0"
 actix-cors = "0.7"
 actix-files = "0.6"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = [
+	"charset",
+	"http2",
+	"json",
+	"rustls-tls",
+] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_with = "3"
@@ -25,7 +30,7 @@ sqlx = { version = "0.9", features = [
 	"postgres",
 	"chrono",
 ] }
-jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 env_logger = "0.11"
 time = "0.3.36"
 serde_repr = "0.1"
