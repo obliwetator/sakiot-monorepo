@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 /**
  * Minimum and maximum sample of every waveform point, normalised to -1..1.
  * Both arrays hold one entry per point and always share a length.
@@ -52,4 +53,14 @@ export function decodeWaveformPeaks(base64: string): WaveformEnvelope {
 			? (min.length * samplesPerPoint * 1_000) / sampleRate
 			: undefined;
 	return { min, max, durationMs };
+}
+
+/** Memoised decode of an encoded peaks payload; absent data reads as empty. */
+export function useDecodedPeaks(
+	encoded: string | null | undefined,
+): WaveformEnvelope {
+	return useMemo(
+		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
+		[encoded],
+	);
 }

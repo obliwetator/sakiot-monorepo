@@ -1,3 +1,4 @@
+import { fractionAtClientX } from "../../shared/geometry";
 import {
 	advanceFineDrag,
 	applyEdgeWithinWindow,
@@ -142,9 +143,6 @@ export function timeAtPointer(
 	widthPx: number,
 	window: TimeWindow,
 ): number {
-	const fraction = Math.min(
-		1,
-		Math.max(0, (clientXPx - leftPx) / Math.max(1, widthPx)),
-	);
+	const fraction = fractionAtClientX(clientXPx, leftPx, widthPx);
 	return window.startMs + fraction * (window.endMs - window.startMs);
 }

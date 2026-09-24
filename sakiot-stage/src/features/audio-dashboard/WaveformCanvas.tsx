@@ -1,14 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
 	useGetSessionWaveformQuery,
 	useGetSilenceFreeSessionWaveformQuery,
 } from "../../app/apiSlice";
+import { fractionInTarget } from "../../shared/geometry";
 import { drawSessionWaveform } from "./sessionWaveformCanvas";
-import {
-	decodeWaveformPeaks,
-	EMPTY_WAVEFORM_ENVELOPE,
-	type WaveformEnvelope,
-} from "./waveformPeaks";
+import { useDecodedPeaks, type WaveformEnvelope } from "./waveformPeaks";
 
 /**
  * Decoded peaks for a session. The query is cached by RTK, so the overview and
@@ -26,10 +23,7 @@ export function useSessionWaveformPeaks(
 	});
 	const query = silenceFree ? silenceFreeQuery : normalQuery;
 	const encoded = query.currentData?.data;
-	const peaks = useMemo(
-		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
-		[encoded],
-	);
+	const peaks = useDecodedPeaks(encoded);
 	return { query, peaks };
 }
 
@@ -76,33 +70,11 @@ export function WaveformCanvas(props: {
 			aria-label={props.label}
 			onClick={
 				props.onSeekFraction &&
-				((event) => {
-					const bounds = event.currentTarget.getBoundingClientRect();
-					props.onSeekFraction?.(
-						Math.min(
-							1,
-							Math.max(
-								0,
-								(event.clientX - bounds.left) / Math.max(1, bounds.width),
-							),
-						),
-					);
-				})
+				((event) => props.onSeekFraction?.(fractionInTarget(event)))
 			}
 			onPointerMove={
 				props.onHoverFraction &&
-				((event) => {
-					const bounds = event.currentTarget.getBoundingClientRect();
-					props.onHoverFraction?.(
-						Math.min(
-							1,
-							Math.max(
-								0,
-								(event.clientX - bounds.left) / Math.max(1, bounds.width),
-							),
-						),
-					);
-				})
+				((event) => props.onHoverFraction?.(fractionInTarget(event)))
 			}
 			onPointerLeave={
 				props.onHoverFraction && (() => props.onHoverFraction?.(null))

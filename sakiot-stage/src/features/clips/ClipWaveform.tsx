@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
 import { Button, ProgressBar } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
-import {
-	decodeWaveformPeaks,
-	EMPTY_WAVEFORM_ENVELOPE,
-} from "../audio-dashboard/waveformPeaks";
+import { useDecodedPeaks } from "../audio-dashboard/waveformPeaks";
 import {
 	nextPollErrorCount,
 	shouldKeepPollingClipWaveform,
@@ -62,11 +59,7 @@ export function ClipWaveform(props: {
 		}
 	}, [data?.error, data?.progress, isError, isFetching]);
 
-	const peaks = useMemo(
-		() =>
-			data?.data ? decodeWaveformPeaks(data.data) : EMPTY_WAVEFORM_ENVELOPE,
-		[data?.data],
-	);
+	const peaks = useDecodedPeaks(data?.data);
 
 	const progress = data?.progress ?? 0;
 	// While the poller is still retrying, show progress instead of the error

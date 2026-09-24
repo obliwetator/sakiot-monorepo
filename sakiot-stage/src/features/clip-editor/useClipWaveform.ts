@@ -1,8 +1,6 @@
-import { useMemo } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
 import {
-	decodeWaveformPeaks,
-	EMPTY_WAVEFORM_ENVELOPE,
+	useDecodedPeaks,
 	type WaveformEnvelope,
 } from "../audio-dashboard/waveformPeaks";
 
@@ -21,8 +19,5 @@ export function useClipWaveform(
 		{ skip: !guildId || !clipId },
 	);
 	const encoded = currentData?.data;
-	return useMemo(
-		() => (encoded ? decodeWaveformPeaks(encoded) : EMPTY_WAVEFORM_ENVELOPE),
-		[encoded],
-	);
+	return useDecodedPeaks(encoded);
 }

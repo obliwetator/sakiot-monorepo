@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import { fractionInTarget } from "../../shared/geometry";
 import { Slider, TextField } from "../../shared/ui";
 import {
 	formatSessionTimecode,
@@ -201,15 +202,7 @@ export function SessionPlaybackTimeline(props: {
 					}}
 					onPointerMove={(event) => {
 						if (draggingRef.current) return;
-						const bounds = event.currentTarget.getBoundingClientRect();
-						const fraction = Math.min(
-							1,
-							Math.max(
-								0,
-								(event.clientX - bounds.left) / Math.max(1, bounds.width),
-							),
-						);
-						scheduleHover(fraction * props.durationMs);
+						scheduleHover(fractionInTarget(event) * props.durationMs);
 					}}
 					onPointerLeave={() => {
 						if (!draggingRef.current) clearHover();
