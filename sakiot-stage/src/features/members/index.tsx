@@ -13,7 +13,6 @@ import {
 	Badge,
 	Button,
 	DialogHeading,
-	IconButton,
 	Modal,
 	Notice,
 	Table,
@@ -22,8 +21,7 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
 } from "../../shared/ui";
 import { roleSwatchBackground, roleTextStyle } from "./roleColors";
 
@@ -247,16 +245,12 @@ export function GuildMembers() {
 										</div>
 									</Button>
 									<div className="shrink-0 px-2">
-										<TooltipTrigger delay={400}>
-											<IconButton
-												aria-label={`View as ${role.name}`}
-												size="sm"
-												onPress={() => setPreviewRole(role)}
-											>
-												<RemoveRedEyeIcon size={16} />
-											</IconButton>
-											<Tooltip>View server as this role</Tooltip>
-										</TooltipTrigger>
+										<TooltipIconButton
+											label={`View as ${role.name}`}
+											tip="View server as this role"
+											icon={<RemoveRedEyeIcon size={16} />}
+											onPress={() => setPreviewRole(role)}
+										/>
 									</div>
 								</div>
 							))}

@@ -7,7 +7,7 @@ import type {
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fractionAtClientX, fractionInRect } from "../../shared/geometry";
 import { usePointerDrag } from "../../shared/pointerDrag";
-import { cn, IconButton, Tooltip, TooltipTrigger } from "../../shared/ui";
+import { cn, TooltipIconButton } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import { pendingBinDrag } from "./ClipBin";
@@ -930,36 +930,21 @@ export function Timeline(props: {
 				/>
 			)}
 			<div className="flex items-center gap-2 mt-2">
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Zoom out"}
-						size="sm"
-						onPress={() => editor.zoom(2)}
-					>
-						<ZoomOutIcon size={16} />
-					</IconButton>
-					<Tooltip>{"Zoom out"}</Tooltip>
-				</TooltipTrigger>
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Fit edit in view"}
-						size="sm"
-						onPress={editor.fitView}
-					>
-						<span className="text-xs leading-5 px-1">Fit</span>
-					</IconButton>
-					<Tooltip>{"Fit edit in view"}</Tooltip>
-				</TooltipTrigger>
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Zoom in"}
-						size="sm"
-						onPress={() => editor.zoom(0.5)}
-					>
-						<ZoomInIcon size={16} />
-					</IconButton>
-					<Tooltip>{"Zoom in"}</Tooltip>
-				</TooltipTrigger>
+				<TooltipIconButton
+					label="Zoom out"
+					icon={<ZoomOutIcon size={16} />}
+					onPress={() => editor.zoom(2)}
+				/>
+				<TooltipIconButton
+					label="Fit edit in view"
+					icon={<span className="text-xs leading-5 px-1">Fit</span>}
+					onPress={editor.fitView}
+				/>
+				<TooltipIconButton
+					label="Zoom in"
+					icon={<ZoomInIcon size={16} />}
+					onPress={() => editor.zoom(0.5)}
+				/>
 				<span className="text-muted text-xs leading-5 tabular-nums">
 					Window {formatDuration(editor.viewStartSec)} –{" "}
 					{formatDuration(editor.viewStartSec + editor.viewWidthSec)}
