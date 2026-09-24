@@ -34,6 +34,8 @@ pub(super) struct RecorderStats {
     /// True while the recorder is alive but refusing to write because the
     /// guild's policy excludes the channel it is connected to. The voice call
     /// stays up so recording can resume when the channel is allowed again.
+    /// Written only by the actor's `RecordingPolicy`; read by the run-loop
+    /// tests, which observe the actor from outside.
     policy_suspended: AtomicBool,
 }
 
@@ -46,6 +48,7 @@ impl RecorderStats {
         self.last_voice_packet_time.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
     pub(super) fn policy_suspended(&self) -> bool {
         self.policy_suspended.load(Ordering::Relaxed)
     }
@@ -81,10 +84,6 @@ impl SuspendedSpeakers {
     /// Removes and returns every remembered speaker.
     pub(super) fn take_all(&mut self) -> Vec<(u64, u32)> {
         self.0.drain().collect()
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.0.clear();
     }
 
     pub(super) fn count(&self) -> usize {
@@ -419,13 +418,5 @@ mod tests {
         remembered.sort_unstable();
         assert_eq!(remembered, vec![(7, 300), (8, 200)]);
         assert_eq!(speakers.count(), 0, "take_all drains the map");
-    }
-
-    #[test]
-    fn clearing_suspended_speakers_drops_stale_channels() {
-        let mut speakers = SuspendedSpeakers::default();
-        speakers.observe(7, 100);
-        speakers.clear();
-        assert_eq!(speakers.count(), 0);
     }
 }

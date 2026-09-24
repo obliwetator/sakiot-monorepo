@@ -76,8 +76,7 @@ impl RecorderHandle {
             stopping: Arc::clone(&stopping),
             has_afk_channel: false,
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
-            last_recording_policy_check_ms: 0,
-            suspended_speakers: super::SuspendedSpeakers::default(),
+            policy: super::RecordingPolicy::new(stats.clone()),
             registry,
             actor_id: Arc::clone(&actor_id),
         };

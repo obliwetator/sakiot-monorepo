@@ -398,21 +398,17 @@ impl RecorderActor {
             .metrics
             .channel_metrics(self.guild_id.get(), channel_id.get());
         self.link.connected();
-        // SSRCs learned in the previous channel are meaningless here.
-        self.suspended_speakers.clear();
         // Re-evaluate the policy for the channel just entered before resuming
         // anything: a handoff into an excluded channel must not reopen logical
-        // sessions, and a later tick must not skip the check because of a
-        // timestamp from the previous channel.
-        self.last_recording_policy_check_ms = 0;
+        // sessions.
         match self.channel_is_excluded(channel_id).await {
             Ok(false) => {
-                self.stats.set_policy_suspended(false);
+                self.policy.entered_channel(true);
                 self.resume_users_in_channel(channel_id, connected_at_ms)
                     .await;
             }
             Ok(true) => {
-                self.stats.set_policy_suspended(true);
+                self.policy.entered_channel(false);
             }
             Err(error) => {
                 warn!(
@@ -422,7 +418,7 @@ impl RecorderActor {
                     error
                 );
                 self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
-                self.stats.set_policy_suspended(true);
+                self.policy.entered_channel(false);
             }
         }
     }
@@ -435,10 +431,9 @@ impl RecorderActor {
     /// the guild could not record again until the call was torn down and
     /// rejoined from scratch.
     pub(super) async fn refresh_recording_policy(&mut self, at_ms: i64) {
-        if at_ms.saturating_sub(self.last_recording_policy_check_ms) < 1_000 {
+        if !self.policy.check_due(at_ms) {
             return;
         }
-        self.last_recording_policy_check_ms = at_ms;
         match self.channel_is_excluded(self.channel_id).await {
             Ok(true) => self.suspend_recording_for_policy(at_ms).await,
             Ok(false) => self.resume_recording_after_policy(at_ms).await,
@@ -472,19 +467,16 @@ impl RecorderActor {
     }
 
     async fn suspend_recording_for_policy(&mut self, at_ms: i64) {
-        if self.stats.policy_suspended() {
-            return;
-        }
-        self.stats.set_policy_suspended(true);
         // Keep the users with an open writer so their writers can be reopened
         // the moment the channel is allowed again.
-        self.suspended_speakers
-            .seed(self.recordings.user_ssrc_pairs());
+        let Some(speakers) = self.policy.suspend(self.recordings.user_ssrc_pairs()) else {
+            return;
+        };
         self.metrics.record_recording_policy_suspension();
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
-            speakers = self.suspended_speakers.count(),
+            speakers,
             "recording suspended: channel is excluded by guild policy; the voice call stays up"
         );
         self.pause_all_for_departure(
@@ -500,12 +492,11 @@ impl RecorderActor {
     }
 
     async fn resume_recording_after_policy(&mut self, at_ms: i64) {
-        if !self.stats.policy_suspended() {
+        let Some(speakers) = self.policy.allow() else {
             return;
-        }
-        self.stats.set_policy_suspended(false);
+        };
         let resumed_sessions = self.resume_users_in_channel(self.channel_id, at_ms).await;
-        let reopened_writers = self.reopen_suspended_speakers().await;
+        let reopened_writers = self.reopen_suspended_speakers(speakers).await;
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
@@ -522,8 +513,7 @@ impl RecorderActor {
     /// so a speaker whose writer was closed by the suspension would otherwise
     /// stay unrecorded until their next transition - and the timeline would show
     /// synthetic silence for the whole remainder of that utterance.
-    async fn reopen_suspended_speakers(&mut self) -> usize {
-        let speakers = self.suspended_speakers.take_all();
+    async fn reopen_suspended_speakers(&mut self, speakers: Vec<(u64, u32)>) -> usize {
         if speakers.is_empty() {
             return 0;
         }

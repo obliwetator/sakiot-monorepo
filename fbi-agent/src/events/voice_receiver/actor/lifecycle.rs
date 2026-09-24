@@ -35,8 +35,7 @@ impl RecorderActor {
         // state event races the once-per-second policy check. Remember the
         // speaker instead: Discord does not repeat a speaking update while an
         // utterance continues, so the writer has to be reopened on resume.
-        if self.stats.policy_suspended() {
-            self.suspended_speakers.observe(user_id, ssrc);
+        if self.policy.remember_speaker(user_id, ssrc) {
             debug!(
                 guild_id = self.guild_id.get(),
                 channel_id = self.channel_id.get(),
@@ -228,7 +227,7 @@ impl RecorderActor {
         self.refresh_recording_policy(at_ms).await;
         // Belt and braces: a writer opened in the window before the first
         // policy check must not receive audio once the channel is excluded.
-        if self.stats.policy_suspended() {
+        if self.policy.is_suspended() {
             return;
         }
         let packet_map: HashMap<u32, Vec<u8>> = packets

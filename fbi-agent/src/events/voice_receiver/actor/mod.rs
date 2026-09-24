@@ -5,6 +5,7 @@
 //! - [`handle`]: the cloneable handle, command types, and queue accounting
 //! - [`lifecycle`]: opening, writing, heartbeating, and finalizing recordings
 //! - [`link`]: the voice connection state machine (handoffs, reconnect windows)
+//! - [`policy`]: channel-exclusion suspension and the speakers to reopen
 //! - [`recovery`]: pause/resume, disconnect recovery, deadlines, stale reaping
 //! - [`packets`]: RTP payload extraction and disconnect command mapping
 //! - [`env`]: the narrow Discord client surface the actor depends on
@@ -14,6 +15,7 @@ mod handle;
 mod lifecycle;
 mod link;
 mod packets;
+mod policy;
 mod recovery;
 
 #[cfg(test)]
@@ -36,9 +38,10 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 
 use link::{Link, PlannedHandoff};
+use policy::RecordingPolicy;
 
 use super::{
-    recordings::{RecorderStats, Recordings, SuspendedSpeakers},
+    recordings::{RecorderStats, Recordings},
     state::VoiceEventType,
 };
 
@@ -65,9 +68,7 @@ struct RecorderActor {
     stopping: Arc<AtomicBool>,
     has_afk_channel: bool,
     pending_cap_seconds: i64,
-    last_recording_policy_check_ms: i64,
-    /// Speakers to reopen writers for when a policy suspension ends.
-    suspended_speakers: SuspendedSpeakers,
+    policy: RecordingPolicy,
     /// Registry entry for this guild; the actor removes itself on exit so a
     /// later reconnect starts with fresh state. `None` for unregistered actors.
     registry: Option<Arc<super::RecordingCoordinatorRegistry>>,
