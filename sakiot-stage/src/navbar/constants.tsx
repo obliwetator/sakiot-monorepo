@@ -38,6 +38,19 @@ export function activePage(pathname: string): PageName | null {
 	}
 }
 
+/**
+ * Path under a guild for each page. Stamps is absent: it has its own
+ * top-level route and is the one page reachable without a guild.
+ */
+export const guildPagePaths: Record<Exclude<PageName, "Stamps">, string> = {
+	Audio: "audio",
+	Clips: "clips",
+	"Clip Editor": "clips/editor",
+	Admin: "admin/cooldowns",
+	"Voice Settings": "admin/voice-settings",
+	Members: "members",
+};
+
 export const pageIcons: Record<PageName, React.ReactElement> = {
 	Audio: <AudiotrackIcon />,
 	Clips: <MovieIcon />,
