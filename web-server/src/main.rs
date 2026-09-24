@@ -1,5 +1,4 @@
 use actix_cors::Cors;
-use actix_web::middleware::Logger;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
@@ -92,7 +91,11 @@ fn is_cors_origin_allowed(
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv().ok();
-    env_logger::init();
+    // Dependencies that still log through the `log` crate (actix, sqlx) are
+    // forwarded into tracing. Warn keeps actix's per-request info lines out.
+    let _ = tracing_log::LogTracer::builder()
+        .with_max_level(tracing_log::log::LevelFilter::Warn)
+        .init();
 
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments
@@ -323,14 +326,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             )
             .default_service(web::route().to(not_found))
             // Wraps execute outermost-first on request (reverse registration order).
-            // Request flow: SecurityHeaders -> Cors -> Logger -> HttpMetrics -> AuthMiddleware -> handler
-            // Response flow: handler -> AuthMiddleware -> HttpMetrics -> Logger -> Cors -> SecurityHeaders
+            // Request flow: SecurityHeaders -> Cors -> HttpMetrics -> AuthMiddleware -> handler
+            // Response flow: handler -> AuthMiddleware -> HttpMetrics -> Cors -> SecurityHeaders
             // SecurityHeaders outermost: covers CORS preflights and 404/5xx.
-            // Cors short-circuits preflights before logging/metrics.
-            // Logger above metrics: records final status after all middleware runs.
+            // Cors short-circuits preflights before metrics.
             // HttpMetrics innermost at app level: measures handler+auth latency only.
             .wrap(HttpMetrics)
-            .wrap(Logger::default())
             .wrap(cors)
             .wrap(SecurityHeaders)
     })
