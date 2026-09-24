@@ -109,24 +109,9 @@ function RenameClipButton(props: { clip: ClipData }) {
 				title="Rename clip"
 				error={error}
 				busy={isLoading}
-				actions={
-					<>
-						<Button
-							variant="primary"
-							isDisabled={isLoading}
-							onPress={handleClose}
-						>
-							Cancel
-						</Button>
-						<Button
-							variant="primary"
-							isDisabled={isLoading || !canSubmit}
-							onPress={() => void handleRename()}
-						>
-							{isLoading ? "Saving..." : "Save"}
-						</Button>
-					</>
-				}
+				confirmLabel={isLoading ? "Saving..." : "Save"}
+				confirmDisabled={!canSubmit}
+				onConfirm={() => void handleRename()}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					Enter a new name for this clip.

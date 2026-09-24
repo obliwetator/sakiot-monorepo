@@ -8,11 +8,10 @@ import type {
 } from "../../app/apiSlice";
 import { BASE_API_URL } from "../../app/apiSlice";
 import { downloadFile } from "../../app/download";
+import { BaseDialog } from "../../shared/BaseDialog";
 import {
 	Badge,
 	Button,
-	DialogHeading,
-	Modal,
 	Notice,
 	ProgressBar,
 	Select,
@@ -426,57 +425,45 @@ export function ChannelMixPlayer(props: {
 				</Notice>
 			)}
 
-			<Modal
-				isOpen={props.dialogOpen}
-				onOpenChange={(isOpen) => {
-					if (!isOpen) props.onDialogOpenChange(false);
-				}}
+			<BaseDialog
+				open={props.dialogOpen}
+				onClose={() => props.onDialogOpenChange(false)}
+				title="Channel mix options"
 			>
-				<DialogHeading>Channel mix options</DialogHeading>
-				<div className="space-y-3 px-5 py-4">
-					<Switch
-						isSelected={props.options.showSourceRows}
-						onChange={(checked) =>
+				<Switch
+					isSelected={props.options.showSourceRows}
+					onChange={(checked) =>
+						props.onOptionsChange((current) => ({
+							...current,
+							showSourceRows: checked,
+						}))
+					}
+				>
+					Show physical source rows
+				</Switch>
+				<div className="relative flex min-w-0 w-full mt-3">
+					<Select
+						label="Timeline scope"
+						selectedKey={props.options.scope}
+						onSelectionChange={(value) =>
 							props.onOptionsChange((current) => ({
 								...current,
-								showSourceRows: checked,
+								scope: value as ChannelMixScope,
 							}))
 						}
 					>
-						Show physical source rows
-					</Switch>
-					<div className="relative flex min-w-0 w-full mt-3">
-						<Select
-							label="Timeline scope"
-							selectedKey={props.options.scope}
-							onSelectionChange={(value) =>
-								props.onOptionsChange((current) => ({
-									...current,
-									scope: value as ChannelMixScope,
-								}))
-							}
-						>
-							<SelectItem id={"all_recordings"}>
-								All recordings while connected
-							</SelectItem>
-							<SelectItem id={"selected_session"}>
-								Selected session only (anchor-style)
-							</SelectItem>
-						</Select>
-					</div>
-					<span className="block text-muted text-xs leading-5">
-						All recordings is the default. Open this dialog with Ctrl/Cmd+,.
-					</span>
+						<SelectItem id={"all_recordings"}>
+							All recordings while connected
+						</SelectItem>
+						<SelectItem id={"selected_session"}>
+							Selected session only (anchor-style)
+						</SelectItem>
+					</Select>
 				</div>
-				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button
-						variant="primary"
-						onPress={() => props.onDialogOpenChange(false)}
-					>
-						Close
-					</Button>
-				</div>
-			</Modal>
+				<span className="block text-muted text-xs leading-5">
+					All recordings is the default. Open this dialog with Ctrl/Cmd+,.
+				</span>
+			</BaseDialog>
 		</div>
 	);
 }

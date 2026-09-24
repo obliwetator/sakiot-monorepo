@@ -18,17 +18,16 @@ import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
+import { BaseDialog } from "../../shared/BaseDialog";
 import { LoadFailure } from "../../shared/LoadFailure";
 import { canDeleteClip } from "../../shared/permissions";
 import {
 	Button,
 	cn,
-	DialogHeading,
 	Disclosure,
 	DisclosurePanel,
 	DisclosureTrigger,
 	Drawer,
-	Modal,
 	Notice,
 	Tab,
 	TabList,
@@ -175,43 +174,21 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 			>
 				Delete
 			</Button>
-			<Modal
-				aria-labelledby="alert-dialog-title"
-				aria-describedby="alert-dialog-description"
-				isOpen={open}
-				onOpenChange={(isOpen) => {
-					if (!isOpen) handleClose();
-				}}
+			<BaseDialog
+				open={open}
+				onClose={handleClose}
+				title="Confirm deletion?"
+				error={error ?? undefined}
+				confirmLabel={error ? "Try again" : "Delete clip"}
+				confirmVariant="danger"
+				confirmDisabled={deleteState.isLoading}
+				onConfirm={handleDelete}
+				autoFocusCancel
 			>
-				<DialogHeading id="alert-dialog-title">
-					{"Confirm deletion?"}
-				</DialogHeading>
-				<div className="space-y-3 px-5 py-4">
-					<p
-						id="alert-dialog-description"
-						className="text-sm leading-6 text-slate-200"
-					>
-						Are you sure you want to delete the clip?
-					</p>
-					{error && (
-						<Notice tone="error" announce="alert">
-							{error}
-						</Notice>
-					)}
-				</div>
-				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button variant="primary" autoFocus onPress={handleClose}>
-						Cancel
-					</Button>
-					<Button
-						variant="danger"
-						isDisabled={deleteState.isLoading}
-						onPress={handleDelete}
-					>
-						{error ? "Try again" : "Delete clip"}
-					</Button>
-				</div>
-			</Modal>
+				<p className="text-sm leading-6 text-slate-200">
+					Are you sure you want to delete the clip?
+				</p>
+			</BaseDialog>
 		</div>
 	);
 }

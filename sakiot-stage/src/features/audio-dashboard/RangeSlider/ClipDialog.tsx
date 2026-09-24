@@ -108,22 +108,17 @@ export function ClipDialog(props: {
 				title="Create clip"
 				error={errorMsg}
 				busy={busy}
-				actions={
-					<>
-						<Button variant="primary" isDisabled={busy} onPress={handleClose}>
-							{created ? "Close" : "Cancel"}
-						</Button>
-						<Button variant="primary" isDisabled={busy} onPress={handleClip}>
-							{isLoading
-								? "Creating..."
-								: downloading
-									? "Downloading..."
-									: created
-										? "Retry download"
-										: "Clip"}
-						</Button>
-					</>
+				cancelLabel={created ? "Close" : "Cancel"}
+				confirmLabel={
+					isLoading
+						? "Creating..."
+						: downloading
+							? "Downloading..."
+							: created
+								? "Retry download"
+								: "Clip"
 				}
+				onConfirm={handleClip}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					Enter a name for this clip. Will return an error if name is a

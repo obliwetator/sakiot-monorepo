@@ -6,7 +6,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
 import { alpha, palette } from "../../shared/palette";
-import { Button, cn, TooltipIconButton } from "../../shared/ui";
+import { cn, TooltipIconButton } from "../../shared/ui";
 import {
 	TimelinePlayhead,
 	TimelineRow,
@@ -104,16 +104,9 @@ function TrackLabel(props: {
 				open={confirmOpen}
 				onClose={() => setConfirmOpen(false)}
 				title={`Remove Track ${props.track + 1}?`}
-				actions={
-					<>
-						<Button variant="primary" onPress={() => setConfirmOpen(false)}>
-							Cancel
-						</Button>
-						<Button variant="danger" onPress={confirmRemove}>
-							Remove track
-						</Button>
-					</>
-				}
+				confirmLabel="Remove track"
+				confirmVariant="danger"
+				onConfirm={confirmRemove}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					This track contains {props.clipCount} clip
