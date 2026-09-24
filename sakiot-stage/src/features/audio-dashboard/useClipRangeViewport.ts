@@ -408,27 +408,24 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 				globalThis.innerHeight,
 			)
 		: null;
+	// Note: the >= 100 and >= 10 cases were spelled out separately but returned
+	// byte-identical arrays, so "Fine ×10" is unreachable from multiplier >= 10.
+	// Collapsed here without changing behaviour; whether the ×10 zone should show
+	// its own boundary is a product question.
 	const precisionBoundaries = dragFeedback
-		? dragFeedback.multiplier >= 100
+		? dragFeedback.multiplier >= 10
 			? [
 					{
 						yPx: dragFeedback.startYPx - ULTRA_FINE_DRAG_START_PX,
 						label: "Ultra ×100",
 					},
 				]
-			: dragFeedback.multiplier >= 10
-				? [
-						{
-							yPx: dragFeedback.startYPx - ULTRA_FINE_DRAG_START_PX,
-							label: "Ultra ×100",
-						},
-					]
-				: [
-						{
-							yPx: dragFeedback.startYPx - FINE_DRAG_START_PX,
-							label: "Fine ×10",
-						},
-					]
+			: [
+					{
+						yPx: dragFeedback.startYPx - FINE_DRAG_START_PX,
+						label: "Fine ×10",
+					},
+				]
 		: [];
 
 	const beginDrag = (event: ReactPointerEvent<HTMLElement>, kind: DragKind) => {
