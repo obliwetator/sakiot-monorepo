@@ -5,10 +5,11 @@ import {
 	useRebuildSessionWaveformMutation,
 	useRebuildSilenceFreeSessionWaveformMutation,
 } from "../../app/apiSlice";
-import { Button, ProgressBar } from "../../shared/ui";
+import { Button } from "../../shared/ui";
 import { formatSessionTimecode } from "../../utils/formatTime";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
 import { useSessionWaveformPeaks, WaveformCanvas } from "./WaveformCanvas";
+import { WaveformStatusOverlay } from "./WaveformStatusOverlay";
 import type { WaveformEnvelope } from "./waveformPeaks";
 
 const WAVEFORM_HEIGHT_PX = 132;
@@ -106,30 +107,18 @@ export function SessionWaveform(props: {
 			onSeek={props.onSeek}
 			label={`${waveformName} logical recording waveform`}
 		>
-			{buildInProgress && !waveformError && (
-				<div className="absolute top-0 left-0 right-0 z-2 px-2 py-1 bg-slate-900/78 pointer-events-none">
-					<span className="text-xs leading-5">
-						Building {waveformName.toLowerCase()} waveform ({rebuildProgress}%)
-					</span>
-					<ProgressBar value={rebuildProgress} />
-				</div>
-			)}
-			{!data?.data && !buildInProgress && !waveformError && (
-				<div className="absolute inset-0 grid place-items-center z-1 pointer-events-none">
-					<span className="text-muted text-xs leading-5">
-						{waveformName} waveform has not been built.
-						{!props.silenceFree &&
-							" Channel Mix uses separate physical-source waveforms."}
-					</span>
-				</div>
-			)}
-			{waveformError && (
-				<div className="absolute inset-0 grid place-items-center z-2 pointer-events-none">
-					<span className="text-danger text-xs leading-5">
-						{waveformName} waveform unavailable. {waveformProblem}
-					</span>
-				</div>
-			)}
+			<WaveformStatusOverlay
+				name={waveformName}
+				building={buildInProgress}
+				progress={rebuildProgress}
+				error={waveformError}
+				errorDetail={waveformProblem}
+				built={Boolean(data?.data)}
+				notBuiltNote={
+					!props.silenceFree &&
+					" Channel Mix uses separate physical-source waveforms."
+				}
+			/>
 			<Button
 				className="absolute right-2 bottom-2 z-4"
 				variant="primary"
