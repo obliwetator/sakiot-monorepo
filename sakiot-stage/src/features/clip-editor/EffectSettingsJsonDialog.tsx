@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Button, TextArea } from "../../shared/ui";
+import { TextArea } from "../../shared/ui";
 import type { EffectLimits } from "./effectLimits";
 import { parseEffectSettingsJson } from "./effectSettingsJson";
 import { DEFAULT_EFFECTS, resizeSelectedSegments } from "./model";
@@ -53,16 +53,8 @@ export function EffectSettingsJsonDialog(props: {
 			onClose={props.onClose}
 			title="Effect settings JSON"
 			error={error ?? undefined}
-			actions={
-				<>
-					<Button variant="primary" onPress={props.onClose}>
-						Cancel
-					</Button>
-					<Button variant="primary" onPress={apply}>
-						Apply to selected
-					</Button>
-				</>
-			}
+			confirmLabel="Apply to selected"
+			onConfirm={apply}
 		>
 			<p className="text-muted text-sm mb-3">
 				Paste a complete or partial camelCase effect object. Values apply to all

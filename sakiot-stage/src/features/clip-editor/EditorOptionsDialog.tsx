@@ -1,5 +1,5 @@
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Button, Switch } from "../../shared/ui";
+import { Switch } from "../../shared/ui";
 import type { EditorOptions } from "./editorOptions";
 
 /**
@@ -18,11 +18,7 @@ export function EditorOptionsDialog(props: {
 			open={props.open}
 			onClose={props.onClose}
 			title="Editor options"
-			actions={
-				<Button variant="primary" onPress={props.onClose}>
-					Done
-				</Button>
-			}
+			closeLabel="Done"
 		>
 			<Switch
 				isSelected={props.options.marqueeMultiTrack}
