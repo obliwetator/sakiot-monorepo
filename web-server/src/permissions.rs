@@ -5,55 +5,44 @@ use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
 
+// Discord's permission bit layout, vendored from serenity's `Permissions`.
+//
+// `web-server` deliberately does not depend on serenity: the agent owns the
+// gateway, and pulling a Discord client into the HTTP service to reuse one
+// bitflags type would drag its whole dependency tree behind it. The bits are
+// fixed by Discord's API, so a local copy cannot drift the way a wrapper
+// around a moving dependency would.
+//
+// The flag documentation below describes Discord's own model. Types named in
+// it (`Member`, `Guild`, `PermissionOverwrite`, ...) are Discord concepts, not
+// items in this crate - this crate stores the bits as `i64` and reads them
+// back out of `roles` and the channel overwrite tables.
 bitflags::bitflags! {
-    /// A set of permissions that can be assigned to [`User`]s and [`Role`]s via
-    /// [`PermissionOverwrite`]s, roles globally in a [`Guild`], and to
-    /// [`GuildChannel`]s.
-    ///
-    /// [`Guild`]: super::guild::Guild
-    /// [`GuildChannel`]: super::channel::GuildChannel
-    /// [`PermissionOverwrite`]: super::channel::PermissionOverwrite
-    /// [`Role`]: super::guild::Role
-    /// [`User`]: super::user::User
+    /// Permission bits as Discord defines them, stored on roles and channel
+    /// overwrites and combined by the helpers below.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct Permissions: i64 {
-        /// Allows for the creation of [`RichInvite`]s.
-        ///
-        /// [`RichInvite`]: super::invite::RichInvite
+        /// Allows for the creation of `RichInvite`s.
         const CREATE_INSTANT_INVITE = 1 << 0;
-        /// Allows for the kicking of guild [member]s.
-        ///
-        /// [member]: super::guild::Member
+        /// Allows for the kicking of guild members.
         const KICK_MEMBERS = 1 << 1;
-        /// Allows the banning of guild [member]s.
-        ///
-        /// [member]: super::guild::Member
+        /// Allows the banning of guild members.
         const BAN_MEMBERS = 1 << 2;
-        /// Allows all permissions, bypassing channel [permission overwrite]s.
-        ///
-        /// [permission overwrite]: super::channel::PermissionOverwrite
+        /// Allows all permissions, bypassing channel permission overwrites.
         const ADMINISTRATOR = 1 << 3;
-        /// Allows management and editing of guild [channel]s.
-        ///
-        /// [channel]: super::channel::GuildChannel
+        /// Allows management and editing of guild channels.
         const MANAGE_CHANNELS = 1 << 4;
-        /// Allows management and editing of the [guild].
-        ///
-        /// [guild]: super::guild::Guild
+        /// Allows management and editing of the guild.
         const MANAGE_GUILD = 1 << 5;
-        /// [`Member`]s with this permission can add new [`Reaction`]s to a
-        /// [`Message`]. Members can still react using reactions already added
+        /// `Member`s with this permission can add new `Reaction`s to a
+        /// `Message`. Members can still react using reactions already added
         /// to messages without this permission.
-        ///
-        /// [`Member`]: super::guild::Member
-        /// [`Message`]: super::channel::Message
-        /// [`Reaction`]: super::channel::Reaction
         const ADD_REACTIONS = 1 << 6;
         /// Allows viewing a guild's audit logs.
         const VIEW_AUDIT_LOG = 1 << 7;
         /// Allows the use of priority speaking in voice channels.
         const PRIORITY_SPEAKER = 1 << 8;
-        // Allows the user to go live.
+        /// Allows the user to go live.
         const STREAM = 1 << 9;
         /// Allows guild members to view a channel, which includes reading
         /// messages in text channels and joining voice channels.
@@ -98,12 +87,9 @@ bitflags::bitflags! {
         const DEAFEN_MEMBERS = 1 << 23;
         /// Allows the moving of members from one voice channel to another.
         const MOVE_MEMBERS = 1 << 24;
-        /// Allows the usage of voice-activity-detection in a [voice] channel.
+        /// Allows the usage of voice-activity-detection in a voice channel.
         ///
-        /// If this is disabled, then [`Member`]s must use push-to-talk.
-        ///
-        /// [`Member`]: super::guild::Member
-        /// [voice]: super::channel::ChannelType::Voice
+        /// If this is disabled, then `Member`s must use push-to-talk.
         const USE_VAD = 1 << 25;
         /// Allows members to change their own nickname in the guild.
         const CHANGE_NICKNAME = 1 << 26;
@@ -114,9 +100,7 @@ bitflags::bitflags! {
         /// Allows management of webhooks.
         const MANAGE_WEBHOOKS = 1 << 29;
         /// Allows management of emojis and stickers created without the use of an
-        /// [`Integration`].
-        ///
-        /// [`Integration`]: super::guild::Integration
+        /// `Integration`.
         const MANAGE_EMOJIS_AND_STICKERS = 1 << 30;
         /// Allows using slash commands.
         const USE_SLASH_COMMANDS = 1 << 31;
