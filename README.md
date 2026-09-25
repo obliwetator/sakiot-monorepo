@@ -20,6 +20,10 @@ stores audio and metadata, and exposes recordings through a web application.
 The Rust services share `sakiot-paths`, `sakiot-proto`, and one database schema.
 Changes spanning these contracts can therefore be committed atomically.
 
+For how the components fit together - the recording and playback paths, the
+gRPC and OpenAPI contracts, authentication, and the media lifecycle - see
+[Architecture](docs/architecture.md).
+
 ## Local Development
 
 One command brings up a local debug environment for `web-server` and the
@@ -214,7 +218,8 @@ Manual service runs resolve this variable relative to their working directory;
 without it, the shared crate falls back to `../data`. Use an absolute path for
 consistent behavior, for example `/data` in containers with a shared volume.
 
-Component READMEs and the operations guides cover configuration and deployment.
+[Architecture](docs/architecture.md) maps the system as a whole; component
+READMEs and the operations guides cover configuration and deployment.
 Pushes to `main` auto-deploy to staging, except Markdown/license-only changes.
 A workspace version bump triggers automatic tagging and production promotion
 after staging succeeds. Production accepts strict `vX.Y.Z` tags; `ops/release`
