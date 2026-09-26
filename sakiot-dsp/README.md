@@ -5,9 +5,8 @@ server code and WebAssembly in the browser.
 
 The crate remains excluded as a root-workspace member. The web server consumes
 it as a path dependency, so normal server builds compile the native crate; a
-dedicated CI job additionally checks standalone tests, native/WASM parity, and
-that the committed WASM bindings are current. See [PLAN.md](PLAN.md) for scope,
-status, and recorded findings.
+dedicated CI job additionally runs the standalone tests, builds the WASM, and
+checks native/WASM parity.
 
 Implemented in the shared native/WASM core:
 
@@ -109,10 +108,23 @@ both the browser WASM and native server renderers.
   Every server segment uses the incremental shared DSP renderer, including
   source windows longer than 60 seconds. Decoded and processed PCM use
   temporary files; processing retains bounded blocks.
-- Tone.js has been removed from `sakiot-stage` and its dependency lockfile.
 - Browser preview has explicit PCM size limits; oversized compositions remain
   exportable by the server. See [STREAMING.md](STREAMING.md) for these limits
   and the server job time/disk budgets.
+
+## Known gaps
+
+- Seeking into the middle of a segment starts the stateful effects (delay,
+  compressor, chorus, reverb) fresh at that offset instead of inheriting the
+  preceding history. Playback from a segment start matches the server exactly.
+- The browser still decodes whole sources and keeps complete output buffers;
+  see [browser limits](STREAMING.md#browser-limits).
+- A WASM load failure has no visible error or retry state. The native Web Audio
+  fallback covers volume, EQ, rate, and reverse, but not independent pitch.
+- The phase vocoder, sinc resampler, and reverb convolution are unprofiled;
+  optimizing them must keep native and WASM output identical.
+- The worker cannot interrupt a WASM render already in progress. It discards
+  obsolete queued requests instead.
 
 ## Native checks
 

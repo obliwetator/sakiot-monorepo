@@ -132,10 +132,7 @@ waveform caches use immutable file revisions, so stale work cannot target a
 replacement file. Waveforms remain regenerable caches and are generated on
 request after composition publication.
 
-Apply migration `20260906000000_composition_jobs.sql` before running this
-release. It is additive and protects archive revisions even while an older web
-release is still running. New jobs use renderer contract version 2. Before
-claiming work, the worker
+New jobs use renderer contract version 2. Before claiming work, the worker
 migrates queued version 1 jobs and expired version 1 attempts to version 2;
 active version 1 leases can finish unchanged. Terminal results and unknown
 versions are not rewritten. See [incremental rendering](../sakiot-dsp/STREAMING.md)

@@ -20,6 +20,9 @@ whole Sakiot application:
 - `fbi-agent` records the Discord voice data that eventually appears in the UI.
 - `sakiot-paths` defines shared path conventions used by the backend pieces that
   serve the data shown here.
+- `sakiot-dsp` is compiled to WASM for the clip editor's effect preview. The
+  `dev`, `test`, `typecheck`, and `build:bundle` scripts build it first, which
+  needs the pinned `wasm-bindgen` CLI (see the root `README.md`).
 
 ## What It Does
 
@@ -77,7 +80,7 @@ This split is temporary. Check upstream periodically:
 npm view openapi-typescript peerDependencies
 ```
 
-Checked on 2026-09-07: the [upstream package manifest](https://github.com/openapi-ts/openapi-typescript/blob/main/packages/openapi-typescript/package.json)
+Checked on 2026-09-26: the [upstream package manifest](https://github.com/openapi-ts/openapi-typescript/blob/main/packages/openapi-typescript/package.json)
 still reports 7.13.0 and requires `typescript: ^5.x`. Keep the isolated
 toolchain until an upstream release supports the compiler API needed with
 TypeScript 7. When that compatibility is verified, delete

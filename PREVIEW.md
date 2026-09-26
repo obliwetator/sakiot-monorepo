@@ -65,7 +65,7 @@ slot; the deploy engine derives each slot's port, database, dirs, units, and
 subdomain from the slot name.
 
 ```sh
-# 1. Refresh the deploy framework so the preview-ci verb exists:
+# 1. Refresh the deploy framework after any ops/ change:
 ops/update-deploy-engine.sh
 
 # 2. Create the shared env file only if absent, then configure it:
@@ -127,7 +127,7 @@ ops/preview-slot.sh clip-editor --remove
 ### Engine-side slot derivation
 
 A `preview-ci <slot> <sha>` deploy loads the shared `preview.env` and rewrites
-these tokens per slot (mirroring the old per-slot files):
+these tokens per slot:
 
 | token in preview.env        | per-slot value                  |
 |-----------------------------|---------------------------------|
@@ -188,5 +188,5 @@ other instances, as documented in `ops/README.md`.
   slot's env file.
 - Media archive is disabled by default in the example env; flip
   `SAKIOT_MEDIA_ARCHIVE_ENABLED` when a branch needs it.
-- Check a deployed slot with `sudo -u sakiot sakiot-deploy status preview <slot>`
-  (local, VPS).
+- Check a deployed slot on the VPS with
+  `sudo -u sakiot /usr/local/lib/sakiot-deploy/bin/sakiot-deploy status preview <slot>`.

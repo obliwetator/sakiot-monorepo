@@ -95,7 +95,7 @@ The binary is installed out-of-band like the rest of `ops/`:
 builds `--package sakiot-deploy` from the checkout as the `sakiot` user and
 installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
 never built from the release worktree, so a broken commit cannot brick
-deploys. Engine tests run in CI (`cargo test --workspace`). Authenticated `*-ci`
+deploys. Engine tests run in CI (`cargo nextest run`). Authenticated `*-ci`
 forced-command verbs are reachable only after the Actions test job succeeds.
 They receive that job's read-only `GITHUB_TOKEN` on stdin, force authenticated
 Git protocol v2 for the source fetch, and skip the duplicate VPS test pass.
@@ -146,8 +146,10 @@ Create a `production` environment without required reviewers and add:
 - `DEPLOY_KNOWN_HOSTS` (pre-verified host key, not live `ssh-keyscan` output)
 
 Create a `staging` environment with the same four secrets (same VPS, same deploy
-user and key). The staging deploy reuses the restricted key; the forced command
-accepts a `staging <sha>` verb in addition to `release`/`rollback`.
+user and key). The staging and preview deploys reuse the restricted key; the forced command
+(`ops/ssh/forced-command`) accepts `release`, `release-ci`,
+`release-promoted`, `rollback`, `staging`, `staging-ci`, `preview-ci`,
+`preview-up`, and `preview-remove`.
 
 No separate GitHub PAT is installed on the VPS. Deploy workflows forward their
 automatic, job-scoped `GITHUB_TOKEN` over SSH stdin. Keep workflow

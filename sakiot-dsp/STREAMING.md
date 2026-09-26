@@ -144,13 +144,6 @@ cargo build --manifest-path sakiot-dsp/Cargo.toml --locked --release --example m
 /usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 600 700 1.35
 /usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 6 4800 0.1
 /usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 60 0 1 max-effects
+scripts/build-dsp.sh
 node sakiot-dsp/web/verify-wasm.mjs
 ```
-
-Recorded implementation verification (2026-09-06; not a current test count):
-335 workspace Rust tests (one existing manual-media test
-ignored), 26 DSP tests (one existing manual FFmpeg EQ measurement ignored),
-383 frontend tests, and 31 Playwright tests across desktop/mobile (three
-viewport-specific skips). Build, workspace/DSP Clippy, formatting, SQLx query
-metadata, native/WASM parity, real AudioWorklet checks and job crash recovery
-passed. Database tests used a disposable local PostgreSQL container.

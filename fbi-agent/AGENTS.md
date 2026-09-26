@@ -20,11 +20,12 @@ from the repository root for the full development environment, or `cargo dev db 
 when only PostgreSQL, migrations, and seed data are needed. Then run SQLx tests
 with `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL"` as shown above.
 
-Do not use `deploy/*.sh`, `systemctl --user ...`, `grpcurl ...`, or service-management commands unless manually instructed.
+Do not use `../ops/deploy`, `../ops/release`, `systemctl ...`, `grpcurl ...`, or service-management commands unless manually instructed.
 
 ## Current Runtime Model
 
-Production bot releases run as system services:
+Production bot releases run as system services (staging uses
+`sakiot-staging-fbi-agent@<release_id>.service`):
 
 ```text
 sakiot-fbi-agent@<release_id>.service
@@ -44,17 +45,20 @@ Each release has its own immutable-ish binary and env file:
 ```env
 BOT_ROLE=active
 BOT_INSTANCE_ID=<host>-<release_id>
+RELEASE_ID=<release_id>
 GRPC_ADDR=<unique localhost port>
 DRAIN_TIMEOUT_SECONDS=0
+SAKIOT_DATA_DIR=<instance data dir>
 ```
 
 `DRAIN_TIMEOUT_SECONDS=0` means a draining instance waits forever until voice is empty.
 
 ## Deploy Flow
 
-Production deploys are triggered by strict `vX.Y.Z` tags through GitHub Actions.
-Use `../ops/release`; deployment implementation and rollback live under
-`../ops/`. See `../ops/README.md`.
+Pushes to `main` deploy staging. Bumping the workspace version in the root
+`Cargo.toml` tags `vX.Y.Z` after staging verifies, which promotes to
+production; `../ops/release` is the manual fallback. Deployment implementation
+and rollback live under `../ops/`. See `../ops/README.md`.
 
 ## Current Important Service Settings
 
