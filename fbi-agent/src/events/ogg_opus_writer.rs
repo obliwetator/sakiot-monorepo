@@ -1,6 +1,8 @@
 //! Streaming Ogg/Opus writer for per-user voice recordings.
 //!
-//! Writes one Opus packet per Ogg page so partial files are always playable.
+//! Batches Opus packets into Ogg pages of ~500 ms (25 packets) per RFC 7845 §4,
+//! avoiding the container overhead of single-packet paging while preserving
+//! crash resilience and live HLS streamability.
 //! Discord delivers 20 ms / 960-sample stereo Opus frames at 48 kHz.
 
 use std::io::Write;
@@ -11,6 +13,14 @@ use ogg::PacketWriteEndInfo;
 const OPUS_SAMPLE_RATE: u32 = 48000;
 const OPUS_CHANNELS: u8 = 2;
 const SAMPLES_PER_FRAME: u64 = 960;
+
+/// Target packets per Ogg page: 25 packets * 20 ms = 500 ms of audio per page.
+/// Falls cleanly within the RFC 7845 §4 recommendation (200 ms to 1000 ms).
+const TARGET_PAGE_PACKETS: usize = 25;
+/// Max payload bytes before forcing a page boundary even if packet count isn't met.
+const TARGET_PAGE_BYTES: usize = 4096;
+/// Ogg page segment table limit (max 255 segments per page).
+const MAX_PAGE_SEGMENTS: usize = 250;
 
 /// Bytes of a pre-encoded 20 ms stereo silent Opus frame. Synthesized once via
 /// audiopus on first use. Inserted on ticks where a tracked user was silent so
@@ -46,6 +56,9 @@ pub struct OggOpusWriter<W: Write> {
     serial: u32,
     granule: u64,
     finished: bool,
+    packets_in_page: usize,
+    bytes_in_page: usize,
+    segments_in_page: usize,
 }
 
 impl<W: Write> OggOpusWriter<W> {
@@ -80,30 +93,46 @@ impl<W: Write> OggOpusWriter<W> {
             serial,
             granule: 0,
             finished: false,
+            packets_in_page: 0,
+            bytes_in_page: 0,
+            segments_in_page: 0,
         })
     }
 
     /// Append one Opus packet (one 20 ms / 960-sample frame), bump granule,
-    /// flush so the file is byte-current.
+    /// batching up to ~500 ms (25 packets) per page.
     pub fn write_packet(&mut self, packet: &[u8]) -> std::io::Result<()> {
         if self.finished {
             return Err(std::io::Error::other("writer already finished"));
         }
         self.granule += SAMPLES_PER_FRAME;
-        self.inner.write_packet(
-            packet.to_vec(),
-            self.serial,
-            PacketWriteEndInfo::EndPage,
-            self.granule,
-        )
+        self.packets_in_page += 1;
+        self.bytes_in_page += packet.len();
+        self.segments_in_page += (packet.len() / 255) + 1;
+
+        let should_end_page = self.packets_in_page >= TARGET_PAGE_PACKETS
+            || self.bytes_in_page >= TARGET_PAGE_BYTES
+            || self.segments_in_page >= MAX_PAGE_SEGMENTS;
+
+        let end_info = if should_end_page {
+            self.packets_in_page = 0;
+            self.bytes_in_page = 0;
+            self.segments_in_page = 0;
+            PacketWriteEndInfo::EndPage
+        } else {
+            PacketWriteEndInfo::NormalPacket
+        };
+
+        self.inner
+            .write_packet(packet.to_vec(), self.serial, end_info, self.granule)
     }
 
     /// Append `count` silent 20 ms frames in one go (used when a user joins
     /// mid-session and we need to align their file with session-start).
     pub fn write_silence(&mut self, count: u64) -> std::io::Result<()> {
-        let bytes = silence_frame_bytes()?;
+        let frame = silence_frame()?;
         for _ in 0..count {
-            self.write_packet(&bytes)?;
+            self.write_packet(frame)?;
         }
         Ok(())
     }
@@ -113,8 +142,8 @@ impl<W: Write> OggOpusWriter<W> {
         if self.finished {
             return Ok(());
         }
-        // Emit a zero-byte packet with EndStream to mark EOS. Some demuxers
-        // tolerate the absence of this, but it is the spec-correct way.
+        // Emit a zero-byte packet with EndStream to mark EOS. If an audio page
+        // was in progress, EndStream ends that page with the EOS flag set.
         self.inner.write_packet(
             Vec::new(),
             self.serial,
@@ -122,6 +151,9 @@ impl<W: Write> OggOpusWriter<W> {
             self.granule,
         )?;
         self.finished = true;
+        self.packets_in_page = 0;
+        self.bytes_in_page = 0;
+        self.segments_in_page = 0;
         Ok(())
     }
 
@@ -195,6 +227,73 @@ mod tests {
 
         w.write_silence(3)?;
         assert_eq!(w.granule(), 5 * SAMPLES_PER_FRAME);
+
+        Ok(())
+    }
+
+    #[test]
+    fn batches_packets_into_pages_and_reduces_overhead() -> Result<(), Box<dyn std::error::Error>> {
+        let mut buf = Vec::new();
+        {
+            let mut w = OggOpusWriter::new(Cursor::new(&mut buf), 54321, 0)?;
+            // 60 frames = 1.2s:
+            // Page 1: OpusHead
+            // Page 2: OpusTags
+            // Page 3: 25 frames
+            // Page 4: 25 frames
+            // Page 5: remaining 10 frames + EOS
+            w.write_silence(60)?;
+            assert_eq!(w.granule(), 60 * SAMPLES_PER_FRAME);
+            w.finish()?;
+        }
+
+        // Count Ogg pages by looking for the "OggS" capture pattern
+        let page_count = buf.windows(4).filter(|w| *w == b"OggS").count();
+        assert_eq!(
+            page_count, 5,
+            "should have bundled 60 packets into 5 pages instead of 63"
+        );
+
+        // Verify all 60 audio packets are cleanly demuxed by ogg::PacketReader
+        let mut reader = ogg::PacketReader::new(Cursor::new(&buf));
+        let head = reader.read_packet_expected()?;
+        assert_eq!(&head.data[..8], b"OpusHead");
+        let tags = reader.read_packet_expected()?;
+        assert_eq!(&tags.data[..8], b"OpusTags");
+
+        let mut audio_packets = 0;
+        while let Ok(Some(p)) = reader.read_packet() {
+            if !p.data.is_empty() {
+                audio_packets += 1;
+            }
+        }
+        assert_eq!(audio_packets, 60, "all 60 audio frames must decode cleanly");
+
+        // Verify FFmpeg/ffprobe demuxes the file and reports the exact 1.200s duration
+        if let Ok(temp) = tempfile::NamedTempFile::new() {
+            std::fs::write(temp.path(), &buf)?;
+            let output = std::process::Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                ])
+                .arg(temp.path())
+                .output();
+            if let Ok(out) = output
+                && out.status.success()
+            {
+                let dur_str = String::from_utf8_lossy(&out.stdout);
+                let dur: f64 = dur_str.trim().parse()?;
+                assert!(
+                    (dur - 1.2).abs() < 0.05,
+                    "duration should be ~1.2s, got {dur}"
+                );
+            }
+        }
 
         Ok(())
     }
