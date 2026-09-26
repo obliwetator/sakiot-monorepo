@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
-import { Button, ProgressBar } from "../../shared/ui";
+import { Button } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
-import {
-	decodeWaveformPeaks,
-	EMPTY_WAVEFORM_ENVELOPE,
-} from "../audio-dashboard/waveformPeaks";
+import { WaveformStatusOverlay } from "../audio-dashboard/WaveformStatusOverlay";
+import { useDecodedPeaks } from "../audio-dashboard/waveformPeaks";
 import {
 	nextPollErrorCount,
 	shouldKeepPollingClipWaveform,
@@ -62,11 +60,7 @@ export function ClipWaveform(props: {
 		}
 	}, [data?.error, data?.progress, isError, isFetching]);
 
-	const peaks = useMemo(
-		() =>
-			data?.data ? decodeWaveformPeaks(data.data) : EMPTY_WAVEFORM_ENVELOPE,
-		[data?.data],
-	);
+	const peaks = useDecodedPeaks(data?.data);
 
 	const progress = data?.progress ?? 0;
 	// While the poller is still retrying, show progress instead of the error
@@ -82,28 +76,13 @@ export function ClipWaveform(props: {
 
 	return (
 		<div className="relative my-4 h-35 rounded-[1px] overflow-hidden bg-purple-500/18">
-			{generating && !waveformError && (
-				<div className="absolute top-0 left-0 right-0 z-2 px-2 py-1 bg-slate-900/78 pointer-events-none">
-					<span className="text-xs leading-5">
-						Building clip waveform ({progress}%)
-					</span>
-					<ProgressBar value={progress} />
-				</div>
-			)}
-			{!data?.data && !generating && !waveformError && (
-				<div className="absolute inset-0 grid place-items-center pointer-events-none">
-					<span className="text-muted text-xs leading-5">
-						Clip waveform has not been built.
-					</span>
-				</div>
-			)}
-			{waveformError && (
-				<div className="absolute inset-0 grid place-items-center">
-					<span className="text-danger text-xs leading-5">
-						Clip waveform unavailable.
-					</span>
-				</div>
-			)}
+			<WaveformStatusOverlay
+				name="Clip"
+				building={generating}
+				progress={progress}
+				error={waveformError}
+				built={Boolean(data?.data)}
+			/>
 			<WaveformCanvas
 				peaks={peaks}
 				height={CLIP_WAVEFORM_HEIGHT_PX}

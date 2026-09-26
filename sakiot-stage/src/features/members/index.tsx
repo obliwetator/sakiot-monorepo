@@ -8,12 +8,10 @@ import {
 	useGetRoleViewQuery,
 } from "../../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
+import { BaseDialog } from "../../shared/BaseDialog";
 import {
 	Badge,
 	Button,
-	DialogHeading,
-	IconButton,
-	Modal,
 	Notice,
 	Table,
 	TableBody,
@@ -21,8 +19,7 @@ import {
 	TableHead,
 	TableHeader,
 	TableRow,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
 } from "../../shared/ui";
 import { roleSwatchBackground, roleTextStyle } from "./roleColors";
 
@@ -52,116 +49,111 @@ function RolePreviewDialog(props: {
 	};
 
 	return (
-		<Modal
-			isOpen={open}
-			onOpenChange={(isOpen) => {
-				if (!isOpen) onClose();
-			}}
-		>
-			<DialogHeading>
-				{role ? (
+		<BaseDialog
+			open={open}
+			onClose={onClose}
+			title={
+				role ? (
 					<>
 						View as <em>{role.name}</em>
 					</>
 				) : (
 					"View as role"
-				)}
-			</DialogHeading>
-			<div className="space-y-3 px-5 py-4 border-y border-ui-border">
-				{isLoading ? (
-					<p className="leading-6">Loading preview…</p>
-				) : isError ? (
-					<p className="leading-6 text-danger">Failed to load preview.</p>
-				) : (
-					roleView && (
-						<div className="flex flex-col gap-3">
-							<div>
-								<h6 className="leading-6 mb-2">What this role can see</h6>
-								{roleView.can_manage_guild ? (
-									<Badge tone={"warning"} size={"sm"}>
-										Can manage the guild (admin pages included)
-									</Badge>
-								) : (
-									<Badge appearance={"outline"} size={"sm"}>
-										Cannot manage the guild
-									</Badge>
-								)}
-							</div>
-							{roleView.channels.length === 0 ? (
-								<p className="text-muted text-sm">
-									No voice channels in this guild.
-								</p>
-							) : (
-								<div>
-									<h6 className="leading-6 mb-2">
-										Voice channels ({roleView.channels.length})
-									</h6>
-									<div className="flex flex-col gap-1">
-										{roleView.channels.map((channel) => (
-											<div
-												key={channel.channel_id}
-												className="relative flex items-center"
-											>
-												<Button
-													className="w-full justify-start text-left"
-													variant="ghost"
-												>
-													<div>
-														{channel.name || channel.channel_id}
-														<span className="block text-xs text-muted">
-															{channel.channel_id}
-														</span>
-													</div>
-												</Button>
-												<div className="shrink-0 px-2">
-													{channel.can_join ? (
-														<Badge
-															appearance={"outline"}
-															tone={"success"}
-															size={"sm"}
-														>
-															Can join
-														</Badge>
-													) : channel.can_view ? (
-														<Badge appearance={"outline"} size={"sm"}>
-															Visible only
-														</Badge>
-													) : (
-														<Badge
-															appearance={"outline"}
-															tone={"danger"}
-															size={"sm"}
-														>
-															Hidden
-														</Badge>
-													)}
-												</div>
-											</div>
-										))}
-									</div>
-								</div>
-							)}
-							<Notice tone={"info"} announce="status">
-								Open the audio preview to browse recordings, clips and stamps as
-								this role. Channels marked "Visible only" or "Hidden" won't
-								appear there — playback needs join permission, which the role
-								lacks. Sessions spanning a hidden channel are invisible
-								entirely.
-							</Notice>
-						</div>
-					)
-				)}
-			</div>
-			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-				<Button variant="primary" onPress={onClose}>
-					Close
-				</Button>
-				<Button variant="primary" isDisabled={!role} onPress={openAudioPreview}>
+				)
+			}
+			cancelLabel="Close"
+			confirmLabel={
+				<>
 					<RemoveRedEyeIcon />
 					Open audio preview
-				</Button>
-			</div>
-		</Modal>
+				</>
+			}
+			confirmDisabled={!role}
+			onConfirm={openAudioPreview}
+		>
+			{isLoading ? (
+				<p className="leading-6">Loading preview…</p>
+			) : isError ? (
+				<p className="leading-6 text-danger">Failed to load preview.</p>
+			) : (
+				roleView && (
+					<div className="flex flex-col gap-3">
+						<div>
+							<h6 className="leading-6 mb-2">What this role can see</h6>
+							{roleView.can_manage_guild ? (
+								<Badge tone={"warning"} size={"sm"}>
+									Can manage the guild (admin pages included)
+								</Badge>
+							) : (
+								<Badge appearance={"outline"} size={"sm"}>
+									Cannot manage the guild
+								</Badge>
+							)}
+						</div>
+						{roleView.channels.length === 0 ? (
+							<p className="text-muted text-sm">
+								No voice channels in this guild.
+							</p>
+						) : (
+							<div>
+								<h6 className="leading-6 mb-2">
+									Voice channels ({roleView.channels.length})
+								</h6>
+								<div className="flex flex-col gap-1">
+									{roleView.channels.map((channel) => (
+										<div
+											key={channel.channel_id}
+											className="relative flex items-center"
+										>
+											<Button
+												className="w-full justify-start text-left"
+												variant="ghost"
+											>
+												<div>
+													{channel.name || channel.channel_id}
+													<span className="block text-xs text-muted">
+														{channel.channel_id}
+													</span>
+												</div>
+											</Button>
+											<div className="shrink-0 px-2">
+												{channel.can_join ? (
+													<Badge
+														appearance={"outline"}
+														tone={"success"}
+														size={"sm"}
+													>
+														Can join
+													</Badge>
+												) : channel.can_view ? (
+													<Badge appearance={"outline"} size={"sm"}>
+														Visible only
+													</Badge>
+												) : (
+													<Badge
+														appearance={"outline"}
+														tone={"danger"}
+														size={"sm"}
+													>
+														Hidden
+													</Badge>
+												)}
+											</div>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+						<Notice tone={"info"} announce="status">
+							Open the audio preview to browse recordings, clips and stamps as
+							this role. Channels marked "Visible only" or "Hidden" won't appear
+							there — playback needs join permission, which the role lacks.
+							Sessions spanning a hidden channel are invisible entirely.
+						</Notice>
+					</div>
+				)
+			)}
+		</BaseDialog>
 	);
 }
 
@@ -236,16 +228,12 @@ export function GuildMembers() {
 										</div>
 									</Button>
 									<div className="shrink-0 px-2">
-										<TooltipTrigger delay={400}>
-											<IconButton
-												aria-label={`View as ${role.name}`}
-												size="sm"
-												onPress={() => setPreviewRole(role)}
-											>
-												<RemoveRedEyeIcon size={16} />
-											</IconButton>
-											<Tooltip>View server as this role</Tooltip>
-										</TooltipTrigger>
+										<TooltipIconButton
+											label={`View as ${role.name}`}
+											tip="View server as this role"
+											icon={<RemoveRedEyeIcon size={16} />}
+											onPress={() => setPreviewRole(role)}
+										/>
 									</div>
 								</div>
 							))}

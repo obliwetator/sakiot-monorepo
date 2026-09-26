@@ -2,7 +2,6 @@ import {
 	Scissors as ContentCutIcon,
 	ChevronDown as ExpandMoreIcon,
 	Film as MovieIcon,
-	Search,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -17,21 +16,22 @@ import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
+import { BaseDialog } from "../../shared/BaseDialog";
 import { canDeleteClip } from "../../shared/permissions";
 import {
 	Button,
 	cn,
-	DialogHeading,
 	Disclosure,
 	DisclosurePanel,
 	DisclosureTrigger,
 	Drawer,
-	Modal,
 	Notice,
+	SearchInput,
 	Tab,
 	TabList,
 	TabPanel,
 	Tabs,
+	Text,
 	useMediaQuery,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
@@ -165,34 +165,16 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 			>
 				Delete
 			</Button>
-			<Modal
-				aria-labelledby="alert-dialog-title"
-				aria-describedby="alert-dialog-description"
-				isOpen={open}
-				onOpenChange={(isOpen) => {
-					if (!isOpen) handleClose();
-				}}
+			<BaseDialog
+				open={open}
+				onClose={handleClose}
+				title="Confirm deletion?"
+				cancelLabel="No"
+				confirmLabel="YEP"
+				onConfirm={handleYes}
 			>
-				<DialogHeading id="alert-dialog-title">
-					{"Confirm deletion?"}
-				</DialogHeading>
-				<div className="space-y-3 px-5 py-4">
-					<p
-						id="alert-dialog-description"
-						className="text-sm leading-6 text-slate-200"
-					>
-						Are you sure you want to delete the clip?
-					</p>
-				</div>
-				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button variant="primary" onPress={handleClose}>
-						No
-					</Button>
-					<Button variant="primary" autoFocus onPress={handleYes}>
-						YEP
-					</Button>
-				</div>
-			</Modal>
+				<Text>Are you sure you want to delete the clip?</Text>
+			</BaseDialog>
 		</div>
 	);
 }
@@ -283,20 +265,13 @@ function ClipsLayout(props: {
 	const list = (
 		<>
 			<div className="p-2 pb-0 shrink-0">
-				<label htmlFor="clip-search" className="relative block">
-					<Search
-						aria-hidden="true"
-						className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-					/>
-					<input
-						id="clip-search"
-						aria-label="Search clips"
-						value={searchQuery}
-						onChange={(event) => setSearchQuery(event.currentTarget.value)}
-						placeholder="Search clips..."
-						className="h-9 w-full rounded-md border border-ui-border bg-canvas pl-9 pr-3 text-sm text-fg outline-hidden placeholder:text-muted focus:border-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-1"
-					/>
-				</label>
+				<SearchInput
+					id="clip-search"
+					label="Search clips"
+					placeholder="Search clips..."
+					value={searchQuery}
+					onChange={setSearchQuery}
+				/>
 			</div>
 			<div className="p-2 shrink-0">
 				<Button

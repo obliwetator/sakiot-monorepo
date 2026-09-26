@@ -1,10 +1,4 @@
-import {
-	Button,
-	Notice,
-	ProgressBar,
-	Tooltip,
-	TooltipTrigger,
-} from "../../shared/ui";
+import { Button, Notice, ProgressBar, WithTooltip } from "../../shared/ui";
 import type { useSilenceRemoval } from "./useSilenceRemoval";
 
 /** Session downloads and silence removal, with their progress and outcome. */
@@ -30,7 +24,13 @@ export function SessionMediaActions(props: {
 					{action === "download" ? "Preparing…" : "Download session"}
 				</Button>
 				{!hasSilenceFree && (
-					<TooltipTrigger delay={400}>
+					<WithTooltip
+						tip={
+							props.finalized
+								? undefined
+								: "Silence removal is available after the recording is finalized"
+						}
+					>
 						<Button
 							variant="primary"
 							isDisabled={action !== null || processing || !props.finalized}
@@ -40,12 +40,7 @@ export function SessionMediaActions(props: {
 								? `Removing silence… ${removal.status.progress}%`
 								: "Remove silence"}
 						</Button>
-						<Tooltip>
-							{props.finalized
-								? undefined
-								: "Silence removal is available after the recording is finalized"}
-						</Tooltip>
-					</TooltipTrigger>
+					</WithTooltip>
 				)}
 				{hasSilenceFree && (
 					<Button

@@ -135,18 +135,40 @@ export type RoleMember = ApiSchema["RoleMember"];
 
 export type RoleView = ApiSchema["RoleView"];
 
+/** Two constants, not one: unifying them would change what requests send. */
+const JSON_BODY_HEADERS = { "Content-Type": "application/json" } as const;
+const JSON_HEADERS = {
+	Accept: "application/json",
+	...JSON_BODY_HEADERS,
+} as const;
+
+const TAG_TYPES = [
+	"Auth",
+	"Clips",
+	"GuildCooldown",
+	"UserOverrides",
+	"GuildVoiceSettings",
+	"GuildRecordingPolicy",
+	"Recordings",
+] as const;
+type ApiTag = (typeof TAG_TYPES)[number];
+
+/** Tags for anything scoped to one guild, given the id bare or in an object. */
+const guildScoped =
+	(...types: ApiTag[]) =>
+	(_result: unknown, _error: unknown, arg: string | { guild_id: string }) => {
+		const id = typeof arg === "string" ? arg : arg.guild_id;
+		return types.map((type) => ({ type, id }));
+	};
+
+/** Append the admin "view as role" query parameter when one is set. */
+const withAsRole = (url: string, as_role?: string): string =>
+	`${url}${as_role ? `?as_role=${as_role}` : ""}`;
+
 export const apiSlice = createApi({
 	reducerPath: "api",
 	baseQuery: baseQueryWithReauth,
-	tagTypes: [
-		"Auth",
-		"Clips",
-		"GuildCooldown",
-		"UserOverrides",
-		"GuildVoiceSettings",
-		"GuildRecordingPolicy",
-		"Recordings",
-	],
+	tagTypes: TAG_TYPES,
 	endpoints: (builder) => ({
 		jamIt: builder.mutation<
 			{ code: JamItRespStatus },
@@ -155,10 +177,7 @@ export const apiSlice = createApi({
 			query: (body) => ({
 				url: apiUrl(API_ROUTES.jamIt),
 				method: "POST",
-				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-				},
+				headers: JSON_HEADERS,
 				body,
 			}),
 		}),
@@ -207,17 +226,15 @@ export const apiSlice = createApi({
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) =>
-				`${apiUrl(API_ROUTES.currentGuildDirs, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
-			providesTags: (_r, _e, { guild_id }) => [
-				{ type: "Recordings", id: guild_id },
-			],
+				withAsRole(apiUrl(API_ROUTES.currentGuildDirs, { guild_id }), as_role),
+			providesTags: guildScoped("Recordings"),
 		}),
 		getLiveStems: builder.query<
 			string[],
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) =>
-				`${apiUrl(API_ROUTES.liveStems, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
+				withAsRole(apiUrl(API_ROUTES.liveStems, { guild_id }), as_role),
 		}),
 		getSessionManifest: builder.query<SessionManifest, string>({
 			query: (recording_session_id) =>
@@ -288,7 +305,7 @@ export const apiSlice = createApi({
 			query: ({ recording_session_id, start, end, name, silence_free }) => ({
 				url: apiUrl(API_ROUTES.sessionClips, { recording_session_id }),
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: JSON_BODY_HEADERS,
 				body: { start, end, name, silence_free },
 			}),
 			invalidatesTags: ["Clips"],
@@ -296,7 +313,7 @@ export const apiSlice = createApi({
 		getClips: builder.query<ClipData[], { guild_id: string; as_role?: string }>(
 			{
 				query: ({ guild_id, as_role }) => ({
-					url: `${apiUrl(API_ROUTES.clips, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
+					url: withAsRole(apiUrl(API_ROUTES.clips, { guild_id }), as_role),
 				}),
 				providesTags: ["Clips"],
 			},
@@ -333,7 +350,7 @@ export const apiSlice = createApi({
 			{ guild_id: string; as_role?: string }
 		>({
 			query: ({ guild_id, as_role }) => ({
-				url: `${apiUrl(API_ROUTES.stamps, { guild_id })}${as_role ? `?as_role=${as_role}` : ""}`,
+				url: withAsRole(apiUrl(API_ROUTES.stamps, { guild_id }), as_role),
 			}),
 		}),
 		deleteClip: builder.mutation<void, { guild_id: string; file_name: string }>(
@@ -352,7 +369,7 @@ export const apiSlice = createApi({
 			query: ({ guild_id, clip_id, name }) => ({
 				url: apiUrl(API_ROUTES.clip, { guild_id, clip_id }),
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
+				headers: JSON_BODY_HEADERS,
 				body: { name },
 			}),
 			invalidatesTags: ["Clips"],
@@ -388,10 +405,7 @@ export const apiSlice = createApi({
 					file_name,
 				}),
 				method: "POST",
-				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-				},
+				headers: JSON_HEADERS,
 				body: { start, end, name },
 			}),
 			invalidatesTags: ["Clips"],
@@ -518,7 +532,7 @@ export const apiSlice = createApi({
 		}),
 		getGuildCooldown: builder.query<ApiSchema["GuildCooldown"], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildCooldown, { guild_id }),
-			providesTags: (_r, _e, id) => [{ type: "GuildCooldown", id }],
+			providesTags: guildScoped("GuildCooldown"),
 		}),
 		setGuildCooldown: builder.mutation<
 			void,
@@ -527,16 +541,14 @@ export const apiSlice = createApi({
 			query: ({ guild_id, cooldown_seconds }) => ({
 				url: apiUrl(API_ROUTES.guildCooldown, { guild_id }),
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
+				headers: JSON_BODY_HEADERS,
 				body: { cooldown_seconds },
 			}),
-			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "GuildCooldown", id: guild_id },
-			],
+			invalidatesTags: guildScoped("GuildCooldown"),
 		}),
 		listUserOverrides: builder.query<UserOverride[], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.userOverrides, { guild_id }),
-			providesTags: (_r, _e, id) => [{ type: "UserOverrides", id }],
+			providesTags: guildScoped("UserOverrides"),
 		}),
 		setUserOverride: builder.mutation<
 			void,
@@ -545,12 +557,10 @@ export const apiSlice = createApi({
 			query: ({ guild_id, user_id, cooldown_seconds }) => ({
 				url: apiUrl(API_ROUTES.userOverride, { guild_id, user_id }),
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
+				headers: JSON_BODY_HEADERS,
 				body: { cooldown_seconds },
 			}),
-			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "UserOverrides", id: guild_id },
-			],
+			invalidatesTags: guildScoped("UserOverrides"),
 		}),
 		deleteUserOverride: builder.mutation<
 			void,
@@ -560,15 +570,11 @@ export const apiSlice = createApi({
 				url: apiUrl(API_ROUTES.userOverride, { guild_id, user_id }),
 				method: "DELETE",
 			}),
-			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "UserOverrides", id: guild_id },
-			],
+			invalidatesTags: guildScoped("UserOverrides"),
 		}),
 		getGuildVoiceSettings: builder.query<GuildVoiceSettings, string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
-			providesTags: (_result, _error, guild_id) => [
-				{ type: "GuildVoiceSettings", id: guild_id },
-			],
+			providesTags: guildScoped("GuildVoiceSettings"),
 		}),
 		setGuildVoiceSettings: builder.mutation<
 			GuildVoiceSettings,
@@ -577,28 +583,22 @@ export const apiSlice = createApi({
 			query: ({ guild_id, pending_cap_seconds }) => ({
 				url: apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
+				headers: JSON_BODY_HEADERS,
 				body: { pending_cap_seconds },
 			}),
-			invalidatesTags: (_result, _error, { guild_id }) => [
-				{ type: "GuildVoiceSettings", id: guild_id },
-			],
+			invalidatesTags: guildScoped("GuildVoiceSettings"),
 		}),
 		deleteGuildVoiceSettings: builder.mutation<GuildVoiceSettings, string>({
 			query: (guild_id) => ({
 				url: apiUrl(API_ROUTES.guildVoiceSettings, { guild_id }),
 				method: "DELETE",
 			}),
-			invalidatesTags: (_result, _error, guild_id) => [
-				{ type: "GuildVoiceSettings", id: guild_id },
-			],
+			invalidatesTags: guildScoped("GuildVoiceSettings"),
 		}),
 		getGuildRecordingPolicy: builder.query<GuildRecordingPolicy, string>({
 			query: (guild_id) =>
 				apiUrl(API_ROUTES.guildRecordingPolicy, { guild_id }),
-			providesTags: (_r, _e, guild_id) => [
-				{ type: "GuildRecordingPolicy", id: guild_id },
-			],
+			providesTags: guildScoped("GuildRecordingPolicy"),
 		}),
 		setGuildRecordingPolicy: builder.mutation<
 			GuildRecordingPolicy,
@@ -613,9 +613,7 @@ export const apiSlice = createApi({
 				method: "PUT",
 				body: { retention_days, excluded_channel_ids },
 			}),
-			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "GuildRecordingPolicy", id: guild_id },
-			],
+			invalidatesTags: guildScoped("GuildRecordingPolicy"),
 		}),
 		deleteRecording: builder.mutation<
 			RecordingDeletionStatus,
@@ -628,9 +626,11 @@ export const apiSlice = createApi({
 				}),
 				method: "DELETE",
 			}),
+			// "Clips" stays untagged: getClips provides the bare tag, which an
+			// id-scoped invalidation would not match.
 			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "Recordings", id: guild_id },
-				"Clips",
+				{ type: "Recordings" as const, id: guild_id },
+				"Clips" as const,
 			],
 		}),
 		getRecordingDeletion: builder.query<

@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { fractionInRect } from "../../shared/geometry";
 import { formatDuration } from "../../utils/formatTime";
 import {
 	axisLabelTransform,
@@ -26,11 +27,7 @@ export function TimelineRuler(props: {
 	});
 
 	const secAtClientX = (element: HTMLElement, clientX: number) => {
-		const bounds = element.getBoundingClientRect();
-		const f = Math.min(
-			1,
-			Math.max(0, (clientX - bounds.left) / Math.max(1, bounds.width)),
-		);
+		const f = fractionInRect(clientX, element.getBoundingClientRect());
 		return props.viewStartSec + f * props.viewWidthSec;
 	};
 

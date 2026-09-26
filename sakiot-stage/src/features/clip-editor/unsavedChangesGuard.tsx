@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useBlocker } from "react-router-dom";
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Button } from "../../shared/ui";
 
 /**
  * Warns before the clip editor is left with unsaved work. In-app navigation
@@ -28,20 +27,11 @@ export function useUnsavedChangesGuard(dirty: boolean) {
 			open={blockedBlocker !== null}
 			onClose={() => blockedBlocker?.reset()}
 			title="Discard clip editor work?"
-			actions={
-				<>
-					<Button
-						variant="primary"
-						autoFocus
-						onPress={() => blockedBlocker?.reset()}
-					>
-						Stay
-					</Button>
-					<Button variant="danger" onPress={() => blockedBlocker?.proceed()}>
-						Discard and leave
-					</Button>
-				</>
-			}
+			cancelLabel="Stay"
+			autoFocusCancel
+			confirmLabel="Discard and leave"
+			confirmVariant="danger"
+			onConfirm={() => blockedBlocker?.proceed()}
 		>
 			<p className="text-sm leading-6 text-slate-200">
 				The clip editor still has unsaved changes. Leaving this page will

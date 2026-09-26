@@ -1,4 +1,3 @@
-import { Search } from "lucide-react";
 import * as React from "react";
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -9,7 +8,7 @@ import {
 } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
 import { type Dirs, getMonthName } from "../../../Constants";
-import { Tree } from "../../../shared/ui";
+import { SearchInput, Tree } from "../../../shared/ui";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
 import { audioTreeRouteState, recordingTreeRoutes } from "./treeNavigation";
@@ -178,20 +177,13 @@ export default function RecordingTree(
 
 	return (
 		<div className="w-full rounded-lg bg-surface p-2">
-			<label htmlFor="audio-tree-search" className="relative block">
-				<Search
-					aria-hidden="true"
-					className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-				/>
-				<input
-					id="audio-tree-search"
-					aria-label="Search recordings"
-					value={searchQuery}
-					onChange={(event) => setSearchQuery(event.currentTarget.value)}
-					placeholder="Search..."
-					className="h-9 w-full rounded-md border border-ui-border bg-canvas pl-9 pr-3 text-sm text-fg outline-hidden placeholder:text-muted focus:border-primary focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-1"
-				/>
-			</label>
+			<SearchInput
+				id="audio-tree-search"
+				label="Search recordings"
+				placeholder="Search..."
+				value={searchQuery}
+				onChange={setSearchQuery}
+			/>
 			{visibleData.length > 0 ? (
 				<Tree
 					aria-label="Recordings"

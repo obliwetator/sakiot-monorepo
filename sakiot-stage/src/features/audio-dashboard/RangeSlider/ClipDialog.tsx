@@ -5,6 +5,7 @@ import { useCreateClipMutation } from "../../../app/apiSlice";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
 import { BaseDialog } from "../../../shared/BaseDialog";
+import { saveBlob } from "../../../shared/download";
 import { Button, TextField } from "../../../shared/ui";
 
 export function ClipDialog(props: {
@@ -51,15 +52,10 @@ export function ClipDialog(props: {
 					}),
 				);
 				if (!fileRes.ok) throw new Error(`download failed: ${fileRes.status}`);
-				const blob = await fileRes.blob();
-				const objectUrl = URL.createObjectURL(blob);
-				const a = document.createElement("a");
-				a.href = objectUrl;
-				a.download = response.name
-					? `${response.name}.ogg`
-					: `${response.id}.ogg`;
-				a.click();
-				URL.revokeObjectURL(objectUrl);
+				saveBlob(
+					await fileRes.blob(),
+					response.name ? `${response.name}.ogg` : `${response.id}.ogg`,
+				);
 			}
 
 			setOpen(false);
@@ -82,24 +78,8 @@ export function ClipDialog(props: {
 				onClose={handleClose}
 				error={errorMsg}
 				busy={isLoading}
-				actions={
-					<>
-						<Button
-							variant="primary"
-							isDisabled={isLoading}
-							onPress={handleClose}
-						>
-							Cancel
-						</Button>
-						<Button
-							variant="primary"
-							isDisabled={isLoading}
-							onPress={handleClip}
-						>
-							{isLoading ? "Creating..." : "Clip"}
-						</Button>
-					</>
-				}
+				confirmLabel={isLoading ? "Creating..." : "Clip"}
+				onConfirm={handleClip}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					Enter a name for this clip. Will return an error if name is a

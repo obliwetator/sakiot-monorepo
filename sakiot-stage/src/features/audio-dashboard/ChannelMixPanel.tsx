@@ -1,4 +1,4 @@
-import { Button, Notice, Tooltip, TooltipTrigger } from "../../shared/ui";
+import { Button, Notice, WithTooltip } from "../../shared/ui";
 import { ChannelMixPlayer, ChannelMixProgress } from "./ChannelMixPlayer";
 import type { useChannelMixPreferences } from "./channelMixPreferences";
 import type { PlaybackShortcutTarget } from "./playbackShortcuts";
@@ -32,7 +32,14 @@ export function ChannelMixPanel(props: {
 							: "Only recordings overlapping this selected session are shown on one timeline (anchor-style)."}
 					</p>
 				</div>
-				<TooltipTrigger delay={400}>
+				<WithTooltip
+					tip={
+						mix?.reason?.message ??
+						(mix?.can_generate === false
+							? "Every recording in this mix must be finalized"
+							: undefined)
+					}
+				>
 					<Button
 						variant="primary"
 						isDisabled={!canGenerate || props.channelMix.generating}
@@ -46,13 +53,7 @@ export function ChannelMixPanel(props: {
 									? "Retry mix"
 									: "Generate channel mix"}
 					</Button>
-					<Tooltip>
-						{mix?.reason?.message ??
-							(mix?.can_generate === false
-								? "Every recording in this mix must be finalized"
-								: undefined)}
-					</Tooltip>
-				</TooltipTrigger>
+				</WithTooltip>
 			</div>
 
 			{props.channelMix.statusError && !mix && (

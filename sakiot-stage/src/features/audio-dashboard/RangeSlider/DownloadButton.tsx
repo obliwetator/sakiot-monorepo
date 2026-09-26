@@ -1,6 +1,7 @@
 import type { Params } from "react-router-dom";
 import { authedFetch } from "../../../app/authedFetch";
 import type { AudioParams } from "../../../Constants";
+import { saveBlob } from "../../../shared/download";
 import { Button } from "../../../shared/ui";
 
 export function DownloadButton(props: {
@@ -15,13 +16,7 @@ export function DownloadButton(props: {
 		try {
 			const fileRes = await authedFetch(url);
 			if (!fileRes.ok) throw new Error(`download failed: ${fileRes.status}`);
-			const blob = await fileRes.blob();
-			const objectUrl = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = objectUrl;
-			a.download = props.params.file_name ?? "";
-			a.click();
-			URL.revokeObjectURL(objectUrl);
+			saveBlob(await fileRes.blob(), props.params.file_name ?? "");
 		} catch (e) {
 			console.error("Download failed", e);
 		}

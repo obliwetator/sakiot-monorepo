@@ -5,8 +5,9 @@ import type {
 	PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { fractionAtClientX, fractionInRect } from "../../shared/geometry";
 import { usePointerDrag } from "../../shared/pointerDrag";
-import { cn, IconButton, Tooltip, TooltipTrigger } from "../../shared/ui";
+import { cn, TooltipIconButton } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { TimelineRow } from "../audio-dashboard/timelineLayout";
 import { pendingBinDrag } from "./ClipBin";
@@ -88,9 +89,10 @@ function TimelineViewportScrollbar(props: {
 		if (!track) return;
 		const bounds = track.getBoundingClientRect();
 		const width = Math.max(1, bounds.width);
-		const pointerFraction = Math.min(
-			1,
-			Math.max(0, (event.clientX - bounds.left) / width),
+		const pointerFraction = fractionAtClientX(
+			event.clientX,
+			bounds.left,
+			width,
 		);
 		const thumbStart = startFraction * width;
 		const thumbEnd = thumbStart + viewportFraction * width;
@@ -492,13 +494,7 @@ export function Timeline(props: {
 				editor.setPasteTarget(null);
 				return;
 			}
-			const fractionOfWidth = Math.min(
-				1,
-				Math.max(
-					0,
-					(clientX - plotBounds.left) / Math.max(1, plotBounds.width),
-				),
-			);
+			const fractionOfWidth = fractionInRect(clientX, plotBounds);
 			const startSec = Math.max(
 				0,
 				editor.viewStartSec + fractionOfWidth * editor.viewWidthSec,
@@ -547,14 +543,7 @@ export function Timeline(props: {
 			if (!zooming && !panning) return;
 			event.preventDefault();
 			if (zooming) {
-				const bounds = currentPlotBounds();
-				const fraction = Math.min(
-					1,
-					Math.max(
-						0,
-						(event.clientX - bounds.left) / Math.max(1, bounds.width),
-					),
-				);
+				const fraction = fractionInRect(event.clientX, currentPlotBounds());
 				const anchorSec = editor.viewStartSec + fraction * editor.viewWidthSec;
 				const factor = event.deltaY > 0 ? 1.1 : 1 / 1.1;
 				editor.zoomAt(factor, anchorSec);
@@ -601,13 +590,7 @@ export function Timeline(props: {
 				found === null
 					? editor.edit.tracks
 					: Math.min(found, editor.edit.tracks);
-			const fractionOfWidth = Math.min(
-				1,
-				Math.max(
-					0,
-					(clientX - plotBounds.left) / Math.max(1, plotBounds.width),
-				),
-			);
+			const fractionOfWidth = fractionInRect(clientX, plotBounds);
 			const rawStart =
 				editor.viewStartSec + fractionOfWidth * editor.viewWidthSec;
 			let startSec = rawStart;
@@ -947,36 +930,21 @@ export function Timeline(props: {
 				/>
 			)}
 			<div className="flex items-center gap-2 mt-2">
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Zoom out"}
-						size="sm"
-						onPress={() => editor.zoom(2)}
-					>
-						<ZoomOutIcon size={16} />
-					</IconButton>
-					<Tooltip>{"Zoom out"}</Tooltip>
-				</TooltipTrigger>
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Fit edit in view"}
-						size="sm"
-						onPress={editor.fitView}
-					>
-						<span className="text-xs leading-5 px-1">Fit</span>
-					</IconButton>
-					<Tooltip>{"Fit edit in view"}</Tooltip>
-				</TooltipTrigger>
-				<TooltipTrigger delay={400}>
-					<IconButton
-						aria-label={"Zoom in"}
-						size="sm"
-						onPress={() => editor.zoom(0.5)}
-					>
-						<ZoomInIcon size={16} />
-					</IconButton>
-					<Tooltip>{"Zoom in"}</Tooltip>
-				</TooltipTrigger>
+				<TooltipIconButton
+					label="Zoom out"
+					icon={<ZoomOutIcon size={16} />}
+					onPress={() => editor.zoom(2)}
+				/>
+				<TooltipIconButton
+					label="Fit edit in view"
+					icon={<span className="text-xs leading-5 px-1">Fit</span>}
+					onPress={editor.fitView}
+				/>
+				<TooltipIconButton
+					label="Zoom in"
+					icon={<ZoomInIcon size={16} />}
+					onPress={() => editor.zoom(0.5)}
+				/>
 				<span className="text-muted text-xs leading-5 tabular-nums">
 					Window {formatDuration(editor.viewStartSec)} –{" "}
 					{formatDuration(editor.viewStartSec + editor.viewWidthSec)}

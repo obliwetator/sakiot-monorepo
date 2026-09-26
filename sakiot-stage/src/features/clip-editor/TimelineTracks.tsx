@@ -6,13 +6,7 @@ import {
 import { type PointerEvent as ReactPointerEvent, useState } from "react";
 import { BaseDialog } from "../../shared/BaseDialog";
 import { alpha, palette } from "../../shared/palette";
-import {
-	Button,
-	cn,
-	IconButton,
-	Tooltip,
-	TooltipTrigger,
-} from "../../shared/ui";
+import { cn, TooltipIconButton } from "../../shared/ui";
 import {
 	TimelinePlayhead,
 	TimelineRow,
@@ -78,55 +72,41 @@ function TrackLabel(props: {
 					Track {props.track + 1}
 				</span>
 				<div className="flex items-center gap-0.5">
-					<TooltipTrigger delay={400}>
-						<IconButton
-							aria-label={props.muted ? "Unmute track" : "Mute track"}
-							className="p-0.5 flex-none"
-							size="sm"
-							onPress={props.onToggleMute}
-						>
-							{props.muted ? (
+					<TooltipIconButton
+						label={props.muted ? "Unmute track" : "Mute track"}
+						icon={
+							props.muted ? (
 								<VolumeOffIcon size={16} />
 							) : (
 								<VolumeUpIcon size={16} />
-							)}
-						</IconButton>
-						<Tooltip>{props.muted ? "Unmute track" : "Mute track"}</Tooltip>
-					</TooltipTrigger>
-					<TooltipTrigger delay={400}>
-						<IconButton
-							aria-label="Remove track"
-							className="p-0.5 flex-none"
-							size="sm"
-							isDisabled={!props.canRemove}
-							onPress={requestRemove}
-						>
-							<CloseIcon size={16} />
-						</IconButton>
-						<Tooltip>
-							{props.canRemove
+							)
+						}
+						className="p-0.5 flex-none"
+						onPress={props.onToggleMute}
+					/>
+					<TooltipIconButton
+						label="Remove track"
+						tip={
+							props.canRemove
 								? props.clipCount > 0
 									? "Remove track and confirm clip deletion"
 									: "Remove track"
-								: "At least one track is required"}
-						</Tooltip>
-					</TooltipTrigger>
+								: "At least one track is required"
+						}
+						icon={<CloseIcon size={16} />}
+						className="p-0.5 flex-none"
+						isDisabled={!props.canRemove}
+						onPress={requestRemove}
+					/>
 				</div>
 			</div>
 			<BaseDialog
 				open={confirmOpen}
 				onClose={() => setConfirmOpen(false)}
 				title={`Remove Track ${props.track + 1}?`}
-				actions={
-					<>
-						<Button variant="primary" onPress={() => setConfirmOpen(false)}>
-							Cancel
-						</Button>
-						<Button variant="danger" onPress={confirmRemove}>
-							Remove track
-						</Button>
-					</>
-				}
+				confirmLabel="Remove track"
+				confirmVariant="danger"
+				onConfirm={confirmRemove}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					This track contains {props.clipCount} clip

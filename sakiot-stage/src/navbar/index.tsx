@@ -6,7 +6,7 @@ import Login from "../login/login";
 import { GuildSelect } from "../shared/GuildSelect";
 import { isGuildAdmin } from "../shared/permissions";
 import { Button, cn, Drawer, IconButton } from "../shared/ui";
-import { activePage, type PageName, pages } from "./constants";
+import { activePage, guildPagePaths, type PageName, pages } from "./constants";
 import { MobileDrawer } from "./MobileDrawer";
 import { UserMenu } from "./UserMenu";
 
@@ -32,45 +32,17 @@ function ResponsiveAppBar(props: {
 			navigate(`${PATH_PREFIX_FOR_LOGGED_USERS}`);
 			return;
 		}
-		switch (name) {
-			case "Admin":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/admin/cooldowns`,
-				);
-				break;
-			case "Voice Settings":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/admin/voice-settings`,
-				);
-				break;
-			case "Members":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/members`,
-				);
-				break;
-			case "Audio":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/audio`,
-				);
-				break;
-			case "Clips":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/clips`,
-				);
-				break;
-			case "Clip Editor":
-				navigate(
-					`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/clips/editor`,
-				);
-				break;
-			case "Stamps":
-				navigate(
-					props.guildSelected?.id
-						? `/stamps/${props.guildSelected.id}`
-						: `/stamps`,
-				);
-				break;
+		if (name === "Stamps") {
+			navigate(
+				props.guildSelected?.id
+					? `/stamps/${props.guildSelected.id}`
+					: "/stamps",
+			);
+			return;
 		}
+		navigate(
+			`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.guildSelected?.id}/${guildPagePaths[name]}`,
+		);
 	};
 
 	const handleDrawerNavClick = (name: PageName) => {

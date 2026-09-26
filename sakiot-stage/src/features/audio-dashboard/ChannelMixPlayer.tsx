@@ -6,12 +6,11 @@ import type {
 	ChannelMixScope,
 } from "../../app/apiSlice";
 import { BASE_API_URL } from "../../app/apiSlice";
-import { authedFetch } from "../../app/authedFetch";
+import { BaseDialog } from "../../shared/BaseDialog";
+import { downloadAsFile } from "../../shared/download";
 import {
 	Badge,
 	Button,
-	DialogHeading,
-	Modal,
 	Notice,
 	ProgressBar,
 	Select,
@@ -33,20 +32,6 @@ import type { PlaybackShortcutTarget } from "./playbackShortcuts";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { useChannelMixPlayback } from "./useChannelMixPlayback";
 import { useSilenceFreePlayback } from "./useSilenceFreePlayback";
-
-function saveBlob(blob: Blob, fileName: string) {
-	const url = URL.createObjectURL(blob);
-	try {
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.download = fileName;
-		document.body.appendChild(anchor);
-		anchor.click();
-		anchor.remove();
-	} finally {
-		window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-	}
-}
 
 export function ChannelMixPlayer(props: {
 	sessionId: string;
@@ -230,23 +215,13 @@ export function ChannelMixPlayer(props: {
 
 	const download = async () => {
 		setDownloadError(null);
-		try {
-			const response = await authedFetch(
-				`${apiUrl(API_ROUTES.sessionChannelMixMedia, {
-					recording_session_id: props.sessionId,
-				})}?download=true&scope=${props.mix.scope}`,
-			);
-			if (!response.ok) {
-				setDownloadError(`Download failed (${response.status}).`);
-				return;
-			}
-			saveBlob(
-				await response.blob(),
-				`session-${props.sessionId}-channel-mix.ogg`,
-			);
-		} catch {
-			setDownloadError("Download failed.");
-		}
+		await downloadAsFile(
+			`${apiUrl(API_ROUTES.sessionChannelMixMedia, {
+				recording_session_id: props.sessionId,
+			})}?download=true&scope=${props.mix.scope}`,
+			`session-${props.sessionId}-channel-mix.ogg`,
+			{ label: "Download", onError: setDownloadError },
+		);
 	};
 
 	return (
@@ -444,57 +419,45 @@ export function ChannelMixPlayer(props: {
 				</Notice>
 			)}
 
-			<Modal
-				isOpen={props.dialogOpen}
-				onOpenChange={(isOpen) => {
-					if (!isOpen) props.onDialogOpenChange(false);
-				}}
+			<BaseDialog
+				open={props.dialogOpen}
+				onClose={() => props.onDialogOpenChange(false)}
+				title="Channel mix options"
 			>
-				<DialogHeading>Channel mix options</DialogHeading>
-				<div className="space-y-3 px-5 py-4">
-					<Switch
-						isSelected={props.options.showSourceRows}
-						onChange={(checked) =>
+				<Switch
+					isSelected={props.options.showSourceRows}
+					onChange={(checked) =>
+						props.onOptionsChange((current) => ({
+							...current,
+							showSourceRows: checked,
+						}))
+					}
+				>
+					Show physical source rows
+				</Switch>
+				<div className="relative flex min-w-0 w-full mt-3">
+					<Select
+						label="Timeline scope"
+						selectedKey={props.options.scope}
+						onSelectionChange={(value) =>
 							props.onOptionsChange((current) => ({
 								...current,
-								showSourceRows: checked,
+								scope: value as ChannelMixScope,
 							}))
 						}
 					>
-						Show physical source rows
-					</Switch>
-					<div className="relative flex min-w-0 w-full mt-3">
-						<Select
-							label="Timeline scope"
-							selectedKey={props.options.scope}
-							onSelectionChange={(value) =>
-								props.onOptionsChange((current) => ({
-									...current,
-									scope: value as ChannelMixScope,
-								}))
-							}
-						>
-							<SelectItem id={"all_recordings"}>
-								All recordings while connected
-							</SelectItem>
-							<SelectItem id={"selected_session"}>
-								Selected session only (anchor-style)
-							</SelectItem>
-						</Select>
-					</div>
-					<span className="block text-muted text-xs leading-5">
-						All recordings is the default. Open this dialog with Ctrl/Cmd+,.
-					</span>
+						<SelectItem id={"all_recordings"}>
+							All recordings while connected
+						</SelectItem>
+						<SelectItem id={"selected_session"}>
+							Selected session only (anchor-style)
+						</SelectItem>
+					</Select>
 				</div>
-				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button
-						variant="primary"
-						onPress={() => props.onDialogOpenChange(false)}
-					>
-						Close
-					</Button>
-				</div>
-			</Modal>
+				<span className="block text-muted text-xs leading-5">
+					All recordings is the default. Open this dialog with Ctrl/Cmd+,.
+				</span>
+			</BaseDialog>
 		</div>
 	);
 }

@@ -2,8 +2,6 @@ import {
 	Scissors as ContentCutIcon,
 	Download as DownloadIcon,
 	Pencil as EditIcon,
-	Pause as PauseIcon,
-	Play as PlayArrowIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,23 +9,22 @@ import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { API_ROUTES, absoluteMediaUrl, apiUrl } from "../../api/routes";
 import { type ClipData, useRenameClipMutation } from "../../app/apiSlice";
 import {
-	authedFetch,
 	refreshForMediaRetry,
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
+import { downloadAsFile } from "../../shared/download";
 import {
 	Badge,
 	Button,
-	IconButton,
 	Notice,
 	Slider,
 	TextField,
-	Tooltip,
-	TooltipTrigger,
+	TooltipIconButton,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
+import { PlaybackControls } from "../audio-dashboard/PlaybackControls";
 import {
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
@@ -50,15 +47,6 @@ function safeFileName(name: string): string {
 		.replaceAll(/[^a-zA-Z0-9._-]+/g, "-")
 		.replaceAll(/^-+|-+$/g, "");
 	return sanitized || "clip";
-}
-
-function saveBlob(blob: Blob, fileName: string) {
-	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = fileName;
-	anchor.click();
-	URL.revokeObjectURL(url);
 }
 
 function MetadataItem(props: { label: string; value: ReactNode }) {
@@ -108,36 +96,20 @@ function RenameClipButton(props: { clip: ClipData }) {
 
 	return (
 		<>
-			<TooltipTrigger delay={400}>
-				<IconButton aria-label="Rename clip" size="sm" onPress={handleOpen}>
-					<EditIcon size={16} />
-				</IconButton>
-				<Tooltip>{"Rename clip"}</Tooltip>
-			</TooltipTrigger>
+			<TooltipIconButton
+				label="Rename clip"
+				icon={<EditIcon size={16} />}
+				onPress={handleOpen}
+			/>
 			<BaseDialog
 				open={open}
 				onClose={handleClose}
 				title="Rename clip"
 				error={error}
 				busy={isLoading}
-				actions={
-					<>
-						<Button
-							variant="primary"
-							isDisabled={isLoading}
-							onPress={handleClose}
-						>
-							Cancel
-						</Button>
-						<Button
-							variant="primary"
-							isDisabled={isLoading || !canSubmit}
-							onPress={() => void handleRename()}
-						>
-							{isLoading ? "Saving..." : "Save"}
-						</Button>
-					</>
-				}
+				confirmLabel={isLoading ? "Saving..." : "Save"}
+				confirmDisabled={!canSubmit}
+				onConfirm={() => void handleRename()}
 			>
 				<p className="text-sm leading-6 text-slate-200">
 					Enter a new name for this clip.
@@ -334,26 +306,21 @@ export function ClipPlayer(props: {
 
 	const download = async () => {
 		setError(null);
-		try {
-			const response = await authedFetch(
-				apiUrl(API_ROUTES.clip, {
-					guild_id: props.clip.guild_id,
-					clip_id: props.clip.clip_id,
-				}),
-			);
-			if (!response.ok) {
-				setError(`Clip download failed (${response.status}).`);
-				return;
-			}
-			saveBlob(
-				await response.blob(),
-				`${safeFileName(props.clip.name ?? props.clip.clip_id)}.ogg`,
-			);
-		} catch {
-			// A dropped connection rejects instead of returning a response;
-			// without this the button silently did nothing.
-			setError("Clip download failed. Check your connection and try again.");
-		}
+		await downloadAsFile(
+			apiUrl(API_ROUTES.clip, {
+				guild_id: props.clip.guild_id,
+				clip_id: props.clip.clip_id,
+			}),
+			`${safeFileName(props.clip.name ?? props.clip.clip_id)}.ogg`,
+			{
+				label: "Clip download",
+				onError: setError,
+				// A dropped connection rejects instead of returning a response;
+				// without this the button silently did nothing.
+				rejectionMessage:
+					"Clip download failed. Check your connection and try again.",
+			},
+		);
 	};
 
 	const displayedPosition = seekPreview ?? position;
@@ -462,36 +429,19 @@ export function ClipPlayer(props: {
 				</p>
 			</div>
 
-			<div className="flex items-center flex-col min-[900px]:flex-row gap-4">
-				<Button variant="primary" isDisabled={!ready} onPress={togglePlay}>
-					{playing ? <PauseIcon /> : <PlayArrowIcon />}
-					{playing ? "Pause" : "Play"}
-				</Button>
-				<div className="min-w-45 flex-1 w-full">
-					<span className="text-xs leading-5">Volume</span>
-					<Slider
-						aria-label="Clip volume"
-						step={0.05}
-						value={volume}
-						minValue={0}
-						maxValue={1}
-						onChange={(value) => setVolume(Number(value))}
-					/>
-				</div>
-				<div className="min-w-45 flex-1 w-full">
-					<span className="text-xs leading-5">
-						Speed {playbackRate.toFixed(2)}×
-					</span>
-					<Slider
-						aria-label="Clip playback speed"
-						step={0.25}
-						value={playbackRate}
-						minValue={0.5}
-						maxValue={2}
-						onChange={(value) => setPlaybackRate(Number(value))}
-					/>
-				</div>
-			</div>
+			<PlaybackControls
+				className="flex-col min-[900px]:flex-row gap-4 mt-0 overflow-visible"
+				fieldClassName="min-w-45 flex-1 w-full"
+				playing={playing}
+				isDisabled={!ready}
+				onTogglePlay={togglePlay}
+				volume={volume}
+				volumeLabel="Clip volume"
+				onVolumeChange={setVolume}
+				playbackRate={playbackRate}
+				speedLabel="Clip playback speed"
+				onPlaybackRateChange={setPlaybackRate}
+			/>
 
 			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none p-4 mt-4">
 				<h6 className="font-medium tracking-[0.001em] text-xl mb-2">

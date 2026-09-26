@@ -33,6 +33,7 @@ export {
 	type NoticeTone,
 } from "./Notice";
 export { ProgressBar, Spinner } from "./Progress";
+export { SearchInput } from "./SearchInput";
 export { Select, SelectItem, type SelectProps } from "./Select";
 export { Radio, RadioGroup, Switch } from "./Selection";
 export { Slider, type SliderProps } from "./Slider";
@@ -46,5 +47,11 @@ export {
 } from "./Table";
 export { Tab, TabList, TabPanel, Tabs } from "./Tabs";
 export { TextArea, TextField, type TextFieldProps } from "./TextField";
-export { Focusable, Tooltip, TooltipTrigger } from "./Tooltip";
+export {
+	Focusable,
+	Tooltip,
+	TooltipIconButton,
+	TooltipTrigger,
+	WithTooltip,
+} from "./Tooltip";
 export { Tree, TreeItem, TreeItemContent } from "./TreeView";

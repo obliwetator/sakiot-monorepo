@@ -148,191 +148,108 @@ const LABELS: Record<string, string> = {
 	zombie_reaped: "Stale recording closed",
 };
 
+type StateSpec = Omit<StateTransition, "phase">;
+
+const SESSION_PAUSE = {
+	stateKey: "session-pause",
+	laneId: "recording",
+	track: 0,
+	color: palette.orange500,
+} as const;
+
+/**
+ * A state the timeline draws as a span: one event opens it, another closes it,
+ * and both carry the same lane, track, label and colour.
+ */
+const pair = (
+	startType: string,
+	endType: string,
+	spec: StateSpec,
+): Record<string, StateTransition> => ({
+	[startType]: { ...spec, phase: "start" },
+	[endType]: { ...spec, phase: "end" },
+});
+
 const STATE_TRANSITIONS: Record<string, StateTransition> = {
-	server_mute: {
-		phase: "start",
+	...pair("server_mute", "server_unmute", {
 		stateKey: "server-mute",
 		laneId: "mute",
 		track: 0,
 		label: "Server muted",
 		color: palette.red500,
-	},
-	server_unmute: {
-		phase: "end",
-		stateKey: "server-mute",
-		laneId: "mute",
-		track: 0,
-		label: "Server muted",
-		color: palette.red500,
-	},
-	self_mute: {
-		phase: "start",
+	}),
+	...pair("self_mute", "self_unmute", {
 		stateKey: "self-mute",
 		laneId: "mute",
 		track: 1,
 		label: "Muted",
 		color: palette.rose400,
-	},
-	self_unmute: {
-		phase: "end",
-		stateKey: "self-mute",
-		laneId: "mute",
-		track: 1,
-		label: "Muted",
-		color: palette.rose400,
-	},
-	server_deafen: {
-		phase: "start",
+	}),
+	...pair("server_deafen", "server_undeafen", {
 		stateKey: "server-deafen",
 		laneId: "deafen",
 		track: 0,
 		label: "Server deafened",
 		color: palette.purple500,
-	},
-	server_undeafen: {
-		phase: "end",
-		stateKey: "server-deafen",
-		laneId: "deafen",
-		track: 0,
-		label: "Server deafened",
-		color: palette.purple500,
-	},
-	self_deafen: {
-		phase: "start",
+	}),
+	...pair("self_deafen", "self_undeafen", {
 		stateKey: "self-deafen",
 		laneId: "deafen",
 		track: 1,
 		label: "Deafened",
 		color: palette.purple400,
-	},
-	self_undeafen: {
-		phase: "end",
-		stateKey: "self-deafen",
-		laneId: "deafen",
-		track: 1,
-		label: "Deafened",
-		color: palette.purple400,
-	},
-	suppress_on: {
-		phase: "start",
+	}),
+	...pair("suppress_on", "suppress_off", {
 		stateKey: "suppress",
 		laneId: "suppress",
 		track: 0,
 		label: "Suppressed",
 		color: palette.yellow500,
-	},
-	suppress_off: {
-		phase: "end",
-		stateKey: "suppress",
-		laneId: "suppress",
-		track: 0,
-		label: "Suppressed",
-		color: palette.yellow500,
-	},
-	stream_start: {
-		phase: "start",
+	}),
+	...pair("stream_start", "stream_stop", {
 		stateKey: "stream",
 		laneId: "media",
 		track: 0,
 		label: "Streaming",
 		color: palette.green500,
-	},
-	stream_stop: {
-		phase: "end",
-		stateKey: "stream",
-		laneId: "media",
-		track: 0,
-		label: "Streaming",
-		color: palette.green500,
-	},
-	video_on: {
-		phase: "start",
+	}),
+	...pair("video_on", "video_off", {
 		stateKey: "video",
 		laneId: "media",
 		track: 1,
 		label: "Camera on",
 		color: palette.teal500,
-	},
-	video_off: {
-		phase: "end",
-		stateKey: "video",
-		laneId: "media",
-		track: 1,
-		label: "Camera on",
-		color: palette.teal500,
-	},
-	recording_pause: {
-		phase: "start",
+	}),
+	...pair("recording_pause", "recording_resume", {
 		stateKey: "recording-pause",
 		laneId: "recording",
 		track: 1,
 		label: "Recording paused",
 		color: palette.orange500,
-	},
-	recording_resume: {
-		phase: "end",
-		stateKey: "recording-pause",
-		laneId: "recording",
-		track: 1,
-		label: "Recording paused",
-		color: palette.orange500,
-	},
-	user_recording_pause: {
-		phase: "start",
+	}),
+	...pair("user_recording_pause", "user_recording_resume", {
 		stateKey: "user-recording-pause",
 		laneId: "recording",
 		track: 2,
 		label: "User recording paused",
 		color: palette.orange400,
-	},
-	user_recording_resume: {
-		phase: "end",
-		stateKey: "user-recording-pause",
-		laneId: "recording",
-		track: 2,
-		label: "User recording paused",
-		color: palette.orange400,
-	},
-	pause: {
-		phase: "start",
-		stateKey: "session-pause",
-		laneId: "recording",
-		track: 0,
-		label: "Session paused",
-		color: palette.orange500,
-	},
-	network_pause: {
-		phase: "start",
-		stateKey: "session-pause",
-		laneId: "recording",
-		track: 0,
-		label: "Network pause",
-		color: palette.orange500,
-	},
-	disconnect: {
-		phase: "start",
-		stateKey: "session-pause",
-		laneId: "recording",
-		track: 0,
-		label: "Disconnected",
-		color: palette.orange500,
-	},
-	afk: {
-		phase: "start",
-		stateKey: "session-pause",
-		laneId: "recording",
-		track: 0,
-		label: "Moved to AFK",
-		color: palette.orange500,
-	},
-	resume: {
-		phase: "end",
-		stateKey: "session-pause",
-		laneId: "recording",
-		track: 0,
-		label: "Session paused",
-		color: palette.orange500,
-	},
+	}),
+	// Four different events open a session pause and one closes it, so this
+	// group cannot go through `pair`; the labels differ on the way in.
+	...Object.fromEntries(
+		(
+			[
+				["pause", "Session paused"],
+				["network_pause", "Network pause"],
+				["disconnect", "Disconnected"],
+				["afk", "Moved to AFK"],
+			] as const
+		).map(([type, label]) => [
+			type,
+			{ ...SESSION_PAUSE, label, phase: "start" } satisfies StateTransition,
+		]),
+	),
+	resume: { ...SESSION_PAUSE, label: "Session paused", phase: "end" },
 };
 
 export function canonicalEventType(eventType: string): string {
