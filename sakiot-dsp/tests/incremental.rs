@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use sakiot_dsp::{
     IncrementalRenderer, SegmentEffects, render_clip_interleaved, reverse_interleaved_frames,
 };

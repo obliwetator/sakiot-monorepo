@@ -227,14 +227,10 @@ jobs:
       - name: Install browser harness dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      - name: Test native DSP
-        run: cargo test --locked
+      # Formatting, default-feature clippy, and native tests run with the rest
+      # of the workspace; only the wasm feature needs a dedicated pass.
+      - name: Clippy with the wasm feature
+        run: cargo clippy --locked --package sakiot-dsp --all-targets --all-features -- -D warnings
 
       - name: Build WASM and worklet
         working-directory: ${{ github.workspace }}

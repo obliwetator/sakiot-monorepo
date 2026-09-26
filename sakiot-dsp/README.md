@@ -3,10 +3,10 @@
 The shared Rust audio processor for the Sakiot clip editor, usable as native
 server code and WebAssembly in the browser.
 
-The crate remains excluded as a root-workspace member. The web server consumes
-it as a path dependency, so normal server builds compile the native crate; a
-dedicated CI job additionally runs the standalone tests, builds the WASM, and
-checks native/WASM parity.
+The crate is a root workspace member and a path dependency of the web server,
+so workspace builds, tests, and Clippy cover the native side. A dedicated CI job
+additionally lints the `wasm` feature, builds the WASM, and checks native/WASM
+parity.
 
 Implemented in the shared native/WASM core:
 
@@ -129,8 +129,8 @@ both the browser WASM and native server renderers.
 ## Native checks
 
 ```sh
-cargo test --manifest-path sakiot-dsp/Cargo.toml
-cargo run --manifest-path sakiot-dsp/Cargo.toml --example process_raw -- \
+cargo test -p sakiot-dsp
+cargo run -p sakiot-dsp --example process_raw -- \
   48000 2 -3 5 -4 2.5 0.7 1 0.125 0.4 1 true -24 30 12 0.003 0.25 \
   true 1.5 3.5 0.7 180 0 0.5 true 1.5 0.01 0.5 1396788041 \
   <input.f32 >output.f32
@@ -141,7 +141,7 @@ The raw utility reads and writes interleaved little-endian `f32` PCM.
 The length-changing offline boundary has a smaller diagnostic utility:
 
 ```sh
-cargo run --manifest-path sakiot-dsp/Cargo.toml --example render_clip_raw -- \
+cargo run -p sakiot-dsp --example render_clip_raw -- \
   48000 2 700 1.35 true 2.0 <input.f32 >output.f32
 ```
 

@@ -1,6 +1,10 @@
 //! Reproducible duration-independent-memory benchmark; output is consumed, not
 //! retained. Run with /usr/bin/time -v and a release build.
 use sakiot_dsp::{IncrementalRenderer, SegmentEffects};
+#[expect(
+    clippy::print_stdout,
+    reason = "the benchmark reports its measurement on stdout"
+)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     let seconds: usize = args.get(1).map_or(Ok(60), |s| s.parse())?;

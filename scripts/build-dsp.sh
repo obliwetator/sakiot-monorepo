@@ -72,10 +72,14 @@ installed_rolldown="$("${rolldown}" --version 2>/dev/null | grep -oE '[0-9]+\.[0
 (
   cd "${dsp_root}"
 
-  cargo build --locked --release --target wasm32-unknown-unknown --features wasm
+  cargo build --locked --release --package sakiot-dsp \
+    --target wasm32-unknown-unknown --features wasm
 
+  # sakiot-dsp is a root workspace member, so output lands in the workspace
+  # target directory. A relative CARGO_TARGET_DIR resolves from this
+  # directory, as it does for cargo.
   wasm-bindgen \
-    "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/sakiot_dsp.wasm" \
+    "${CARGO_TARGET_DIR:-${repo_root}/target}/wasm32-unknown-unknown/release/sakiot_dsp.wasm" \
     --out-dir pkg \
     --target web
 

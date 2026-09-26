@@ -111,10 +111,9 @@ Both sides run the same `SegmentProcessor`, so what the user previews is what
 gets rendered. The crate core deliberately has no browser or server
 dependencies; the `wasm` feature only adds a thin `wasm-bindgen` boundary.
 
-`sakiot-dsp` is its own Cargo workspace, excluded from the root one, so
-`cargo test --workspace` and `cargo clippy --workspace` do not select it. It
-gets a dedicated CI job instead, which additionally builds and verifies the
-WASM artifact.
+`sakiot-dsp` is a member of the root Cargo workspace, so the workspace build,
+tests, and Clippy cover its native side. A dedicated CI job additionally lints
+the `wasm` feature, builds the WASM artifact, and verifies it against native.
 
 ## Service-to-service calls
 

@@ -3,12 +3,12 @@ members = [
     "fbi-agent",
     "ops/sakiot-dev",
     "ops/sakiot-deploy",
+    "sakiot-dsp",
     "sakiot-paths",
     "sakiot-proto",
     "sakiot-storage",
     "web-server",
 ]
-exclude = ["sakiot-dsp"]
 resolver = "3"
 
 # Single source of truth for the product version. Bumping this in a PR and

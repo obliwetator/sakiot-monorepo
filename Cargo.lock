@@ -4599,9 +4599,11 @@ dependencies = [
 
 [[package]]
 name = "sakiot-dsp"
-version = "0.1.0"
+version = "1.0.33"
 dependencies = [
+ "js-sys",
  "libm",
+ "wasm-bindgen",
 ]
 
 [[package]]

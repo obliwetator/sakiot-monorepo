@@ -1,6 +1,6 @@
 [package]
 name = "sakiot-dsp"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 publish = false
 
@@ -16,6 +16,5 @@ libm = "=0.2.16"
 js-sys = { version = "=0.3.99", optional = true }
 wasm-bindgen = { version = "=0.2.122", optional = true }
 
-# Keep this prototype independent from the monorepo workspace. In particular,
-# root `cargo test --workspace` and `cargo clippy --workspace` must not select it.
-[workspace]
+[lints]
+workspace = true

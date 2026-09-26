@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)]
+
 use sakiot_dsp::{SegmentEffects, SegmentProcessor, db_to_gain, ffmpeg_filter_chain};
 use std::error::Error;
 use std::f32::consts::TAU;
@@ -177,7 +179,7 @@ fn render_with_ffmpeg(input: &[f32], filter: &str) -> Result<Vec<f32>, Box<dyn E
     Ok(output
         .stdout
         .chunks_exact(size_of::<f32>())
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte chunk")))
+        .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
         .collect())
 }
 

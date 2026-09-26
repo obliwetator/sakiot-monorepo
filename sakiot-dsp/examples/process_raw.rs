@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut samples: Vec<f32> = bytes
         .chunks_exact(size_of::<f32>())
-        .map(|sample| f32::from_le_bytes(sample.try_into().expect("four-byte chunk")))
+        .map(|sample| f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]))
         .collect();
     let mut processor = SegmentProcessor::new(sample_rate, channels, effects)?;
     processor.process_interleaved(&mut samples)?;

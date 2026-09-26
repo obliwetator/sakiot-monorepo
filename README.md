@@ -11,7 +11,7 @@ stores audio and metadata, and exposes recordings through a web application.
 - `sakiot-paths` - Shared Rust crate for filesystem and URL conventions.
 - `sakiot-proto` - Shared gRPC contract and generated Rust types.
 - `sakiot-storage` - Shared Backblaze B2 archive configuration and S3 client.
-- `sakiot-dsp` - Shared native/WASM audio processing; a standalone Cargo workspace.
+- `sakiot-dsp` - Shared native/WASM audio processing for the clip editor.
 - `sakiot-db` - Canonical PostgreSQL migrations and backup tooling.
 - `ops/sakiot-dev` - Typed `cargo dev` local-development orchestration.
 - `ops/sakiot-deploy` - Rust deployment engine.
@@ -123,16 +123,14 @@ suite.
 
 ## Rust Workspace
 
-The root Cargo workspace contains both services, three shared crates, and the
-two operations CLIs. `sakiot-dsp` is a separate workspace compiled as a path
-dependency of `web-server`; run its standalone tests separately:
+The root Cargo workspace contains both services, four shared crates (including
+`sakiot-dsp`), and the two operations CLIs:
 
 ```sh
 cargo build --workspace
 DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
-cargo test --manifest-path sakiot-dsp/Cargo.toml --locked
 ```
 
 SQLx query metadata is checked into `.sqlx` so rust-analyzer and offline builds
