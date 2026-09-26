@@ -2,11 +2,11 @@ import type { SegmentEffects } from "./model";
 import { sharedDspStreamingEffectConfig } from "./sharedDspConfig";
 
 const dspWasmUrl = new URL(
-	"../../../../sakiot-DSP/pkg/sakiot_dsp_bg.wasm",
+	"../../../../sakiot-dsp/pkg/sakiot_dsp_bg.wasm",
 	import.meta.url,
 ).href;
 const dspWorkletUrl = new URL(
-	"../../../../sakiot-DSP/pkg/sakiot-dsp-worklet.bundle.js",
+	"../../../../sakiot-dsp/pkg/sakiot-dsp-worklet.bundle.js",
 	import.meta.url,
 ).href;
 

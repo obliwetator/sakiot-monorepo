@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { WasmSegmentProcessor } from "../../../../sakiot-DSP/pkg/sakiot_dsp.js";
+import { WasmSegmentProcessor } from "../../../../sakiot-dsp/pkg/sakiot_dsp.js";
 import type { SegmentEffects } from "./model";
 import { DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 import {

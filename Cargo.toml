@@ -8,7 +8,7 @@ members = [
     "sakiot-storage",
     "web-server",
 ]
-exclude = ["sakiot-DSP"]
+exclude = ["sakiot-dsp"]
 resolver = "3"
 
 # Single source of truth for the product version. Bumping this in a PR and

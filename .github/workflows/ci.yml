@@ -191,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sakiot-DSP
+        working-directory: sakiot-dsp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -205,7 +205,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: sakiot-DSP/package-lock.json
+          cache-dependency-path: sakiot-dsp/package-lock.json
 
       - name: Read pinned wasm-bindgen CLI version
         run: echo "WASM_BINDGEN_CLI_VERSION=$(tr -d '[:space:]' <wasm-bindgen-cli-version)" >>"${GITHUB_ENV}"

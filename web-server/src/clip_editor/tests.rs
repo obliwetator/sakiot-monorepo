@@ -127,7 +127,7 @@ fn maps_product_effects_into_the_shared_contract() {
 #[ignore = "manual real-media integration check"]
 async fn renders_real_clip_through_shared_server_pipeline() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../sakiot-DSP/examples/8161a145-9b3d-4bdb-bca1-4d12fd6781a2/source.ogg");
+        .join("../sakiot-dsp/examples/8161a145-9b3d-4bdb-bca1-4d12fd6781a2/source.ogg");
     assert!(source.is_file(), "real-media fixture is missing");
     let temporary = tempfile::tempdir().unwrap();
     let output = temporary.path().join("shared-render.ogg");

@@ -86,7 +86,7 @@ assert_scope \
 assert_scope \
   "shared DSP" \
   true true false true false \
-  "sakiot-DSP/src/lib.rs" \
-  "sakiot-DSP/pkg/sakiot_dsp_bg.wasm"
+  "sakiot-dsp/src/lib.rs" \
+  "sakiot-dsp/pkg/sakiot_dsp_bg.wasm"
 
 echo "ci-scope tests passed"

@@ -56,7 +56,7 @@ async function exportOpenApi(destination: string): Promise<void> {
 			"--locked",
 			"--quiet",
 			"-p",
-			"web_server",
+			"web-server",
 			"--bin",
 			"export_openapi",
 		],

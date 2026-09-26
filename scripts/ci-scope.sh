@@ -30,7 +30,7 @@ while IFS= read -r path; do
       rust=true
       api_contract=true
       ;;
-    sakiot-DSP/*)
+    sakiot-dsp/*)
       rust=true
       dsp=true
       frontend=true

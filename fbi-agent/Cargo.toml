@@ -1,7 +1,13 @@
 [package]
-name = "fbi_agent"
+name = "fbi-agent"
 version.workspace = true
 edition = "2024"
+
+# The binary keeps its underscore name: release layouts, systemd units, and
+# the deploy engine all install and run `fbi_agent`.
+[[bin]]
+name = "fbi_agent"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

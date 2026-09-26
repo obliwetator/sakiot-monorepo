@@ -1,4 +1,4 @@
-# sakiot-DSP
+# sakiot-dsp
 
 The shared Rust audio processor for the Sakiot clip editor, usable as native
 server code and WebAssembly in the browser.
@@ -117,8 +117,8 @@ both the browser WASM and native server renderers.
 ## Native checks
 
 ```sh
-cargo test --manifest-path sakiot-DSP/Cargo.toml
-cargo run --manifest-path sakiot-DSP/Cargo.toml --example process_raw -- \
+cargo test --manifest-path sakiot-dsp/Cargo.toml
+cargo run --manifest-path sakiot-dsp/Cargo.toml --example process_raw -- \
   48000 2 -3 5 -4 2.5 0.7 1 0.125 0.4 1 true -24 30 12 0.003 0.25 \
   true 1.5 3.5 0.7 180 0 0.5 true 1.5 0.01 0.5 1396788041 \
   <input.f32 >output.f32
@@ -129,7 +129,7 @@ The raw utility reads and writes interleaved little-endian `f32` PCM.
 The length-changing offline boundary has a smaller diagnostic utility:
 
 ```sh
-cargo run --manifest-path sakiot-DSP/Cargo.toml --example render_clip_raw -- \
+cargo run --manifest-path sakiot-dsp/Cargo.toml --example render_clip_raw -- \
   48000 2 700 1.35 true 2.0 <input.f32 >output.f32
 ```
 
@@ -138,16 +138,16 @@ cargo run --manifest-path sakiot-DSP/Cargo.toml --example render_clip_raw -- \
 `pkg/` is committed so the frontend, CI, and the deploy engine can build
 without a WASM toolchain. Regenerate it with the repository script after any
 change to the DSP sources or to the pinned tooling; it enforces the pinned
-`wasm-bindgen` and `rolldown` versions and always builds from `sakiot-DSP`, so
+`wasm-bindgen` and `rolldown` versions and always builds from `sakiot-dsp`, so
 the output does not depend on the caller's working directory. From the
 repository root:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version "$(cat sakiot-DSP/wasm-bindgen-cli-version)" --locked
-(cd sakiot-DSP && npm ci)
+cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked
+(cd sakiot-dsp && npm ci)
 scripts/build-dsp.sh
-(cd sakiot-DSP && node web/verify-wasm.mjs)
+(cd sakiot-dsp && node web/verify-wasm.mjs)
 ```
 
 `sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
@@ -159,11 +159,11 @@ The script is the only place that names the build steps: `npm run wasm:build`
 delegates to it, and the CI `dsp` job calls it directly.
 
 To verify the generated WASM processor against the native processor with the
-version-matched `wasm-bindgen` CLI and Node.js (from `sakiot-DSP/`):
+version-matched `wasm-bindgen` CLI and Node.js (from `sakiot-dsp/`):
 
 ```sh
 scripts/build-dsp.sh
-(cd sakiot-DSP && node web/verify-wasm.mjs)
+(cd sakiot-dsp && node web/verify-wasm.mjs)
 ```
 
 CI runs the parity verifier once against the committed browser asset and again
@@ -183,7 +183,7 @@ Tone is retained here only as a development comparison oracle; the production
 serves its own Tone dependency, so it does not rely on frontend packages.
 
 ```sh
-cd sakiot-DSP
+cd sakiot-dsp
 npm install
 npx playwright install chromium
 npm run browser:measure

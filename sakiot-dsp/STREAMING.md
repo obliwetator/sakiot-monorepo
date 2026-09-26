@@ -138,13 +138,13 @@ remains bounded. The existing job limits remain the final resource guard.
 Reproduce from the repository root:
 
 ```sh
-cargo test --manifest-path sakiot-DSP/Cargo.toml --locked --release
-cargo build --manifest-path sakiot-DSP/Cargo.toml --locked --release --example measure_incremental
-/usr/bin/time -v sakiot-DSP/target/release/examples/measure_incremental 60 700 1.35
-/usr/bin/time -v sakiot-DSP/target/release/examples/measure_incremental 600 700 1.35
-/usr/bin/time -v sakiot-DSP/target/release/examples/measure_incremental 6 4800 0.1
-/usr/bin/time -v sakiot-DSP/target/release/examples/measure_incremental 60 0 1 max-effects
-node sakiot-DSP/web/verify-wasm.mjs
+cargo test --manifest-path sakiot-dsp/Cargo.toml --locked --release
+cargo build --manifest-path sakiot-dsp/Cargo.toml --locked --release --example measure_incremental
+/usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 60 700 1.35
+/usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 600 700 1.35
+/usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 6 4800 0.1
+/usr/bin/time -v sakiot-dsp/target/release/examples/measure_incremental 60 0 1 max-effects
+node sakiot-dsp/web/verify-wasm.mjs
 ```
 
 Recorded implementation verification (2026-09-06; not a current test count):

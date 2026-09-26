@@ -20,7 +20,7 @@ under `cargo watch` with the `dev-login` cargo feature (Discord OAuth bypass via
 When running manually:
 
 ```sh
-cargo run -p web_server --bin web_server --features dev-login
+cargo run -p web-server --bin web_server --features dev-login
 ```
 
 ## Role In The System
@@ -53,7 +53,7 @@ Export the same OpenAPI document without starting the service or connecting to
 the database:
 
 ```sh
-SQLX_OFFLINE=true cargo run --locked -p web_server --bin export_openapi
+SQLX_OFFLINE=true cargo run --locked -p web-server --bin export_openapi
 ```
 
 Runtime media uses `SAKIOT_DATA_DIR`; without it, the fallback is `../data`
@@ -138,7 +138,7 @@ release is still running. New jobs use renderer contract version 2. Before
 claiming work, the worker
 migrates queued version 1 jobs and expired version 1 attempts to version 2;
 active version 1 leases can finish unchanged. Terminal results and unknown
-versions are not rewritten. See [incremental rendering](../sakiot-DSP/STREAMING.md)
+versions are not rewritten. See [incremental rendering](../sakiot-dsp/STREAMING.md)
 for the shared DSP pipeline, resource limits, and version migration.
 A rollback to a release without the worker leaves accepted jobs queued until a
 compatible release runs again; do not drop the queue tables during rollback.

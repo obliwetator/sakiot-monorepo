@@ -68,6 +68,9 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
             select(&[Component::Web]);
         } else if path.starts_with("sakiot-stage/") || path.starts_with("sakiot_stage/") {
             select(&[Component::Frontend]);
+        } else if path.starts_with("sakiot-dsp/") || path.starts_with("sakiot-DSP/") {
+            // Compiled natively into web-server and to WASM for the frontend.
+            select(&[Component::Web, Component::Frontend]);
         } else if path.starts_with("sakiot-paths/")
             || path.starts_with("sakiot-proto/")
             || path.starts_with(".sqlx/")
@@ -149,6 +152,12 @@ mod tests {
         assert_components(&["FBI-agent/src/main.rs"], &[Bot]);
         assert_components(&["web_server/src/main.rs"], &[Web]);
         assert_components(&["sakiot_stage/src/App.tsx"], &[Frontend]);
+    }
+
+    #[test]
+    fn dsp_paths_map_to_web_and_frontend() {
+        assert_components(&["sakiot-dsp/src/lib.rs"], &[Web, Frontend]);
+        assert_components(&["sakiot-DSP/src/lib.rs"], &[Web, Frontend]);
     }
 
     #[test]

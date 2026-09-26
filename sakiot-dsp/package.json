@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"wasm:build": "bash ../scripts/build-dsp.sh",
-		"browser:measure": "npm run wasm:build && node browser/run.mjs"
+		"browser:measure": "bun run wasm:build && node browser/run.mjs"
 	},
 	"devDependencies": {
 		"playwright": "1.62.0",

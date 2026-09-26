@@ -1,7 +1,7 @@
 import initDsp, {
 	WasmIncrementalRenderer,
 	WasmSegmentProcessor,
-} from "../../../../sakiot-DSP/pkg/sakiot_dsp.js";
+} from "../../../../sakiot-dsp/pkg/sakiot_dsp.js";
 import { MAX_BROWSER_RENDER_BYTES } from "./pcmBudget";
 import { waveformEnvelopeFromPcm } from "./processedWaveform";
 import {

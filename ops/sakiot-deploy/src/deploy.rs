@@ -427,7 +427,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
             log("building FBI Agent");
             deps.runner.run(
                 &Cmd::new("cargo")
-                    .args(["build", "--release", "--locked", "--package", "fbi_agent"])
+                    .args(["build", "--release", "--locked", "--bin", "fbi_agent"])
                     .cwd(worktree.path())
                     .env("SQLX_OFFLINE", "true")
                     .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),
@@ -454,7 +454,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
             )?;
         } else {
             log("building web server");
-            let mut args = vec!["build", "--release", "--locked", "--package", "web_server"];
+            let mut args = vec!["build", "--release", "--locked", "--bin", "web_server"];
             if matches!(target, Target::Staging | Target::Preview) {
                 args.extend(["--features", "dev-login"]);
             }
@@ -708,9 +708,9 @@ fn prepare_production_promotion(
                 "build",
                 "--release",
                 "--locked",
-                "--package",
+                "--bin",
                 "fbi_agent",
-                "--package",
+                "--bin",
                 "web_server",
             ])
             .cwd(worktree)

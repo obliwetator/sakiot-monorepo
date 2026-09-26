@@ -1,6 +1,6 @@
 /**
  * Parameters shared by the canonical DSP and the emergency native Web Audio
- * fallback. Normal preview and server rendering both use sakiot-DSP; this
+ * fallback. Normal preview and server rendering both use sakiot-dsp; this
  * graph is only used if WASM initialization fails.
  */
 export const PARITY_APPROVED_EQ = {

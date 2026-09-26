@@ -16,7 +16,7 @@ is the map that sits above them.
 | `sakiot-paths` | Rust crate | The filesystem and URL layout, shared so both services agree on where media lives. |
 | `sakiot-proto` | Rust crate | The gRPC contract (`fbi_agent.proto`) and its generated types. |
 | `sakiot-storage` | Rust crate | Backblaze B2 archive configuration and S3 client. |
-| `sakiot-DSP` | Rust crate → native + WASM | Audio effects, compiled both into `web-server` and to WASM for the browser. |
+| `sakiot-dsp` | Rust crate → native + WASM | Audio effects, compiled both into `web-server` and to WASM for the browser. |
 | `ops/sakiot-dev` | Rust CLI | Local development orchestration (`cargo dev`). |
 | `ops/sakiot-deploy` | Rust CLI | The deployment engine that runs on the VPS. |
 
@@ -101,7 +101,7 @@ client draws waveforms without downloading the audio.
 ## Clip editing and the DSP parity story
 
 The clip editor is the one place where the same audio code runs in two
-environments. `sakiot-DSP` is compiled twice:
+environments. `sakiot-dsp` is compiled twice:
 
 - **Natively**, as a path dependency of `web-server`, to render the final clip.
 - **To WASM**, loaded by the frontend into an `AudioWorklet`
@@ -111,7 +111,7 @@ Both sides run the same `SegmentProcessor`, so what the user previews is what
 gets rendered. The crate core deliberately has no browser or server
 dependencies; the `wasm` feature only adds a thin `wasm-bindgen` boundary.
 
-`sakiot-DSP` is its own Cargo workspace, excluded from the root one, so
+`sakiot-dsp` is its own Cargo workspace, excluded from the root one, so
 `cargo test --workspace` and `cargo clippy --workspace` do not select it. It
 gets a dedicated CI job instead, which additionally builds and verifies the
 WASM artifact.

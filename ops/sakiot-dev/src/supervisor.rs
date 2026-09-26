@@ -32,7 +32,7 @@ async fn supervise_children(config: &Config) -> Result<()> {
         .args([
             "watch",
             "-x",
-            "run -p web_server --bin web_server --features dev-login",
+            "run -p web-server --bin web_server --features dev-login",
         ])
         .cwd(&config.root);
     let frontend = Cmd::new("bun")
