@@ -10,6 +10,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, ServerSideEncryption},
 };
+use aws_smithy_http_client::tls;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -104,8 +105,14 @@ impl Archive {
             None,
             "sakiot-media-archive",
         );
+        let http_client = aws_smithy_http_client::Builder::new()
+            .tls_provider(tls::Provider::Rustls(
+                tls::rustls_provider::CryptoMode::Ring,
+            ))
+            .build_https();
         let s3_config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
+            .http_client(http_client)
             .region(Region::new(config.region.clone()))
             .credentials_provider(credentials)
             .endpoint_url(&config.endpoint)

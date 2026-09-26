@@ -9,11 +9,9 @@ use std::sync::atomic::Ordering;
 use serenity::model::id::{ChannelId, UserId};
 use tracing::{info, warn};
 
-use super::RecorderActor;
+use super::{RecorderActor, link::Departure};
 use crate::cast::ToI64;
-use crate::events::voice_receiver::{
-    disconnect::RECOVERABLE_DISCONNECT_TIMEOUT_MS, state::VoiceEventType,
-};
+use crate::events::voice_receiver::state::VoiceEventType;
 
 impl RecorderActor {
     pub(super) async fn handle_client_disconnect(&mut self, user_id: u64, at_ms: i64) {
@@ -199,14 +197,13 @@ impl RecorderActor {
     /// policy suspension, where the bot stays connected but the channel must not
     /// be recorded. Pausing rather than finalizing keeps the session resumable
     /// with an explicit gap when recording is allowed again.
-    async fn pause_all_for_departure(
-        &mut self,
-        from_channel_id: ChannelId,
-        to_channel_id: Option<ChannelId>,
-        reason: &str,
-        starts_grace: bool,
-        at_ms: i64,
-    ) {
+    async fn pause_all_for_departure(&mut self, departure: Departure, at_ms: i64) {
+        let Departure {
+            from_channel_id,
+            to_channel_id,
+            reason,
+            starts_grace,
+        } = departure;
         let recordings = self.recordings.take_all_active();
         for (ssrc, recording) in recordings {
             let user_id = recording.user_id;
@@ -364,58 +361,14 @@ impl RecorderActor {
                 .fetch_add(1, Ordering::Relaxed);
         }
 
-        if let Some(planned) = self.planned_handoff {
-            self.pause_all_for_departure(
-                planned.from_channel_id,
-                planned.to_channel_id,
-                if planned.to_channel_id.is_some() {
-                    "handoff"
-                } else {
-                    "bot_departure"
-                },
-                false,
-                at_ms,
-            )
-            .await;
-            if planned.to_channel_id.is_some() {
-                self.disconnected_at_ms = at_ms;
-                self.recoverable_disconnect_deadline_ms =
-                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
-            }
-            return;
-        }
-
-        if recoverable {
-            if self.disconnected_at_ms == 0 {
-                self.disconnected_at_ms = at_ms;
-                self.recoverable_disconnect_deadline_ms =
-                    at_ms.saturating_add(RECOVERABLE_DISCONNECT_TIMEOUT_MS as i64);
-                self.pause_all_for_departure(
-                    self.channel_id,
-                    Some(self.channel_id),
-                    "network",
-                    true,
-                    at_ms,
-                )
-                .await;
-            }
-            return;
-        }
-
-        self.pause_all_for_departure(
+        if let Some(departure) = self.link.driver_disconnected(
             self.channel_id,
-            None,
-            if finalize_empty_channel {
-                "empty_channel"
-            } else {
-                "bot_departure"
-            },
-            false,
+            recoverable,
+            finalize_empty_channel,
             at_ms,
-        )
-        .await;
-        self.disconnected_at_ms = 0;
-        self.recoverable_disconnect_deadline_ms = 0;
+        ) {
+            self.pause_all_for_departure(departure, at_ms).await;
+        }
     }
 
     pub(super) async fn handle_driver_connected(
@@ -444,24 +397,18 @@ impl RecorderActor {
         self.channel_metrics = self
             .metrics
             .channel_metrics(self.guild_id.get(), channel_id.get());
-        self.planned_handoff = None;
-        self.disconnected_at_ms = 0;
-        self.recoverable_disconnect_deadline_ms = 0;
-        // SSRCs learned in the previous channel are meaningless here.
-        self.suspended_speakers.clear();
+        self.link.connected();
         // Re-evaluate the policy for the channel just entered before resuming
         // anything: a handoff into an excluded channel must not reopen logical
-        // sessions, and a later tick must not skip the check because of a
-        // timestamp from the previous channel.
-        self.last_recording_policy_check_ms = 0;
+        // sessions.
         match self.channel_is_excluded(channel_id).await {
             Ok(false) => {
-                self.stats.set_policy_suspended(false);
+                self.policy.entered_channel(true);
                 self.resume_users_in_channel(channel_id, connected_at_ms)
                     .await;
             }
             Ok(true) => {
-                self.stats.set_policy_suspended(true);
+                self.policy.entered_channel(false);
             }
             Err(error) => {
                 warn!(
@@ -471,7 +418,7 @@ impl RecorderActor {
                     error
                 );
                 self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
-                self.stats.set_policy_suspended(true);
+                self.policy.entered_channel(false);
             }
         }
     }
@@ -484,10 +431,9 @@ impl RecorderActor {
     /// the guild could not record again until the call was torn down and
     /// rejoined from scratch.
     pub(super) async fn refresh_recording_policy(&mut self, at_ms: i64) {
-        if at_ms.saturating_sub(self.last_recording_policy_check_ms) < 1_000 {
+        if !self.policy.check_due(at_ms) {
             return;
         }
-        self.last_recording_policy_check_ms = at_ms;
         match self.channel_is_excluded(self.channel_id).await {
             Ok(true) => self.suspend_recording_for_policy(at_ms).await,
             Ok(false) => self.resume_recording_after_policy(at_ms).await,
@@ -521,38 +467,36 @@ impl RecorderActor {
     }
 
     async fn suspend_recording_for_policy(&mut self, at_ms: i64) {
-        if self.stats.policy_suspended() {
-            return;
-        }
-        self.stats.set_policy_suspended(true);
         // Keep the users with an open writer so their writers can be reopened
         // the moment the channel is allowed again.
-        self.suspended_speakers
-            .seed(self.recordings.user_ssrc_pairs());
+        let Some(speakers) = self.policy.suspend(self.recordings.user_ssrc_pairs()) else {
+            return;
+        };
         self.metrics.record_recording_policy_suspension();
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
-            speakers = self.suspended_speakers.count(),
+            speakers,
             "recording suspended: channel is excluded by guild policy; the voice call stays up"
         );
         self.pause_all_for_departure(
-            self.channel_id,
-            Some(self.channel_id),
-            "channel_excluded",
-            false,
+            Departure {
+                from_channel_id: self.channel_id,
+                to_channel_id: Some(self.channel_id),
+                reason: "channel_excluded",
+                starts_grace: false,
+            },
             at_ms,
         )
         .await;
     }
 
     async fn resume_recording_after_policy(&mut self, at_ms: i64) {
-        if !self.stats.policy_suspended() {
+        let Some(speakers) = self.policy.allow() else {
             return;
-        }
-        self.stats.set_policy_suspended(false);
+        };
         let resumed_sessions = self.resume_users_in_channel(self.channel_id, at_ms).await;
-        let reopened_writers = self.reopen_suspended_speakers().await;
+        let reopened_writers = self.reopen_suspended_speakers(speakers).await;
         info!(
             guild_id = self.guild_id.get(),
             channel_id = self.channel_id.get(),
@@ -569,8 +513,7 @@ impl RecorderActor {
     /// so a speaker whose writer was closed by the suspension would otherwise
     /// stay unrecorded until their next transition - and the timeline would show
     /// synthetic silence for the whole remainder of that utterance.
-    async fn reopen_suspended_speakers(&mut self) -> usize {
-        let speakers = self.suspended_speakers.take_all();
+    async fn reopen_suspended_speakers(&mut self, speakers: Vec<(u64, u32)>) -> usize {
         if speakers.is_empty() {
             return 0;
         }
@@ -614,11 +557,7 @@ impl RecorderActor {
     /// termination: the signal it would wait for is only sent after the loop it
     /// is running inside returns.
     pub(super) async fn handle_deadlines(&mut self, now_ms: i64) -> Option<i64> {
-        if recoverable_disconnect_timed_out(
-            self.disconnected_at_ms,
-            self.recoverable_disconnect_deadline_ms,
-            now_ms,
-        ) {
+        if self.link.reconnect_deadline_passed(now_ms) {
             // The run loop must never block on the guild operation mutex: a
             // holder may be awaiting this actor's termination, which would
             // deadlock. If the lock is contended, keep the deadline state and
@@ -634,9 +573,7 @@ impl RecorderActor {
                 guild_id = self.guild_id.get(),
                 "voice recovery timed out; tearing down stale call"
             );
-            self.disconnected_at_ms = 0;
-            self.recoverable_disconnect_deadline_ms = 0;
-            self.planned_handoff = None;
+            self.link.torn_down();
             self.metrics.record_recovery_teardown();
             if report.manager_missing {
                 self.metrics.record_recovery_teardown_manager_missing();
@@ -667,29 +604,9 @@ impl RecorderActor {
     /// loop terminate. Pending-session expiry is handled by the global expiry
     /// task, so nothing needs this actor alive after the departure is recorded.
     pub(super) async fn handle_voice_session_ended(&mut self, at_ms: i64) {
-        if self.voice_session_ended {
-            return;
+        if let Some(departure) = self.link.end_session(self.channel_id) {
+            self.pause_all_for_departure(departure, at_ms).await;
         }
-        self.voice_session_ended = true;
-        if let Some(planned) = self.planned_handoff.take() {
-            self.pause_all_for_departure(
-                planned.from_channel_id,
-                planned.to_channel_id,
-                if planned.to_channel_id.is_some() {
-                    "handoff"
-                } else {
-                    "bot_departure"
-                },
-                false,
-                at_ms,
-            )
-            .await;
-        } else {
-            self.pause_all_for_departure(self.channel_id, None, "bot_departure", false, at_ms)
-                .await;
-        }
-        self.disconnected_at_ms = 0;
-        self.recoverable_disconnect_deadline_ms = 0;
     }
 
     /// Drops this guild's entry from the recorder registry so the sender is
@@ -701,7 +618,7 @@ impl RecorderActor {
     }
 
     pub(super) async fn reap_stale_users(&mut self) {
-        if self.disconnected_at_ms > 0 || !self.recordings.has_users() {
+        if self.link.is_reconnecting() || !self.recordings.has_users() {
             return;
         }
 
@@ -773,29 +690,9 @@ fn deadline_exit(connected_after: bool, now_ms: i64) -> Option<i64> {
     (!connected_after).then_some(now_ms)
 }
 
-fn recoverable_disconnect_timed_out(
-    disconnected_at_ms: i64,
-    deadline_ms: i64,
-    now_ms: i64,
-) -> bool {
-    disconnected_at_ms > 0 && deadline_ms > 0 && now_ms >= deadline_ms
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{deadline_exit, recoverable_disconnect_timed_out};
-
-    #[test]
-    fn reconnect_before_recovery_deadline_is_preserved() {
-        assert!(!recoverable_disconnect_timed_out(1_000, 61_000, 60_999));
-        assert!(!recoverable_disconnect_timed_out(0, 0, 61_000));
-    }
-
-    #[test]
-    fn recovery_deadline_fires_at_most_once_after_state_reset() {
-        assert!(recoverable_disconnect_timed_out(1_000, 61_000, 61_000));
-        assert!(!recoverable_disconnect_timed_out(0, 0, 61_001));
-    }
+    use super::deadline_exit;
 
     #[test]
     fn a_call_that_survives_teardown_keeps_the_actor_alive() {
