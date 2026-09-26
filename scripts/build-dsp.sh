@@ -40,9 +40,15 @@ if command -v rustup >/dev/null 2>&1; then
 fi
 
 pinned_bindgen="$(tr -d '[:space:]' <"${dsp_root}/wasm-bindgen-cli-version")"
-command -v wasm-bindgen >/dev/null 2>&1 \
+# `cargo install` puts the CLI in cargo's bin directory, which is not on PATH
+# for non-login shells such as the VPS deploy's SSH forced command.
+wasm_bindgen="$(command -v wasm-bindgen 2>/dev/null || true)"
+if [[ -z "${wasm_bindgen}" && -x "${CARGO_HOME:-${HOME}/.cargo}/bin/wasm-bindgen" ]]; then
+  wasm_bindgen="${CARGO_HOME:-${HOME}/.cargo}/bin/wasm-bindgen"
+fi
+[[ -n "${wasm_bindgen}" ]] \
   || fail "wasm-bindgen is not installed; run: cargo install wasm-bindgen-cli --version ${pinned_bindgen} --locked"
-installed_bindgen="$(wasm-bindgen --version 2>/dev/null | awk '{print $2}')"
+installed_bindgen="$("${wasm_bindgen}" --version 2>/dev/null | awk '{print $2}')"
 [[ "${installed_bindgen}" == "${pinned_bindgen}" ]] \
   || fail "wasm-bindgen ${installed_bindgen} does not match the pinned ${pinned_bindgen}; run: cargo install wasm-bindgen-cli --version ${pinned_bindgen} --locked"
 
@@ -78,7 +84,7 @@ installed_rolldown="$("${rolldown}" --version 2>/dev/null | grep -oE '[0-9]+\.[0
   # sakiot-dsp is a root workspace member, so output lands in the workspace
   # target directory. A relative CARGO_TARGET_DIR resolves from this
   # directory, as it does for cargo.
-  wasm-bindgen \
+  "${wasm_bindgen}" \
     "${CARGO_TARGET_DIR:-${repo_root}/target}/wasm32-unknown-unknown/release/sakiot_dsp.wasm" \
     --out-dir pkg \
     --target web
