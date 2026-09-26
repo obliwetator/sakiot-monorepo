@@ -204,8 +204,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: sakiot-dsp/package-lock.json
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Read pinned wasm-bindgen CLI version
         run: echo "WASM_BINDGEN_CLI_VERSION=$(tr -d '[:space:]' <wasm-bindgen-cli-version)" >>"${GITHUB_ENV}"
@@ -225,7 +225,7 @@ jobs:
         run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_CLI_VERSION}" --locked
 
       - name: Install browser harness dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Check formatting
         run: cargo fmt --check
@@ -236,26 +236,12 @@ jobs:
       - name: Test native DSP
         run: cargo test --locked
 
-      - name: Verify committed WASM/native parity
-        run: node web/verify-wasm.mjs
-
       - name: Build WASM and worklet
         working-directory: ${{ github.workspace }}
         run: scripts/build-dsp.sh
 
-      - name: Verify rebuilt WASM/native parity
+      - name: Verify WASM/native parity
         run: node web/verify-wasm.mjs
-
-      # rustc can emit byte-different but behavior-identical WASM on different
-      # build hosts. Both the committed and rebuilt modules are checked against
-      # native DSP above; keep exact stale checks for deterministic text assets.
-      - name: Check deterministic generated artifacts
-        run: |
-          git diff --exit-code -- \
-            pkg/sakiot_dsp.js \
-            pkg/sakiot_dsp.d.ts \
-            pkg/sakiot_dsp_bg.wasm.d.ts \
-            pkg/sakiot-dsp-worklet.bundle.js
 
   api-contract:
     needs: scope
@@ -310,6 +296,32 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      # The frontend scripts compile sakiot-dsp to WASM before testing or
+      # bundling; pkg/ is build output, not committed.
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          target: wasm32-unknown-unknown
+          cache-workspaces: sakiot-dsp
+          cache-save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Read pinned wasm-bindgen CLI version
+        run: echo "WASM_BINDGEN_CLI_VERSION=$(tr -d '[:space:]' <../sakiot-dsp/wasm-bindgen-cli-version)" >>"${GITHUB_ENV}"
+
+      - name: Cache wasm-bindgen CLI
+        id: cache-wasm-bindgen
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/bin/wasm-bindgen-test-runner
+            ~/.cargo/bin/wasm2es6js
+          key: wasm-bindgen-cli-${{ runner.os }}-${{ env.WASM_BINDGEN_CLI_VERSION }}
+
+      - name: Install wasm-bindgen CLI
+        if: steps.cache-wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_CLI_VERSION}" --locked
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Test

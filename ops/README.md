@@ -18,7 +18,18 @@ migrations, service changes, and health checks.
 
 Install required tools: Git, Rust, Bun, `protoc`, OpenSSL development headers,
 FFmpeg, `audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rsync`,
-and `sudo`. Backup and provisioning scripts also use `flock`, `jq`, and
+and `sudo`. The frontend build compiles `sakiot-dsp` to WASM, so the `sakiot`
+user also needs the `wasm32-unknown-unknown` target and the pinned
+`wasm-bindgen` CLI:
+
+```sh
+sudo -u sakiot bash -lc 'cd /path/to/sakiot-monorepo \
+  && rustup target add wasm32-unknown-unknown \
+  && cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked'
+```
+
+Re-run the `cargo install` line whenever `sakiot-dsp/wasm-bindgen-cli-version`
+changes; `scripts/build-dsp.sh` fails the frontend build on a version mismatch. Backup and provisioning scripts also use `flock`, `jq`, and
 Python 3. `grpcurl` is useful for manual bot diagnostics; the Rust deploy engine
 uses its own gRPC client.
 

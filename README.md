@@ -28,8 +28,8 @@ gRPC and OpenAPI contracts, authentication, and the media lifecycle - see
 
 One command brings up a local debug environment for `web-server` and the
 frontend (Docker, FFmpeg—including `ffprobe` and the `rubberband` audio
-filter—`audiowaveform`, Cargo Watch, Bun, and `rsync` for fixture transfers are
-required):
+filter—`audiowaveform`, Cargo Watch, Bun, the pinned `wasm-bindgen` CLI for the
+DSP WASM build, and `rsync` for fixture transfers are required):
 
 ```sh
 cargo dev up
@@ -162,6 +162,14 @@ cd sakiot-stage
 bun install
 bun run test
 bun run build
+```
+
+The `dev`, `test`, `typecheck`, and `build:bundle` scripts first compile
+`sakiot-dsp` to WASM into the untracked `sakiot-dsp/pkg/`. That needs the
+pinned `wasm-bindgen` CLI once per machine:
+
+```sh
+cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked
 ```
 
 ## Git Hooks

@@ -135,19 +135,23 @@ cargo run --manifest-path sakiot-dsp/Cargo.toml --example render_clip_raw -- \
 
 ## WASM assets
 
-`pkg/` is committed so the frontend, CI, and the deploy engine can build
-without a WASM toolchain. Regenerate it with the repository script after any
-change to the DSP sources or to the pinned tooling; it enforces the pinned
+`pkg/` is build output and is not committed. `sakiot-stage`'s `dev`, `test`,
+`typecheck`, and `build:bundle` scripts run the repository build script first,
+so local development, CI, and the deploy engine on the VPS all compile the WASM
+from the DSP sources in the same checkout. The script enforces the pinned
 `wasm-bindgen` and `rolldown` versions and always builds from `sakiot-dsp`, so
-the output does not depend on the caller's working directory. From the
-repository root:
+the output does not depend on the caller's working directory.
+
+Every machine that builds the frontend needs the WASM toolchain once. The
+`wasm32-unknown-unknown` target is listed in `rust-toolchain.toml`, so rustup
+installs it with the pinned compiler; add it by hand only if yours predates
+that. From the repository root:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked
-(cd sakiot-dsp && npm ci)
+(cd sakiot-stage && bun install)
 scripts/build-dsp.sh
-(cd sakiot-dsp && node web/verify-wasm.mjs)
 ```
 
 `sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
@@ -155,21 +159,20 @@ bundled `pkg/sakiot-dsp-worklet.bundle.js`. The worker owns random-access
 preprocessing and exact waveform rendering; the AudioWorklet is the production
 real-time boundary for the downstream chain.
 
-The script is the only place that names the build steps: `npm run wasm:build`
-delegates to it, and the CI `dsp` job calls it directly.
+The script is the only place that names the build steps: `bun run wasm:build`
+here and `bun run build:dsp` in `sakiot-stage` delegate to it, and the CI `dsp`
+job calls it directly.
 
 To verify the generated WASM processor against the native processor with the
-version-matched `wasm-bindgen` CLI and Node.js (from `sakiot-dsp/`):
+version-matched `wasm-bindgen` CLI and Node.js:
 
 ```sh
 scripts/build-dsp.sh
 (cd sakiot-dsp && node web/verify-wasm.mjs)
 ```
 
-CI runs the parity verifier once against the committed browser asset and again
-after rebuilding it. The generated JavaScript, TypeScript declarations, and
-worklet bundle must also remain byte-for-byte clean. The compiled WASM module
-is not byte-compared across build hosts because rustc can produce different
+CI builds the WASM and runs the parity verifier on it. The compiled module is
+not byte-compared across build hosts because rustc can produce different
 binary encodings with sample-identical behavior; its native parity is the
 release gate.
 
@@ -184,9 +187,9 @@ serves its own Tone dependency, so it does not rely on frontend packages.
 
 ```sh
 cd sakiot-dsp
-npm install
-npx playwright install chromium
-npm run browser:measure
+bun install
+bunx playwright install chromium
+bun run browser:measure
 ```
 
 On Linux, Chromium's normal system libraries must also be present. This

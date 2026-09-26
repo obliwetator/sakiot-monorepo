@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Regenerate the shared DSP browser artifacts in sakiot-dsp/pkg/.
+# Build the shared DSP browser artifacts into sakiot-dsp/pkg/.
 #
-# pkg/ is committed so the frontend, CI, and the deploy engine build without a
-# WASM toolchain; run this script after changing the DSP sources or the pinned
-# tooling, then commit the result. The CI `dsp` job calls it to rebuild and
-# byte-compare the deterministic outputs against the committed ones, and
-# `npm run wasm:build` in sakiot-dsp delegates to it.
+# pkg/ is build output and is not committed. sakiot-stage's dev, test,
+# typecheck, and bundle scripts call this first, so every frontend build -
+# local, CI, and the deploy engine on the VPS - compiles the WASM from the
+# DSP sources in the same checkout. The CI `dsp` job also runs it before
+# verifying WASM/native parity, and `bun run wasm:build` in sakiot-dsp
+# delegates to it.
 #
 # Keeping the whole build here means the pinned wasm-bindgen CLI version and
 # the bundler are only ever named in one place. Build order matters: the
 # worklet bundle inlines pkg/sakiot_dsp.js, so wasm-bindgen must run first.
 #
-# Requirements: the wasm32-unknown-unknown target, the wasm-bindgen CLI at the
-# version in sakiot-dsp/wasm-bindgen-cli-version, and rolldown (installed by
-# `npm ci` in sakiot-dsp or `bun install` in sakiot-stage).
+# Requirements: the wasm32-unknown-unknown target (listed in
+# rust-toolchain.toml), the wasm-bindgen CLI at the version in
+# sakiot-dsp/wasm-bindgen-cli-version, and rolldown (installed by
+# `bun install` in sakiot-stage or sakiot-dsp).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,9 +46,9 @@ installed_bindgen="$(wasm-bindgen --version 2>/dev/null | awk '{print $2}')"
 [[ "${installed_bindgen}" == "${pinned_bindgen}" ]] \
   || fail "wasm-bindgen ${installed_bindgen} does not match the pinned ${pinned_bindgen}; run: cargo install wasm-bindgen-cli --version ${pinned_bindgen} --locked"
 
-# sakiot-dsp pins rolldown in its own package.json; sakiot-stage resolves the
-# same version through Vite. Either install is acceptable as long as the
-# version matches, which keeps the bundle byte-identical from both trees.
+# sakiot-dsp and sakiot-stage both pin rolldown. Either install is acceptable
+# as long as the version matches, which keeps the bundle byte-identical from
+# both trees.
 pinned_rolldown="$(sed -n 's/.*"rolldown": *"\([^"]*\)".*/\1/p' "${dsp_root}/package.json" | head -n1)"
 rolldown=""
 for candidate in \
@@ -58,10 +60,10 @@ for candidate in \
   fi
 done
 [[ -n "${rolldown}" ]] \
-  || fail "rolldown is not installed; run 'npm ci' in sakiot-dsp or 'bun install' in sakiot-stage"
+  || fail "rolldown is not installed; run 'bun install' in sakiot-stage or sakiot-dsp"
 installed_rolldown="$("${rolldown}" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1 || true)"
 [[ -z "${pinned_rolldown}" || "${installed_rolldown}" == "${pinned_rolldown}" ]] \
-  || fail "rolldown ${installed_rolldown} does not match the pinned ${pinned_rolldown}; run 'npm ci' in sakiot-dsp"
+  || fail "rolldown ${installed_rolldown} does not match the pinned ${pinned_rolldown}; run 'bun install' in sakiot-stage"
 
 # Every step runs from sakiot-dsp: rustup picks the pinned toolchain from the
 # repository's rust-toolchain.toml, and rolldown writes `//#region <path>`
@@ -73,7 +75,7 @@ installed_rolldown="$("${rolldown}" --version 2>/dev/null | grep -oE '[0-9]+\.[0
   cargo build --locked --release --target wasm32-unknown-unknown --features wasm
 
   wasm-bindgen \
-    target/wasm32-unknown-unknown/release/sakiot_dsp.wasm \
+    "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/release/sakiot_dsp.wasm" \
     --out-dir pkg \
     --target web
 
