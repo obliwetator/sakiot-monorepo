@@ -1058,6 +1058,17 @@ mod tests {
     #[tokio::test]
     async fn live_hls_output_covers_a_source_that_grows_while_ffmpeg_reads_it()
     -> Result<(), Box<dyn std::error::Error>> {
+        // CI runners have no ffmpeg; skip there like the other media-tool tests.
+        let ffmpeg_available = Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .is_ok_and(|status| status.success());
+        if !ffmpeg_available {
+            return Ok(());
+        }
         let dir =
             std::env::temp_dir().join(format!("sakiot-live-test-e2e-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&dir).await?;
