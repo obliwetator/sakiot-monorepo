@@ -401,7 +401,6 @@ pub async fn play_clip(
 use crate::audio::StartEnd;
 use chrono::Datelike;
 use std::path::Path;
-use std::process::Stdio;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct CreateClipResponse {
@@ -416,7 +415,7 @@ async fn crop_ffmpeg(
     end: f32,
     file_path: &str,
     target_path: &str,
-) -> Result<tokio::process::Child, AppError> {
+) -> Result<(), AppError> {
     let duration = end - start;
     let mut command = tokio::process::Command::new("ffmpeg");
     command
@@ -430,14 +429,12 @@ async fn crop_ffmpeg(
         // copy the codec
         .args(["-c:a", "copy"])
         // output file
-        .arg(target_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    command
-        .spawn()
-        .map_err(|e| AppError::FfmpegError(e.to_string()))
+        .arg(target_path);
+    if let Err(error) = crate::ffmpeg::run_ffmpeg(command).await {
+        error!("FFMPEG error: {error}");
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Inclusive clip length bounds, shared by the pre-flight range validation.
@@ -616,17 +613,7 @@ pub async fn create_clip(
 
     tokio::fs::create_dir_all(&target_dir).await?;
 
-    let child = crop_ffmpeg(start, end, src_path.as_str(), &full_save_path).await?;
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| AppError::FfmpegError(e.to_string()))?;
-
-    if !output.status.success() {
-        let err_msg = String::from_utf8_lossy(&output.stderr);
-        error!("FFMPEG error: {}", err_msg);
-        return Err(AppError::FfmpegError(err_msg.to_string()));
-    }
+    crop_ffmpeg(start, end, src_path.as_str(), &full_save_path).await?;
 
     let size = tokio::fs::metadata(&full_save_path)
         .await

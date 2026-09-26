@@ -24,60 +24,23 @@ pub(super) async fn render_compose_shared(
         .args(["-c:a", "libopus", "-b:a", "96k"])
         .args(["-progress", "pipe:2", "-nostats"])
         .arg(output);
-    run_ffmpeg_with_progress(command, expected_total_ms, progress, cache_key).await
-}
-
-pub(super) async fn run_ffmpeg_with_progress(
-    command: tokio::process::Command,
-    expected_total_ms: i64,
-    progress: &web::Data<WaveformProgressContainer>,
-    cache_key: &str,
-) -> Result<(), AppError> {
-    run_ffmpeg(command, Some((expected_total_ms, progress, cache_key))).await
-}
-
-async fn run_ffmpeg(
-    mut command: tokio::process::Command,
-    progress_info: Option<(i64, &web::Data<WaveformProgressContainer>, &str)>,
-) -> Result<(), AppError> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let mut child = command
-        .spawn()
-        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| AppError::FfmpegError("FFmpeg stderr pipe unavailable".into()))?;
-    let mut lines = BufReader::new(stderr).lines();
-    let mut error_output = Vec::new();
-    while let Some(line) = lines.next_line().await.map_err(AppError::IoError)? {
-        if let Some((expected_total_ms, progress, cache_key)) = progress_info
-            && let Some(value) = compose_progress_percent(&line, expected_total_ms)
-        {
+    let progress_sink = progress.clone();
+    let cache_key = cache_key.to_owned();
+    crate::ffmpeg::run_ffmpeg_with_progress(command, move |elapsed_us| {
+        let progress = progress_sink.clone();
+        let cache_key = cache_key.clone();
+        async move {
+            let Some(value) = compose_progress_percent(elapsed_us, expected_total_ms) else {
+                return;
+            };
             let mut values = progress.0.write().await;
-            let current = values.entry(cache_key.to_owned()).or_insert(0);
+            let current = values.entry(cache_key).or_insert(0);
             if *current >= 0 && value > *current {
                 *current = value;
             }
-        } else if !is_ffmpeg_progress_line(&line) && error_output.len() < MAX_FFMPEG_ERROR_BYTES {
-            let remaining = MAX_FFMPEG_ERROR_BYTES - error_output.len();
-            error_output.extend_from_slice(&line.as_bytes()[..line.len().min(remaining)]);
-            error_output.push(b'\n');
         }
-    }
-
-    let status = child.wait().await.map_err(AppError::IoError)?;
-    if !status.success() {
-        return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&error_output).into_owned(),
-        ));
-    }
-    Ok(())
+    })
+    .await
 }
 
 pub(super) async fn prepare_shared_dsp_segments(
@@ -129,7 +92,7 @@ async fn decode_segment_to_pcm(segment: &SegmentRender, path: &Path) -> Result<(
             "f32le",
         ])
         .arg(path);
-    run_ffmpeg(command, None).await
+    crate::ffmpeg::run_ffmpeg(command).await
 }
 
 /// Seekable PCM makes reverse bounded as well: read backwards by block and
@@ -264,34 +227,13 @@ pub(super) fn db_to_linear(db: f32) -> f64 {
     10f64.powf(f64::from(db) / 20.0)
 }
 
-pub(super) fn compose_progress_percent(line: &str, total_ms: i64) -> Option<i16> {
-    let elapsed_us = line.strip_prefix("out_time_us=")?.parse::<u64>().ok()?;
+pub(super) fn compose_progress_percent(elapsed_us: u64, total_ms: i64) -> Option<i16> {
     let total_ms = u64::try_from(total_ms).ok()?.max(1);
     let progress = (elapsed_us / 1_000)
         .saturating_mul(99)
         .checked_div(total_ms)?
         .clamp(1, 99);
     i16::try_from(progress).ok()
-}
-
-pub(super) fn is_ffmpeg_progress_line(line: &str) -> bool {
-    matches!(
-        line.split_once('=').map(|(key, _)| key),
-        Some(
-            "bitrate"
-                | "drop_frames"
-                | "dup_frames"
-                | "fps"
-                | "frame"
-                | "out_time"
-                | "out_time_ms"
-                | "out_time_us"
-                | "progress"
-                | "speed"
-                | "stream_0_0_q"
-                | "total_size"
-        )
-    )
 }
 
 pub(super) async fn probe_duration(path: &Path) -> Result<f64, AppError> {

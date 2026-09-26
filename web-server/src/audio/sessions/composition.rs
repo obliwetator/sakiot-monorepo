@@ -90,11 +90,7 @@ pub(super) async fn compose_session_inner(
     command
         .args(["-filter_complex", &filter, "-map", output_label])
         .args(["-c:a", "libopus", "-b:a", "96k"])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .arg(output);
 
     if track_original_timeline {
         // silenceremove compresses output timestamps, so its out_time_us cannot
@@ -106,40 +102,29 @@ pub(super) async fn compose_session_inner(
         command.args(["-progress", "pipe:2", "-nostats"]);
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| AppError::FfmpegError("FFmpeg stderr pipe unavailable".into()))?;
-    let mut lines = BufReader::new(stderr).lines();
-    let mut error_output = Vec::new();
-    while let Some(line) = lines.next_line().await.map_err(AppError::IoError)? {
-        if let Some(progress) = &progress
-            && let Some(value) = composition_progress_percent(
-                &line,
-                selected_end.saturating_sub(selected_start),
-                progress.completed,
-            )
-        {
-            let mut values = progress.progress.0.write().await;
-            let current = values.entry(progress.cache_key.clone()).or_insert(0);
-            if *current >= 0 && value > *current {
-                *current = value;
+    if let Some(progress) = progress.as_ref() {
+        let duration_ms = selected_end.saturating_sub(selected_start);
+        let progress_map = progress.progress.clone();
+        let cache_key = progress.cache_key.clone();
+        let completed = progress.completed;
+        crate::ffmpeg::run_ffmpeg_with_progress(command, move |elapsed_us| {
+            let progress_map = progress_map.clone();
+            let cache_key = cache_key.clone();
+            async move {
+                let Some(value) = composition_progress_percent(elapsed_us, duration_ms, completed)
+                else {
+                    return;
+                };
+                let mut values = progress_map.0.write().await;
+                let current = values.entry(cache_key).or_insert(0);
+                if *current >= 0 && value > *current {
+                    *current = value;
+                }
             }
-        } else if !is_ffmpeg_progress_line(&line) && error_output.len() < 4_096 {
-            let remaining = 4_096 - error_output.len();
-            error_output.extend_from_slice(&line.as_bytes()[..line.len().min(remaining)]);
-            error_output.push(b'\n');
-        }
-    }
-
-    let status = child.wait().await.map_err(AppError::IoError)?;
-    if !status.success() {
-        return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&error_output).into_owned(),
-        ));
+        })
+        .await?;
+    } else {
+        crate::ffmpeg::run_ffmpeg(command).await?;
     }
     if let Some(progress) = progress {
         progress
@@ -153,11 +138,10 @@ pub(super) async fn compose_session_inner(
 }
 
 pub(super) fn composition_progress_percent(
-    line: &str,
+    elapsed_us: u64,
     duration_ms: i64,
     completed: i16,
 ) -> Option<i16> {
-    let elapsed_us = line.strip_prefix("out_time_us=")?.parse::<u64>().ok()?;
     let duration_ms = u64::try_from(duration_ms).ok()?.max(1);
     let completed = u64::try_from(completed).ok()?.clamp(2, 99);
     let elapsed_ms = elapsed_us / 1_000;
@@ -166,26 +150,6 @@ pub(super) fn composition_progress_percent(
         .checked_div(duration_ms)?
         .clamp(1, completed - 1);
     i16::try_from(progress).ok()
-}
-
-pub(super) fn is_ffmpeg_progress_line(line: &str) -> bool {
-    matches!(
-        line.split_once('=').map(|(key, _)| key),
-        Some(
-            "bitrate"
-                | "drop_frames"
-                | "dup_frames"
-                | "fps"
-                | "frame"
-                | "out_time"
-                | "out_time_ms"
-                | "out_time_us"
-                | "progress"
-                | "speed"
-                | "stream_0_0_q"
-                | "total_size"
-        )
-    )
 }
 
 pub(super) async fn composition_plan(

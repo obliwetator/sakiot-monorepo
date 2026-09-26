@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, route, web};
@@ -9,7 +8,6 @@ use chrono::Datelike;
 use sakiot_paths::RecordingKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;

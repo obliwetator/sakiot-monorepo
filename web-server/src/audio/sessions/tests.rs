@@ -42,15 +42,11 @@ fn hls_segment_validation_blocks_traversal_and_reserved_routes() {
 #[test]
 fn maps_ffmpeg_output_time_into_composition_progress() {
     assert_eq!(
-        composition_progress_percent("out_time_us=5000000", 10_000, 85),
+        composition_progress_percent(5_000_000, 10_000, 85),
         Some(42)
     );
     assert_eq!(
-        composition_progress_percent("out_time_us=10000000", 10_000, 85),
+        composition_progress_percent(10_000_000, 10_000, 85),
         Some(84)
-    );
-    assert_eq!(
-        composition_progress_percent("progress=end", 10_000, 85),
-        None
     );
 }

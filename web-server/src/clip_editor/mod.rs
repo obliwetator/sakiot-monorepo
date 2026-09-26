@@ -5,7 +5,6 @@ use std::{fs::File, io::BufWriter, io::Write};
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -25,7 +24,6 @@ const NORMALIZED_MIN: f32 = 0.0;
 const NORMALIZED_MAX: f32 = 1.0;
 const DELAY_MAX_SECONDS: f32 = 5.0;
 const SAMPLE_RATE: f64 = 48_000.0;
-const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
 // Absolute safety caps the adjustable slider limits are clamped to. Above
 // these the renderers either overflow f32 to INF/NaN (gain past ~±770 dB) or
 // exceed the validated pitch/rate DSP parameter ranges.

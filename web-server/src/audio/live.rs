@@ -452,7 +452,7 @@ async fn spawn_job(
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(AppError::IoError)?;
+            .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
             AppError::IoError(std::io::Error::other("ffmpeg stdin was not piped"))
@@ -478,7 +478,7 @@ async fn spawn_job(
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(AppError::IoError)?
+            .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?
     };
     drain_child_stderr(&mut child, id.clone());
 

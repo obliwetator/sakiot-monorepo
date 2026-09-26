@@ -1,5 +1,3 @@
-use std::process::{Output, Stdio};
-
 use actix_web::{HttpRequest, HttpResponse, post, web};
 use sqlx::{Pool, Postgres};
 use tracing::info;
@@ -14,28 +12,11 @@ use super::util::{
     file_exists, get_file_path_root, handle_idempotency_key, is_stale, is_valid_file_segment,
 };
 
-const MAX_FFMPEG_ERROR_BYTES: usize = 4096;
-
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct RemoveSilenceResponse {
     pub url: String,
     pub message: &'static str,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum SilenceJobFailure {
-    Ffmpeg(String),
-}
-
-impl SilenceJobFailure {
-    fn into_app_error(self) -> AppError {
-        match self {
-            Self::Ffmpeg(message) => AppError::FfmpegError(message),
-        }
-    }
-}
-
-type SilenceJobResult = Result<(), SilenceJobFailure>;
 
 /// Kept as a zero-sized compatibility app-data type for integration tests and
 /// overlapping releases. Durable silence work now lives in `media_jobs`.
@@ -49,20 +30,6 @@ fn recording_fingerprint(path: &(i64, i64, i32, i32, String)) -> String {
         "{}/{}/{:04}/{:02}/{}",
         path.0, path.1, path.2, path.3, path.4
     )
-}
-
-fn ffmpeg_result(output: &Output) -> SilenceJobResult {
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = &output.stderr[..output.stderr.len().min(MAX_FFMPEG_ERROR_BYTES)];
-    let message = String::from_utf8_lossy(stderr).trim().to_owned();
-    Err(SilenceJobFailure::Ffmpeg(if message.is_empty() {
-        format!("ffmpeg exited with {}", output.status)
-    } else {
-        message
-    }))
 }
 
 #[utoipa::path(
@@ -187,24 +154,18 @@ pub(crate) async fn run_recording_silence_job(
         .await?;
     tokio::fs::create_dir_all(&output_dir).await?;
     let temporary = output.with_extension(format!("{job_id}.{attempt_token}.tmp.ogg"));
-    let command_output = tokio::process::Command::new("ffmpeg")
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         .arg("-y")
         .args(["-i", &source])
         .args([
             "-af",
             "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB",
         ])
-        .arg(&temporary)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|error| AppError::FfmpegError(format!("could not start ffmpeg: {error}")))?;
-    if let Err(failure) = ffmpeg_result(&command_output) {
+        .arg(&temporary);
+    if let Err(error) = crate::ffmpeg::run_ffmpeg(command).await {
         let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(failure.into_app_error());
+        return Err(error);
     }
     let mut tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
     tokio::fs::rename(&temporary, &output).await?;
@@ -218,36 +179,4 @@ pub(crate) async fn run_recording_silence_job(
     let url = format!("/api/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}?silence=true");
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::ExitStatus;
-
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-        ExitStatus::from_raw(code as u32)
-    }
-
-    #[test]
-    fn ffmpeg_nonzero_exit_is_failure() {
-        let output = Output {
-            status: exit_status(1),
-            stdout: Vec::new(),
-            stderr: b"invalid input".to_vec(),
-        };
-
-        assert_eq!(
-            ffmpeg_result(&output),
-            Err(SilenceJobFailure::Ffmpeg("invalid input".into()))
-        );
-    }
 }

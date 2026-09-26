@@ -177,15 +177,8 @@ async fn renders_real_clip_through_shared_server_pipeline() {
 
 #[test]
 fn maps_ffmpeg_output_time_into_composition_progress() {
-    assert_eq!(
-        compose_progress_percent("out_time_us=5000000", 10_000),
-        Some(49)
-    );
-    assert_eq!(
-        compose_progress_percent("out_time_us=10000000", 10_000),
-        Some(99)
-    );
-    assert_eq!(compose_progress_percent("progress=end", 10_000), None);
+    assert_eq!(compose_progress_percent(5_000_000, 10_000), Some(49));
+    assert_eq!(compose_progress_percent(10_000_000, 10_000), Some(99));
 }
 
 #[test]

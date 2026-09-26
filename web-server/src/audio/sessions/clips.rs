@@ -131,7 +131,8 @@ pub(super) async fn crop_silence_free_session(
         ));
     }
 
-    let result = tokio::process::Command::new("ffmpeg")
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
         .arg("-y")
         .args([
             "-hide_banner",
@@ -144,18 +145,10 @@ pub(super) async fn crop_silence_free_session(
         .arg(source)
         .args(["-t", &(end - start).to_string()])
         .args(["-map", "0:a:0", "-c:a", "libopus", "-b:a", "96k"])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
-    if !result.status.success() {
+        .arg(output);
+    if let Err(error) = crate::ffmpeg::run_ffmpeg(command).await {
         let _ = tokio::fs::remove_file(output).await;
-        return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&result.stderr).into_owned(),
-        ));
+        return Err(error);
     }
     Ok(())
 }

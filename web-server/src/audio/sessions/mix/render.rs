@@ -1,21 +1,53 @@
 //! Channel-mix job lifecycle, media materialization, and FFmpeg rendering.
 
 use std::collections::HashSet;
-use std::path::Path;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use actix_web::web;
 use sqlx::{Pool, Postgres};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
 
-use super::super::{is_ffmpeg_progress_line, milliseconds_as_seconds};
+use super::super::milliseconds_as_seconds;
 use super::cache::MixCacheMetadata;
 use super::{MIX_FINGERPRINT, MIX_OUTPUT, MIX_SETTINGS, MixJob, MixPlan};
+
+/// Rollback ledger for the three-file mix cache publication.
+///
+/// Every temp file starts in `pending`. Each successful rename moves it to
+/// `published`, so a failure at any step removes exactly what is on disk at
+/// that moment: the not-yet-renamed temporaries plus the files already
+/// published under their final names.
+#[derive(Default)]
+struct PublicationGuard {
+    pending: Vec<PathBuf>,
+    published: Vec<PathBuf>,
+}
+
+impl PublicationGuard {
+    fn track(&mut self, temporary: &Path) {
+        self.pending.push(temporary.to_path_buf());
+    }
+
+    /// Rename a tracked temp file to its final name. On success the final
+    /// path becomes a rollback target.
+    async fn publish(&mut self, temporary: &Path, destination: PathBuf) -> Result<(), AppError> {
+        tokio::fs::rename(temporary, &destination).await?;
+        self.pending.retain(|path| path.as_path() != temporary);
+        self.published.push(destination);
+        Ok(())
+    }
+
+    /// Best-effort removal of everything this publication still owns.
+    async fn rollback(&self) {
+        for path in self.pending.iter().chain(self.published.iter()) {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+}
 
 pub(super) async fn render_mix<'a>(
     pool: &web::Data<Pool<Postgres>>,
@@ -48,63 +80,54 @@ pub(super) async fn render_mix<'a>(
     let settings_temporary = plan
         .cache_dir
         .join(format!(".settings.{}.tmp", uuid::Uuid::new_v4()));
-    let result = run_mix_ffmpeg(plan, job, &temporary).await;
-    if let Err(error) = result {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error);
+
+    let mut publication = PublicationGuard::default();
+    publication.track(&temporary);
+    publication.track(&fingerprint_temporary);
+    publication.track(&settings_temporary);
+
+    // Everything up to and including the renames rolls the filesystem back on
+    // failure; `begin_publication` is inside the scope because a failed fence
+    // claim must not leave the temp files behind.
+    let result = async {
+        run_mix_ffmpeg(plan, job, &temporary).await?;
+        tokio::fs::write(&fingerprint_temporary, &plan.fingerprint).await?;
+        let metadata = MixCacheMetadata {
+            source_fingerprint: plan.source_fingerprint.clone(),
+            fingerprint: plan.fingerprint.clone(),
+            settings: plan.settings.clone(),
+        };
+        let settings = serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?;
+        tokio::fs::write(&settings_temporary, &settings).await?;
+        let publication_tx = if let Some((fence_pool, job_id, attempt_token)) = fence {
+            Some(crate::media_jobs::begin_publication(fence_pool, job_id, attempt_token).await?)
+        } else {
+            None
+        };
+        publication
+            .publish(&temporary, plan.cache_dir.join(MIX_OUTPUT))
+            .await?;
+        publication
+            .publish(&fingerprint_temporary, plan.cache_dir.join(MIX_FINGERPRINT))
+            .await?;
+        publication
+            .publish(&settings_temporary, plan.cache_dir.join(MIX_SETTINGS))
+            .await?;
+        Ok::<_, AppError>(publication_tx)
     }
-    if let Err(error) = tokio::fs::write(&fingerprint_temporary, &plan.fingerprint).await {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error.into());
-    }
-    let metadata = MixCacheMetadata {
-        source_fingerprint: plan.source_fingerprint.clone(),
-        fingerprint: plan.fingerprint.clone(),
-        settings: plan.settings.clone(),
+    .await;
+
+    let publication_tx = match result {
+        Ok(publication_tx) => publication_tx,
+        Err(error) => {
+            publication.rollback().await;
+            return Err(error);
+        }
     };
-    if let Err(error) = tokio::fs::write(
-        &settings_temporary,
-        serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?,
-    )
-    .await
-    {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error.into());
-    }
-    let publication = if let Some((fence_pool, job_id, attempt_token)) = fence {
-        Some(crate::media_jobs::begin_publication(fence_pool, job_id, attempt_token).await?)
-    } else {
-        None
-    };
-    if let Err(error) = tokio::fs::rename(&temporary, plan.cache_dir.join(MIX_OUTPUT)).await {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error.into());
-    }
-    if let Err(error) =
-        tokio::fs::rename(&fingerprint_temporary, plan.cache_dir.join(MIX_FINGERPRINT)).await
-    {
-        let _ = tokio::fs::remove_file(plan.cache_dir.join(MIX_OUTPUT)).await;
-        let _ = tokio::fs::remove_file(&fingerprint_temporary).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error.into());
-    }
-    if let Err(error) =
-        tokio::fs::rename(&settings_temporary, plan.cache_dir.join(MIX_SETTINGS)).await
-    {
-        let _ = tokio::fs::remove_file(plan.cache_dir.join(MIX_OUTPUT)).await;
-        let _ = tokio::fs::remove_file(plan.cache_dir.join(MIX_FINGERPRINT)).await;
-        let _ = tokio::fs::remove_file(&settings_temporary).await;
-        return Err(error.into());
-    }
-    if let (Some(tx), Some((_, job_id, attempt_token))) = (publication, fence) {
+
+    // The cache files are in place; a failure completing the job record must
+    // not remove them - the next attempt would have to re-render the mix.
+    if let (Some(tx), Some((_, job_id, attempt_token))) = (publication_tx, fence) {
         let url = format!(
             "/api/audio/sessions/{}/channel-mix/media?scope={}",
             plan.session_id,
@@ -148,44 +171,22 @@ pub(super) async fn run_mix_ffmpeg(
             "pipe:2",
             "-nostats",
         ])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .map_err(|error| crate::ffmpeg::tool_error("ffmpeg", error))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| AppError::FfmpegError("FFmpeg stderr pipe unavailable".into()))?;
-    let mut lines = BufReader::new(stderr).lines();
-    let mut error_output = Vec::new();
-    while let Some(line) = lines.next_line().await? {
-        if let Some(value) = line.strip_prefix("out_time_us=")
-            && let Ok(elapsed_us) = value.parse::<u64>()
-        {
+        .arg(output);
+    let duration_ms = plan.duration_ms.max(1) as u64;
+    let job = Arc::clone(job);
+    crate::ffmpeg::run_ffmpeg_with_progress(command, move |elapsed_us| {
+        let job = Arc::clone(&job);
+        async move {
             let progress = elapsed_us
                 .saturating_mul(99)
-                .checked_div((plan.duration_ms.max(1) as u64).saturating_mul(1_000))
+                .checked_div(duration_ms.saturating_mul(1_000))
                 .unwrap_or(0)
                 .clamp(1, 99) as i16;
             let mut state = job.lock().await;
             state.progress = state.progress.max(progress);
-        } else if !is_ffmpeg_progress_line(&line) && error_output.len() < 4_096 {
-            let remaining = 4_096 - error_output.len();
-            error_output.extend_from_slice(&line.as_bytes()[..line.len().min(remaining)]);
-            error_output.push(b'\n');
         }
-    }
-    let status = child.wait().await?;
-    if !status.success() {
-        return Err(AppError::FfmpegError(
-            String::from_utf8_lossy(&error_output).into_owned(),
-        ));
-    }
-    Ok(())
+    })
+    .await
 }
 
 pub(super) fn build_mix_filter(plan: &MixPlan) -> String {
