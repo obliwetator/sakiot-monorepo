@@ -3,7 +3,7 @@ use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
 use web_server::http_metrics::HttpMetrics;
-use web_server::telemetry::init_telemetry;
+use web_server::telemetry::{init_stderr_logging, init_telemetry};
 
 use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
@@ -117,6 +117,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .first()
         .is_some_and(|argument| argument == "compose-worker")
     {
+        // Without a subscriber the child's failure reasons were silently dropped.
+        init_stderr_logging();
         let result = web_server::clip_editor::run_compose_worker_command(&arguments[1..]).await;
         if let Err(error) = &result {
             tracing::error!(?error, "composition child stopped");

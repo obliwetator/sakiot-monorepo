@@ -1,7 +1,7 @@
 use opentelemetry_sdk::Resource;
 use std::env;
 use std::io::Write;
-use tracing_subscriber::{Layer, Registry, layer::SubscriberExt};
+use tracing_subscriber::{Registry, filter::LevelFilter, layer::SubscriberExt};
 
 pub const SERVICE_NAME: &str = "web_server";
 
@@ -21,6 +21,16 @@ fn service_instance_id(port: u16) -> String {
         })
 }
 
+/// Stderr-only logging for short-lived child processes (and the fallback when
+/// OTLP export cannot start). Children inherit the service's stderr, so their
+/// errors land in the same journal as the parent's.
+pub fn init_stderr_logging() {
+    let subscriber = Registry::default()
+        .with(LevelFilter::INFO)
+        .with(tracing_subscriber::fmt::layer().pretty());
+    let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
 pub fn init_telemetry(port: u16) {
     let otlp_exporter = match opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
@@ -31,11 +41,7 @@ pub fn init_telemetry(port: u16) {
             warn_startup(&format!(
                 "failed to create OTLP span exporter, traces disabled: {e}"
             ));
-            let fmt_layer = tracing_subscriber::fmt::layer()
-                .pretty()
-                .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-            let subscriber = Registry::default().with(fmt_layer);
-            let _ = tracing::subscriber::set_global_default(subscriber);
+            init_stderr_logging();
             return;
         }
     };
@@ -49,11 +55,7 @@ pub fn init_telemetry(port: u16) {
             warn_startup(&format!(
                 "failed to create OTLP metric exporter, metrics disabled: {e}"
             ));
-            let fmt_layer = tracing_subscriber::fmt::layer()
-                .pretty()
-                .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-            let subscriber = Registry::default().with(fmt_layer);
-            let _ = tracing::subscriber::set_global_default(subscriber);
+            init_stderr_logging();
             return;
         }
     };
@@ -82,11 +84,14 @@ pub fn init_telemetry(port: u16) {
     let tracer = opentelemetry::global::tracer(SERVICE_NAME);
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .pretty()
-        .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
-
-    let subscriber = Registry::default().with(telemetry).with(fmt_layer);
+    // The level cap must be global, not per-layer: the OpenTelemetry layer is
+    // otherwise enabled for every dependency's DEBUG/TRACE span and event, and
+    // per-layer filtering alone still let aws-smithy TRACE events (20+ KB of
+    // RuntimeComponents Debug output each) through to the fmt output.
+    let subscriber = Registry::default()
+        .with(LevelFilter::INFO)
+        .with(telemetry)
+        .with(tracing_subscriber::fmt::layer().pretty());
 
     if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
         warn_startup(&format!("failed to set global tracing subscriber: {e}"));

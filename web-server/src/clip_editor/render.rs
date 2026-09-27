@@ -9,19 +9,8 @@ pub(super) async fn render_compose_shared(
     cache_key: &str,
 ) -> Result<(), AppError> {
     let raw_files = prepare_shared_dsp_segments(segments, output).await?;
-    let filter_graph = build_shared_mix_graph(segments, master_volume_db);
-    let mut command = tokio::process::Command::new("ffmpeg");
+    let mut command = mix_command(&raw_files.paths, segments, master_volume_db);
     command
-        .arg("-y")
-        .args(["-hide_banner", "-loglevel", "error"]);
-    for path in &raw_files.paths {
-        command
-            .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i"])
-            .arg(path);
-    }
-    command
-        .args(["-filter_complex", &filter_graph, "-map", "[out]"])
-        .args(["-c:a", "libopus", "-b:a", "96k"])
         .args(["-progress", "pipe:2", "-nostats"])
         .arg(output);
     let progress_sink = progress.clone();
@@ -41,6 +30,33 @@ pub(super) async fn render_compose_shared(
         }
     })
     .await
+}
+
+/// One FFmpeg input (and one demuxer thread) per rendered segment. The caller
+/// appends the output path last, after any global options.
+pub(super) fn mix_command(
+    raw_paths: &[PathBuf],
+    segments: &[SegmentRender],
+    master_volume_db: f32,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
+        .arg("-y")
+        .args(["-hide_banner", "-loglevel", "error"]);
+    for path in raw_paths {
+        command
+            .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i"])
+            .arg(path);
+    }
+    command
+        .args([
+            "-filter_complex",
+            &build_shared_mix_graph(segments, master_volume_db),
+            "-map",
+            "[out]",
+        ])
+        .args(["-c:a", "libopus", "-b:a", "96k"]);
+    command
 }
 
 pub(super) async fn prepare_shared_dsp_segments(

@@ -5,6 +5,11 @@ use std::time::Duration;
 
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const DISK_BUDGET: u64 = 8 * 1024 * 1024 * 1024;
+/// RLIMIT_AS counts reserved address space, not resident memory. glibc
+/// reserves a 64 MiB arena per thread and the final mix runs one FFmpeg thread
+/// per segment, so 111 segments exhausted 2 GiB while using ~100 MiB.
+/// Inherited by FFmpeg along with the limits.
+pub(super) const MALLOC_ARENA_MAX: (&str, &str) = ("MALLOC_ARENA_MAX", "2");
 
 pub fn spawn_compose_worker(pool: Pool<Postgres>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -61,6 +66,7 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
+        .env(MALLOC_ARENA_MAX.0, MALLOC_ARENA_MAX.1)
         .kill_on_drop(true);
     command.as_std_mut().process_group(0);
     let mut child = command.spawn()?;
@@ -101,6 +107,28 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
     result
 }
 
+/// Bound allocations and individual temporary files in the calling process and
+/// its FFmpeg descendants. The stack limit is also FFmpeg's default thread
+/// stack (glibc derives it from RLIMIT_STACK); at 8 MiB, MAX_SEGMENTS mix inputs
+/// alone would reserve most of the address-space budget.
+pub(super) fn apply_resource_limits() -> std::io::Result<()> {
+    let limits = [
+        (libc::RLIMIT_AS, 2 * 1024 * 1024 * 1024),
+        (libc::RLIMIT_FSIZE, DISK_BUDGET),
+        (libc::RLIMIT_STACK, 2 * 1024 * 1024),
+    ];
+    for (resource, value) in limits {
+        let limit = libc::rlimit {
+            rlim_cur: value,
+            rlim_max: value,
+        };
+        if unsafe { libc::setrlimit(resource, &limit) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 /// Internal child-process entry point, not an HTTP endpoint. It reads only the
 /// database settings here; no listening socket or Discord connection is opened.
 pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppError> {
@@ -120,22 +148,7 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
     }
     let id = &arguments[0];
     let token = &arguments[1];
-    // Bound allocations and individual temporary files in this child only.
-    unsafe {
-        let memory = libc::rlimit {
-            rlim_cur: 2 * 1024 * 1024 * 1024,
-            rlim_max: 2 * 1024 * 1024 * 1024,
-        };
-        let file = libc::rlimit {
-            rlim_cur: DISK_BUDGET,
-            rlim_max: DISK_BUDGET,
-        };
-        if libc::setrlimit(libc::RLIMIT_AS, &memory) != 0
-            || libc::setrlimit(libc::RLIMIT_FSIZE, &file) != 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
-    }
+    apply_resource_limits()?;
     // This thread still runs if a DSP blocking task stalls the async executor.
     // It also prevents descendants surviving an abruptly terminated supervisor.
     let parent = unsafe { libc::getppid() };
@@ -413,6 +426,51 @@ mod tests {
         let group = ProcessGroup(i32::try_from(child.id())?);
         drop(group);
         assert!(!child.wait()?.success());
+        Ok(())
+    }
+
+    /// A 111-segment export failed with FFmpeg's "pthread_create failed" once
+    /// per-thread glibc arenas and 8 MiB stacks filled the 2 GiB address space.
+    #[actix_rt::test]
+    async fn largest_mix_fits_child_resource_limits() -> Result<(), Box<dyn std::error::Error>> {
+        if !std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return Ok(());
+        }
+        let temp = tempfile::tempdir()?;
+        // 0.1 s of stereo f32 silence per segment, staggered across 30 s.
+        let raw = vec![0u8; 4800 * 8];
+        let mut paths = Vec::new();
+        let mut segments = Vec::new();
+        for index in 0..MAX_SEGMENTS {
+            let path = temp.path().join(format!("{index}.f32"));
+            std::fs::write(&path, &raw)?;
+            segments.push(SegmentRender {
+                path: path.clone(),
+                source_in: 0.0,
+                source_out: 0.1,
+                effects: sakiot_dsp::SegmentEffects::default(),
+                timeline_start: index as f32 * 0.15,
+                muted: false,
+            });
+            paths.push(path);
+        }
+        let mut command = mix_command(&paths, &segments, 0.0);
+        command
+            .arg(temp.path().join("render.ogg"))
+            .env(MALLOC_ARENA_MAX.0, MALLOC_ARENA_MAX.1);
+        unsafe {
+            command.as_std_mut().pre_exec(apply_resource_limits);
+        }
+        let output = command.output().await?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     }
 }
