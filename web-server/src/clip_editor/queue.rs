@@ -1,10 +1,13 @@
 //! PostgreSQL owns job state. A lease token fences every attempt, including
 //! final publication; polling is read-only and terminal results are retained.
 use super::*;
+use crate::errors::{ErrorKind, JobError};
 
 pub const RENDERER_VERSION: i32 = 2;
 pub(super) const MAX_ATTEMPTS: i32 = 3;
 const QUEUE_LOCK: i64 = crate::media_jobs::QUEUE_LOCK;
+/// Queued or running media and composition jobs admitted across all users.
+const GLOBAL_ACTIVE_LIMIT: i64 = 100;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Snapshot {
@@ -78,6 +81,8 @@ pub(super) async fn enqueue(
         }
         return Ok(row.id);
     }
+    // Personal and shared capacity are reported separately: only the first is
+    // something the caller can resolve by waiting for their own exports.
     let (total, owned): (i64, i64) = sqlx::query_as(
         "SELECT
             (SELECT count(*) FROM composition_jobs WHERE state IN ('queued','running'))
@@ -88,10 +93,11 @@ pub(super) async fn enqueue(
     .bind(user_id)
     .fetch_one(&mut *tx)
     .await?;
-    if total >= 100 || owned >= 3 {
-        return Err(AppError::ServiceUnavailable(
-            "Export queue is full; try again after an export finishes".into(),
-        ));
+    if owned >= crate::media_jobs::PER_USER_ACTIVE_LIMIT {
+        return Err(AppError::UserJobLimitReached);
+    }
+    if total >= GLOBAL_ACTIVE_LIMIT {
+        return Err(AppError::ExportQueueFull);
     }
     let id = uuid::Uuid::new_v4().to_string();
     let result_id = snapshot
@@ -123,8 +129,10 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<(String, Strin
         .execute(&mut *tx)
         .await?;
     sqlx::query!(
-        "UPDATE composition_jobs SET state = 'failed', stage = 'failed', error = 'Export worker stopped repeatedly. Please submit the export again.', attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE state = 'running' AND lease_expires_at < now() AND attempts >= $1",
-        MAX_ATTEMPTS
+        "UPDATE composition_jobs SET state = 'failed', stage = 'failed', error = $2, error_kind = $3, attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE state = 'running' AND lease_expires_at < now() AND attempts >= $1",
+        MAX_ATTEMPTS,
+        ErrorKind::WorkerInterrupted.default_message(),
+        ErrorKind::WorkerInterrupted.as_str()
     )
     .execute(&mut *tx)
     .await?;
@@ -158,7 +166,7 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<(String, Strin
         ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1
         ) UPDATE composition_jobs j SET state = 'running', stage = 'preparing', progress = 0,
         attempts = attempts + 1, attempt_token = $1, lease_expires_at = now() + interval '60 seconds',
-        error = NULL, updated_at = now() FROM candidate WHERE j.id = candidate.id RETURNING j.id",
+        error = NULL, error_kind = NULL, updated_at = now() FROM candidate WHERE j.id = candidate.id RETURNING j.id",
         token,
         RENDERER_VERSION,
         MAX_ATTEMPTS
@@ -178,7 +186,7 @@ pub(super) async fn load(pool: &Pool<Postgres>, id: &str, token: &str) -> Result
     )
     .fetch_optional(pool)
     .await?
-    .ok_or(AppError::Conflict("Export lease lost".into()))?;
+    .ok_or(AppError::JobLeaseLost)?;
     Ok(Job {
         id: row.id,
         guild_id: row.guild_id,
@@ -225,17 +233,21 @@ pub(super) async fn report(
         == 1)
 }
 
+/// Record a failed attempt. `retryable` alone decides whether it is retried;
+/// the stored message is the kind's public text and never promises a retry.
 pub(super) async fn fail(
     pool: &Pool<Postgres>,
     id: &str,
     token: &str,
-    message: &str,
+    kind: ErrorKind,
     retryable: bool,
 ) -> Result<(), sqlx::Error> {
+    let message = kind.default_message();
+    let kind = kind.as_str();
     sqlx::query!(
         "UPDATE composition_jobs SET state = CASE WHEN $4 AND attempts < $5 THEN 'queued' ELSE 'failed' END,
         stage = CASE WHEN $4 AND attempts < $5 THEN 'retrying' ELSE 'failed' END,
-        error = $3, attempt_token = NULL, lease_expires_at = NULL,
+        error = $3, error_kind = $6, attempt_token = NULL, lease_expires_at = NULL,
         retry_at = now() + attempts * interval '10 seconds',
         finished_at = CASE WHEN $4 AND attempts < $5 THEN NULL ELSE now() END, updated_at = now()
         WHERE id = $1 AND attempt_token = $2 AND state = 'running'",
@@ -243,7 +255,8 @@ pub(super) async fn fail(
         token,
         message,
         retryable,
-        MAX_ATTEMPTS
+        MAX_ATTEMPTS,
+        kind
     )
     .execute(pool)
     .await?;
@@ -257,7 +270,7 @@ pub(super) async fn status(
     id: &str,
 ) -> Result<ComposeClipStatus, AppError> {
     let row = sqlx::query!(
-        "SELECT state, stage, progress, error, result_clip_id FROM composition_jobs WHERE id = $1 AND guild_id = $2 AND user_id = $3",
+        "SELECT state, stage, progress, error, error_kind, result_clip_id FROM composition_jobs WHERE id = $1 AND guild_id = $2 AND user_id = $3",
         id,
         guild_id,
         user_id
@@ -265,11 +278,13 @@ pub(super) async fn status(
     .fetch_optional(pool)
     .await?
     .ok_or(AppError::ClipNotFound)?;
+    let error = JobError::from_columns(row.error_kind.as_deref(), row.error.as_deref());
     Ok(ComposeClipStatus {
         result_clip_id: (row.state == "ready").then_some(row.result_clip_id),
         status: row.state,
         stage: row.stage,
         progress: row.progress,
-        error: row.error,
+        error_kind: error.as_ref().and_then(|error| error.kind),
+        error: error.map(|error| error.message),
     })
 }

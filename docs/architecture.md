@@ -164,12 +164,21 @@ rather than silently running without an archive. See
 
 ## Contracts that are enforced, not documented
 
-Three cross-component contracts are checked mechanically, which is why they do
+Four cross-component contracts are checked mechanically, which is why they do
 not drift:
 
 - **HTTP API → frontend types.** `web-server` emits an OpenAPI document at
   compile time; `bun run generate:api-types` derives the TypeScript from it and
   `check:api-types` fails CI when the checked-in types are stale.
+- **Errors → users.** Every API error body is `{ code, kind, message }`
+  (`web-server/src/errors.rs`). `kind` is a stable `ErrorKind` that reaches the
+  frontend through the same generated types; `message` is always safe to show,
+  while SQL, paths, subprocess output, and upstream bodies are only logged.
+  Background jobs persist the kind in `error_kind` and derive their displayed
+  text from it, so legacy free-form `error` text is never returned. Retry
+  decisions are made on types, never on wording. The frontend normalizes every
+  failure (contract bodies, older bodies without `kind`, network failures,
+  malformed responses) through `sakiot-stage/src/app/apiError.ts`.
 - **SQL → Rust.** SQLx verifies every `query!` against the real schema at
   compile time. The metadata is committed in `.sqlx`, refreshed by
   `scripts/sqlx-prepare.sh` against a disposable database, and the pre-commit

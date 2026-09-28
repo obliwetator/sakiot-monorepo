@@ -37,7 +37,7 @@ pub(super) async fn publish(
     .fetch_optional(&mut *tx)
     .await?;
     if owned.is_none() {
-        return Err(AppError::Conflict("Export lease lost".into()));
+        return Err(AppError::JobLeaseLost);
     }
     let mut composition =
         serde_json::to_value(&job.snapshot.body).map_err(|_| AppError::InternalError)?;
@@ -60,7 +60,7 @@ pub(super) async fn publish(
         .execute(&mut *tx)
         .await?;
         if result.rows_affected() != 1 {
-            return Err(AppError::Conflict("The destination clip changed or was deleted during export. Reopen it before overwriting.".into()));
+            return Err(AppError::DestinationChanged);
         }
     } else {
         sqlx::query!(

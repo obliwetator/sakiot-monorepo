@@ -1,6 +1,7 @@
 //! The web process supervises a disposable copy of its own executable. This
 //! makes blocking DSP and its FFmpeg descendants killable as one process group.
 use super::*;
+use crate::errors::ErrorKind;
 use std::time::Duration;
 
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -24,19 +25,23 @@ pub fn spawn_compose_worker(pool: Pool<Postgres>) -> tokio::task::JoinHandle<()>
                 last_cleanup = Some(std::time::Instant::now());
             }
             match queue::claim(&pool).await {
-                Ok(Some((id, token))) => {
-                    if let Err(error) = supervise(&pool, &id, &token).await {
-                        tracing::error!(job_id = %id, ?error, "composition worker failed");
-                        let _ = queue::fail(
-                            &pool,
-                            &id,
-                            &token,
-                            "Export worker was interrupted. Retrying automatically when possible.",
-                            true,
-                        )
-                        .await;
+                Ok(Some((id, token))) => match supervise(&pool, &id, &token).await {
+                    Ok(()) => {}
+                    // The new owner reports this job; a stale attempt must not.
+                    Err(AppError::JobLeaseLost) => {
+                        tracing::warn!(job_id = %id, "composition lease lost; leaving the job to its new owner");
                     }
-                }
+                    Err(error) => {
+                        tracing::error!(job_id = %id, ?error, "composition worker failed");
+                        let kind = match error {
+                            AppError::ExecutionTimedOut => ErrorKind::ExecutionTimedOut,
+                            _ => ErrorKind::WorkerInterrupted,
+                        };
+                        if let Err(error) = queue::fail(&pool, &id, &token, kind, true).await {
+                            tracing::error!(job_id = %id, ?error, "composition failure could not be recorded");
+                        }
+                    }
+                },
                 Ok(None) => tokio::time::sleep(Duration::from_secs(2)).await,
                 Err(error) => {
                     tracing::error!(?error, "composition queue claim failed");
@@ -76,6 +81,7 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
             .and_then(|pid| i32::try_from(pid).ok())
             .ok_or(AppError::InternalError)?,
     );
+    let started = tokio::time::Instant::now();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
     let deadline = tokio::time::sleep(ATTEMPT_TIMEOUT);
     tokio::pin!(deadline);
@@ -84,7 +90,10 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
             status = child.wait() => {
                 break match status {
                     Ok(status) if status.success() => Ok(()),
-                    Ok(_) => Err(AppError::InternalError),
+                    // The child's own watchdog kills its group at the same
+                    // deadline and may win the race against ours.
+                    Ok(_) if started.elapsed() >= ATTEMPT_TIMEOUT => Err(AppError::ExecutionTimedOut),
+                    Ok(status) => Err(AppError::WorkerInterrupted(format!("compose worker exited with {status}"))),
                     Err(error) => Err(error.into()),
                 };
             }
@@ -94,12 +103,12 @@ async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), A
                 // definitive "not renewed" answer means the lease is gone.
                 match tokio::time::timeout(Duration::from_secs(5), queue::renew(pool, id, token)).await {
                     Ok(Ok(true)) => {},
-                    Ok(Ok(false)) => break Err(AppError::Conflict("Export lease lost".into())),
+                    Ok(Ok(false)) => break Err(AppError::JobLeaseLost),
                     Ok(Err(error)) => tracing::warn!(job_id = %id, ?error, "composition lease renewal failed; retrying next heartbeat"),
                     Err(_) => tracing::warn!(job_id = %id, "composition lease renewal timed out; retrying next heartbeat"),
                 }
             }
-            _ = &mut deadline => break Err(AppError::ServiceUnavailable("Export exceeded the execution deadline".into())),
+            _ = &mut deadline => break Err(AppError::ExecutionTimedOut),
         }
     };
     drop(group);
@@ -194,7 +203,7 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
                     Ok(false) => {
                         // Publication may have just committed. Returning lets the
                         // supervisor end the group; no new attempt may publish.
-                        break Err(AppError::Conflict("Export lease lost".into()));
+                        break Err(AppError::JobLeaseLost);
                     }
                     Err(error) => tracing::warn!(
                         job_id = %id,
@@ -203,29 +212,40 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
                     ),
                 }
                 if workspace_bytes(&attempt_dir(id, token)).await? > DISK_BUDGET {
-                    break Err(AppError::BadRequest("Export exceeded the temporary storage budget".into()));
+                    break Err(AppError::StorageBudgetExceeded);
                 }
             }
         }
     };
-    if let Err(error) = result {
-        tracing::error!(job_id = %id, ?error, "composition attempt failed");
-        let retryable = !matches!(
-            error,
-            AppError::BadRequest(_)
-                | AppError::Conflict(_)
-                | AppError::Forbidden
-                | AppError::ClipNotFound
-        );
-        let message = match &error {
-            AppError::Conflict(message) | AppError::BadRequest(message) => message.clone(),
-            AppError::Forbidden => "Access to a source clip was removed.".into(),
-            AppError::ClipNotFound => "A source or destination clip was deleted.".into(),
-            _ => "The export could not finish. Check the source clips and retry.".into(),
-        };
-        queue::fail(&pool, id, token, &message, retryable).await?;
+    match result {
+        Ok(()) => {}
+        // Publication may have just committed under the new owner. Returning
+        // lets the supervisor end the group; this attempt reports nothing.
+        Err(AppError::JobLeaseLost) => {
+            tracing::warn!(job_id = %id, "composition lease lost");
+        }
+        Err(error) => {
+            tracing::error!(job_id = %id, ?error, "composition attempt failed");
+            let (kind, retryable) = classify_failure(&error);
+            queue::fail(&pool, id, token, kind, retryable).await?;
+        }
     }
     Ok(())
+}
+
+/// The public kind and retry decision for a failed attempt. Requests that
+/// became invalid are final; anything else may be transient.
+fn classify_failure(error: &AppError) -> (ErrorKind, bool) {
+    match error {
+        AppError::Forbidden => (ErrorKind::SourceAccessRevoked, false),
+        AppError::BadRequest(_)
+        | AppError::Conflict(_)
+        | AppError::ClipNotFound
+        | AppError::SourceChanged
+        | AppError::DestinationChanged
+        | AppError::StorageBudgetExceeded => (error.kind(), false),
+        _ => (error.kind(), true),
+    }
 }
 
 pub(super) fn attempt_dir(id: &str, token: &str) -> PathBuf {
@@ -262,9 +282,7 @@ async fn execute(
         .enumerate()
     {
         if job.snapshot.sources.get(index) != Some(&source.saved_file_name) {
-            return Err(AppError::Conflict(
-                "A source clip changed after this export was submitted".into(),
-            ));
+            return Err(AppError::SourceChanged);
         }
         let pinned = directory.join(format!("source-{index}.ogg"));
         // All media lives on the same filesystem. A hard link keeps the exact
@@ -302,7 +320,7 @@ async fn execute(
         return Err(AppError::FfmpegError("Empty export".into()));
     }
     if !queue::report(pool, &job.id, &job.token, "publishing", 99).await? {
-        return Err(AppError::Conflict("Export lease lost".into()));
+        return Err(AppError::JobLeaseLost);
     }
     let saved = format!("compositions/{}-{}.ogg", job.id, job.token);
     let final_path = crate::media_archive::clip_local_path(&saved)?;

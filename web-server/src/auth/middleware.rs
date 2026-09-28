@@ -1,7 +1,7 @@
 use actix_web::body::EitherBody;
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::{
-    Error, HttpMessage, HttpResponse,
+    Error, HttpMessage, ResponseError,
     http::{
         Method,
         header::{HeaderName, HeaderValue},
@@ -9,11 +9,11 @@ use actix_web::{
     web,
 };
 use futures_util::future::{LocalBoxFuture, Ready, ready};
-use serde_json::json;
 use tracing::warn;
 
 use super::cookies::ACCESS_TOKEN_COOKIE;
 use super::jwt::{Access, AccessKeys, Token};
+use crate::errors::AppError;
 
 pub struct AuthMiddleware;
 
@@ -81,8 +81,8 @@ where
             None => {
                 tracing::error!("AccessKeys not in app_data — server misconfigured");
                 let (request, _pl) = req.into_parts();
-                let response = HttpResponse::InternalServerError()
-                    .finish()
+                let response = AppError::InternalError
+                    .error_response()
                     .map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
             }
@@ -92,7 +92,9 @@ where
             Some(token) => token,
             None => {
                 let (request, _pl) = req.into_parts();
-                let response = HttpResponse::Unauthorized().finish().map_into_right_body();
+                let response = AppError::Unauthorized
+                    .error_response()
+                    .map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
             }
         };
@@ -109,8 +111,8 @@ where
             if csrf_header != Some(&decoded_access.csrf) {
                 warn!("CSRF token mismatch for {} (expected present)", req.path());
                 let (request, _pl) = req.into_parts();
-                let response = HttpResponse::Forbidden()
-                    .json(json!({"error": "invalid_csrf_token"}))
+                let response = AppError::CsrfRejected
+                    .error_response()
                     .map_into_right_body();
                 return Box::pin(async { Ok(ServiceResponse::new(request, response)) });
             }

@@ -12,7 +12,7 @@ use super::*;
     responses(
         (status = 202, description = "Clip composition durably queued", body = ComposeClipAccepted),
         (status = 409, description = "Request key already used for a different export", body = crate::errors::ApiError),
-        (status = 503, description = "Export queue unavailable or full", body = crate::errors::ApiError),
+        (status = 503, description = "Caller's active-job limit reached (`user_job_limit_reached`) or shared export queue full (`export_queue_full`)", body = crate::errors::ApiError),
         (status = 400, description = "Invalid composition request", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 403, description = "Missing channel permission", body = crate::errors::ApiError),

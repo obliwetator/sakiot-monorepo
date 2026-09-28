@@ -78,7 +78,7 @@ pub async fn put_voice_settings(
     let user_id = require_guild_manager(&req, &pool, guild_id).await?;
     if body.pending_cap_seconds < MIN_PENDING_CAP_SECONDS {
         return Err(AppError::BadRequest(format!(
-            "pending_cap_seconds must be at least {MIN_PENDING_CAP_SECONDS}"
+            "The pending recording cap must be at least {MIN_PENDING_CAP_SECONDS} seconds."
         )));
     }
 

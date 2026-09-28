@@ -128,13 +128,9 @@ impl MediaArchive {
                 } else if error.kind() == StorageErrorKind::Integrity {
                     repository::mark_verification_conflict(pool, object.id, &error.to_string())
                         .await?;
-                    Err(AppError::ServiceUnavailable(
-                        "archived media failed integrity validation".to_owned(),
-                    ))
+                    Err(AppError::ArchiveIntegrityFailure(error.to_string()))
                 } else {
-                    Err(AppError::ServiceUnavailable(
-                        "media archive unavailable".to_owned(),
-                    ))
+                    Err(AppError::MediaArchiveUnavailable(error.to_string()))
                 }
             }
         }

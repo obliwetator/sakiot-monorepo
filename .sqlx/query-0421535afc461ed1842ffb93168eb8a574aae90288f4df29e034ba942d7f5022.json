@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE composition_jobs SET state = 'failed', stage = 'failed', error = $2, error_kind = $3, attempt_token = NULL, lease_expires_at = NULL, finished_at = now(), updated_at = now() WHERE state = 'running' AND lease_expires_at < now() AND attempts >= $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0421535afc461ed1842ffb93168eb8a574aae90288f4df29e034ba942d7f5022"
+}

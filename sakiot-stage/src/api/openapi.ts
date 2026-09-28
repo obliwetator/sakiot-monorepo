@@ -953,8 +953,13 @@ export interface components {
 			tail_seconds: number;
 		};
 		ApiError: {
-			/** Format: int32 */
+			/**
+			 * Format: int32
+			 * @description The HTTP status code, repeated for clients that only keep the body.
+			 */
 			code: number;
+			kind: components["schemas"]["ErrorKind"];
+			/** @description A safe, human-readable explanation. */
 			message: string;
 		};
 		ChannelMixGenerationSettings: {
@@ -1090,7 +1095,9 @@ export interface components {
 			segments: components["schemas"]["ComposeSegment"][];
 		};
 		ComposeClipStatus: {
+			/** @description Safe explanation of the last failed attempt; never internal detail. */
 			error?: string | null;
+			error_kind?: null | components["schemas"]["ErrorKind"];
 			/** Format: int32 */
 			progress: number;
 			result_clip_id?: string | null;
@@ -1199,6 +1206,42 @@ export interface components {
 			/** Format: int32 */
 			year: number;
 		};
+		/**
+		 * @description Stable machine-readable error classification. Values are part of the
+		 *     API and are persisted by background jobs: add new ones, never rename.
+		 * @enum {string}
+		 */
+		ErrorKind:
+			| "invalid_request"
+			| "unauthorized"
+			| "csrf_rejected"
+			| "forbidden"
+			| "not_found"
+			| "clip_not_found"
+			| "role_not_found"
+			| "media_not_found"
+			| "conflict"
+			| "range_not_satisfiable"
+			| "user_job_limit_reached"
+			| "export_queue_full"
+			| "execution_timed_out"
+			| "media_temporarily_unavailable"
+			| "archive_integrity_failure"
+			| "media_inspection_failed"
+			| "media_processing_failed"
+			| "media_tools_unavailable"
+			| "discord_rate_limited"
+			| "discord_timeout"
+			| "discord_unavailable"
+			| "bot_unavailable"
+			| "worker_interrupted"
+			| "source_changed"
+			| "source_access_revoked"
+			| "destination_changed"
+			| "storage_budget_exceeded"
+			| "waiting_for_media_work"
+			| "unsafe_media_reference"
+			| "internal_error";
 		File: {
 			/**
 			 * @description Role-preview annotation only: "can-listen" | "visible-only" | "hidden".
@@ -1301,7 +1344,9 @@ export interface components {
 			guild_id: number;
 		};
 		MediaJobStatus: {
+			/** @description Safe explanation of the last failed attempt; never internal detail. */
 			error?: string | null;
+			error_kind?: null | components["schemas"]["ErrorKind"];
 			id: string;
 			kind: string;
 			/** Format: int32 */
@@ -1313,7 +1358,9 @@ export interface components {
 		RecordingDeletionStatus: {
 			/** Format: int32 */
 			attempts: number;
+			/** @description Safe explanation of the last attempt's outcome; never internal detail. */
 			error?: string | null;
+			error_kind?: null | components["schemas"]["ErrorKind"];
 			id: string;
 			mode: string;
 			recording_session_id: string;
@@ -1831,6 +1878,24 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["RecordingDeletionStatus"];
+				};
+			};
+			/** @description Manage Guild required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Deletion record not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
 				};
 			};
 		};
@@ -2575,7 +2640,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description Export queue unavailable or full */
+			/** @description Caller's active-job limit reached (`user_job_limit_reached`) or shared export queue full (`export_queue_full`) */
 			503: {
 				headers: {
 					[name: string]: unknown;
@@ -4655,6 +4720,24 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["MediaJobStatus"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Job not found, expired, or not visible to the caller */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
 				};
 			};
 		};

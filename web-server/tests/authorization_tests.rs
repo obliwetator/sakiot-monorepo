@@ -9,7 +9,9 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
-use web_server::admin::recording_policy::{get_recording_policy, put_recording_policy};
+use web_server::admin::recording_policy::{
+    RETENTION_RANGE_MESSAGE, get_recording_policy, put_recording_policy,
+};
 use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
@@ -489,10 +491,35 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
         .insert_header(("X-CSRF-Token", CSRF))
         .set_json(json!({"retention_days":0,"excluded_channel_ids":[]}))
         .to_request();
+    let invalid = test::call_service(&app, invalid).await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let invalid: serde_json::Value = test::read_body_json(invalid).await;
+    assert_eq!(invalid["code"], 400);
+    assert_eq!(invalid["kind"], "invalid_request");
+    assert_eq!(invalid["message"], RETENTION_RANGE_MESSAGE);
+
+    // Middleware rejections follow the same body contract.
+    let anonymous =
+        test::call_service(&app, test::TestRequest::get().uri(&policy_uri).to_request()).await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let anonymous: serde_json::Value = test::read_body_json(anonymous).await;
     assert_eq!(
-        test::call_service(&app, invalid).await.status(),
-        StatusCode::BAD_REQUEST
+        (anonymous["code"].clone(), anonymous["kind"].clone()),
+        (json!(401), json!("unauthorized"))
     );
+    let forged = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&policy_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .set_json(json!({"retention_days":30,"excluded_channel_ids":[]}))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(forged.status(), StatusCode::FORBIDDEN);
+    let forged: serde_json::Value = test::read_body_json(forged).await;
+    assert_eq!(forged["kind"], "csrf_rejected");
+
     let updated: serde_json::Value = test::call_and_read_body_json(&app,
         test::TestRequest::put().uri(&policy_uri)
             .insert_header(("Cookie",cookie.clone())).insert_header(("X-CSRF-Token",CSRF))
@@ -514,6 +541,8 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     )
     .await;
     assert_eq!(forbidden_permanent.status(), StatusCode::FORBIDDEN);
+    let forbidden_permanent: serde_json::Value = test::read_body_json(forbidden_permanent).await;
+    assert_eq!(forbidden_permanent["kind"], "forbidden");
     let accepted = test::call_service(
         &app,
         test::TestRequest::delete()

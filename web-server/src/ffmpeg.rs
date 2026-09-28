@@ -22,11 +22,9 @@ const MAX_ERROR_BYTES: usize = 4096;
 
 /// Map a tool spawn failure, separating a missing FFmpeg install from any
 /// other I/O error.
-pub(crate) fn tool_error(tool: &str, error: std::io::Error) -> AppError {
+pub(crate) fn tool_error(tool: &'static str, error: std::io::Error) -> AppError {
     if error.kind() == std::io::ErrorKind::NotFound {
-        AppError::ServiceUnavailable(format!(
-            "{tool} executable is unavailable; install FFmpeg on the web server"
-        ))
+        AppError::MediaToolUnavailable(tool)
     } else {
         AppError::IoError(error)
     }

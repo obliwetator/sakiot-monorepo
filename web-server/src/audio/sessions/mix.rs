@@ -497,7 +497,7 @@ pub(crate) async fn run_session_mix_job(
             _ = interval.tick() => {
                 let value = job.lock().await.progress;
                 if !crate::media_jobs::report_progress(pool, job_id, attempt_token, "rendering", value).await? {
-                    return Err(AppError::Conflict("Media job lease lost".into()));
+                    return Err(AppError::JobLeaseLost);
                 }
             }
         }

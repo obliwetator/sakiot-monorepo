@@ -43,14 +43,16 @@ pub struct GuildRecordingPolicyBody {
     pub excluded_channel_ids: Vec<String>,
 }
 
+/// Shown to managers when retention is out of range.
+pub const RETENTION_RANGE_MESSAGE: &str =
+    "Retention must be between 1 and 3650 days, or empty to keep recordings indefinitely.";
+
 fn validate(body: &GuildRecordingPolicyBody) -> Result<Vec<i64>, AppError> {
     if body
         .retention_days
         .is_some_and(|days| !(1..=3650).contains(&days))
     {
-        return Err(AppError::BadRequest(
-            "retention_days must be 1–3650 or null".into(),
-        ));
+        return Err(AppError::BadRequest(RETENTION_RANGE_MESSAGE.into()));
     }
     if body.excluded_channel_ids.len() > 100 {
         return Err(AppError::BadRequest(

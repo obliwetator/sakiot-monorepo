@@ -1,4 +1,5 @@
 use super::{queue::*, *};
+use crate::errors::ErrorKind;
 use sqlx::PgPool;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -67,9 +68,46 @@ async fn queue_backpressure_keeps_idempotent_retries_available(pool: PgPool) -> 
     submit(&pool, "three", &snapshot).await?;
     assert!(matches!(
         submit(&pool, "four", &snapshot).await,
-        Err(AppError::ServiceUnavailable(_))
+        Err(AppError::UserJobLimitReached)
     ));
     assert_eq!(submit(&pool, "one", &snapshot).await?, first);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn shared_capacity_is_reported_apart_from_the_personal_limit(pool: PgPool) -> TestResult {
+    // Other users fill the shared queue; this user has nothing active.
+    sqlx::query("INSERT INTO composition_jobs (id,guild_id,user_id,idempotency_key,request,snapshot,result_clip_id) SELECT 'other-' || n, 1, 1000 + n, 'key', '{}', '{}', 'clip-' || n FROM generate_series(1, 100) n")
+        .execute(&pool)
+        .await?;
+    let error = submit(&pool, "blocked", &snapshot())
+        .await
+        .expect_err("the shared queue is full");
+    assert!(matches!(error, AppError::ExportQueueFull));
+    let response = actix_web::ResponseError::error_response(&error);
+    assert_eq!(
+        response.status(),
+        actix_web::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let body = actix_web::body::to_bytes(response.into_body()).await?;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body)?,
+        serde_json::json!({
+            "code": 503,
+            "kind": "export_queue_full",
+            "message": ErrorKind::ExportQueueFull.default_message(),
+        })
+    );
+
+    // A caller at their own limit hears about that first: it is the part
+    // they can resolve.
+    sqlx::query("INSERT INTO media_jobs (id,kind,user_id,idempotency_key,resource_key,request) SELECT 'mine-' || n, 'session_download', 100, 'key-' || n, 'resource-' || n, '{}' FROM generate_series(1, 3) n")
+        .execute(&pool)
+        .await?;
+    assert!(matches!(
+        submit(&pool, "blocked", &snapshot()).await,
+        Err(AppError::UserJobLimitReached)
+    ));
     Ok(())
 }
 
@@ -95,7 +133,7 @@ async fn claims_are_globally_bounded_and_old_attempt_cannot_publish(pool: PgPool
     assert!(publish(&pool, &old, "stale.ogg", 1.0, 100).await.is_err());
     publish(&pool, &recovered, "recovered.ogg", 1.0, 100).await?;
     // A late error from the old attempt must not replace success.
-    fail(&pool, &id, &old.token, "late failure", true).await?;
+    fail(&pool, &id, &old.token, ErrorKind::InternalError, true).await?;
     assert_eq!(status(&pool, 1, 100, &id).await?.status, "ready");
     Ok(())
 }
@@ -115,9 +153,15 @@ async fn completion_and_failure_are_stable_and_owner_scoped(pool: PgPool) -> Tes
     assert!(status(&pool, 1, 101, &id).await.is_err());
     let failed_id = submit(&pool, "failed", &snapshot).await?;
     let job = claimed(&pool).await;
-    fail(&pool, &job.id, &job.token, "Unsupported source", false).await?;
+    fail(&pool, &job.id, &job.token, ErrorKind::SourceChanged, false).await?;
     for _ in 0..3 {
-        assert_eq!(status(&pool, 1, 100, &failed_id).await?.status, "failed");
+        let failed = status(&pool, 1, 100, &failed_id).await?;
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.error_kind, Some(ErrorKind::SourceChanged));
+        assert_eq!(
+            failed.error.as_deref(),
+            Some(ErrorKind::SourceChanged.default_message())
+        );
     }
     Ok(())
 }
@@ -127,13 +171,20 @@ async fn retries_have_a_terminal_budget(pool: PgPool) -> TestResult {
     let id = submit(&pool, "retry", &snapshot()).await?;
     for attempt in 1..=MAX_ATTEMPTS {
         let job = claimed(&pool).await;
-        fail(&pool, &id, &job.token, "Transient failure", true).await?;
+        fail(&pool, &id, &job.token, ErrorKind::ExecutionTimedOut, true).await?;
         let expected = if attempt < MAX_ATTEMPTS {
-            "queued"
+            ("queued", "retrying")
         } else {
-            "failed"
+            ("failed", "failed")
         };
-        assert_eq!(status(&pool, 1, 100, &id).await?.status, expected);
+        let result = status(&pool, 1, 100, &id).await?;
+        assert_eq!((result.status.as_str(), result.stage.as_str()), expected);
+        // The deadline is reported as such, never as a source-clip problem,
+        // and the text does not promise a retry the queue may not make.
+        assert_eq!(result.error_kind, Some(ErrorKind::ExecutionTimedOut));
+        let message = result.error.unwrap_or_default();
+        assert!(!message.to_lowercase().contains("retry"), "{message}");
+        assert!(!message.to_lowercase().contains("source"), "{message}");
         sqlx::query("UPDATE composition_jobs SET retry_at = now()")
             .execute(&pool)
             .await?;
@@ -192,7 +243,7 @@ async fn overwrite_fences_archive_worker_and_checks_revision(pool: PgPool) -> Te
     assert_eq!(stale.id, second);
     assert!(matches!(
         publish(&pool, &stale, "stale.ogg", 1.0, 100).await,
-        Err(AppError::Conflict(_))
+        Err(AppError::DestinationChanged)
     ));
     Ok(())
 }
@@ -207,7 +258,7 @@ async fn deleted_overwrite_target_cannot_be_reported_ready(pool: PgPool) -> Test
         .await?;
     assert!(matches!(
         publish(&pool, &job, "new.ogg", 1.0, 100).await,
-        Err(AppError::Conflict(_))
+        Err(AppError::DestinationChanged)
     ));
     assert_ne!(status(&pool, 1, 100, &id).await?.status, "ready");
     Ok(())
@@ -264,6 +315,25 @@ async fn active_v1_lease_is_preserved_then_expired_work_migrates_with_new_token(
         publish(&pool, &old, "stale-v1.ogg", 1.0, 100)
             .await
             .is_err()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn legacy_export_errors_are_not_echoed(pool: PgPool) -> TestResult {
+    let id = submit(&pool, "legacy", &snapshot()).await?;
+    sqlx::query("UPDATE composition_jobs SET state='failed', stage='failed', error='FFmpeg failed: /srv/sakiot/data/clips/x.ogg: Invalid data', error_kind=NULL WHERE id=$1")
+        .bind(&id)
+        .execute(&pool)
+        .await?;
+    let result = status(&pool, 1, 100, &id).await?;
+    let body = serde_json::to_string(&result)?;
+    assert!(!body.contains("/srv"), "{body}");
+    assert!(!body.contains("FFmpeg"), "{body}");
+    assert_eq!(result.error_kind, None);
+    assert_eq!(
+        result.error.as_deref(),
+        Some(crate::errors::UNCLASSIFIED_JOB_ERROR)
     );
     Ok(())
 }

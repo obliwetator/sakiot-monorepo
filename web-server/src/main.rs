@@ -302,7 +302,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete_recording)
             .service(get_recording_deletion);
 
+        let (json_config, path_config, query_config) = web_server::errors::extractor_configs();
         App::new()
+            .app_data(json_config)
+            .app_data(path_config)
+            .app_data(query_config)
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(discord_http_client.clone()))
             .app_data(web::Data::new(media_archive.clone()))

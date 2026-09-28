@@ -15,14 +15,15 @@ use sqlx::{Pool, Postgres, Row};
 
 use crate::audio::WaveformProgressContainer;
 use crate::auth::{Access, Token};
-use crate::errors::AppError;
+use crate::errors::{AppError, ErrorKind, JobError};
 use crate::media_archive::MediaArchive;
 
 /// The composition queue uses the same transaction lock for cross-queue limits.
 pub const QUEUE_LOCK: i64 = 0x53414b4d45444941;
 const MAX_ATTEMPTS: i32 = 3;
 const GLOBAL_RUNNING_LIMIT: i64 = 4;
-const PER_USER_ACTIVE_LIMIT: i64 = 3;
+/// Active media plus composition jobs one user may have queued or running.
+pub(crate) const PER_USER_ACTIVE_LIMIT: i64 = 3;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -88,7 +89,10 @@ pub struct MediaJobStatus {
     pub stage: String,
     pub progress: i16,
     pub result_url: Option<String>,
+    /// Safe explanation of the last failed attempt; never internal detail.
     pub error: Option<String>,
+    /// Stable classification of `error`. Absent for records that predate it.
+    pub error_kind: Option<ErrorKind>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,9 +171,7 @@ pub async fn enqueue(
     .fetch_one(&mut *tx)
     .await?;
     if active >= PER_USER_ACTIVE_LIMIT {
-        return Err(AppError::ServiceUnavailable(
-            "You already have the maximum number of active media jobs".into(),
-        ));
+        return Err(AppError::UserJobLimitReached);
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -200,13 +202,17 @@ pub async fn load_status(
     id: &str,
 ) -> Result<MediaJobStatus, AppError> {
     let row = sqlx::query(
-        "SELECT j.id, j.kind, j.state, j.stage, j.progress, j.result_url, j.error FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id = $1 AND v.user_id = $2",
+        "SELECT j.id, j.kind, j.state, j.stage, j.progress, j.result_url, j.error, j.error_kind FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id = $1 AND v.user_id = $2",
     )
     .bind(id)
     .bind(user_id)
     .fetch_optional(pool)
     .await?
-    .ok_or(AppError::FileNotFound)?;
+    .ok_or(AppError::NotFound)?;
+    let error = JobError::from_columns(
+        row.try_get::<Option<String>, _>("error_kind")?.as_deref(),
+        row.try_get::<Option<String>, _>("error")?.as_deref(),
+    );
     Ok(MediaJobStatus {
         id: row.try_get("id")?,
         kind: row.try_get("kind")?,
@@ -214,7 +220,8 @@ pub async fn load_status(
         stage: row.try_get("stage")?,
         progress: row.try_get("progress")?,
         result_url: row.try_get("result_url")?,
-        error: row.try_get("error")?,
+        error_kind: error.as_ref().and_then(|error| error.kind),
+        error: error.map(|error| error.message),
     })
 }
 
@@ -256,10 +263,13 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
         .bind(QUEUE_LOCK)
         .execute(&mut *tx)
         .await?;
+    let interrupted = ErrorKind::WorkerInterrupted;
     sqlx::query(
-        "UPDATE media_jobs SET state='failed', stage='failed', error='Media worker stopped repeatedly. Submit the request again.', attempt_token=NULL, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE state='running' AND lease_expires_at < now() AND attempts >= $1",
+        "UPDATE media_jobs SET state='failed', stage='failed', error=$2, error_kind=$3, attempt_token=NULL, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE state='running' AND lease_expires_at < now() AND attempts >= $1",
     )
     .bind(MAX_ATTEMPTS)
+    .bind(interrupted.default_message())
+    .bind(interrupted.as_str())
     .execute(&mut *tx)
     .await?;
     let running: i64 = sqlx::query_scalar(
@@ -273,7 +283,7 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
     }
     let token = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query(
-        "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.request",
+        "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,error_kind=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.request",
     )
     .bind(&token)
     .bind(MAX_ATTEMPTS)
@@ -334,7 +344,7 @@ where
                 if let Some(value) = value.filter(|value| *value >= 0)
                     && !report_progress(pool, id, token, stage, value).await?
                 {
-                    return Err(AppError::Conflict("Media job lease lost".into()));
+                    return Err(AppError::JobLeaseLost);
                 }
             }
         }
@@ -358,7 +368,7 @@ pub async fn begin_publication<'a>(
     .fetch_optional(&mut *tx)
     .await?;
     if owned.is_none() {
-        return Err(AppError::Conflict("Media job lease lost".into()));
+        return Err(AppError::JobLeaseLost);
     }
     Ok(tx)
 }
@@ -372,7 +382,7 @@ pub async fn complete_publication(
 ) -> Result<(), AppError> {
     let result_path = result_path.map(|path| path.to_string_lossy().into_owned());
     let updated = sqlx::query(
-        "UPDATE media_jobs SET state='ready',stage='ready',progress=100,result_url=$3,result_path=$4,error=NULL,attempt_token=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'",
+        "UPDATE media_jobs SET state='ready',stage='ready',progress=100,result_url=$3,result_path=$4,error=NULL,error_kind=NULL,attempt_token=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'",
     )
     .bind(id)
     .bind(token)
@@ -381,7 +391,7 @@ pub async fn complete_publication(
     .execute(&mut *tx)
     .await?;
     if updated.rows_affected() != 1 {
-        return Err(AppError::Conflict("Media job lease lost".into()));
+        return Err(AppError::JobLeaseLost);
     }
     tx.commit().await?;
     Ok(())
@@ -402,29 +412,26 @@ async fn finish(
             None,
             false,
         ),
-        Err(error) if job_attempts(pool, &job.id).await? < MAX_ATTEMPTS => (
-            "queued",
-            "queued",
-            0,
-            None,
-            None,
-            Some(error.to_string()),
-            true,
-        ),
-        Err(error) => (
-            "failed",
-            "failed",
-            0,
-            None,
-            None,
-            Some(error.to_string()),
-            false,
-        ),
+        // The new owner reports this job; a stale attempt must not.
+        Err(AppError::JobLeaseLost) => {
+            tracing::warn!(job_id = %job.id, "media job lease lost; leaving the job to its new owner");
+            return Ok(());
+        }
+        Err(error) => {
+            let retry = job_attempts(pool, &job.id).await? < MAX_ATTEMPTS;
+            let kind = error.kind();
+            tracing::warn!(job_id = %job.id, kind = kind.as_str(), retry, ?error, "media job attempt failed");
+            if retry {
+                ("queued", "queued", 0, None, None, Some(kind), true)
+            } else {
+                ("failed", "failed", 0, None, None, Some(kind), false)
+            }
+        }
     };
     let query = if retry {
-        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,attempt_token=NULL,lease_expires_at=NULL,retry_at=now()+interval '5 seconds',finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
+        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=now()+interval '5 seconds',finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
     } else {
-        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,attempt_token=NULL,lease_expires_at=NULL,retry_at=now(),finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
+        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=now(),finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
     };
     sqlx::query(query)
         .bind(&job.id)
@@ -434,7 +441,8 @@ async fn finish(
         .bind(progress)
         .bind(result_url)
         .bind(result_path)
-        .bind(error)
+        .bind(error.map(ErrorKind::default_message))
+        .bind(error.map(ErrorKind::as_str))
         .execute(pool)
         .await?;
     Ok(())
@@ -581,17 +589,15 @@ async fn execute(pool: Pool<Postgres>, media: MediaArchive, job: ClaimedMediaJob
         loop {
             tokio::select! {
                 result = &mut attempt => break result,
-                _ = &mut deadline => break Err(AppError::ServiceUnavailable(
-                    "Media job exceeded the 30-minute attempt limit".into(),
-                )),
+                _ = &mut deadline => break Err(AppError::ExecutionTimedOut),
                 _ = interval.tick() => match renew(&pool, &job).await {
                     Ok(true) => lease_confirmed_at = tokio::time::Instant::now(),
-                    Ok(false) => break Err(AppError::Conflict("Media job lease lost".into())),
+                    Ok(false) => break Err(AppError::JobLeaseLost),
                     Err(error) => {
                         tracing::warn!(job_id=%job.id, ?error, "media lease renewal failed");
                         if lease_confirmed_at.elapsed() >= Duration::from_secs(40) {
-                            break Err(AppError::ServiceUnavailable(
-                                "Media job lease could not be renewed".into(),
+                            break Err(AppError::WorkerInterrupted(
+                                "media job lease could not be renewed".into(),
                             ));
                         }
                     }
@@ -661,7 +667,16 @@ async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
     Ok(())
 }
 
-#[utoipa::path(get, path = "/api/media-jobs/{job_id}", tag = "media", responses((status = 200, body = MediaJobStatus)))]
+#[utoipa::path(
+    get,
+    path = "/api/media-jobs/{job_id}",
+    tag = "media",
+    responses(
+        (status = 200, body = MediaJobStatus),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 404, description = "Job not found, expired, or not visible to the caller", body = crate::errors::ApiError),
+    )
+)]
 #[get("/media-jobs/{job_id}")]
 pub async fn get_media_job(
     path: web::Path<String>,
@@ -683,7 +698,7 @@ pub async fn get_media_job_result(
     let token = token.ok_or(AppError::Unauthorized)?;
     let row = sqlx::query("SELECT j.state,j.result_path,j.request FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id=$1 AND v.user_id=$2")
         .bind(path.as_str()).bind(token.user_id).fetch_optional(pool.get_ref()).await?
-        .ok_or(AppError::FileNotFound)?;
+        .ok_or(AppError::NotFound)?;
     let state: String = row.try_get("state")?;
     let result_path: Option<String> = row.try_get("result_path")?;
     let job_request: serde_json::Value = row.try_get("request")?;
@@ -763,7 +778,7 @@ mod tests {
         }
         assert!(matches!(
             enqueue(&pool, None, 10, "key-4", "resource-4", &request(4)).await,
-            Err(AppError::ServiceUnavailable(_))
+            Err(AppError::UserJobLimitReached)
         ));
         Ok(())
     }
@@ -808,6 +823,90 @@ mod tests {
             load_status(&pool, old.user_id, &old.id).await?.status,
             "ready"
         );
+        Ok(())
+    }
+
+    const INTERNAL: &str =
+        "Database Error: relation media_jobs at /srv/sakiot/data/.media-jobs stderr: libopus";
+
+    fn assert_safe(status: &MediaJobStatus) {
+        let body = serde_json::to_string(status).unwrap();
+        for secret in ["Database", "/srv", "stderr", "libopus"] {
+            assert!(!body.contains(secret), "{secret} leaked: {body}");
+        }
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn failures_report_a_safe_kind_and_terminal_failures_do_not_promise_retry(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        for attempt in 1..=MAX_ATTEMPTS {
+            let job = claim(&pool).await?.ok_or("job was not claimed")?;
+            finish(&pool, &job, Err(AppError::FfmpegError(INTERNAL.into()))).await?;
+            let status = load_status(&pool, 10, &queued.id).await?;
+            assert_safe(&status);
+            assert_eq!(status.error_kind, Some(ErrorKind::MediaProcessingFailed));
+            assert_eq!(
+                status.error.as_deref(),
+                Some(ErrorKind::MediaProcessingFailed.default_message())
+            );
+            let expected = if attempt < MAX_ATTEMPTS {
+                "queued"
+            } else {
+                "failed"
+            };
+            assert_eq!(status.status, expected);
+            assert!(
+                !status
+                    .error
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains("retry")
+            );
+            sqlx::query("UPDATE media_jobs SET retry_at=now()")
+                .execute(&pool)
+                .await?;
+        }
+        // Old releases read the raw column; it holds the public text too.
+        let stored: Option<String> = sqlx::query_scalar("SELECT error FROM media_jobs WHERE id=$1")
+            .bind(&queued.id)
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(
+            stored.as_deref(),
+            Some(ErrorKind::MediaProcessingFailed.default_message())
+        );
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn legacy_error_text_is_never_returned(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        sqlx::query("UPDATE media_jobs SET state='failed', stage='failed', error=$2, error_kind=NULL WHERE id=$1")
+            .bind(&queued.id)
+            .bind(INTERNAL)
+            .execute(&pool)
+            .await?;
+        let status = load_status(&pool, 10, &queued.id).await?;
+        assert_safe(&status);
+        assert_eq!(status.error_kind, None);
+        assert_eq!(
+            status.error.as_deref(),
+            Some(crate::errors::UNCLASSIFIED_JOB_ERROR)
+        );
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn a_lost_lease_writes_nothing(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
+        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        let job = claim(&pool).await?.ok_or("job was not claimed")?;
+        finish(&pool, &job, Err(AppError::JobLeaseLost)).await?;
+        let status = load_status(&pool, 10, &queued.id).await?;
+        assert_eq!((status.status.as_str(), status.error), ("running", None));
         Ok(())
     }
 }

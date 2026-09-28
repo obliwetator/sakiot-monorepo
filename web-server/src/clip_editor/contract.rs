@@ -249,6 +249,9 @@ pub struct ComposeClipStatus {
     pub status: String,
     pub progress: i16,
     pub stage: String,
+    /// Safe explanation of the last failed attempt; never internal detail.
     pub error: Option<String>,
+    /// Stable classification of `error`. Absent for records that predate it.
+    pub error_kind: Option<crate::errors::ErrorKind>,
     pub result_clip_id: Option<String>,
 }

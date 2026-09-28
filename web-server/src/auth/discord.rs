@@ -50,14 +50,14 @@ pub async fn parse_discord_response<T: DeserializeOwned>(
         if error.is_timeout() {
             AppError::DiscordTimeout
         } else {
-            AppError::BadGateway("Discord is unavailable".into())
+            AppError::DiscordUnavailable(error.to_string())
         }
     })?;
     check_discord_status(&response, token_exchange)?;
     response
         .json::<T>()
         .await
-        .map_err(|_| AppError::BadGateway("Discord returned an invalid response".into()))
+        .map_err(|error| AppError::DiscordUnavailable(format!("invalid response body: {error}")))
 }
 
 fn check_discord_status(response: &Response, token_exchange: bool) -> Result<(), AppError> {
@@ -76,7 +76,7 @@ fn check_discord_status(response: &Response, token_exchange: bool) -> Result<(),
     if status == StatusCode::UNAUTHORIZED || (token_exchange && status == StatusCode::BAD_REQUEST) {
         return Err(AppError::Unauthorized);
     }
-    Err(AppError::BadGateway(format!(
+    Err(AppError::DiscordUnavailable(format!(
         "Discord returned HTTP {status}"
     )))
 }

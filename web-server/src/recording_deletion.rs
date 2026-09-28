@@ -11,7 +11,7 @@ use sakiot_paths::{DataRoots, RecordingKey, SessionKey};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, Row};
 
-use crate::errors::AppError;
+use crate::errors::{AppError, ErrorKind, JobError};
 use crate::media_archive::MediaArchive;
 use crate::permissions::require_guild_manager;
 
@@ -54,7 +54,10 @@ pub struct RecordingDeletionStatus {
     pub stage: String,
     pub mode: String,
     pub attempts: i32,
+    /// Safe explanation of the last attempt's outcome; never internal detail.
     pub error: Option<String>,
+    /// Stable classification of `error`. Absent for records that predate it.
+    pub error_kind: Option<ErrorKind>,
 }
 
 async fn load_status(
@@ -62,8 +65,12 @@ async fn load_status(
     guild_id: i64,
     id: &str,
 ) -> Result<RecordingDeletionStatus, AppError> {
-    let row = sqlx::query("SELECT recording_session_id,state,stage,mode,attempts,error FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2")
-        .bind(guild_id).bind(id).fetch_optional(pool).await?.ok_or(AppError::FileNotFound)?;
+    let row = sqlx::query("SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2")
+        .bind(guild_id).bind(id).fetch_optional(pool).await?.ok_or(AppError::NotFound)?;
+    let error = JobError::from_columns(
+        row.try_get::<Option<String>, _>("error_kind")?.as_deref(),
+        row.try_get::<Option<String>, _>("error")?.as_deref(),
+    );
     Ok(RecordingDeletionStatus {
         id: id.to_owned(),
         recording_session_id: row.try_get::<i64, _>("recording_session_id")?.to_string(),
@@ -72,7 +79,8 @@ async fn load_status(
         stage: row.try_get("stage")?,
         mode: row.try_get("mode")?,
         attempts: row.try_get("attempts")?,
-        error: row.try_get("error")?,
+        error_kind: error.as_ref().and_then(|error| error.kind),
+        error: error.map(|error| error.message),
     })
 }
 
@@ -119,7 +127,11 @@ pub async fn delete_recording(
     path = "/api/admin/guilds/{guild_id}/recording-deletions/{job_id}",
     tag = "admin",
     params(("guild_id" = i64, Path), ("job_id" = String, Path)),
-    responses((status = 200, description = "Audited deletion status", body = RecordingDeletionStatus)),
+    responses(
+        (status = 200, description = "Audited deletion status", body = RecordingDeletionStatus),
+        (status = 403, description = "Manage Guild required", body = crate::errors::ApiError),
+        (status = 404, description = "Deletion record not found", body = crate::errors::ApiError),
+    ),
     security(("access_token" = [])),
 )]
 #[get("/admin/guilds/{guild_id}/recording-deletions/{job_id}")]
@@ -174,7 +186,7 @@ async fn enqueue(
         if mode == DeletionMode::Permanent
             && (existing_mode == "soft" || matches!(existing_state.as_str(), "failed" | "paused"))
         {
-            sqlx::query("UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2 IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1")
+            sqlx::query("UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,error_kind=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2 IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1")
                 .bind(&id).bind(actor).execute(&mut *tx).await?;
         }
         id
@@ -223,7 +235,7 @@ pub fn spawn_worker(
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
             if policy.allow_permanent
-                && let Err(error) = run_one(&pool, &media).await
+                && let Err(error) = run_one(&pool, &media, &DataRoots::from_env()).await
             {
                 tracing::error!(?error, "recording deletion worker failed");
             }
@@ -277,12 +289,56 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppError> {
     .transpose()
 }
 
-async fn run_one(pool: &Pool<Postgres>, media: &MediaArchive) -> Result<(), AppError> {
+/// Why a permanent-deletion attempt stopped before finishing. Retry policy
+/// is decided by the variant alone, never by the wording shown to managers.
+#[derive(Debug, thiserror::Error)]
+enum AttemptError {
+    /// Guild media work is queued or running. Requeue without spending an
+    /// attempt: waiting is expected and must not exhaust the failure budget.
+    #[error("waiting for guild media work")]
+    Waiting,
+    /// Another attempt now owns the job. Stop without writing any status.
+    #[error("deletion lease lost")]
+    LeaseLost,
+    /// A real failure. Spends an attempt and backs off until the limit.
+    #[error("{}: {detail}", kind.as_str())]
+    Failed { kind: ErrorKind, detail: String },
+}
+
+impl AttemptError {
+    fn failed(kind: ErrorKind, detail: impl Into<String>) -> Self {
+        Self::Failed {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl From<AppError> for AttemptError {
+    fn from(error: AppError) -> Self {
+        match error {
+            AppError::JobLeaseLost => Self::LeaseLost,
+            error => Self::failed(error.kind(), format!("{error:?}")),
+        }
+    }
+}
+
+impl From<sqlx::Error> for AttemptError {
+    fn from(error: sqlx::Error) -> Self {
+        AppError::from(error).into()
+    }
+}
+
+async fn run_one(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    roots: &DataRoots,
+) -> Result<(), AppError> {
     let Some(job) = claim(pool).await? else {
         return Ok(());
     };
     let result = {
-        let mut work = Box::pin(process(pool, media, &job));
+        let mut work = Box::pin(process_with_roots(pool, media, &job, roots));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
         loop {
             tokio::select! {
@@ -290,29 +346,46 @@ async fn run_one(pool: &Pool<Postgres>, media: &MediaArchive) -> Result<(), AppE
                 _ = heartbeat.tick() => {
                     let renewed = sqlx::query("UPDATE recording_deletion_jobs SET lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()")
                         .bind(&job.id).bind(&job.token).execute(pool).await?.rows_affected();
-                    if renewed != 1 { break Err(AppError::Conflict("Deletion lease lost".into())); }
+                    if renewed != 1 { break Err(AttemptError::LeaseLost); }
                 }
             }
         }
     };
-    if let Err(error) = result {
-        tracing::warn!(job_id=%job.id, ?error, "recording deletion attempt failed");
-        let public_error = match &error {
-            AppError::Conflict(message) => message.as_str(),
-            _ => "Deletion could not finish; the worker will retry",
-        };
-        let waiting = matches!(&error, AppError::Conflict(message) if message.starts_with("Waiting for") || message.starts_with("Guild media work"));
-        sqlx::query("UPDATE recording_deletion_jobs SET attempts=CASE WHEN $5 THEN attempts-1 ELSE attempts END,state=CASE WHEN attempts >= $3 AND NOT $5 THEN 'failed' ELSE 'queued' END,stage='retry',error=$4,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now(),finished_at=CASE WHEN attempts >= $3 AND NOT $5 THEN now() ELSE NULL END WHERE id=$1 AND attempt_token=$2 AND state='running'")
-            .bind(&job.id).bind(&job.token).bind(MAX_ATTEMPTS).bind(public_error).bind(waiting).execute(pool).await?;
+    record_outcome(pool, &job, result).await
+}
+
+/// Persist an attempt's outcome. Every write is fenced by the attempt token,
+/// so an attempt that lost its lease cannot touch a reclaimed job.
+async fn record_outcome(
+    pool: &Pool<Postgres>,
+    job: &Claimed,
+    result: Result<(), AttemptError>,
+) -> Result<(), AppError> {
+    match result {
+        Ok(()) => {}
+        Err(AttemptError::LeaseLost) => {
+            tracing::warn!(job_id = %job.id, "recording deletion lease lost; leaving the job to its new owner");
+        }
+        Err(AttemptError::Waiting) => {
+            tracing::info!(job_id = %job.id, "recording deletion waiting for guild media work");
+            let kind = ErrorKind::WaitingForMediaWork;
+            sqlx::query("UPDATE recording_deletion_jobs SET attempts=attempts-1,state='queued',stage='waiting',error=$3,error_kind=$4,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'")
+                .bind(&job.id).bind(&job.token).bind(kind.default_message()).bind(kind.as_str()).execute(pool).await?;
+        }
+        Err(AttemptError::Failed { kind, detail }) => {
+            tracing::warn!(job_id = %job.id, kind = kind.as_str(), %detail, "recording deletion attempt failed");
+            sqlx::query("UPDATE recording_deletion_jobs SET state=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'queued' END,stage=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'retry' END,error=$4,error_kind=$5,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now(),finished_at=CASE WHEN attempts >= $3 THEN now() ELSE NULL END WHERE id=$1 AND attempt_token=$2 AND state='running'")
+                .bind(&job.id).bind(&job.token).bind(MAX_ATTEMPTS).bind(kind.default_message()).bind(kind.as_str()).execute(pool).await?;
+        }
     }
     Ok(())
 }
 
-async fn stage(pool: &Pool<Postgres>, job: &Claimed, value: &str) -> Result<(), AppError> {
+async fn stage(pool: &Pool<Postgres>, job: &Claimed, value: &str) -> Result<(), AttemptError> {
     let changed = sqlx::query("UPDATE recording_deletion_jobs SET stage=$3,lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()")
         .bind(&job.id).bind(&job.token).bind(value).execute(pool).await?.rows_affected();
     if changed != 1 {
-        return Err(AppError::Conflict("Deletion lease lost".into()));
+        return Err(AttemptError::LeaseLost);
     }
     Ok(())
 }
@@ -338,34 +411,27 @@ struct CompositionJob {
     id: String,
 }
 
-async fn process(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
-    job: &Claimed,
-) -> Result<(), AppError> {
-    process_with_roots(pool, media, job, &DataRoots::from_env()).await
-}
-
 async fn process_with_roots(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
     job: &Claimed,
     roots: &DataRoots,
-) -> Result<(), AppError> {
+) -> Result<(), AttemptError> {
     // Do not race a renderer already admitted before the tombstone. Queued
     // attempts recheck source access and will fail once they start.
     let active: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running'))")
         .bind(job.guild_id).fetch_one(pool).await?;
     if active > 0 {
-        return Err(AppError::Conflict(
-            "Waiting for in-flight guild media jobs".into(),
-        ));
+        return Err(AttemptError::Waiting);
     }
     let session = sqlx::query("SELECT guild_id,starting_channel_id,started_at,ended_at,deletion_requested_at FROM recording_sessions WHERE id=$1 AND guild_id=$2")
         .bind(job.session_id).bind(job.guild_id).fetch_optional(pool).await?.ok_or(AppError::FileNotFound)?;
     let tombstone: Option<DateTime<Utc>> = session.try_get("deletion_requested_at")?;
     if tombstone.is_none() {
-        return Err(AppError::Conflict("Recording is not tombstoned".into()));
+        return Err(AttemptError::failed(
+            ErrorKind::InternalError,
+            "recording is not tombstoned",
+        ));
     }
     let started: DateTime<Utc> = session.try_get("started_at")?;
     let ended: Option<DateTime<Utc>> = session.try_get("ended_at")?;
@@ -383,8 +449,9 @@ async fn process_with_roots(
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         {
-            return Err(AppError::Conflict(
-                "A clip has an unsafe archive identifier".into(),
+            return Err(AttemptError::failed(
+                ErrorKind::UnsafeMediaReference,
+                format!("clip {:?} has an unsafe archive identifier", clip.id),
             ));
         }
     }
@@ -428,7 +495,7 @@ async fn process_with_roots(
             archive
                 .purge_versions(&format!("media/v1/clips/{}/", clip.id))
                 .await
-                .map_err(|e| AppError::ServiceUnavailable(e.to_string()))?;
+                .map_err(|error| AppError::MediaArchiveUnavailable(error.to_string()))?;
         }
     }
     stage(pool, job, "purging_local").await?;
@@ -460,7 +527,13 @@ async fn process_with_roots(
     }
     for composition_job in &composition_jobs {
         uuid::Uuid::parse_str(&composition_job.id).map_err(|_| {
-            AppError::Conflict("A composition job has an invalid identifier".into())
+            AttemptError::failed(
+                ErrorKind::UnsafeMediaReference,
+                format!(
+                    "composition job {:?} has an invalid identifier",
+                    composition_job.id
+                ),
+            )
         })?;
         remove_dir_if_exists(
             &roots
@@ -476,16 +549,14 @@ async fn process_with_roots(
     let owned: Option<String> = sqlx::query_scalar("SELECT id FROM recording_deletion_jobs WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now() FOR UPDATE")
         .bind(&job.id).bind(&job.token).fetch_optional(&mut *tx).await?;
     if owned.is_none() {
-        return Err(AppError::Conflict("Deletion lease lost".into()));
+        return Err(AttemptError::LeaseLost);
     }
     // A new media request may have entered after the initial check. Leave the
     // tombstone in place and retry rather than publish/erase across it.
     let active: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running'))")
         .bind(job.guild_id).fetch_one(&mut *tx).await?;
     if active > 0 {
-        return Err(AppError::Conflict(
-            "Guild media work started during deletion".into(),
-        ));
+        return Err(AttemptError::Waiting);
     }
     sqlx::query("DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1) OR clip_id=ANY($2)")
         .bind(job.session_id).bind(clips.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()).execute(&mut *tx).await?;
@@ -522,8 +593,8 @@ async fn process_with_roots(
         .bind(job.session_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,finished_at=now(),updated_at=now() WHERE id=$1")
-        .bind(&job.id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,error_kind=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2")
+        .bind(&job.id).bind(&job.token).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -534,7 +605,7 @@ async fn purge_source(
     object_id: Option<i64>,
     prefix: &str,
     job: &Claimed,
-) -> Result<(), AppError> {
+) -> Result<(), AttemptError> {
     let mut lock = pool.begin().await?;
     if let Some(object_id) = object_id {
         sqlx::query("SELECT pg_advisory_xact_lock($1,$2)")
@@ -548,7 +619,7 @@ async fn purge_source(
         archive
             .purge_versions(prefix)
             .await
-            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))?;
+            .map_err(|error| AppError::MediaArchiveUnavailable(error.to_string()))?;
     }
     lock.commit().await?;
     Ok(())
@@ -724,7 +795,7 @@ async fn remove_dir_if_exists(path: &Path) -> Result<(), AppError> {
     }
 }
 
-async fn purge_fragment(roots: &DataRoots, fragment: &Fragment) -> Result<(), AppError> {
+async fn purge_fragment(roots: &DataRoots, fragment: &Fragment) -> Result<(), AttemptError> {
     if !matches!(
         Path::new(&fragment.file_name)
             .components()
@@ -732,8 +803,9 @@ async fn purge_fragment(roots: &DataRoots, fragment: &Fragment) -> Result<(), Ap
             .as_slice(),
         [std::path::Component::Normal(_)]
     ) {
-        return Err(AppError::Conflict(
-            "A recording has an unsafe file name".into(),
+        return Err(AttemptError::failed(
+            ErrorKind::UnsafeMediaReference,
+            format!("recording fragment {} has an unsafe file name", fragment.id),
         ));
     }
     let key = RecordingKey::new(
@@ -1112,6 +1184,173 @@ mod tests {
             .execute(&pool).await;
         assert!(unsafe_job.is_err());
         assert!(claim(&pool).await?.is_none());
+        Ok(())
+    }
+
+    async fn permanent_job(pool: &PgPool, file_name: &str) -> Result<String, AppError> {
+        let (session_id, _) = seed_session(pool, file_name).await?;
+        enqueue(
+            pool,
+            1,
+            session_id,
+            Some(200),
+            "manager",
+            DeletionMode::Permanent,
+        )
+        .await
+    }
+
+    async fn make_due(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE recording_deletion_jobs SET retry_at=now() WHERE id=$1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn waiting_for_media_work_never_spends_the_failure_budget(pool: PgPool) -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let roots = DataRoots::new(temp.path());
+        let job_id = permanent_job(&pool, "waiting-recording").await?;
+        sqlx::query("INSERT INTO media_jobs (id,kind,guild_id,user_id,idempotency_key,resource_key,request) VALUES ('busy','session_download',1,100,'busy','busy','{}')")
+            .execute(&pool)
+            .await?;
+        for _ in 0..MAX_ATTEMPTS + 3 {
+            make_due(&pool, &job_id).await?;
+            run_one(&pool, &MediaArchive::disabled(), &roots).await?;
+        }
+        let waiting = load_status(&pool, 1, &job_id).await?;
+        assert_eq!(
+            (
+                waiting.state.as_str(),
+                waiting.stage.as_str(),
+                waiting.attempts
+            ),
+            ("queued", "waiting", 0)
+        );
+        assert_eq!(waiting.error_kind, Some(ErrorKind::WaitingForMediaWork));
+        assert_eq!(
+            waiting.error.as_deref(),
+            Some(ErrorKind::WaitingForMediaWork.default_message())
+        );
+
+        // Once the guild's media work drains, the same job completes.
+        sqlx::query("UPDATE media_jobs SET state='ready' WHERE id='busy'")
+            .execute(&pool)
+            .await?;
+        make_due(&pool, &job_id).await?;
+        run_one(&pool, &MediaArchive::disabled(), &roots).await?;
+        let done = load_status(&pool, 1, &job_id).await?;
+        assert_eq!((done.state.as_str(), done.attempts), ("ready", 1));
+        assert_eq!((done.error, done.error_kind), (None, None));
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn real_failures_spend_attempts_until_the_limit(pool: PgPool) -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let roots = DataRoots::new(temp.path());
+        let job_id = permanent_job(&pool, "failing-recording").await?;
+        // A stored name that would escape the recordings root must stop the
+        // purge, however often it is retried.
+        sqlx::query(
+            "UPDATE audio_files SET file_name='../escape' WHERE file_name='failing-recording'",
+        )
+        .execute(&pool)
+        .await?;
+        for attempt in 1..=MAX_ATTEMPTS {
+            make_due(&pool, &job_id).await?;
+            run_one(&pool, &MediaArchive::disabled(), &roots).await?;
+            let status = load_status(&pool, 1, &job_id).await?;
+            assert_eq!(status.attempts, attempt);
+            let expected = if attempt < MAX_ATTEMPTS {
+                ("queued", "retry")
+            } else {
+                ("failed", "failed")
+            };
+            assert_eq!((status.state.as_str(), status.stage.as_str()), expected);
+            assert_eq!(status.error_kind, Some(ErrorKind::UnsafeMediaReference));
+            let message = status.error.unwrap_or_default();
+            assert_eq!(message, ErrorKind::UnsafeMediaReference.default_message());
+            assert!(!message.contains("escape"));
+            assert!(!message.to_lowercase().contains("retry"));
+        }
+        make_due(&pool, &job_id).await?;
+        assert!(claim(&pool).await?.is_none());
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn a_stale_attempt_cannot_touch_a_reclaimed_job(pool: PgPool) -> TestResult {
+        let temp = tempfile::tempdir()?;
+        let roots = DataRoots::new(temp.path());
+        let job_id = permanent_job(&pool, "reclaimed-recording").await?;
+        let recording = RecordingKey::new(1, 10, 2026, 9, "reclaimed-recording")
+            .recording_path(&roots.recordings_str());
+        tokio::fs::create_dir_all(recording.parent().unwrap()).await?;
+        tokio::fs::write(&recording, b"test-media").await?;
+
+        let stale = claim(&pool).await?.unwrap();
+        sqlx::query("UPDATE recording_deletion_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=$1")
+            .bind(&job_id)
+            .execute(&pool)
+            .await?;
+        let current = claim(&pool).await?.unwrap();
+        stage(&pool, &current, "purging_archive").await?;
+        let snapshot = || {
+            sqlx::query_as::<_, (String, String, i32, Option<String>, Option<String>, Option<String>)>(
+                "SELECT state,stage,attempts,attempt_token,error,error_kind FROM recording_deletion_jobs WHERE id=$1",
+            )
+            .bind(&job_id)
+            .fetch_one(&pool)
+        };
+        let before = snapshot().await?;
+
+        assert!(matches!(
+            stage(&pool, &stale, "late").await,
+            Err(AttemptError::LeaseLost)
+        ));
+        assert!(matches!(
+            process_with_roots(&pool, &MediaArchive::disabled(), &stale, &roots).await,
+            Err(AttemptError::LeaseLost)
+        ));
+        assert!(recording.exists(), "a stale attempt purged media");
+        for outcome in [
+            Err(AttemptError::Waiting),
+            Err(AttemptError::failed(
+                ErrorKind::InternalError,
+                "late failure",
+            )),
+            Err(AttemptError::LeaseLost),
+            Ok(()),
+        ] {
+            record_outcome(&pool, &stale, outcome).await?;
+        }
+        assert_eq!(snapshot().await?, before);
+
+        process_with_roots(&pool, &MediaArchive::disabled(), &current, &roots).await?;
+        assert_eq!(load_status(&pool, 1, &job_id).await?.state, "ready");
+        assert!(!recording.exists());
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn legacy_deletion_errors_are_not_echoed(pool: PgPool) -> TestResult {
+        let job_id = permanent_job(&pool, "legacy-recording").await?;
+        sqlx::query("UPDATE recording_deletion_jobs SET error='IO Error: /srv/sakiot/data/recordings permission denied', error_kind=NULL WHERE id=$1")
+            .bind(&job_id)
+            .execute(&pool)
+            .await?;
+        let status = load_status(&pool, 1, &job_id).await?;
+        let body = serde_json::to_string(&status)?;
+        assert!(!body.contains("/srv"), "{body}");
+        assert!(!body.contains("IO Error"), "{body}");
+        assert_eq!(status.error_kind, None);
+        assert_eq!(
+            status.error.as_deref(),
+            Some(crate::errors::UNCLASSIFIED_JOB_ERROR)
+        );
         Ok(())
     }
 }

@@ -30,7 +30,7 @@ pub struct UserOverride {
 fn validate_seconds(secs: i32) -> Result<(), AppError> {
     if secs < 0 {
         Err(AppError::BadRequest(
-            "cooldown_seconds must be >= 0".to_string(),
+            "The cooldown cannot be negative.".to_string(),
         ))
     } else {
         Ok(())

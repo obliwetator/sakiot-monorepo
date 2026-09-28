@@ -56,8 +56,8 @@ pub(crate) async fn serve_remote(
                 "B2 HEAD metadata differs from the verified archive ledger",
             )
             .await?;
-            return Err(AppError::ServiceUnavailable(
-                "archived media failed metadata validation".to_owned(),
+            return Err(AppError::ArchiveIntegrityFailure(
+                "B2 HEAD metadata differs from the verified archive ledger".to_owned(),
             ));
         }
         metrics::remote_read_success(0, started.elapsed());
@@ -86,8 +86,8 @@ pub(crate) async fn serve_remote(
             "B2 GET metadata differs from the verified archive ledger",
         )
         .await?;
-        return Err(AppError::ServiceUnavailable(
-            "archived media failed metadata validation".to_owned(),
+        return Err(AppError::ArchiveIntegrityFailure(
+            "B2 GET metadata differs from the verified archive ledger".to_owned(),
         ));
     }
 
@@ -215,7 +215,7 @@ fn map_remote_error(error: StorageError) -> AppError {
         StorageErrorKind::NotFound => AppError::FileNotFound,
         _ => {
             warn!(?error, "B2 remote media read failed");
-            AppError::ServiceUnavailable("media archive unavailable".to_owned())
+            AppError::MediaArchiveUnavailable(error.to_string())
         }
     }
 }

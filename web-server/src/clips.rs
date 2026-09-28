@@ -353,7 +353,7 @@ pub async fn play_clip(
                         "Failed to connect to Jammer gRPC service: {}",
                         e,
                     );
-                    AppError::GrpcError(e.to_string())
+                    AppError::BotUnavailable(e.to_string())
                 })?
         }
         Err(e) => {
@@ -363,7 +363,7 @@ pub async fn play_clip(
                 "Failed to connect to Jammer gRPC service: {}",
                 e,
             );
-            return Err(AppError::GrpcError(e.to_string()));
+            return Err(AppError::BotUnavailable(e.to_string()));
         }
     };
     let (grpc_address, mut client) = connected;
@@ -476,12 +476,12 @@ fn validate_clip_fits_recording(end: f32, recording_duration: f64) -> Result<(),
 async fn probe_source_duration(path: &Path) -> Result<f64, AppError> {
     let probe = crate::ffmpeg::run_ffprobe(path).await?;
     if !probe.status.success() {
-        return Err(AppError::BadGateway(
+        return Err(AppError::MediaInspectionFailed(
             "ffprobe could not read the recording duration".into(),
         ));
     }
     crate::ffmpeg::parse_probe_duration(&probe.stdout)
-        .ok_or_else(|| AppError::BadGateway("ffprobe returned no audio duration".into()))
+        .ok_or_else(|| AppError::MediaInspectionFailed("ffprobe returned no audio duration".into()))
 }
 
 /// Duration of a clip ffmpeg just wrote. `None` means the output carries no
@@ -932,7 +932,7 @@ mod tests {
         std::fs::write(&junk, b"not an ogg stream").expect("write junk");
         assert!(matches!(
             probe_source_duration(&junk).await,
-            Err(AppError::BadGateway(_))
+            Err(AppError::MediaInspectionFailed(_))
         ));
         assert_eq!(probe_rendered_duration(&junk).await.unwrap(), None);
     }
