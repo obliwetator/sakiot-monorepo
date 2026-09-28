@@ -9,12 +9,13 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { API_ROUTES, absoluteMediaUrl, apiUrl } from "../../api/routes";
+import { problemFromError } from "../../app/apiError";
 import { type ClipData, useRenameClipMutation } from "../../app/apiSlice";
 import {
-	authedFetch,
 	refreshForMediaRetry,
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
+import { downloadFile } from "../../app/download";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
 import { BaseDialog } from "../../shared/BaseDialog";
 import {
@@ -50,15 +51,6 @@ function safeFileName(name: string): string {
 		.replaceAll(/[^a-zA-Z0-9._-]+/g, "-")
 		.replaceAll(/^-+|-+$/g, "");
 	return sanitized || "clip";
-}
-
-function saveBlob(blob: Blob, fileName: string) {
-	const url = URL.createObjectURL(blob);
-	const anchor = document.createElement("a");
-	anchor.href = url;
-	anchor.download = fileName;
-	anchor.click();
-	URL.revokeObjectURL(url);
 }
 
 function MetadataItem(props: { label: string; value: ReactNode }) {
@@ -335,24 +327,17 @@ export function ClipPlayer(props: {
 	const download = async () => {
 		setError(null);
 		try {
-			const response = await authedFetch(
+			await downloadFile(
 				apiUrl(API_ROUTES.clip, {
 					guild_id: props.clip.guild_id,
 					clip_id: props.clip.clip_id,
 				}),
-			);
-			if (!response.ok) {
-				setError(`Clip download failed (${response.status}).`);
-				return;
-			}
-			saveBlob(
-				await response.blob(),
 				`${safeFileName(props.clip.name ?? props.clip.clip_id)}.ogg`,
 			);
-		} catch {
+		} catch (failure) {
 			// A dropped connection rejects instead of returning a response;
 			// without this the button silently did nothing.
-			setError("Clip download failed. Check your connection and try again.");
+			setError(`Clip download failed. ${problemFromError(failure).message}`);
 		}
 	};
 

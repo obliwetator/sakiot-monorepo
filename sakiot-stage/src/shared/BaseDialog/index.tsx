@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button, DialogHeading, Modal } from "../ui";
+import { Button, DialogHeading, Modal, Notice } from "../ui";
 
 export function BaseDialog(props: {
 	open: boolean;
@@ -24,7 +24,9 @@ export function BaseDialog(props: {
 			<div className="space-y-3 px-5 py-4">
 				{props.children}
 				{props.error && (
-					<p className="leading-6 text-danger mt-2">{props.error}</p>
+					<Notice tone="error" announce="alert" className="mt-2">
+						{props.error}
+					</Notice>
 				)}
 			</div>
 			<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { components } from "../../api/openapi";
 import {
+	isDefiniteRejection,
+	problemFromError,
+	problemFromQueryError,
+} from "../../app/apiError";
+import {
 	apiSlice,
 	useComposeClipMutation,
 	useGetAuthDetailsQuery,
@@ -87,17 +92,19 @@ export function useCompositionExport(guildId: string) {
 				setPending(next);
 			} catch (failure) {
 				if (currentKey.current !== storageKey) return;
-				const code =
-					typeof failure === "object" && failure && "status" in failure
-						? failure.status
-						: null;
-				// A 4xx proves rejection. A network error or 5xx may have happened
-				// after commit: preserve the exact request/key for a safe retry.
-				if (typeof code === "number" && code >= 400 && code < 500) {
+				const problem = problemFromError(failure);
+				if (isDefiniteRejection(problem)) {
+					// Nothing was queued, and the editor still holds the edit.
 					persist(storageKey, null);
 					setPending(null);
+					setError(`The export was not started. ${problem.message}`);
+				} else {
+					// It may have been queued before the answer was lost. Keep the
+					// exact request and key: resending them can only find that export.
+					setError(
+						`Could not confirm whether the export started. ${problem.message} Try again to check; this cannot create a duplicate export.`,
+					);
 				}
-				setError("Could not confirm the export. Press Render to retry safely.");
 			}
 		},
 		[compose, guildId, storageKey],
@@ -122,7 +129,7 @@ export function useCompositionExport(guildId: string) {
 			setDone(status.status === "ready");
 			setError(
 				status.status === "failed"
-					? (status.error ?? "The export failed. Please try again.")
+					? `The export failed. ${status.error ?? "No further detail is available."}`
 					: null,
 			);
 			if (status.status === "ready")
@@ -151,6 +158,8 @@ export function useCompositionExport(guildId: string) {
 		[active, starting, storageKey, submit],
 	);
 
+	const pollProblem = pollError ? problemFromQueryError(pollError) : null;
+
 	const resetMessage = useCallback(() => {
 		setError(null);
 		setDone(false);
@@ -163,10 +172,17 @@ export function useCompositionExport(guildId: string) {
 		resetMessage,
 		error:
 			error ??
-			(pollError
-				? "Connection interrupted. Your export is still tracked; reconnecting…"
+			(pollProblem
+				? pollProblem.status === 401
+					? `${pollProblem.message} Your export is still tracked and resumes once you log in.`
+					: "Connection interrupted. Your export is still tracked; reconnecting…"
 				: null),
 		progress: status?.progress ?? 0,
 		stage: status?.stage ?? "queued",
+		/** Why the previous attempt failed while the job waits to retry. */
+		retryReason:
+			status?.status === "queued" || status?.status === "running"
+				? (status.error ?? null)
+				: null,
 	};
 }

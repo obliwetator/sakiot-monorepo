@@ -8,6 +8,7 @@ import {
 	useGetRoleViewQuery,
 } from "../../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS } from "../../Constants";
+import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Badge,
 	Button,
@@ -38,6 +39,8 @@ function RolePreviewDialog(props: {
 		data: roleView,
 		isLoading,
 		isError,
+		error,
+		refetch,
 	} = useGetRoleViewQuery(
 		{ guild_id: guildId, role_id: role?.role_id ?? "" },
 		{ skip: !open || !role },
@@ -71,7 +74,11 @@ function RolePreviewDialog(props: {
 				{isLoading ? (
 					<p className="leading-6">Loading preview…</p>
 				) : isError ? (
-					<p className="leading-6 text-danger">Failed to load preview.</p>
+					<LoadFailure
+						error={error}
+						what="Could not load the role preview."
+						onRetry={() => void refetch()}
+					/>
 				) : (
 					roleView && (
 						<div className="flex flex-col gap-3">
@@ -173,7 +180,8 @@ export function GuildMembers() {
 		data: roles,
 		isLoading: loadingRoles,
 		isError: rolesError,
-		error: rolesErrorMessage,
+		error: rolesLoadError,
+		refetch: refetchRoles,
 	} = useGetGuildRolesQuery(gid, { skip: !gid });
 	const [selectedRole, setSelectedRole] = useState<GuildRole | null>(null);
 	const [previewRole, setPreviewRole] = useState<GuildRole | null>(null);
@@ -189,7 +197,8 @@ export function GuildMembers() {
 		data: members,
 		isLoading: loadingMembers,
 		isError: membersError,
-		error: membersErrorMessage,
+		error: membersLoadError,
+		refetch: refetchMembers,
 	} = useGetRoleMembersQuery(
 		{ guild_id: gid, role_id: selectedRole?.role_id ?? "" },
 		{ skip: !gid || !selectedRole },
@@ -206,9 +215,11 @@ export function GuildMembers() {
 			{loadingRoles ? (
 				<p className="leading-6">Loading roles…</p>
 			) : rolesError ? (
-				<p className="leading-6 text-danger">
-					Failed to load roles: {JSON.stringify(rolesErrorMessage)}
-				</p>
+				<LoadFailure
+					error={rolesLoadError}
+					what="Could not load roles."
+					onRetry={() => void refetchRoles()}
+				/>
 			) : (
 				<div className="flex items-stretch flex-col min-[900px]:flex-row gap-4">
 					<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none min-[900px]:min-w-70">
@@ -272,9 +283,12 @@ export function GuildMembers() {
 						{loadingMembers ? (
 							<p className="leading-6 p-4">Loading members…</p>
 						) : membersError ? (
-							<p className="leading-6 text-danger p-4">
-								Failed to load members: {JSON.stringify(membersErrorMessage)}
-							</p>
+							<LoadFailure
+								className="p-4"
+								error={membersLoadError}
+								what="Could not load members."
+								onRetry={() => void refetchMembers()}
+							/>
 						) : (
 							<Table>
 								<TableHeader>

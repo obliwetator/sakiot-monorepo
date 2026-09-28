@@ -358,7 +358,7 @@ test("validates native forms, submits with Enter, exposes pending state, and res
 	await userSecondsInput.fill("-2");
 	await userSecondsInput.press("Enter");
 	await expect(page.getByRole("alert")).toContainText(
-		"Provide a user id and non-negative integer seconds.",
+		"Provide a numeric Discord user ID and non-negative integer seconds.",
 	);
 
 	await userIdInput.fill("10003");

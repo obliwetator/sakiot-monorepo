@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { problemFromQueryError } from "../../app/apiError";
 import {
 	useRebuildSessionWaveformMutation,
 	useRebuildSilenceFreeSessionWaveformMutation,
@@ -25,7 +26,7 @@ export function SessionWaveform(props: {
 		props.sessionId,
 		props.silenceFree,
 	);
-	const { currentData: data, isError, refetch } = query;
+	const { currentData: data, isError, error, refetch } = query;
 	const [rebuildNormalWaveform, normalRebuildState] =
 		useRebuildSessionWaveformMutation();
 	const [rebuildSilenceFreeWaveform, silenceFreeRebuildState] =
@@ -90,6 +91,12 @@ export function SessionWaveform(props: {
 	const buildInProgress =
 		rebuilding || rebuildState.isLoading || data?.building === true;
 	const waveformError = isError || rebuildState.isError;
+	const waveformProblem = waveformError
+		? problemFromQueryError(
+				rebuildState.isError ? rebuildState.error : error,
+				"It could not be loaded.",
+			).message
+		: "";
 
 	return (
 		<SessionWaveformDisplay
@@ -119,7 +126,7 @@ export function SessionWaveform(props: {
 			{waveformError && (
 				<div className="absolute inset-0 grid place-items-center z-2 pointer-events-none">
 					<span className="text-danger text-xs leading-5">
-						{waveformName} waveform unavailable.
+						{waveformName} waveform unavailable. {waveformProblem}
 					</span>
 				</div>
 			)}

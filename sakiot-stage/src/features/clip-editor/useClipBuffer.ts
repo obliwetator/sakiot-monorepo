@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { API_ROUTES, apiUrl } from "../../api/routes";
-import { authedFetch, SESSION_EXPIRED_MESSAGE } from "../../app/authedFetch";
+import {
+	ApiRequestError,
+	problemFromError,
+	problemFromResponse,
+} from "../../app/apiError";
+import { authedFetch } from "../../app/authedFetch";
 
 import { PcmBudget, SOURCE_CACHE_BYTES } from "./pcmBudget";
 
@@ -9,6 +14,7 @@ let decodeQueue: Promise<unknown> = Promise.resolve();
 const bufferCache = new Map<string, Promise<AudioBuffer>>();
 let decodeContext: AudioContext | null = null;
 const SHARED_DSP_SAMPLE_RATE = 48_000;
+const LOAD_FAILED = "Clip audio could not be loaded.";
 
 function contextForDecoding(): AudioContext {
 	if (!decodeContext) {
@@ -43,16 +49,30 @@ export function loadClipBuffer(
 			apiUrl(API_ROUTES.clip, { guild_id: guildId, clip_id: clipId }),
 		);
 		if (!response.ok) {
-			// authedFetch already retried once after a refresh; a 401 here
-			// means the refresh token is gone too.
-			if (response.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE);
-			if (response.status === 403) {
-				throw new Error("You don't have access to this clip's channel.");
-			}
-			throw new Error(`Clip audio load failed (${response.status}).`);
+			// authedFetch already retried once after a refresh, so a 401 here
+			// means the session is over; problemFromResponse words it so.
+			const problem = await problemFromResponse(response);
+			throw new ApiRequestError(
+				response.status === 403
+					? {
+							...problem,
+							message: "You don't have access to this clip's channel.",
+						}
+					: problem,
+			);
 		}
 		const bytes = await response.arrayBuffer();
-		return contextForDecoding().decodeAudioData(bytes);
+		try {
+			return await contextForDecoding().decodeAudioData(bytes);
+		} catch {
+			throw new ApiRequestError({
+				cause: "malformed",
+				status: response.status,
+				kind: null,
+				message:
+					"The clip audio could not be decoded. The file may be damaged or in an unsupported format.",
+			});
+		}
 	});
 	decodeQueue = promise.then(
 		() => undefined,
@@ -105,10 +125,7 @@ export function useClipBuffer(
 					setState({
 						status: "error",
 						buffer: null,
-						error:
-							error instanceof Error
-								? error.message
-								: "Clip audio could not be loaded.",
+						error: `${LOAD_FAILED} ${problemFromError(error).message}`,
 					});
 				}
 			});

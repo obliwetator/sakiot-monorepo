@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { problemFromError } from "../../app/apiError";
 import {
 	type ClipData,
 	useDeleteClipMutation,
@@ -17,6 +18,7 @@ import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
+import { LoadFailure } from "../../shared/LoadFailure";
 import { canDeleteClip } from "../../shared/permissions";
 import {
 	Button,
@@ -134,25 +136,33 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 
 	const handleClose = () => {
 		setOpen(false);
+		setError(null);
 	};
 	const params = useParams();
 
-	const [deleteClip] = useDeleteClipMutation();
+	const [deleteClip, deleteState] = useDeleteClipMutation();
+	const [error, setError] = useState<string | null>(null);
 
 	const handleYes = async () => {
-		if (params.guild_id) {
-			try {
-				await deleteClip({
-					guild_id: params.guild_id,
-					file_name: props.clip_id,
-				}).unwrap();
-				setOpen(false);
-			} catch (error) {
-				console.error("Failed to delete clip:", error);
-				setOpen(false);
-			}
-		} else {
+		if (!params.guild_id) {
 			setOpen(false);
+			return;
+		}
+		setError(null);
+		try {
+			await deleteClip({
+				guild_id: params.guild_id,
+				file_name: props.clip_id,
+			}).unwrap();
+			setOpen(false);
+		} catch (failure) {
+			// Keep the dialog open so the failure is visible and can be retried.
+			const problem = problemFromError(failure);
+			setError(
+				problem.kind === "clip_not_found"
+					? "This clip no longer exists. It may already have been deleted."
+					: `The clip was not deleted. ${problem.message}`,
+			);
 		}
 	};
 
@@ -183,13 +193,23 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 					>
 						Are you sure you want to delete the clip?
 					</p>
+					{error && (
+						<Notice tone="error" announce="alert">
+							{error}
+						</Notice>
+					)}
 				</div>
 				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
 					<Button variant="primary" onPress={handleClose}>
 						No
 					</Button>
-					<Button variant="primary" autoFocus onPress={handleYes}>
-						YEP
+					<Button
+						variant="primary"
+						autoFocus
+						isDisabled={deleteState.isLoading}
+						onPress={handleYes}
+					>
+						{error ? "Try again" : "YEP"}
 					</Button>
 				</div>
 			</Modal>
@@ -208,13 +228,14 @@ export default function Clips() {
 	const guild =
 		authData?.guilds?.find((g) => g.id === guildId) ?? guildSelected;
 	const { asRoleArg } = useAsRole();
-	const { data, isError, isLoading, isUninitialized } = useGetClipsQuery(
-		{ guild_id: guildId, ...asRoleArg },
-		{
-			skip: !guildId,
-			refetchOnMountOrArgChange: true,
-		},
-	);
+	const { data, isError, error, refetch, isLoading, isUninitialized } =
+		useGetClipsQuery(
+			{ guild_id: guildId, ...asRoleArg },
+			{
+				skip: !guildId,
+				refetchOnMountOrArgChange: true,
+			},
+		);
 
 	// A failed or in-flight request must not read as "no clips": rendering the
 	// same empty page for all three made a broken API look like an empty library.
@@ -222,9 +243,11 @@ export default function Clips() {
 		return (
 			<div className="p-3 min-[900px]:p-6">
 				<ViewAsRoleBanner guildId={guildId} />
-				<Notice tone="error" announce="alert">
-					Could not load clips. Check your connection, then reload the page.
-				</Notice>
+				<LoadFailure
+					error={error}
+					what="Could not load clips."
+					onRetry={() => void refetch()}
+				/>
 			</div>
 		);
 	}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { problemFromError } from "../../app/apiError";
 import {
 	type ChannelMixScope,
 	useGenerateSessionChannelMixMutation,
@@ -11,6 +12,33 @@ import {
 	parseChannelMixStatus,
 } from "./channelMixState";
 import { useChannelMixDraft } from "./useChannelMixDraft";
+
+/** A 409 carries the mix status document, whose reason explains the conflict. */
+function channelMixFailure(failure: unknown): string {
+	if (
+		typeof failure === "object" &&
+		failure !== null &&
+		"status" in failure &&
+		failure.status === 409 &&
+		"data" in failure
+	) {
+		const status = parseChannelMixStatusBody(failure.data);
+		if (status) return `The channel mix was not generated. ${status}`;
+	}
+	return `Channel mix generation failed. ${problemFromError(failure, "Try again.").message}`;
+}
+
+function parseChannelMixStatusBody(data: unknown): string | null {
+	if (typeof data !== "object" || data === null || !("reason" in data))
+		return null;
+	const reason = data.reason;
+	return typeof reason === "object" &&
+		reason !== null &&
+		"message" in reason &&
+		typeof reason.message === "string"
+		? reason.message
+		: null;
+}
 
 /**
  * A session's channel mix: its status (polled only while processing), the
@@ -84,8 +112,8 @@ export function useSessionChannelMix(options: {
 				body: { participants: draft.settings },
 			}).unwrap();
 			await refetch();
-		} catch {
-			setActionError("Channel mix generation failed. Try again.");
+		} catch (failure) {
+			setActionError(channelMixFailure(failure));
 		}
 	};
 

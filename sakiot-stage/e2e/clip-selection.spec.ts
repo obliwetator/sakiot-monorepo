@@ -133,7 +133,7 @@ test("a failed clip download reports an error instead of failing silently", asyn
 	await page.getByRole("button", { name: "Download clip" }).click();
 	await expect(
 		page.getByText(
-			"Clip download failed. Check your connection and try again.",
+			"Clip download failed. The server could not be reached. Check your connection and try again.",
 		),
 	).toBeVisible();
 });

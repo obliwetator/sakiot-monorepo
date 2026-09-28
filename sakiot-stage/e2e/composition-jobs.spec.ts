@@ -146,11 +146,15 @@ test("a lost submission response retries the same request after reload", async (
 	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
 	await page.getByRole("button", { name: "Export", exact: true }).click();
 	await page.getByRole("button", { name: "Render", exact: true }).click();
-	await expect(
-		page.getByText(
-			"Could not confirm the export. Press Render to retry safely.",
-		),
-	).toBeVisible();
+	await expect(page.getByRole("alert")).toHaveText(
+		"Could not confirm whether the export started. The server could not be reached. Check your connection and try again. Try again to check; this cannot create a duplicate export.",
+	);
+	// The exact request and key survive for a safe resend.
+	const kept = await page.evaluate(
+		(key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+		storageKey,
+	);
+	expect(kept).toMatchObject({ key: requests[0].key, jobId: null });
 	await page.reload();
 	await expect.poll(() => requests.length).toBe(2);
 	expect(requests[0].key).toBeTruthy();
@@ -193,6 +197,147 @@ test("an expired job stops polling and explains how to recover", async ({
 			"This export is no longer available. Check your clips before starting another export.",
 		),
 	).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Render", exact: true }),
+	).toBeEnabled();
+});
+
+async function routeCompose(
+	page: import("@playwright/test").Page,
+	replies: { status: number; json: unknown }[],
+) {
+	const requests: { key: string; body: unknown }[] = [];
+	await page.route(
+		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose`,
+		async (route) => {
+			if (route.request().method() === "OPTIONS") {
+				await route.fulfill({ status: 204, headers: corsHeaders });
+				return;
+			}
+			requests.push({
+				key: route.request().headers()["idempotency-key"],
+				body: route.request().postDataJSON(),
+			});
+			const reply = replies.shift() ?? {
+				status: 202,
+				json: { id: "accepted-job", status: "processing", progress: 0 },
+			};
+			await route.fulfill({ ...reply, headers: corsHeaders });
+		},
+	);
+	await page.route(
+		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose/accepted-job`,
+		(route) =>
+			route.fulfill({
+				headers: corsHeaders,
+				json: {
+					status: "queued",
+					stage: "queued",
+					progress: 0,
+					error: null,
+					result_clip_id: null,
+				},
+			}),
+	);
+	return requests;
+}
+
+test("a definite rejection explains itself and keeps the edit", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of 503.*\/api\/audio\/clips\/guild-123\/compose/);
+	const requests = await routeCompose(page, [
+		{
+			status: 503,
+			json: {
+				code: 503,
+				kind: "user_job_limit_reached",
+				message:
+					"You already have the maximum number of active media jobs. Wait for one to finish, then try again.",
+			},
+		},
+	]);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
+	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByLabel("Clip name").fill("My mix");
+	await page.getByRole("button", { name: "Render", exact: true }).click();
+	await expect(page.getByRole("alert")).toHaveText(
+		"The export was not started. You already have the maximum number of active media jobs. Wait for one to finish, then try again.",
+	);
+	// Nothing was queued, so nothing is tracked; the dialog keeps its input.
+	await expect
+		.poll(() => page.evaluate((key) => localStorage.getItem(key), storageKey))
+		.toBeNull();
+	await expect(page.getByLabel("Clip name")).toHaveValue("My mix");
+	await page.getByRole("button", { name: "Render", exact: true }).click();
+	await expect(
+		page.getByText("Waiting for an available export slot…"),
+	).toBeVisible();
+	expect(requests).toHaveLength(2);
+	// A rejected request may be replaced by a fresh one.
+	expect(requests[1].key).not.toBe(requests[0].key);
+});
+
+test("an unclassified server fault keeps the request for an identical resend", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of 500.*\/api\/audio\/clips\/guild-123\/compose/);
+	const requests = await routeCompose(page, [
+		{
+			status: 500,
+			json: {
+				code: 500,
+				kind: "internal_error",
+				message: "Something went wrong on the server.",
+			},
+		},
+	]);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
+	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await page.getByRole("button", { name: "Render", exact: true }).click();
+	await expect(page.getByRole("alert")).toContainText(
+		"Could not confirm whether the export started. Something went wrong on the server.",
+	);
+	await page.getByRole("button", { name: "Render", exact: true }).click();
+	await expect(
+		page.getByText("Waiting for an available export slot…"),
+	).toBeVisible();
+	expect(requests).toHaveLength(2);
+	expect(requests[1]).toEqual(requests[0]);
+});
+
+test("a failed export reports the server's reason", async ({ page }) => {
+	await page.addInitScript(
+		({ key, body }) => {
+			localStorage.setItem(
+				key,
+				JSON.stringify({ key: "timed-out", body, jobId: "timed-out-job" }),
+			);
+		},
+		{ key: storageKey, body: draft },
+	);
+	await page.route(
+		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose/timed-out-job`,
+		(route) =>
+			route.fulfill({
+				headers: corsHeaders,
+				json: {
+					status: "failed",
+					stage: "failed",
+					progress: 0,
+					error: "Processing exceeded its time limit and was stopped.",
+					error_kind: "execution_timed_out",
+					result_clip_id: null,
+				},
+			}),
+	);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
+	await page.getByRole("button", { name: "Export", exact: true }).click();
+	await expect(page.getByRole("alert")).toHaveText(
+		"The export failed. Processing exceeded its time limit and was stopped.",
+	);
 	await expect(
 		page.getByRole("button", { name: "Render", exact: true }),
 	).toBeEnabled();

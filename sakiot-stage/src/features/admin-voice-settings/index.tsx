@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { managerActionFailure as failure } from "../../app/apiError";
 import {
 	useDeleteGuildVoiceSettingsMutation,
 	useGetGuildRecordingPolicyQuery,
@@ -7,6 +8,7 @@ import {
 	useSetGuildRecordingPolicyMutation,
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
+import { LoadFailure } from "../../shared/LoadFailure";
 import { Button, Notice, TextField } from "../../shared/ui";
 
 const MIN_PENDING_SECONDS = 60;
@@ -14,15 +16,25 @@ const MIN_PENDING_SECONDS = 60;
 export function GuildVoiceSettingsPage() {
 	const { guild_id } = useParams<{ guild_id: string }>();
 	const guildId = guild_id ?? "";
-	const { data, isLoading, isError } = useGetGuildVoiceSettingsQuery(guildId, {
+	const {
+		data,
+		isLoading,
+		isError,
+		error: loadError,
+		refetch,
+	} = useGetGuildVoiceSettingsQuery(guildId, {
 		skip: !guildId,
 	});
 	const [save, saveState] = useSetGuildVoiceSettingsMutation();
 	const [reset, resetState] = useDeleteGuildVoiceSettingsMutation();
 	const [seconds, setSeconds] = useState("21600");
 	const [validation, setValidation] = useState<string | null>(null);
-	const { data: recordingPolicy, isError: recordingPolicyError } =
-		useGetGuildRecordingPolicyQuery(guildId, { skip: !guildId });
+	const {
+		data: recordingPolicy,
+		isError: recordingPolicyError,
+		error: recordingPolicyLoadError,
+		refetch: refetchRecordingPolicy,
+	} = useGetGuildRecordingPolicyQuery(guildId, { skip: !guildId });
 	const [saveRecordingPolicy, recordingSaveState] =
 		useSetGuildRecordingPolicyMutation();
 	const [retentionDays, setRetentionDays] = useState("");
@@ -103,9 +115,11 @@ export function GuildVoiceSettingsPage() {
 
 				{isLoading && <p className="leading-6">Loading voice settings…</p>}
 				{isError && (
-					<Notice tone={"error"} announce="alert">
-						Could not load voice settings.
-					</Notice>
+					<LoadFailure
+						error={loadError}
+						what="Could not load voice settings."
+						onRetry={() => void refetch()}
+					/>
 				)}
 				{data && (
 					<div className="flex flex-col gap-4">
@@ -150,7 +164,7 @@ export function GuildVoiceSettingsPage() {
 						)}
 						{saveState.isError && (
 							<Notice tone={"error"} announce="alert">
-								Save failed.
+								{failure(saveState.error, "The override was not saved.")}
 							</Notice>
 						)}
 						{resetState.isSuccess && (
@@ -160,7 +174,10 @@ export function GuildVoiceSettingsPage() {
 						)}
 						{resetState.isError && (
 							<Notice tone={"error"} announce="alert">
-								Could not restore the default. Try again.
+								{failure(
+									resetState.error,
+									"The six-hour default was not restored.",
+								)}
 							</Notice>
 						)}
 					</div>
@@ -177,9 +194,11 @@ export function GuildVoiceSettingsPage() {
 					start new recordings.
 				</p>
 				{recordingPolicyError && (
-					<Notice tone="error" announce="alert">
-						Could not load recording policy.
-					</Notice>
+					<LoadFailure
+						error={recordingPolicyLoadError}
+						what="Could not load the recording policy."
+						onRetry={() => void refetchRecordingPolicy()}
+					/>
 				)}
 				{recordingPolicy && (
 					<div className="flex flex-col gap-4">
@@ -236,7 +255,10 @@ export function GuildVoiceSettingsPage() {
 						)}
 						{recordingSaveState.isError && (
 							<Notice tone="error" announce="alert">
-								Could not save recording policy.
+								{failure(
+									recordingSaveState.error,
+									"The recording policy was not saved.",
+								)}
 							</Notice>
 						)}
 					</div>

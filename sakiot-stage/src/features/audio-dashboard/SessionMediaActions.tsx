@@ -84,6 +84,11 @@ export function SessionMediaActions(props: {
 					</span>
 				</div>
 			)}
+			{removal.connectionNotice && (
+				<Notice className="mt-2" tone={"warning"} announce="status">
+					{removal.connectionNotice}
+				</Notice>
+			)}
 			{removal.message && (
 				<Notice className="mt-2" tone={"success"} announce="status">
 					{removal.message}

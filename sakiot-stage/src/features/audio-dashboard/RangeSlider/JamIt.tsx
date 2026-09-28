@@ -1,6 +1,7 @@
 import { Music as MusicNoteIcon } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { problemFromError } from "../../../app/apiError";
 import { useJamItMutation } from "../../../app/apiSlice";
 import { BaseDialog } from "../../../shared/BaseDialog";
 import { Button, Notice } from "../../../shared/ui";
@@ -16,6 +17,8 @@ export function JamIt(props: { visible: boolean }) {
 	const [feedback, setFeedback] = useState<{
 		type: JamItRespStatus;
 		cooldownRemaining?: number;
+		/** Why the request failed, when the server said. */
+		reason?: string;
 	} | null>(null);
 	const params = useParams();
 	const [jamIt, jamState] = useJamItMutation();
@@ -49,7 +52,17 @@ export function JamIt(props: { visible: boolean }) {
 					cooldownRemaining: apiError?.data?.cooldown_remaining_seconds,
 				});
 			} else {
-				setFeedback({ type: JamItRespStatus.UNKNOWN });
+				const problem = problemFromError(
+					err,
+					"Clip playback failed. Try again shortly.",
+				);
+				setFeedback({
+					type: JamItRespStatus.UNKNOWN,
+					reason:
+						problem.kind === "bot_unavailable"
+							? "The bot could not be reached. It may be restarting; try again shortly."
+							: problem.message,
+				});
 			}
 			setOpen(true);
 		}
@@ -75,7 +88,7 @@ export function JamIt(props: { visible: boolean }) {
 				? "Bot is not connected to a voice channel in this guild."
 				: feedback?.type === JamItRespStatus.COOLDOWN
 					? `Try again in ${feedback.cooldownRemaining ?? "a few"} seconds.`
-					: "Clip playback failed. Try again shortly.";
+					: (feedback?.reason ?? "Clip playback failed. Try again shortly.");
 
 	return (
 		<>

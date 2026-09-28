@@ -258,3 +258,129 @@ test("recording controls issue each media command once under StrictMode", async 
 		.toEqual(["play", "pause", "seek", "seek", "play", "pause"]);
 	expect(errors).toEqual([]);
 });
+
+const CLIP_CREATE_PATH = `${API_ORIGIN}${API_PREFIX}/audio/clips/create/${GUILD_ID}/${CHANNEL_ID}/2026/8/${FILE_NAME}`;
+
+async function openRecording(page: Page) {
+	await mockRecordingApi(page);
+	await page.goto(
+		`/dashboard/${GUILD_ID}/audio/${CHANNEL_ID}/2026/8/${FILE_NAME}`,
+	);
+	await expect(
+		page.getByRole("button", { name: "Play", exact: true }),
+	).toBeVisible({ timeout: 15_000 });
+}
+
+test("a rejected clip explains why and keeps the entered name", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of 409.*\/api\/audio\/clips\/create\//);
+	await openRecording(page);
+	await page.route(CLIP_CREATE_PATH, async (route) => {
+		if (route.request().method() === "OPTIONS") {
+			await route.fulfill({ status: 204, headers: corsHeaders });
+			return;
+		}
+		await route.fulfill({
+			status: 409,
+			headers: corsHeaders,
+			json: {
+				code: 409,
+				kind: "conflict",
+				message: "A clip with this name already exists.",
+			},
+		});
+	});
+	await page.getByRole("button", { name: "Clip", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await dialog.getByLabel("Name").fill("Highlight");
+	await dialog.getByRole("button", { name: "Clip", exact: true }).click();
+	await expect(dialog.getByRole("alert")).toHaveText(
+		"The clip was not created. A clip with this name already exists.",
+	);
+	await expect(dialog.getByLabel("Name")).toHaveValue("Highlight");
+	await expect(
+		dialog.getByRole("button", { name: "Clip", exact: true }),
+	).toBeEnabled();
+});
+
+test("a created clip whose download fails is retried without recreating it", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of 503.*\/api\/audio\/clips\/guild-123\/clip-9/);
+	await openRecording(page);
+	let creates = 0;
+	let downloads = 0;
+	await page.route(CLIP_CREATE_PATH, async (route) => {
+		if (route.request().method() === "OPTIONS") {
+			await route.fulfill({ status: 204, headers: corsHeaders });
+			return;
+		}
+		creates++;
+		await route.fulfill({
+			headers: corsHeaders,
+			json: {
+				status: "success",
+				file: "clip-9.ogg",
+				id: "clip-9",
+				name: "Highlight",
+			},
+		});
+	});
+	await page.route(
+		`${API_ORIGIN}${API_PREFIX}/audio/clips/${GUILD_ID}/clip-9`,
+		async (route) => {
+			downloads++;
+			if (downloads === 1) {
+				await route.fulfill({
+					status: 503,
+					headers: corsHeaders,
+					json: {
+						code: 503,
+						kind: "media_temporarily_unavailable",
+						message:
+							"The media archive is temporarily unavailable. Try again later.",
+					},
+				});
+				return;
+			}
+			await route.fulfill({
+				headers: { ...corsHeaders, "Content-Type": "audio/ogg" },
+				body: silentWav(),
+			});
+		},
+	);
+	await page.getByRole("button", { name: "Clip", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await dialog.getByLabel("Name").fill("Highlight");
+	await dialog.getByRole("button", { name: "Clip", exact: true }).click();
+	await expect(dialog.getByRole("alert")).toHaveText(
+		'The clip "Highlight" was created and is in your clips, but downloading it failed. The media archive is temporarily unavailable. Try again later.',
+	);
+	const download = page.waitForEvent("download");
+	await dialog.getByRole("button", { name: "Retry download" }).click();
+	expect((await download).suggestedFilename()).toBe("Highlight.ogg");
+	await expect(dialog).toHaveCount(0);
+	expect(creates).toBe(1);
+	expect(downloads).toBe(2);
+});
+
+test("a failed recording download is reported instead of only logged", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/net::ERR_FAILED.*\/api\/download\//);
+	await openRecording(page);
+	await page.route(`${API_ORIGIN}${API_PREFIX}/download/**`, (route) =>
+		route.abort("failed"),
+	);
+	await page.getByRole("button", { name: "Download", exact: true }).click();
+	await expect(page.getByRole("alert")).toHaveText(
+		"The recording download failed. The server could not be reached. Check your connection and try again.",
+	);
+	await expect(
+		page.getByRole("button", { name: "Download", exact: true }),
+	).toBeEnabled();
+});

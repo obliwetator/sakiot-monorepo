@@ -21,6 +21,14 @@ export class SilenceJobTimeoutError extends Error {
 	}
 }
 
+/** The server reported the job failed; the message is its safe explanation. */
+export class SilenceJobFailedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "SilenceJobFailedError";
+	}
+}
+
 export class SilenceJobAbortedError extends Error {
 	constructor() {
 		super("Silence removal wait was aborted");
@@ -89,7 +97,9 @@ export async function waitForSilenceJob(
 				url: response.result_url ?? "",
 			};
 		} else if (response.status === "failed") {
-			throw new Error(response.error ?? "Silence removal failed");
+			throw new SilenceJobFailedError(
+				response.error ?? "No further detail is available.",
+			);
 		}
 
 		if (attempt === maxAttempts) throw new SilenceJobTimeoutError(attempt);

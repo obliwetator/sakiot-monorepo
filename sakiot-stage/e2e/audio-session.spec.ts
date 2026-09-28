@@ -49,6 +49,99 @@ test("recording removal is soft and explains retained media", async ({
 	).toBeVisible();
 });
 
+test("a removal status that cannot be loaded never claims deletion progress", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of 500.*\/recording-deletions\/soft-job/);
+	await mockAudioApi(page);
+	let statusAvailable = false;
+	await page.route(
+		`${API_ORIGIN}${API_PREFIX}/admin/guilds/${GUILD_ID}/recording-deletions/soft-job`,
+		async (route, request) => {
+			if (statusAvailable) {
+				await route.fallback();
+				return;
+			}
+			expect(request.method()).toBe("GET");
+			await route.fulfill({ status: 500, headers: corsHeaders, body: "" });
+		},
+	);
+	page.on("dialog", (dialog) => dialog.accept());
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	await page
+		.getByRole("button", { name: "Remove recording from view" })
+		.click();
+	// The removal reply itself confirmed the soft deletion.
+	await expect(
+		page.getByText(
+			"Recording removed from view. Its media and metadata are retained.",
+		),
+	).toBeVisible();
+	await expect(page.getByRole("alert")).toContainText(
+		"Could not refresh the deletion status; showing the last known state.",
+	);
+	await expect(page.getByText(/in progress|permanently deleted/)).toHaveCount(
+		0,
+	);
+	statusAvailable = true;
+	await page.getByRole("button", { name: "Check again" }).click();
+	await expect(page.getByRole("alert")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Check again" })).toHaveCount(
+		0,
+	);
+});
+
+test("removal conflicts and missing permissions are explained", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(/status of (409|403).*\/recordings\/session-123/);
+	await mockAudioApi(page);
+	const replies = [
+		{
+			status: 409,
+			json: {
+				code: 409,
+				kind: "conflict",
+				message: "Only finalized recordings can be deleted",
+			},
+		},
+		{
+			status: 403,
+			json: {
+				code: 403,
+				kind: "forbidden",
+				message: "You do not have permission to do that.",
+			},
+		},
+	];
+	await page.route(
+		`${API_ORIGIN}${API_PREFIX}/admin/guilds/${GUILD_ID}/recordings/${SESSION_ID}`,
+		async (route, request) => {
+			if (request.method() !== "DELETE") {
+				await route.fallback();
+				return;
+			}
+			const reply = replies.shift();
+			await route.fulfill({ ...reply, headers: corsHeaders });
+		},
+	);
+	page.on("dialog", (dialog) => dialog.accept());
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	const remove = page.getByRole("button", {
+		name: "Remove recording from view",
+	});
+	await remove.click();
+	await expect(page.getByRole("alert")).toHaveText(
+		"Could not remove the recording. Only finalized recordings can be deleted",
+	);
+	await remove.click();
+	await expect(page.getByRole("alert")).toHaveText(
+		"Removing recordings requires the Manage Server permission.",
+	);
+});
+
 test("native controls keep focus styling, pseudo-elements, and responsive layouts", async ({
 	page,
 }, testInfo) => {

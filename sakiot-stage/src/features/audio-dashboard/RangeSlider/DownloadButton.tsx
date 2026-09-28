@@ -1,35 +1,46 @@
+import { useState } from "react";
 import type { Params } from "react-router-dom";
-import { authedFetch } from "../../../app/authedFetch";
+import { problemFromError } from "../../../app/apiError";
+import { downloadFile } from "../../../app/download";
 import type { AudioParams } from "../../../Constants";
-import { Button } from "../../../shared/ui";
+import { Button, Notice } from "../../../shared/ui";
 
 export function DownloadButton(props: {
 	isClip: boolean;
 	isSilence: boolean;
 	params: Readonly<Params<AudioParams>>;
 }) {
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
 	const handleDownload = async () => {
 		const url = props.isClip
 			? `audio/clips/${props.params.guild_id}/${props.params.file_name}`
 			: `download/${props.params.guild_id}/${props.params.channel_id}/${props.params.year}/${props.params.month}/${props.params.file_name}.ogg${props.isSilence ? "?silence=true" : ""}`;
+		const what = props.isClip ? "clip" : "recording";
+		setBusy(true);
+		setError(null);
 		try {
-			const fileRes = await authedFetch(url);
-			if (!fileRes.ok) throw new Error(`download failed: ${fileRes.status}`);
-			const blob = await fileRes.blob();
-			const objectUrl = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = objectUrl;
-			a.download = props.params.file_name ?? "";
-			a.click();
-			URL.revokeObjectURL(objectUrl);
-		} catch (e) {
-			console.error("Download failed", e);
+			await downloadFile(url, props.params.file_name ?? "");
+		} catch (failure) {
+			setError(
+				`The ${what} download failed. ${problemFromError(failure).message}`,
+			);
+		} finally {
+			setBusy(false);
 		}
 	};
 
 	return (
-		<Button variant="primary" onPress={handleDownload}>
-			Download
-		</Button>
+		<>
+			<Button variant="primary" isDisabled={busy} onPress={handleDownload}>
+				{busy ? "Downloading…" : "Download"}
+			</Button>
+			{error && (
+				<Notice tone="error" announce="alert">
+					{error}
+				</Notice>
+			)}
+		</>
 	);
 }

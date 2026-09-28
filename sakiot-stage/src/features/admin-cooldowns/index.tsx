@@ -1,6 +1,7 @@
 import { Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { managerActionFailure } from "../../app/apiError";
 import {
 	useDeleteUserOverrideMutation,
 	useGetGuildCooldownQuery,
@@ -8,6 +9,7 @@ import {
 	useSetGuildCooldownMutation,
 	useSetUserOverrideMutation,
 } from "../../app/apiSlice";
+import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Button,
 	cn,
@@ -38,10 +40,10 @@ export function GuildAdminCooldowns() {
 	const { guild_id } = useParams<{ guild_id: string }>();
 	const gid = guild_id ?? "";
 
-	const { data: guildCooldown, isLoading: loadingGuild } =
-		useGetGuildCooldownQuery(gid, { skip: !gid });
-	const { data: overrides, isLoading: loadingOverrides } =
-		useListUserOverridesQuery(gid, { skip: !gid });
+	const guildQuery = useGetGuildCooldownQuery(gid, { skip: !gid });
+	const overridesQuery = useListUserOverridesQuery(gid, { skip: !gid });
+	const { data: guildCooldown, isLoading: loadingGuild } = guildQuery;
+	const { data: overrides, isLoading: loadingOverrides } = overridesQuery;
 	const [setGuildCooldown, setGuildState] = useSetGuildCooldownMutation();
 	const [setUserOverride, setOverrideState] = useSetUserOverrideMutation();
 	const [deleteUserOverride, deleteState] = useDeleteUserOverrideMutation();
@@ -106,8 +108,10 @@ export function GuildAdminCooldowns() {
 	const handleAddOverride = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		const seconds = parseSeconds(newSeconds);
-		if (!newUserId.trim() || seconds === null) {
-			setOverrideError("Provide a user id and non-negative integer seconds.");
+		if (!/^\d+$/.test(newUserId.trim()) || seconds === null) {
+			setOverrideError(
+				"Provide a numeric Discord user ID and non-negative integer seconds.",
+			);
 			return;
 		}
 
@@ -139,10 +143,13 @@ export function GuildAdminCooldowns() {
 				tone: "success",
 				message: `Override for user ${userId} deleted.`,
 			});
-		} catch {
+		} catch (failure) {
 			setDeleteFeedback({
 				tone: "error",
-				message: `Could not delete the override for user ${userId}.`,
+				message: managerActionFailure(
+					failure,
+					`Could not delete the override for user ${userId}.`,
+				),
 			});
 		} finally {
 			setDeletingUserId(null);
@@ -178,6 +185,13 @@ export function GuildAdminCooldowns() {
 					// response arrived, leaving the placeholder on screen.
 					<Text aria-live="polite">Loading guild cooldown…</Text>
 				) : null}
+				{guildQuery.isError && (
+					<LoadFailure
+						error={guildQuery.error}
+						what="Could not load the guild cooldown."
+						onRetry={() => void guildQuery.refetch()}
+					/>
+				)}
 
 				<form
 					noValidate
@@ -226,7 +240,10 @@ export function GuildAdminCooldowns() {
 				)}
 				{setGuildState.isError && (
 					<Notice tone="error" announce="alert">
-						Could not save the guild default.
+						{managerActionFailure(
+							setGuildState.error,
+							"Could not save the guild default.",
+						)}
 					</Notice>
 				)}
 			</Panel>
@@ -298,7 +315,10 @@ export function GuildAdminCooldowns() {
 				)}
 				{setOverrideState.isError && (
 					<Notice tone="error" announce="alert">
-						Could not save the user override.
+						{managerActionFailure(
+							setOverrideState.error,
+							"Could not save the user override.",
+						)}
 					</Notice>
 				)}
 				{deleteFeedback && (
@@ -312,6 +332,12 @@ export function GuildAdminCooldowns() {
 
 				{loadingOverrides ? (
 					<Text aria-live="polite">Loading admin cooldowns…</Text>
+				) : overridesQuery.isError ? (
+					<LoadFailure
+						error={overridesQuery.error}
+						what="Could not load the user overrides."
+						onRetry={() => void overridesQuery.refetch()}
+					/>
 				) : (
 					<div
 						className={cn(

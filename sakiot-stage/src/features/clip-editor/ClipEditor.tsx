@@ -470,6 +470,7 @@ export function ClipEditor(props: { guildId: string }) {
 				isRendering={exportJob.rendering}
 				progress={exportJob.progress}
 				stage={exportJob.stage}
+				retryReason={exportJob.retryReason}
 				done={exportJob.done}
 				segmentCount={editor.edit.segments.length}
 				overwriteAvailable={canOverwrite}

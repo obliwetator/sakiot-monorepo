@@ -16,6 +16,7 @@ export function ClipExportDialog(props: {
 	isRendering: boolean;
 	progress: number;
 	stage: string;
+	retryReason?: string | null;
 	done: boolean;
 	segmentCount: number;
 	overwriteAvailable: boolean;
@@ -89,7 +90,7 @@ export function ClipExportDialog(props: {
 							{props.stage === "queued"
 								? "Waiting for an available export slot…"
 								: props.stage === "retrying"
-									? "Retrying the export after an interruption…"
+									? `Retrying the export after a failed attempt.${props.retryReason ? ` ${props.retryReason}` : ""}`
 									: props.stage === "preparing"
 										? "Preparing source audio…"
 										: props.stage === "publishing"

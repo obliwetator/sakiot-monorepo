@@ -2,6 +2,7 @@ import { useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
+import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Button,
 	Table,
@@ -30,7 +31,7 @@ export function Stamps() {
 	const guildName = guild?.id === guildId ? guild.name : undefined;
 	const { asRoleArg } = useAsRole();
 
-	const { data, isLoading, isError, error } = useGetStampsQuery(
+	const { data, isLoading, isError, error, refetch } = useGetStampsQuery(
 		{ guild_id: guildId, ...asRoleArg },
 		{
 			skip: !guildId,
@@ -58,9 +59,11 @@ export function Stamps() {
 	if (isError) {
 		return (
 			<div className="p-6">
-				<p className="leading-6 text-danger">
-					Failed to load stamps: {JSON.stringify(error)}
-				</p>
+				<LoadFailure
+					error={error}
+					what="Could not load stamps."
+					onRetry={() => void refetch()}
+				/>
 			</div>
 		);
 	}

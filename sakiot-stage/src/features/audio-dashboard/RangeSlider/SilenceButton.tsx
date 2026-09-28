@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import type { Params } from "react-router-dom";
+import { problemFromError } from "../../../app/apiError";
 import { useRemoveSilenceMutation } from "../../../app/apiSlice";
 import { useAppSelector } from "../../../app/hooks";
 import type { AudioParams } from "../../../Constants";
 import { bumpSilenceVersion, setHasSilence } from "../../../reducers/silence";
 import { Button, Notice } from "../../../shared/ui";
-import { SilenceJobTimeoutError, waitForSilenceJob } from "./silenceJobPoll";
+import {
+	SilenceJobFailedError,
+	SilenceJobTimeoutError,
+	waitForSilenceJob,
+} from "./silenceJobPoll";
 
 export function SilenceButton(props: {
 	params: Readonly<Params<AudioParams>>;
@@ -51,11 +56,14 @@ export function SilenceButton(props: {
 			dispatch(bumpSilenceVersion());
 		} catch (err) {
 			if (controller.signal.aborted) return;
-			console.error("Error removing silence:", err);
 			setError(
 				err instanceof SilenceJobTimeoutError
-					? "Silence removal is taking longer than expected. Try again."
-					: "Could not remove silence. Try again.",
+					? "Silence removal is taking longer than expected. It may still finish on the server; try again later."
+					: err instanceof SilenceJobFailedError
+						? `Silence removal failed. ${err.message}`
+						: `Could not remove silence. ${
+								problemFromError(err, "Try again.").message
+							}`,
 			);
 		} finally {
 			if (abortRef.current === controller) {
