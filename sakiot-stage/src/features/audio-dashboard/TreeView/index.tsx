@@ -2,11 +2,7 @@ import { Search } from "lucide-react";
 import * as React from "react";
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import {
-	apiSlice,
-	useGetCurrentGuildDirsQuery,
-	useGetLiveStemsQuery,
-} from "../../../app/apiSlice";
+import { apiSlice, useGetCurrentGuildDirsQuery } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
 import { type Dirs, getMonthName } from "../../../Constants";
 import { Tree } from "../../../shared/ui";
@@ -49,7 +45,6 @@ function filterTree(data: Dirs[], query: string): Dirs[] {
 export default function RecordingTree(
 	props: { onRecordingSelect?: () => void } = {},
 ) {
-	const [data, setData] = useState<Dirs[] | null>(null);
 	const [expandedItems, setExpandedItems] = useState<string[]>([]);
 	const [searchQuery, setSearchQuery] = useState("");
 	const params = useParams();
@@ -57,15 +52,13 @@ export default function RecordingTree(
 	const navigate = useNavigate();
 	const { asRoleArg } = useAsRole();
 	const {
-		data: channelsData,
-		isSuccess,
+		currentData: channelsData,
 		isError,
 		error: dirsError,
 	} = useGetCurrentGuildDirsQuery(
 		{ guild_id: params.guild_id ?? "", ...asRoleArg },
 		{
 			skip: !params.guild_id,
-			refetchOnMountOrArgChange: true,
 		},
 	);
 	const { data: selectedSession } =
@@ -74,21 +67,24 @@ export default function RecordingTree(
 			{ skip: !params.session_id },
 		);
 	const selectedSessionFinalized = selectedSession?.state === "finalized";
-	const { data: liveStems } = useGetLiveStemsQuery(
-		{ guild_id: params.guild_id ?? "", ...asRoleArg },
-		{
+	const liveArgs = { guild_id: params.guild_id ?? "", ...asRoleArg };
+	const { currentData: liveStems } =
+		apiSlice.endpoints.getLiveStems.useQueryState(liveArgs, {
 			skip: !params.guild_id,
-			pollingInterval: selectedSessionFinalized ? 0 : 10_000,
-		},
-	);
+		});
+	apiSlice.endpoints.getLiveStems.useQuerySubscription(liveArgs, {
+		skip: !params.guild_id,
+		// The route loader takes an initial snapshot. Keep checking only while
+		// there are live badges to update; an idle guild needs no polling.
+		pollingInterval:
+			!selectedSessionFinalized && liveStems?.length ? 10_000 : 0,
+	});
 	const liveSet = useMemo(() => new Set(liveStems ?? []), [liveStems]);
 
-	React.useEffect(() => {
-		if (isSuccess && channelsData) {
-			const res = transform_to_months(channelsData);
-			setData(res);
-		}
-	}, [channelsData, isSuccess]);
+	const data = useMemo(
+		() => (channelsData ? transform_to_months(channelsData) : null),
+		[channelsData],
+	);
 
 	// Resolve the current URL against the loaded tree. This handles both legacy
 	// physical-file routes and logical-session routes used by stamps.

@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
-import { useGetAuthDetailsQuery } from "./apiSlice";
+import { apiSlice, useGetAuthDetailsQuery } from "./apiSlice";
 import {
 	BASE_API_URL,
 	isLoggedIn as hasLoggedInCookie,
 	setCsrfToken,
 } from "./authedFetch";
+import { useAppDispatch } from "./hooks";
 
 export function useAuthBootstrap() {
 	const [hasToken, setHasToken] = useState(hasLoggedInCookie());
+	const dispatch = useAppDispatch();
 
 	const {
 		data: authData,
 		isLoading,
 		isError,
-		refetch,
 	} = useGetAuthDetailsQuery(undefined, {
 		skip: !hasToken,
 	});
@@ -28,14 +29,21 @@ export function useAuthBootstrap() {
 			if (typeof e.data.csrf !== "string" || e.data.csrf.length < 16) return;
 			setCsrfToken(e.data.csrf);
 			setHasToken(true);
-			refetch();
+			// A same-origin logged-out page may have skipped the initial query;
+			// initiate works in that case too, and the hook joins this request.
+			void dispatch(
+				apiSlice.endpoints.getAuthDetails.initiate(undefined, {
+					subscribe: false,
+					forceRefetch: true,
+				}),
+			);
 			if (e.source && (e.source as Window).close) {
 				setTimeout(() => (e.source as Window).close(), 200);
 			}
 		};
 		window.addEventListener("message", handler);
 		return () => window.removeEventListener("message", handler);
-	}, [refetch]);
+	}, [dispatch]);
 
 	return { authData, isLoading, isLoggedIn };
 }

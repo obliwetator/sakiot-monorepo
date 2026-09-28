@@ -3,15 +3,16 @@ import { Navigate, Route } from "react-router-dom";
 import { GuildAccessBoundary } from "../layouts/GuildAccessBoundary";
 import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
+import { AudioRouteError } from "./AudioRouteError";
+import { audioRouteLoader, shouldRevalidateAudio } from "./audioRouteLoader";
 import { RouteState } from "./RouteState";
 
 const Clips = React.lazy(() => import("../features/clips"));
 const ClipEditor = React.lazy(() => import("../features/clip-editor"));
-const YearSelection = React.lazy(() =>
+const loadAudioRoute = () =>
 	import("../features/audio-dashboard/YearSelection").then((m) => ({
-		default: m.YearSelection,
-	})),
-);
+		Component: m.YearSelection,
+	}));
 const Stamps = React.lazy(() =>
 	import("../features/stamps").then((m) => ({ default: m.Stamps })),
 );
@@ -42,7 +43,15 @@ const lazyRoute = (node: React.ReactNode) => (
 // elements and never renders components.
 export const appRoutesElement = (
 	<>
-		<Route path="/" element={<LayoutsWithNavbar />}>
+		<Route
+			path="/"
+			element={<LayoutsWithNavbar />}
+			hydrateFallbackElement={
+				<p className="p-4" role="status">
+					Loading Route
+				</p>
+			}
+		>
 			<Route index element={<ProtectedLayout />} />
 
 			<Route path="/stamps" element={lazyRoute(<Stamps />)} />
@@ -54,15 +63,17 @@ export const appRoutesElement = (
 				<Route index element={<ProtectedLayout />} />
 				<Route path=":guild_id" element={<GuildAccessBoundary />}>
 					<Route index element={<Navigate to="audio" replace />} />
-					<Route path="audio">
-						<Route path="" element={lazyRoute(<YearSelection />)} />
-						<Route
-							path="session/:session_id"
-							element={lazyRoute(<YearSelection />)}
-						/>
+					<Route
+						path="audio"
+						loader={audioRouteLoader}
+						shouldRevalidate={shouldRevalidateAudio}
+						errorElement={<AudioRouteError />}
+					>
+						<Route index lazy={loadAudioRoute} />
+						<Route path="session/:session_id" lazy={loadAudioRoute} />
 						<Route
 							path=":channel_id/:year/:month/:file_name"
-							element={lazyRoute(<YearSelection />)}
+							lazy={loadAudioRoute}
 						/>
 					</Route>
 					<Route path="clips">

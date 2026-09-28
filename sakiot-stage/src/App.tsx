@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import {
 	BrowserRouter,
 	createBrowserRouter,
@@ -17,6 +17,18 @@ const mainRouter = createBrowserRouter(
 );
 function AuthenticatedApp() {
 	const { authData, isLoading, isLoggedIn } = useAuthBootstrap();
+	const previousUser = useRef<string | null | undefined>(undefined);
+	const userId = isLoggedIn ? authData?.user?.user_id : null;
+	useEffect(() => {
+		if (isLoading) return;
+		const previous = previousUser.current;
+		previousUser.current = userId;
+		// An initial loader joins the auth probe itself. A later login/account
+		// change must rerun loaders which previously had no authorized session.
+		if (previous !== undefined && userId && previous !== userId) {
+			void mainRouter.revalidate();
+		}
+	}, [isLoading, userId]);
 
 	let content: ReactNode;
 	if (isLoading || !isLoggedIn) {
