@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,error_kind=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.request",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "request",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "request"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "760f0758465d76eaf2c54bd1483b98feb8db695f2e5a855aea828566f591a2c7"
+}

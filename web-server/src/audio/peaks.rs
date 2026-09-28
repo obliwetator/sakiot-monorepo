@@ -188,11 +188,16 @@ pub(crate) async fn run_recording_waveform_job(
     let end_ts: Option<i64> = if silence_free {
         None
     } else {
-        sqlx::query_scalar("SELECT end_ts FROM audio_files WHERE file_name=$1")
-            .bind(file_name)
+        // Decoding still rejects a NULL end_ts (a live recording), as before.
+        Some(
+            sqlx::query_scalar!(
+                r#"SELECT end_ts AS "end_ts!" FROM audio_files WHERE file_name=$1"#,
+                file_name
+            )
             .fetch_optional(pool)
             .await?
-            .ok_or(AppError::FileNotFound)?
+            .ok_or(AppError::FileNotFound)?,
+        )
     };
     let path = (guild_id, channel_id, year, month, file_name.to_owned());
     let (input, cache_key) = if silence_free {
@@ -246,11 +251,13 @@ pub(crate) async fn run_recording_waveform_job(
     let mut tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
     tokio::fs::rename(&attempt_output, &output).await?;
     if let Some(end_ts) = end_ts {
-        sqlx::query("UPDATE audio_files SET waveform_end_ts=$2 WHERE file_name=$1 AND end_ts=$2")
-            .bind(file_name)
-            .bind(end_ts)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "UPDATE audio_files SET waveform_end_ts=$2 WHERE file_name=$1 AND end_ts=$2",
+            file_name,
+            end_ts
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     let url = format!(
         "/api/audio/waveform/{guild_id}/{channel_id}/{year}/{month}/{file_name}{}",
@@ -363,16 +370,14 @@ pub(crate) async fn run_clip_waveform_job(
     job_id: &str,
     attempt_token: &str,
 ) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
-    use sqlx::Row;
-    let row = sqlx::query(
+    let saved_file_name = sqlx::query_scalar!(
         "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
     )
-    .bind(guild_id)
-    .bind(clip_id)
     .fetch_optional(pool)
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    let saved_file_name: Option<String> = row.try_get("saved_file_name")?;
     let input_path =
         crate::media_archive::clip_local_path(&saved_file_name.ok_or(AppError::ClipNotFound)?)?;
     media.ensure_clip_local(pool, clip_id, &input_path).await?;

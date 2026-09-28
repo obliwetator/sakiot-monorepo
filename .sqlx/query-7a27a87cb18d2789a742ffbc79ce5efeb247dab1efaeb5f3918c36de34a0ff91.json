@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM audio_files af JOIN recording_sessions rs ON rs.id=af.recording_session_id WHERE af.id=$1 AND rs.deletion_requested_at IS NOT NULL) OR EXISTS(SELECT 1 FROM clips c WHERE c.clip_id=$2 AND c.deleted_at IS NOT NULL) AS \"deleting!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deleting!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7a27a87cb18d2789a742ffbc79ce5efeb247dab1efaeb5f3918c36de34a0ff91"
+}

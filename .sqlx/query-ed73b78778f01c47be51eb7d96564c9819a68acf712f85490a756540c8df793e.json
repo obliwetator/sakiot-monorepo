@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.state,j.result_path,j.request FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id=$1 AND v.user_id=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "result_path",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "result_path"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "request",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "request"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "ed73b78778f01c47be51eb7d96564c9819a68acf712f85490a756540c8df793e"
+}

@@ -106,15 +106,14 @@ pub async fn create_fragment_in(
 ) -> DbResult<RecordingHandle> {
     let now_ms = now.timestamp_millis();
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(guild_id)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
         .execute(&mut *tx)
         .await?;
-    let excluded: bool = sqlx::query_scalar(
-        "SELECT COALESCE($2 = ANY(excluded_channel_ids), false) FROM guild_recording_policy WHERE guild_id=$1",
+    let excluded = sqlx::query_scalar!(
+        r#"SELECT COALESCE($2 = ANY(excluded_channel_ids), false) AS "excluded!" FROM guild_recording_policy WHERE guild_id=$1"#,
+        guild_id,
+        channel_id
     )
-    .bind(guild_id)
-    .bind(channel_id)
     .fetch_optional(&mut *tx)
     .await?
     .unwrap_or(false);

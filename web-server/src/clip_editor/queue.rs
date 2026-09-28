@@ -83,20 +83,20 @@ pub(super) async fn enqueue(
     }
     // Personal and shared capacity are reported separately: only the first is
     // something the caller can resolve by waiting for their own exports.
-    let (total, owned): (i64, i64) = sqlx::query_as(
-        "SELECT
+    let active = sqlx::query!(
+        r#"SELECT
             (SELECT count(*) FROM composition_jobs WHERE state IN ('queued','running'))
-              + (SELECT count(*) FROM media_jobs WHERE state IN ('queued','running')),
+              + (SELECT count(*) FROM media_jobs WHERE state IN ('queued','running')) AS "total!",
             (SELECT count(*) FROM composition_jobs WHERE user_id=$1 AND state IN ('queued','running'))
-              + (SELECT count(*) FROM media_jobs WHERE user_id=$1 AND state IN ('queued','running'))",
+              + (SELECT count(*) FROM media_jobs WHERE user_id=$1 AND state IN ('queued','running')) AS "owned!""#,
+        user_id
     )
-    .bind(user_id)
     .fetch_one(&mut *tx)
     .await?;
-    if owned >= crate::media_jobs::PER_USER_ACTIVE_LIMIT {
+    if active.owned >= crate::media_jobs::PER_USER_ACTIVE_LIMIT {
         return Err(AppError::UserJobLimitReached);
     }
-    if total >= GLOBAL_ACTIVE_LIMIT {
+    if active.total >= GLOBAL_ACTIVE_LIMIT {
         return Err(AppError::ExportQueueFull);
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -137,15 +137,15 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<(String, Strin
     .execute(&mut *tx)
     .await?;
     // One active composition per database, including overlapping web releases.
-    let (running_compositions, running_total): (i64, i64) = sqlx::query_as(
-        "SELECT
-            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now()),
+    let running = sqlx::query!(
+        r#"SELECT
+            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now()) AS "compositions!",
             (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now())
-              + (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at >= now())",
+              + (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at >= now()) AS "total!""#
     )
     .fetch_one(&mut *tx)
     .await?;
-    if running_compositions >= 1 || running_total >= 4 {
+    if running.compositions >= 1 || running.total >= 4 {
         tx.commit().await?;
         return Ok(None);
     }

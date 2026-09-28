@@ -6,7 +6,7 @@ use std::{sync::OnceLock, time::Duration};
 use actix_web::{HttpResponse, get, web};
 use opentelemetry::{KeyValue, metrics::Gauge};
 use serde::Serialize;
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 use tokio::task::AbortHandle;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -77,45 +77,29 @@ fn failed_workers(state: &HealthState) -> Vec<&'static str> {
 }
 
 async fn queue_health(pool: &Pool<Postgres>) -> Result<QueueHealth, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT \
-            (SELECT count(*) FROM media_jobs WHERE state='queued') AS media_queued, \
-            (SELECT count(*) FROM media_jobs WHERE state='running') AS media_running, \
-            (SELECT count(*) FROM composition_jobs WHERE state='queued') AS composition_queued, \
-            (SELECT count(*) FROM composition_jobs WHERE state='running') AS composition_running, \
-            (SELECT count(*) FROM recording_deletion_jobs WHERE state='queued') AS deletion_queued, \
-            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running') AS deletion_running, \
-            (SELECT count(*) FROM recording_deletion_jobs WHERE state='failed') AS deletion_failed, \
-            (SELECT count(*) FROM media_objects WHERE state='pending') AS archive_pending, \
-            (SELECT count(*) FROM media_objects WHERE state='uploading') AS archive_uploading, \
-            (SELECT count(*) FROM media_objects WHERE state IN ('missing','conflict')) AS archive_problem, \
-            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_media_queued_seconds, \
-            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM composition_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_composition_queued_seconds, \
-            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM recording_deletion_jobs WHERE state='queued' AND retry_at <= now()) AS oldest_deletion_queued_seconds, \
-            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_objects WHERE state IN ('pending','uploading') AND retry_at <= now()) AS oldest_archive_pending_seconds, \
-            (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_media_leases, \
-            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_composition_leases, \
-            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS expired_deletion_leases",
-    ).fetch_one(pool).await?;
-    Ok(QueueHealth {
-        media_queued: row.try_get("media_queued")?,
-        media_running: row.try_get("media_running")?,
-        composition_queued: row.try_get("composition_queued")?,
-        composition_running: row.try_get("composition_running")?,
-        deletion_queued: row.try_get("deletion_queued")?,
-        deletion_running: row.try_get("deletion_running")?,
-        deletion_failed: row.try_get("deletion_failed")?,
-        archive_pending: row.try_get("archive_pending")?,
-        archive_uploading: row.try_get("archive_uploading")?,
-        archive_problem: row.try_get("archive_problem")?,
-        oldest_media_queued_seconds: row.try_get("oldest_media_queued_seconds")?,
-        oldest_composition_queued_seconds: row.try_get("oldest_composition_queued_seconds")?,
-        oldest_deletion_queued_seconds: row.try_get("oldest_deletion_queued_seconds")?,
-        oldest_archive_pending_seconds: row.try_get("oldest_archive_pending_seconds")?,
-        expired_media_leases: row.try_get("expired_media_leases")?,
-        expired_composition_leases: row.try_get("expired_composition_leases")?,
-        expired_deletion_leases: row.try_get("expired_deletion_leases")?,
-    })
+    sqlx::query_as!(
+        QueueHealth,
+        r#"SELECT
+            (SELECT count(*) FROM media_jobs WHERE state='queued') AS "media_queued!",
+            (SELECT count(*) FROM media_jobs WHERE state='running') AS "media_running!",
+            (SELECT count(*) FROM composition_jobs WHERE state='queued') AS "composition_queued!",
+            (SELECT count(*) FROM composition_jobs WHERE state='running') AS "composition_running!",
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='queued') AS "deletion_queued!",
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running') AS "deletion_running!",
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='failed') AS "deletion_failed!",
+            (SELECT count(*) FROM media_objects WHERE state='pending') AS "archive_pending!",
+            (SELECT count(*) FROM media_objects WHERE state='uploading') AS "archive_uploading!",
+            (SELECT count(*) FROM media_objects WHERE state IN ('missing','conflict')) AS "archive_problem!",
+            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_jobs WHERE state='queued' AND retry_at <= now()) AS "oldest_media_queued_seconds!",
+            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM composition_jobs WHERE state='queued' AND retry_at <= now()) AS "oldest_composition_queued_seconds!",
+            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM recording_deletion_jobs WHERE state='queued' AND retry_at <= now()) AS "oldest_deletion_queued_seconds!",
+            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_objects WHERE state IN ('pending','uploading') AND retry_at <= now()) AS "oldest_archive_pending_seconds!",
+            (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS "expired_media_leases!",
+            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS "expired_composition_leases!",
+            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS "expired_deletion_leases!""#
+    )
+    .fetch_one(pool)
+    .await
 }
 
 struct HealthMetrics {

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE($2 = ANY(excluded_channel_ids), false) AS \"excluded!\" FROM guild_recording_policy WHERE guild_id=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "excluded!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8b637db17ab70a8fae522db7780e909a809fdbcbaa6838cc5fdae42d7fef08c0"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_guilds\n            SET owner = (user_id = $2)\n          WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "46cc36407f29d15407643be3af3115512f3d2578c6aa536d133c8cd32d5e587a"
+}

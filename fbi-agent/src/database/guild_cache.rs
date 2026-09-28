@@ -9,6 +9,9 @@ use serenity::{
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
+/// PostgreSQL's bind-parameter limit. Bulk cache syncs are chunked multi-row
+/// `QueryBuilder` inserts whose arity varies with the chunk, so they are the
+/// only runtime-checked SQL here; every fixed statement uses `query!`.
 const BIND_LIMIT: usize = 65535;
 
 pub(crate) async fn update_info(handler: &Handler, ctx: &Context, guilds: &[GuildId]) {
@@ -72,10 +75,12 @@ pub(crate) async fn remove_guild_present(
     pool: &Pool<Postgres>,
     guild_id: serenity::model::id::GuildId,
 ) -> DbResult<()> {
-    sqlx::query("DELETE FROM guilds_present WHERE guild_id = $1")
-        .bind(guild_id.to_i64())
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM guilds_present WHERE guild_id = $1",
+        guild_id.to_i64()
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -117,7 +122,7 @@ async fn update_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult
 }
 
 pub(crate) async fn sync_live_role(pool: &Pool<Postgres>, role: &Role) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary, color_tertiary)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (role_id) DO UPDATE SET
@@ -127,14 +132,14 @@ pub(crate) async fn sync_live_role(pool: &Pool<Postgres>, role: &Role) -> DbResu
              color = EXCLUDED.color,
              color_secondary = EXCLUDED.color_secondary,
              color_tertiary = EXCLUDED.color_tertiary",
+        role.guild_id.to_i64(),
+        role.id.to_i64(),
+        role.permissions.bits().to_i64(),
+        role.name,
+        role.colours.primary_colour.0 as i64,
+        role.colours.secondary_colour.map(|c| c.0 as i64),
+        role.colours.tertiary_colour.map(|c| c.0 as i64)
     )
-    .bind(role.guild_id.to_i64())
-    .bind(role.id.to_i64())
-    .bind(role.permissions.bits().to_i64())
-    .bind(&role.name)
-    .bind(role.colours.primary_colour.0 as i64)
-    .bind(role.colours.secondary_colour.map(|c| c.0 as i64))
-    .bind(role.colours.tertiary_colour.map(|c| c.0 as i64))
     .execute(pool)
     .await?;
 
@@ -147,12 +152,13 @@ pub(crate) async fn delete_live_role(pool: &Pool<Postgres>, role_id: RoleId) -> 
 
     // channel_permissions.target_id is intentionally polymorphic and has no
     // foreign key to roles, so remove these rows explicitly.
-    sqlx::query("DELETE FROM channel_permissions WHERE kind = 'role' AND target_id = $1")
-        .bind(role_id)
-        .execute(&mut *transaction)
-        .await?;
-    sqlx::query("DELETE FROM roles WHERE role_id = $1")
-        .bind(role_id)
+    sqlx::query!(
+        "DELETE FROM channel_permissions WHERE kind = 'role' AND target_id = $1",
+        role_id
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query!("DELETE FROM roles WHERE role_id = $1", role_id)
         .execute(&mut *transaction)
         .await?;
 
@@ -199,32 +205,32 @@ pub(crate) async fn sync_live_member_roles(
     let user_id = user_id.to_i64();
     let role_ids: Vec<i64> = role_ids.iter().copied().map(ToI64::to_i64).collect();
 
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM user_roles ur
           USING roles r
          WHERE ur.role_id = r.role_id
            AND ur.user_id = $1
            AND r.guild_id = $2",
+        user_id,
+        guild_id
     )
-    .bind(user_id)
-    .bind(guild_id)
     .execute(&mut *transaction)
     .await?;
 
     // Joining through roles keeps an out-of-order unknown role fail-closed:
     // known revoked roles stay removed without violating the foreign key.
     if !role_ids.is_empty() {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO user_roles (user_id, role_id)
              SELECT $1, r.role_id
                FROM roles r
               WHERE r.guild_id = $2
                 AND r.role_id = ANY($3)
              ON CONFLICT (user_id, role_id) DO NOTHING",
+            user_id,
+            guild_id,
+            &role_ids
         )
-        .bind(user_id)
-        .bind(guild_id)
-        .bind(&role_ids)
         .execute(&mut *transaction)
         .await?;
     }
@@ -242,22 +248,24 @@ pub(crate) async fn delete_live_member(
     let guild_id = guild_id.to_i64();
     let user_id = user_id.to_i64();
 
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM user_roles ur
           USING roles r
          WHERE ur.role_id = r.role_id
            AND ur.user_id = $1
            AND r.guild_id = $2",
+        user_id,
+        guild_id
     )
-    .bind(user_id)
-    .bind(guild_id)
     .execute(&mut *transaction)
     .await?;
-    sqlx::query("DELETE FROM user_guilds WHERE id = $1 AND user_id = $2")
-        .bind(guild_id)
-        .bind(user_id)
-        .execute(&mut *transaction)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM user_guilds WHERE id = $1 AND user_id = $2",
+        guild_id,
+        user_id
+    )
+    .execute(&mut *transaction)
+    .await?;
 
     transaction.commit().await?;
     Ok(())
@@ -348,22 +356,22 @@ pub(crate) async fn sync_guild_owner(
     let owner_id = owner_id.to_i64();
     let mut transaction = pool.begin().await?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO guilds (id, owner_id)
          VALUES ($1, $2)
          ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id",
+        guild_id,
+        owner_id
     )
-    .bind(guild_id)
-    .bind(owner_id)
     .execute(&mut *transaction)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE user_guilds
             SET owner = (user_id = $2)
           WHERE id = $1",
+        guild_id,
+        owner_id
     )
-    .bind(guild_id)
-    .bind(owner_id)
     .execute(&mut *transaction)
     .await?;
 
@@ -409,25 +417,27 @@ pub(crate) async fn sync_live_channel(
     let mut transaction = pool.begin().await?;
     let channel_id = channel.id.to_i64();
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO channels (channel_id, guild_id, type, name)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (channel_id) DO UPDATE SET
              guild_id = EXCLUDED.guild_id,
              type = EXCLUDED.type,
              name = EXCLUDED.name",
+        channel_id,
+        channel.guild_id.to_i64(),
+        u8::from(channel.kind) as i32,
+        channel.name()
     )
-    .bind(channel_id)
-    .bind(channel.guild_id.to_i64())
-    .bind(u8::from(channel.kind) as i32)
-    .bind(channel.name())
     .execute(&mut *transaction)
     .await?;
 
-    sqlx::query("DELETE FROM channel_permissions WHERE channel_id = $1")
-        .bind(channel_id)
-        .execute(&mut *transaction)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM channel_permissions WHERE channel_id = $1",
+        channel_id
+    )
+    .execute(&mut *transaction)
+    .await?;
 
     for overwrite in &channel.permission_overwrites {
         let (kind, target_id) = match overwrite.kind {
@@ -446,19 +456,19 @@ pub(crate) async fn sync_live_channel(
             }
         };
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (channel_id, target_id) DO UPDATE SET
                  kind = EXCLUDED.kind,
                  allow = EXCLUDED.allow,
                  deny = EXCLUDED.deny",
+            channel_id,
+            target_id,
+            kind,
+            overwrite.allow.bits().to_i64(),
+            overwrite.deny.bits().to_i64()
         )
-        .bind(channel_id)
-        .bind(target_id)
-        .bind(kind)
-        .bind(overwrite.allow.bits().to_i64())
-        .bind(overwrite.deny.bits().to_i64())
         .execute(&mut *transaction)
         .await?;
     }
@@ -472,37 +482,40 @@ pub(crate) async fn delete_live_channel(
     channel_id: serenity::model::id::ChannelId,
 ) -> DbResult<()> {
     // The channel_permissions foreign key cascades this deletion.
-    sqlx::query("DELETE FROM channels WHERE channel_id = $1")
-        .bind(channel_id.to_i64())
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM channels WHERE channel_id = $1",
+        channel_id.to_i64()
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 async fn prune_stale_roles(pool: &Pool<Postgres>, guild_id: i64, role_ids: &[i64]) -> DbResult<()> {
     if role_ids.is_empty() {
-        sqlx::query("DELETE FROM roles WHERE guild_id = $1")
-            .bind(guild_id)
+        sqlx::query!("DELETE FROM roles WHERE guild_id = $1", guild_id)
             .execute(pool)
             .await?;
     } else {
-        sqlx::query("DELETE FROM roles WHERE guild_id = $1 AND NOT (role_id = ANY($2))")
-            .bind(guild_id)
-            .bind(role_ids)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM roles WHERE guild_id = $1 AND NOT (role_id = ANY($2))",
+            guild_id,
+            role_ids
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
 
 async fn delete_user_roles_for_guild(pool: &Pool<Postgres>, guild_id: i64) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM user_roles ur
           USING roles r
          WHERE ur.role_id = r.role_id
            AND r.guild_id = $1",
+        guild_id
     )
-    .bind(guild_id)
     .execute(pool)
     .await?;
 
@@ -513,13 +526,13 @@ async fn delete_channel_permissions_for_guild(
     pool: &Pool<Postgres>,
     guild_id: i64,
 ) -> DbResult<()> {
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM channel_permissions cp
           USING channels c
          WHERE cp.channel_id = c.channel_id
            AND c.guild_id = $1",
+        guild_id
     )
-    .bind(guild_id)
     .execute(pool)
     .await?;
 
@@ -532,16 +545,17 @@ async fn prune_stale_channels(
     channel_ids: &[i64],
 ) -> DbResult<()> {
     if channel_ids.is_empty() {
-        sqlx::query("DELETE FROM channels WHERE guild_id = $1")
-            .bind(guild_id)
+        sqlx::query!("DELETE FROM channels WHERE guild_id = $1", guild_id)
             .execute(pool)
             .await?;
     } else {
-        sqlx::query("DELETE FROM channels WHERE guild_id = $1 AND NOT (channel_id = ANY($2))")
-            .bind(guild_id)
-            .bind(channel_ids)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM channels WHERE guild_id = $1 AND NOT (channel_id = ANY($2))",
+            guild_id,
+            channel_ids
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
@@ -580,14 +594,16 @@ pub(crate) async fn sync_present_guild_ids(
     let guild_ids: Vec<i64> = guild_ids.iter().copied().map(ToI64::to_i64).collect();
     upsert_guilds_present(pool, &guild_ids).await?;
     if guild_ids.is_empty() {
-        sqlx::query("DELETE FROM guilds_present")
+        sqlx::query!("DELETE FROM guilds_present")
             .execute(pool)
             .await?;
     } else {
-        sqlx::query("DELETE FROM guilds_present WHERE NOT (guild_id = ANY($1))")
-            .bind(&guild_ids)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM guilds_present WHERE NOT (guild_id = ANY($1))",
+            &guild_ids
+        )
+        .execute(pool)
+        .await?;
     }
 
     Ok(())

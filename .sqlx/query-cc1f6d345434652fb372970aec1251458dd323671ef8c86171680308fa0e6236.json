@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now()) AS \"compositions!\",\n            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now())\n              + (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at >= now()) AS \"total!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "compositions!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "cc1f6d345434652fb372970aec1251458dd323671ef8c86171680308fa0e6236"
+}

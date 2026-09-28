@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM channels WHERE guild_id = $1 AND NOT (channel_id = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5a2bb37472b092c42197eb1dbbb7b19bec6ad7360b9d2aa151eaa1537016fffe"
+}

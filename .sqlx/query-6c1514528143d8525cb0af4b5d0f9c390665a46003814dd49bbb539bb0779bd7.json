@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "recording_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "stage",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "stage"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "mode",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "mode"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "error_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "error_kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "6c1514528143d8525cb0af4b5d0f9c390665a46003814dd49bbb539bb0779bd7"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_recording_policy (guild_id,retention_days,excluded_channel_ids,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (guild_id) DO UPDATE SET retention_days=EXCLUDED.retention_days,excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int8Array",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e5276f14ea20dec19e7c42dee50bd54f0c1c8c803f5d847c269fd13cf733e9ba"
+}

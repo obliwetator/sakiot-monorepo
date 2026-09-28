@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,error_kind=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "16d94ec6940ed0161516940e15075428f5b5c4d73cd662140f5282dc95865a41"
+}

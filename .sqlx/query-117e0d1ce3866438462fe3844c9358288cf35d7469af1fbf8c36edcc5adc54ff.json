@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_roles ur\n          USING roles r\n         WHERE ur.role_id = r.role_id\n           AND ur.user_id = $1\n           AND r.guild_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "117e0d1ce3866438462fe3844c9358288cf35d7469af1fbf8c36edcc5adc54ff"
+}

@@ -51,13 +51,13 @@ pub async fn get_user(
 }
 
 pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Result<(), AppError> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO discord_auth_user (id, username, avatar) VALUES ($1,$2,$3) \
          ON CONFLICT (id) DO UPDATE SET username=EXCLUDED.username, avatar=EXCLUDED.avatar",
+        user.id,
+        user.username,
+        user.avatar.as_deref().unwrap_or_default()
     )
-    .bind(user.id)
-    .bind(&user.username)
-    .bind(user.avatar.as_deref().unwrap_or_default())
     .execute(pool.get_ref())
     .await?;
     Ok(())
@@ -72,6 +72,8 @@ pub async fn insert_user_guilds_db(
         return Ok(());
     }
 
+    // A multi-row insert whose arity follows the guild count, so it cannot be
+    // a compile-time-checked `query!`.
     let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
         "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) ",
     );

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.id FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE v.user_id=$1 AND j.kind=$2 AND j.resource_key=$3 AND j.state='failed' ORDER BY j.created_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "media_jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cd976ddde1754bc38854955db324e1f4cb1d9753e74e2fce4d9200a75d44bde9"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guilds (id, owner_id)\n         VALUES ($1, $2)\n         ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f22bc210607c1c19cf344a8a61acfb15459dc6553d8a2f159120f1f27185060"
+}

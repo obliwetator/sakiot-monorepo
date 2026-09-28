@@ -11,7 +11,7 @@ use std::time::Duration;
 use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, get, web};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::audio::WaveformProgressContainer;
 use crate::auth::{Access, Token};
@@ -116,58 +116,63 @@ pub async fn enqueue(
     }
     let request_json = serde_json::to_value(request).map_err(|_| AppError::InternalError)?;
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(QUEUE_LOCK)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", QUEUE_LOCK)
         .execute(&mut *tx)
         .await?;
 
-    if let Some(row) = sqlx::query(
+    if let Some(row) = sqlx::query!(
         "SELECT id, request FROM media_jobs WHERE user_id = $1 AND kind = $2 AND idempotency_key = $3",
+        user_id,
+        request.kind(),
+        idempotency_key
     )
-    .bind(user_id)
-    .bind(request.kind())
-    .bind(idempotency_key)
     .fetch_optional(&mut *tx)
     .await?
     {
-        let previous: serde_json::Value = row.try_get("request")?;
-        if previous != request_json {
+        if row.request != request_json {
             return Err(AppError::Conflict(
                 "This media request key was already used for different work".into(),
             ));
         }
-        let id: String = row.try_get("id")?;
-        sqlx::query("INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
-            .bind(&id).bind(user_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            "INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            row.id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
-        return load_status(pool, user_id, &id).await;
+        return load_status(pool, user_id, &row.id).await;
     }
 
-    if let Some(row) = sqlx::query(
+    if let Some(row) = sqlx::query!(
         "SELECT id, request FROM media_jobs WHERE kind = $1 AND resource_key = $2 AND state IN ('queued', 'running') ORDER BY created_at LIMIT 1",
+        request.kind(),
+        resource_key
     )
-    .bind(request.kind())
-    .bind(resource_key)
     .fetch_optional(&mut *tx)
     .await?
     {
-        let previous: serde_json::Value = row.try_get("request")?;
-        if previous != request_json {
+        if row.request != request_json {
             return Err(AppError::Conflict(
                 "This media resource is already being processed with different settings".into(),
             ));
         }
-        let id: String = row.try_get("id")?;
-        sqlx::query("INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING")
-            .bind(&id).bind(user_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            "INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            row.id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
-        return load_status(pool, user_id, &id).await;
+        return load_status(pool, user_id, &row.id).await;
     }
 
-    let active: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM media_jobs WHERE user_id = $1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE user_id = $1 AND state IN ('queued','running'))",
+    let active = sqlx::query_scalar!(
+        r#"SELECT (SELECT count(*) FROM media_jobs WHERE user_id = $1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE user_id = $1 AND state IN ('queued','running')) AS "active!""#,
+        user_id
     )
-    .bind(user_id)
     .fetch_one(&mut *tx)
     .await?;
     if active >= PER_USER_ACTIVE_LIMIT {
@@ -175,23 +180,25 @@ pub async fn enqueue(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO media_jobs (id, kind, guild_id, user_id, idempotency_key, resource_key, request) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        id,
+        request.kind(),
+        guild_id,
+        user_id,
+        idempotency_key,
+        resource_key,
+        request_json
     )
-    .bind(&id)
-    .bind(request.kind())
-    .bind(guild_id)
-    .bind(user_id)
-    .bind(idempotency_key)
-    .bind(resource_key)
-    .bind(request_json)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2)")
-        .bind(&id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2)",
+        id,
+        user_id
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     load_status(pool, user_id, &id).await
 }
@@ -201,25 +208,22 @@ pub async fn load_status(
     user_id: i64,
     id: &str,
 ) -> Result<MediaJobStatus, AppError> {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT j.id, j.kind, j.state, j.stage, j.progress, j.result_url, j.error, j.error_kind FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id = $1 AND v.user_id = $2",
+        id,
+        user_id
     )
-    .bind(id)
-    .bind(user_id)
     .fetch_optional(pool)
     .await?
     .ok_or(AppError::NotFound)?;
-    let error = JobError::from_columns(
-        row.try_get::<Option<String>, _>("error_kind")?.as_deref(),
-        row.try_get::<Option<String>, _>("error")?.as_deref(),
-    );
+    let error = JobError::from_columns(row.error_kind.as_deref(), row.error.as_deref());
     Ok(MediaJobStatus {
-        id: row.try_get("id")?,
-        kind: row.try_get("kind")?,
-        status: row.try_get("state")?,
-        stage: row.try_get("stage")?,
-        progress: row.try_get("progress")?,
-        result_url: row.try_get("result_url")?,
+        id: row.id,
+        kind: row.kind,
+        status: row.state,
+        stage: row.stage,
+        progress: row.progress,
+        result_url: row.result_url,
         error_kind: error.as_ref().and_then(|error| error.kind),
         error: error.map(|error| error.message),
     })
@@ -231,10 +235,14 @@ pub async fn active_for_resource(
     kind: &str,
     resource_key: &str,
 ) -> Result<Option<MediaJobStatus>, AppError> {
-    let id: Option<String> = sqlx::query_scalar(
+    let id = sqlx::query_scalar!(
         "SELECT j.id FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE v.user_id=$1 AND j.kind=$2 AND j.resource_key=$3 AND j.state IN ('queued','running') ORDER BY j.created_at DESC LIMIT 1",
+        user_id,
+        kind,
+        resource_key
     )
-    .bind(user_id).bind(kind).bind(resource_key).fetch_optional(pool).await?;
+    .fetch_optional(pool)
+    .await?;
     match id {
         Some(id) => load_status(pool, user_id, &id).await.map(Some),
         None => Ok(None),
@@ -247,10 +255,14 @@ pub async fn latest_failed_for_resource(
     kind: &str,
     resource_key: &str,
 ) -> Result<Option<MediaJobStatus>, AppError> {
-    let id: Option<String> = sqlx::query_scalar(
+    let id = sqlx::query_scalar!(
         "SELECT j.id FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE v.user_id=$1 AND j.kind=$2 AND j.resource_key=$3 AND j.state='failed' ORDER BY j.created_at DESC LIMIT 1",
+        user_id,
+        kind,
+        resource_key
     )
-    .bind(user_id).bind(kind).bind(resource_key).fetch_optional(pool).await?;
+    .fetch_optional(pool)
+    .await?;
     match id {
         Some(id) => load_status(pool, user_id, &id).await.map(Some),
         None => Ok(None),
@@ -259,21 +271,20 @@ pub async fn latest_failed_for_resource(
 
 async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(QUEUE_LOCK)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", QUEUE_LOCK)
         .execute(&mut *tx)
         .await?;
     let interrupted = ErrorKind::WorkerInterrupted;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE media_jobs SET state='failed', stage='failed', error=$2, error_kind=$3, attempt_token=NULL, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE state='running' AND lease_expires_at < now() AND attempts >= $1",
+        MAX_ATTEMPTS,
+        interrupted.default_message(),
+        interrupted.as_str()
     )
-    .bind(MAX_ATTEMPTS)
-    .bind(interrupted.default_message())
-    .bind(interrupted.as_str())
     .execute(&mut *tx)
     .await?;
-    let running: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at >= now()) + (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now())",
+    let running = sqlx::query_scalar!(
+        r#"SELECT (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at >= now()) + (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at >= now()) AS "running!""#
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -282,20 +293,19 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
         return Ok(None);
     }
     let token = uuid::Uuid::new_v4().to_string();
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,error_kind=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.request",
+        token,
+        MAX_ATTEMPTS
     )
-    .bind(&token)
-    .bind(MAX_ATTEMPTS)
     .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;
     row.map(|row| {
-        let request: serde_json::Value = row.try_get("request")?;
         Ok(ClaimedMediaJob {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            request: serde_json::from_value(request).map_err(|_| AppError::InternalError)?,
+            id: row.id,
+            user_id: row.user_id,
+            request: serde_json::from_value(row.request).map_err(|_| AppError::InternalError)?,
             token,
         })
     })
@@ -303,8 +313,15 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
 }
 
 async fn renew(pool: &Pool<Postgres>, job: &ClaimedMediaJob) -> Result<bool, AppError> {
-    Ok(sqlx::query("UPDATE media_jobs SET lease_expires_at=now()+interval '60 seconds',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()")
-        .bind(&job.id).bind(&job.token).execute(pool).await?.rows_affected() == 1)
+    Ok(sqlx::query!(
+        "UPDATE media_jobs SET lease_expires_at=now()+interval '60 seconds',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+        job.id,
+        job.token
+    )
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 pub async fn report_progress(
@@ -314,8 +331,17 @@ pub async fn report_progress(
     stage: &str,
     progress: i16,
 ) -> Result<bool, AppError> {
-    Ok(sqlx::query("UPDATE media_jobs SET stage=$3,progress=$4,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()")
-        .bind(id).bind(token).bind(stage).bind(progress.clamp(0, 99)).execute(pool).await?.rows_affected() == 1)
+    Ok(sqlx::query!(
+        "UPDATE media_jobs SET stage=$3,progress=$4,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+        id,
+        token,
+        stage,
+        progress.clamp(0, 99)
+    )
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 /// Mirror the existing FFmpeg/audiowaveform progress source into the durable
@@ -360,11 +386,11 @@ pub async fn begin_publication<'a>(
     token: &str,
 ) -> Result<sqlx::Transaction<'a, Postgres>, AppError> {
     let mut tx = pool.begin().await?;
-    let owned: Option<String> = sqlx::query_scalar(
+    let owned = sqlx::query_scalar!(
         "SELECT id FROM media_jobs WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now() FOR UPDATE",
+        id,
+        token
     )
-    .bind(id)
-    .bind(token)
     .fetch_optional(&mut *tx)
     .await?;
     if owned.is_none() {
@@ -381,13 +407,13 @@ pub async fn complete_publication(
     result_path: Option<&Path>,
 ) -> Result<(), AppError> {
     let result_path = result_path.map(|path| path.to_string_lossy().into_owned());
-    let updated = sqlx::query(
+    let updated = sqlx::query!(
         "UPDATE media_jobs SET state='ready',stage='ready',progress=100,result_url=$3,result_path=$4,error=NULL,error_kind=NULL,attempt_token=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'",
+        id,
+        token,
+        result_url,
+        result_path
     )
-    .bind(id)
-    .bind(token)
-    .bind(result_url)
-    .bind(result_path)
     .execute(&mut *tx)
     .await?;
     if updated.rows_affected() != 1 {
@@ -428,30 +454,28 @@ async fn finish(
             }
         }
     };
-    let query = if retry {
-        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=now()+interval '5 seconds',finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
-    } else {
-        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=now(),finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()"
-    };
-    sqlx::query(query)
-        .bind(&job.id)
-        .bind(&job.token)
-        .bind(state)
-        .bind(stage)
-        .bind(progress)
-        .bind(result_url)
-        .bind(result_path)
-        .bind(error.map(ErrorKind::default_message))
-        .bind(error.map(ErrorKind::as_str))
-        .execute(pool)
-        .await?;
+    // A retry waits five seconds before it can be claimed again.
+    sqlx::query!(
+        "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=CASE WHEN $10 THEN now()+interval '5 seconds' ELSE now() END,finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+        job.id,
+        job.token,
+        state,
+        stage,
+        progress,
+        result_url,
+        result_path,
+        error.map(ErrorKind::default_message),
+        error.map(ErrorKind::as_str),
+        retry
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 async fn job_attempts(pool: &Pool<Postgres>, id: &str) -> Result<i32, AppError> {
     Ok(
-        sqlx::query_scalar("SELECT attempts FROM media_jobs WHERE id=$1")
-            .bind(id)
+        sqlx::query_scalar!("SELECT attempts FROM media_jobs WHERE id=$1", id)
             .fetch_one(pool)
             .await?,
     )
@@ -638,15 +662,14 @@ pub fn spawn_worker(pool: Pool<Postgres>, media: MediaArchive) -> tokio::task::J
 
 async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
     let managed = PathBuf::from(crate::audio::paths::recording_path()).join(".media-jobs");
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         "SELECT id,result_path FROM media_jobs WHERE state IN ('ready','failed') AND finished_at < now()-interval '30 days' ORDER BY finished_at LIMIT 100",
     )
     .fetch_all(pool)
     .await?;
     for row in rows {
-        let id: String = row.try_get("id")?;
-        let path: Option<String> = row.try_get("result_path")?;
-        if let Some(path) = path {
+        let id = row.id;
+        if let Some(path) = row.result_path {
             let path = PathBuf::from(path);
             if !path.starts_with(&managed) {
                 tracing::error!(job_id=%id, path=%path.display(), "refusing to clean unmanaged media result");
@@ -661,8 +684,12 @@ async fn cleanup(pool: &Pool<Postgres>) -> Result<(), AppError> {
                 }
             }
         }
-        sqlx::query("DELETE FROM media_jobs WHERE id=$1 AND state IN ('ready','failed') AND finished_at < now()-interval '30 days'")
-            .bind(&id).execute(pool).await?;
+        sqlx::query!(
+            "DELETE FROM media_jobs WHERE id=$1 AND state IN ('ready','failed') AND finished_at < now()-interval '30 days'",
+            id
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
@@ -696,23 +723,25 @@ pub async fn get_media_job_result(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let row = sqlx::query("SELECT j.state,j.result_path,j.request FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id=$1 AND v.user_id=$2")
-        .bind(path.as_str()).bind(token.user_id).fetch_optional(pool.get_ref()).await?
-        .ok_or(AppError::NotFound)?;
-    let state: String = row.try_get("state")?;
-    let result_path: Option<String> = row.try_get("result_path")?;
-    let job_request: serde_json::Value = row.try_get("request")?;
-    if state != "ready" {
+    let row = sqlx::query!(
+        "SELECT j.state,j.result_path,j.request FROM media_jobs j JOIN media_job_viewers v ON v.job_id=j.id WHERE j.id=$1 AND v.user_id=$2",
+        path.as_str(),
+        token.user_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if row.state != "ready" {
         return Err(AppError::Conflict("Media result is not ready".into()));
     }
     let job_request: MediaJobRequest =
-        serde_json::from_value(job_request).map_err(|_| AppError::InternalError)?;
+        serde_json::from_value(row.request).map_err(|_| AppError::InternalError)?;
     if let MediaJobRequest::SessionDownload { session_id, .. } = job_request {
         crate::audio::sessions::require_session_access(&pool, session_id, token.user_id).await?;
     } else {
         return Err(AppError::FileNotFound);
     }
-    let result_path = result_path.ok_or(AppError::FileNotFound)?;
+    let result_path = row.result_path.ok_or(AppError::FileNotFound)?;
     let file = NamedFile::open_async(Path::new(&result_path))
         .await
         .map_err(AppError::IoError)?;

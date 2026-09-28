@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM media_jobs WHERE id=$1 AND state IN ('ready','failed') AND finished_at < now()-interval '30 days'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c8fd22735b10971f00da094f6772eab8220a926df2d30a410b04877d245ecbb7"
+}

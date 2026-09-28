@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_deletion_jobs SET state=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'queued' END,stage=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'retry' END,error=$4,error_kind=$5,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now(),finished_at=CASE WHEN attempts >= $3 THEN now() ELSE NULL END WHERE id=$1 AND attempt_token=$2 AND state='running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0d652aec618f227801f7298ede0e688cfedb135eb6f6a28457e6ddd6111b8970"
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running')) AS \"active!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "active!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c0f3fffe0c3372dcf92fa4160ff248a3b140bb853aa7bfae58ef4a3d135a2169"
+}

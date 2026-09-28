@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_jobs SET state='failed', stage='failed', error=$2, error_kind=$3, attempt_token=NULL, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE state='running' AND lease_expires_at < now() AND attempts >= $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "11e18f353f49fd7d8d45b8a0b820a4f8e2ba6828ebf47fd23f8ed05243e3b51e"
+}

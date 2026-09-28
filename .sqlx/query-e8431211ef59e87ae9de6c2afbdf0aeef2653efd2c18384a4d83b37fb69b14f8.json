@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE audio_files SET waveform_end_ts=$2 WHERE file_name=$1 AND end_ts=$2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e8431211ef59e87ae9de6c2afbdf0aeef2653efd2c18384a4d83b37fb69b14f8"
+}

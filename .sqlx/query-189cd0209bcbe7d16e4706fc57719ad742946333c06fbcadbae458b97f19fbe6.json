@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM guilds_present WHERE NOT (guild_id = ANY($1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "189cd0209bcbe7d16e4706fc57719ad742946333c06fbcadbae458b97f19fbe6"
+}

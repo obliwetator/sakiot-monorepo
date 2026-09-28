@@ -179,10 +179,16 @@ not drift:
   decisions are made on types, never on wording. The frontend normalizes every
   failure (contract bodies, older bodies without `kind`, network failures,
   malformed responses) through `sakiot-stage/src/app/apiError.ts`.
-- **SQL → Rust.** SQLx verifies every `query!` against the real schema at
-  compile time. The metadata is committed in `.sqlx`, refreshed by
-  `scripts/sqlx-prepare.sh` against a disposable database, and the pre-commit
-  hook re-checks it when migrations or SQLx-using files are staged.
+- **SQL → Rust.** Every fixed production statement in `web-server` and
+  `fbi-agent` is a `query!`/`query_as!`/`query_scalar!` macro, which SQLx
+  verifies against the real schema at compile time. The metadata is committed
+  in `.sqlx`, refreshed by `scripts/sqlx-prepare.sh` against a disposable
+  database, and the pre-commit hook re-checks it when migrations or
+  SQLx-using files are staged. The deliberate runtime-checked exceptions are
+  variable-arity multi-row inserts built with `QueryBuilder` (the bot's guild
+  cache sync and `user_guilds` in `web-server/src/user.rs`), the `sakiot-dev`
+  tooling that runs caller-supplied SQL against arbitrary databases, and test
+  fixtures.
 - **Version → release.** `[workspace.package] version` is the only release
   trigger. Bumping it and merging tags `v<version>`, which deploys to
   production. See [`ops/README.md`](../ops/README.md) and

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,error_kind=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2::bigint IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0193b7c737ec9d5288d9f7e9b1c02ff0682f26ac2b12ad77f460a4db442d7d66"
+}

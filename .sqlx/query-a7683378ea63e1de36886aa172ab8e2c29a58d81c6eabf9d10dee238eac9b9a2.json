@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM roles WHERE guild_id = $1 AND NOT (role_id = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a7683378ea63e1de36886aa172ab8e2c29a58d81c6eabf9d10dee238eac9b9a2"
+}

@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, get, put, web};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::{errors::AppError, permissions::require_guild_manager};
 
@@ -22,15 +22,17 @@ async fn voice_channels(
     pool: &Pool<Postgres>,
     guild_id: i64,
 ) -> Result<Vec<VoiceChannel>, AppError> {
-    let rows = sqlx::query("SELECT channel_id,name FROM channels WHERE guild_id=$1 AND type IN (2,13) ORDER BY name,channel_id")
-        .bind(guild_id).fetch_all(pool).await?;
+    let rows = sqlx::query!(
+        "SELECT channel_id,name FROM channels WHERE guild_id=$1 AND type IN (2,13) ORDER BY name,channel_id",
+        guild_id
+    )
+    .fetch_all(pool)
+    .await?;
     rows.into_iter()
         .map(|row| {
             Ok(VoiceChannel {
-                id: row.try_get::<i64, _>("channel_id")?.to_string(),
-                name: row
-                    .try_get::<Option<String>, _>("name")?
-                    .unwrap_or_else(|| "Unnamed voice channel".into()),
+                id: row.channel_id.to_string(),
+                name: row.name.unwrap_or_else(|| "Unnamed voice channel".into()),
             })
         })
         .collect()
@@ -94,17 +96,17 @@ pub async fn get_recording_policy(
     let guild_id = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
     let channels = voice_channels(&pool, guild_id).await?;
-    let row = sqlx::query(
+    let row = sqlx::query!(
         "SELECT retention_days, excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
+        guild_id
     )
-    .bind(guild_id)
     .fetch_optional(pool.get_ref())
     .await?;
     let policy = match row {
         Some(row) => GuildRecordingPolicy {
-            retention_days: row.try_get("retention_days")?,
+            retention_days: row.retention_days,
             excluded_channel_ids: row
-                .try_get::<Vec<i64>, _>("excluded_channel_ids")?
+                .excluded_channel_ids
                 .into_iter()
                 .map(|id| id.to_string())
                 .collect(),
@@ -147,15 +149,14 @@ pub async fn put_recording_policy(
     let mut tx = pool.begin().await?;
     // The bot takes the same lock before opening a recording fragment. A
     // policy update and a new fragment therefore cannot cross unnoticed.
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(guild_id)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
         .execute(&mut *tx)
         .await?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM channels WHERE guild_id=$1 AND channel_id=ANY($2) AND type IN (2,13)",
+    let count = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!" FROM channels WHERE guild_id=$1 AND channel_id=ANY($2) AND type IN (2,13)"#,
+        guild_id,
+        &ids
     )
-    .bind(guild_id)
-    .bind(&ids)
     .fetch_one(&mut *tx)
     .await?;
     if count != ids.len() as i64 {
@@ -163,8 +164,15 @@ pub async fn put_recording_policy(
             "Excluded channels must be voice channels in this server".into(),
         ));
     }
-    sqlx::query("INSERT INTO guild_recording_policy (guild_id,retention_days,excluded_channel_ids,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (guild_id) DO UPDATE SET retention_days=EXCLUDED.retention_days,excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()")
-        .bind(guild_id).bind(body.retention_days).bind(&ids).bind(user_id).execute(&mut *tx).await?;
+    sqlx::query!(
+        "INSERT INTO guild_recording_policy (guild_id,retention_days,excluded_channel_ids,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (guild_id) DO UPDATE SET retention_days=EXCLUDED.retention_days,excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()",
+        guild_id,
+        body.retention_days,
+        &ids,
+        user_id
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(HttpResponse::Ok().json(GuildRecordingPolicy {
         retention_days: body.retention_days,

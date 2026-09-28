@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_job_viewers (job_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aca4bf12d868c4d8d023e8bd99c90623d0c9e3db46c1d80f3a8a223d8fa1c583"
+}

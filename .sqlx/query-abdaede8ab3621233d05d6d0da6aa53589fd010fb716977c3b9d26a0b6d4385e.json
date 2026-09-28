@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM channel_permissions WHERE kind = 'role' AND target_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "abdaede8ab3621233d05d6d0da6aa53589fd010fb716977c3b9d26a0b6d4385e"
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_jobs SET state=$3,stage=$4,progress=$5,result_url=$6,result_path=$7,error=$8,error_kind=$9,attempt_token=NULL,lease_expires_at=NULL,retry_at=CASE WHEN $10 THEN now()+interval '5 seconds' ELSE now() END,finished_at=CASE WHEN $3 IN ('ready','failed') THEN now() ELSE NULL END,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int2",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba0ffed5ca70c99c75507921c045081ac0cd84c2db5bb3fa190e88e5d99bdaf2"
+}

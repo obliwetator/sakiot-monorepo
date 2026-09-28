@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE media_jobs SET state='ready',stage='ready',progress=100,result_url=$3,result_path=$4,error=NULL,error_kind=NULL,attempt_token=NULL,lease_expires_at=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ff0fcebc320067fe8e16684c35a05e1c3945d368edbc756a09f0cd70d8c78e93"
+}

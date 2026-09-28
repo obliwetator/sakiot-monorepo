@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT clip_id,saved_file_name,recording_session_id,original_file_name,channel_id,composition FROM clips WHERE guild_id=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "clip_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "saved_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "saved_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "recording_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "original_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "original_file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "composition",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "composition"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "460f3a336002bf45bfeea5f21802ee16a2764f456c85c167f9a0ba1f9e50289c"
+}

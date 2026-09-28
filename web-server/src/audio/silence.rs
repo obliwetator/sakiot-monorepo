@@ -169,10 +169,12 @@ pub(crate) async fn run_recording_silence_job(
     }
     let mut tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
     tokio::fs::rename(&temporary, &output).await?;
-    if let Err(error) = sqlx::query("UPDATE audio_files SET silence=true WHERE file_name=$1")
-        .bind(file_name)
-        .execute(&mut *tx)
-        .await
+    if let Err(error) = sqlx::query!(
+        "UPDATE audio_files SET silence=true WHERE file_name=$1",
+        file_name
+    )
+    .execute(&mut *tx)
+    .await
     {
         return Err(error.into());
     }

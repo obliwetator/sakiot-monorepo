@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM clips WHERE clip_id=ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "152c60171ad71855b726c6a900ce1eaa5eacf2ef9fb0f33ed60b105dc1d6a57f"
+}

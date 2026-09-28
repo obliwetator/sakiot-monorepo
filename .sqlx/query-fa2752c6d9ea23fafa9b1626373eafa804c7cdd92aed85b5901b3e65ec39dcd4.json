@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM media_jobs WHERE id=ANY($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa2752c6d9ea23fafa9b1626373eafa804c7cdd92aed85b5901b3e65ec39dcd4"
+}

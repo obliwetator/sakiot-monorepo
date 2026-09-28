@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO channels (channel_id, guild_id, type, name)\n         VALUES ($1, $2, $3, $4)\n         ON CONFLICT (channel_id) DO UPDATE SET\n             guild_id = EXCLUDED.guild_id,\n             type = EXCLUDED.type,\n             name = EXCLUDED.name",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dac70303d752ab1768c5fb0659ec321c27a4d4e94c06c0619e7f9eb219310228"
+}

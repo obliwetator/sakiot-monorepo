@@ -1,0 +1,133 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            (SELECT count(*) FROM media_jobs WHERE state='queued') AS \"media_queued!\",\n            (SELECT count(*) FROM media_jobs WHERE state='running') AS \"media_running!\",\n            (SELECT count(*) FROM composition_jobs WHERE state='queued') AS \"composition_queued!\",\n            (SELECT count(*) FROM composition_jobs WHERE state='running') AS \"composition_running!\",\n            (SELECT count(*) FROM recording_deletion_jobs WHERE state='queued') AS \"deletion_queued!\",\n            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running') AS \"deletion_running!\",\n            (SELECT count(*) FROM recording_deletion_jobs WHERE state='failed') AS \"deletion_failed!\",\n            (SELECT count(*) FROM media_objects WHERE state='pending') AS \"archive_pending!\",\n            (SELECT count(*) FROM media_objects WHERE state='uploading') AS \"archive_uploading!\",\n            (SELECT count(*) FROM media_objects WHERE state IN ('missing','conflict')) AS \"archive_problem!\",\n            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_jobs WHERE state='queued' AND retry_at <= now()) AS \"oldest_media_queued_seconds!\",\n            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM composition_jobs WHERE state='queued' AND retry_at <= now()) AS \"oldest_composition_queued_seconds!\",\n            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM recording_deletion_jobs WHERE state='queued' AND retry_at <= now()) AS \"oldest_deletion_queued_seconds!\",\n            (SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::bigint FROM media_objects WHERE state IN ('pending','uploading') AND retry_at <= now()) AS \"oldest_archive_pending_seconds!\",\n            (SELECT count(*) FROM media_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS \"expired_media_leases!\",\n            (SELECT count(*) FROM composition_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS \"expired_composition_leases!\",\n            (SELECT count(*) FROM recording_deletion_jobs WHERE state='running' AND lease_expires_at < now()-interval '2 minutes') AS \"expired_deletion_leases!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "media_queued!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "media_running!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "composition_queued!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "composition_running!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "deletion_queued!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "deletion_running!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "deletion_failed!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "archive_pending!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "archive_uploading!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "archive_problem!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "oldest_media_queued_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "oldest_composition_queued_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "oldest_deletion_queued_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "oldest_archive_pending_seconds!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 14,
+        "name": "expired_media_leases!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 15,
+        "name": "expired_composition_leases!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 16,
+        "name": "expired_deletion_leases!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "efc83d52276a2f519eba11d34d38b84218b16f2c6b30c712825ea645134d5a6c"
+}

@@ -9,7 +9,7 @@ use actix_web::{HttpRequest, HttpResponse, delete, get, web};
 use chrono::{DateTime, Datelike, Utc};
 use sakiot_paths::{DataRoots, RecordingKey, SessionKey};
 use serde::{Deserialize, Serialize};
-use sqlx::{Pool, Postgres, Row};
+use sqlx::{Pool, Postgres};
 
 use crate::errors::{AppError, ErrorKind, JobError};
 use crate::media_archive::MediaArchive;
@@ -65,20 +65,23 @@ async fn load_status(
     guild_id: i64,
     id: &str,
 ) -> Result<RecordingDeletionStatus, AppError> {
-    let row = sqlx::query("SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2")
-        .bind(guild_id).bind(id).fetch_optional(pool).await?.ok_or(AppError::NotFound)?;
-    let error = JobError::from_columns(
-        row.try_get::<Option<String>, _>("error_kind")?.as_deref(),
-        row.try_get::<Option<String>, _>("error")?.as_deref(),
-    );
+    let row = sqlx::query!(
+        "SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2",
+        guild_id,
+        id
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let error = JobError::from_columns(row.error_kind.as_deref(), row.error.as_deref());
     Ok(RecordingDeletionStatus {
         id: id.to_owned(),
-        recording_session_id: row.try_get::<i64, _>("recording_session_id")?.to_string(),
+        recording_session_id: row.recording_session_id.to_string(),
         status_url: format!("/api/admin/guilds/{guild_id}/recording-deletions/{id}"),
-        state: row.try_get("state")?,
-        stage: row.try_get("stage")?,
-        mode: row.try_get("mode")?,
-        attempts: row.try_get("attempts")?,
+        state: row.state,
+        stage: row.stage,
+        mode: row.mode,
+        attempts: row.attempts,
         error_kind: error.as_ref().and_then(|error| error.kind),
         error: error.map(|error| error.message),
     })
@@ -154,62 +157,94 @@ async fn enqueue(
     mode: DeletionMode,
 ) -> Result<String, AppError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(guild_id)
+    sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
         .execute(&mut *tx)
         .await?;
-    let row = sqlx::query("SELECT state,deletion_requested_at FROM recording_sessions WHERE guild_id=$1 AND id=$2 FOR UPDATE")
-        .bind(guild_id).bind(session_id).fetch_optional(&mut *tx).await?;
-    let Some(row) = row else {
-        let previous: Option<String> = sqlx::query_scalar("SELECT id FROM recording_deletion_jobs WHERE guild_id=$1 AND recording_session_id=$2 AND state='ready'")
-            .bind(guild_id).bind(session_id).fetch_optional(&mut *tx).await?;
+    let state = sqlx::query_scalar!(
+        "SELECT state FROM recording_sessions WHERE guild_id=$1 AND id=$2 FOR UPDATE",
+        guild_id,
+        session_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(state) = state else {
+        let previous = sqlx::query_scalar!(
+            "SELECT id FROM recording_deletion_jobs WHERE guild_id=$1 AND recording_session_id=$2 AND state='ready'",
+            guild_id,
+            session_id
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
         return previous.ok_or(AppError::FileNotFound);
     };
-    let state: String = row.try_get("state")?;
     if state != "finalized" {
         return Err(AppError::Conflict(
             "Only finalized recordings can be deleted".into(),
         ));
     }
-    let existing = sqlx::query(
+    let existing = sqlx::query!(
         "SELECT id,mode,state FROM recording_deletion_jobs WHERE recording_session_id=$1 FOR UPDATE",
+        session_id
     )
-    .bind(session_id)
     .fetch_optional(&mut *tx)
     .await?;
     let id = if let Some(existing) = existing {
-        let id: String = existing.try_get("id")?;
-        let existing_mode: String = existing.try_get("mode")?;
-        let existing_state: String = existing.try_get("state")?;
         // Merely repeating the default soft request never advances a job to
         // irreversible deletion, even if a feature flag later changes.
         if mode == DeletionMode::Permanent
-            && (existing_mode == "soft" || matches!(existing_state.as_str(), "failed" | "paused"))
+            && (existing.mode == "soft" || matches!(existing.state.as_str(), "failed" | "paused"))
         {
-            sqlx::query("UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,error_kind=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2 IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1")
-                .bind(&id).bind(actor).execute(&mut *tx).await?;
-        }
-        id
-    } else {
-        let id = uuid::Uuid::new_v4().to_string();
-        let fragments: Vec<Fragment> = sqlx::query_as("SELECT id,guild_id,channel_id,year,month,file_name FROM audio_files WHERE recording_session_id=$1 ORDER BY id")
-            .bind(session_id).fetch_all(&mut *tx).await?;
-        let clips = related_clips(&mut tx, guild_id, session_id, &fragments).await?;
-        sqlx::query("UPDATE recording_sessions SET deletion_requested_at=now() WHERE id=$1")
-            .bind(session_id)
+            sqlx::query!(
+                "UPDATE recording_deletion_jobs SET mode='permanent',state='queued',stage='queued',retry_at=now(),attempts=0,error=NULL,error_kind=NULL,finished_at=NULL,permanent_requested_by=COALESCE(permanent_requested_by,$2),permanent_requested_at=CASE WHEN permanent_requested_by IS NULL AND $2::bigint IS NOT NULL THEN now() ELSE COALESCE(permanent_requested_at,now()) END,updated_at=now() WHERE id=$1",
+                existing.id,
+                actor
+            )
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE clips SET deleted_at=COALESCE(deleted_at,now()) WHERE guild_id=$1 AND clip_id=ANY($2)")
-            .bind(guild_id).bind(clips.iter().map(|clip| clip.id.as_str()).collect::<Vec<_>>())
-            .execute(&mut *tx).await?;
+        }
+        existing.id
+    } else {
+        let id = uuid::Uuid::new_v4().to_string();
+        let fragments = session_fragments(&mut *tx, session_id).await?;
+        let clips = related_clips(&mut tx, guild_id, session_id, &fragments).await?;
+        sqlx::query!(
+            "UPDATE recording_sessions SET deletion_requested_at=now() WHERE id=$1",
+            session_id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "UPDATE clips SET deleted_at=COALESCE(deleted_at,now()) WHERE guild_id=$1 AND clip_id=ANY($2)",
+            guild_id,
+            &clip_ids(&clips) as &[String]
+        )
+        .execute(&mut *tx)
+        .await?;
         match mode {
             DeletionMode::Soft => {
-                sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now())")
-                    .bind(&id).bind(session_id).bind(guild_id).bind(actor).bind(reason).execute(&mut *tx).await?;
+                sqlx::query!(
+                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now())",
+                    id,
+                    session_id,
+                    guild_id,
+                    actor,
+                    reason
+                )
+                .execute(&mut *tx)
+                .await?;
             }
             DeletionMode::Permanent => {
-                sqlx::query("INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,permanent_requested_by,permanent_requested_at) VALUES ($1,$2,$3,$4,$5,$6,$4,now())")
-                    .bind(&id).bind(session_id).bind(guild_id).bind(actor).bind(reason).bind(mode.as_str()).execute(&mut *tx).await?;
+                sqlx::query!(
+                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,permanent_requested_by,permanent_requested_at) VALUES ($1,$2,$3,$4,$5,$6,$4,now())",
+                    id,
+                    session_id,
+                    guild_id,
+                    actor,
+                    reason,
+                    mode.as_str()
+                )
+                .execute(&mut *tx)
+                .await?;
             }
         }
         id
@@ -246,11 +281,13 @@ pub fn spawn_worker(
 async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
     // One small page per sweep. Retention only hides data; it never authorizes
     // permanent destruction, regardless of the permanent-delete feature flag.
-    let rows = sqlx::query("SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL ORDER BY rs.ended_at,rs.id LIMIT 25")
-        .fetch_all(pool).await?;
+    let rows = sqlx::query!(
+        "SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL ORDER BY rs.ended_at,rs.id LIMIT 25"
+    )
+    .fetch_all(pool)
+    .await?;
     for row in rows {
-        let guild_id: i64 = row.try_get("guild_id")?;
-        let session_id: i64 = row.try_get("id")?;
+        let (guild_id, session_id) = (row.guild_id, row.id);
         if let Err(error) = enqueue(
             pool,
             guild_id,
@@ -276,17 +313,19 @@ struct Claimed {
 
 async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppError> {
     let token = uuid::Uuid::new_v4().to_string();
-    let row = sqlx::query("WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.guild_id")
-        .bind(MAX_ATTEMPTS).bind(&token).fetch_optional(pool).await?;
-    row.map(|row| {
-        Ok(Claimed {
-            id: row.try_get("id")?,
-            session_id: row.try_get("recording_session_id")?,
-            guild_id: row.try_get("guild_id")?,
-            token,
-        })
-    })
-    .transpose()
+    let row = sqlx::query!(
+        "WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.guild_id",
+        MAX_ATTEMPTS,
+        token
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| Claimed {
+        id: row.id,
+        session_id: row.recording_session_id,
+        guild_id: row.guild_id,
+        token,
+    }))
 }
 
 /// Why a permanent-deletion attempt stopped before finishing. Retry policy
@@ -344,8 +383,14 @@ async fn run_one(
             tokio::select! {
                 result = &mut work => break result,
                 _ = heartbeat.tick() => {
-                    let renewed = sqlx::query("UPDATE recording_deletion_jobs SET lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()")
-                        .bind(&job.id).bind(&job.token).execute(pool).await?.rows_affected();
+                    let renewed = sqlx::query!(
+                        "UPDATE recording_deletion_jobs SET lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()",
+                        job.id,
+                        job.token
+                    )
+                    .execute(pool)
+                    .await?
+                    .rows_affected();
                     if renewed != 1 { break Err(AttemptError::LeaseLost); }
                 }
             }
@@ -369,28 +414,49 @@ async fn record_outcome(
         Err(AttemptError::Waiting) => {
             tracing::info!(job_id = %job.id, "recording deletion waiting for guild media work");
             let kind = ErrorKind::WaitingForMediaWork;
-            sqlx::query("UPDATE recording_deletion_jobs SET attempts=attempts-1,state='queued',stage='waiting',error=$3,error_kind=$4,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'")
-                .bind(&job.id).bind(&job.token).bind(kind.default_message()).bind(kind.as_str()).execute(pool).await?;
+            sqlx::query!(
+                "UPDATE recording_deletion_jobs SET attempts=attempts-1,state='queued',stage='waiting',error=$3,error_kind=$4,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running'",
+                job.id,
+                job.token,
+                kind.default_message(),
+                kind.as_str()
+            )
+            .execute(pool)
+            .await?;
         }
         Err(AttemptError::Failed { kind, detail }) => {
             tracing::warn!(job_id = %job.id, kind = kind.as_str(), %detail, "recording deletion attempt failed");
-            sqlx::query("UPDATE recording_deletion_jobs SET state=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'queued' END,stage=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'retry' END,error=$4,error_kind=$5,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now(),finished_at=CASE WHEN attempts >= $3 THEN now() ELSE NULL END WHERE id=$1 AND attempt_token=$2 AND state='running'")
-                .bind(&job.id).bind(&job.token).bind(MAX_ATTEMPTS).bind(kind.default_message()).bind(kind.as_str()).execute(pool).await?;
+            sqlx::query!(
+                "UPDATE recording_deletion_jobs SET state=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'queued' END,stage=CASE WHEN attempts >= $3 THEN 'failed' ELSE 'retry' END,error=$4,error_kind=$5,retry_at=now()+interval '30 seconds',attempt_token=NULL,lease_expires_at=NULL,updated_at=now(),finished_at=CASE WHEN attempts >= $3 THEN now() ELSE NULL END WHERE id=$1 AND attempt_token=$2 AND state='running'",
+                job.id,
+                job.token,
+                MAX_ATTEMPTS,
+                kind.default_message(),
+                kind.as_str()
+            )
+            .execute(pool)
+            .await?;
         }
     }
     Ok(())
 }
 
 async fn stage(pool: &Pool<Postgres>, job: &Claimed, value: &str) -> Result<(), AttemptError> {
-    let changed = sqlx::query("UPDATE recording_deletion_jobs SET stage=$3,lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()")
-        .bind(&job.id).bind(&job.token).bind(value).execute(pool).await?.rows_affected();
+    let changed = sqlx::query!(
+        "UPDATE recording_deletion_jobs SET stage=$3,lease_expires_at=now()+interval '5 minutes',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now()",
+        job.id,
+        job.token,
+        value
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
     if changed != 1 {
         return Err(AttemptError::LeaseLost);
     }
     Ok(())
 }
 
-#[derive(sqlx::FromRow)]
 struct Fragment {
     id: i64,
     guild_id: i64,
@@ -399,7 +465,6 @@ struct Fragment {
     month: i32,
     file_name: String,
 }
-#[derive(sqlx::FromRow)]
 struct Clip {
     id: String,
     saved: Option<String>,
@@ -419,25 +484,29 @@ async fn process_with_roots(
 ) -> Result<(), AttemptError> {
     // Do not race a renderer already admitted before the tombstone. Queued
     // attempts recheck source access and will fail once they start.
-    let active: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running'))")
-        .bind(job.guild_id).fetch_one(pool).await?;
-    if active > 0 {
+    if active_guild_media_jobs(pool, job.guild_id).await? > 0 {
         return Err(AttemptError::Waiting);
     }
-    let session = sqlx::query("SELECT guild_id,starting_channel_id,started_at,ended_at,deletion_requested_at FROM recording_sessions WHERE id=$1 AND guild_id=$2")
-        .bind(job.session_id).bind(job.guild_id).fetch_optional(pool).await?.ok_or(AppError::FileNotFound)?;
-    let tombstone: Option<DateTime<Utc>> = session.try_get("deletion_requested_at")?;
-    if tombstone.is_none() {
+    let session = sqlx::query!(
+        "SELECT starting_channel_id,started_at,ended_at,deletion_requested_at FROM recording_sessions WHERE id=$1 AND guild_id=$2",
+        job.session_id,
+        job.guild_id
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::FileNotFound)?;
+    if session.deletion_requested_at.is_none() {
         return Err(AttemptError::failed(
             ErrorKind::InternalError,
             "recording is not tombstoned",
         ));
     }
-    let started: DateTime<Utc> = session.try_get("started_at")?;
-    let ended: Option<DateTime<Utc>> = session.try_get("ended_at")?;
-    let starting_channel: i64 = session.try_get("starting_channel_id")?;
-    let fragments: Vec<Fragment> = sqlx::query_as("SELECT id,guild_id,channel_id,year,month,file_name FROM audio_files WHERE recording_session_id=$1 ORDER BY id")
-        .bind(job.session_id).fetch_all(pool).await?;
+    let (started, ended, starting_channel) = (
+        session.started_at,
+        session.ended_at,
+        session.starting_channel_id,
+    );
+    let fragments = session_fragments(pool, job.session_id).await?;
     let clips = {
         let mut connection = pool.acquire().await?;
         related_clips(&mut connection, job.guild_id, job.session_id, &fragments).await?
@@ -461,11 +530,12 @@ async fn process_with_roots(
     // Archive uploads hold this advisory lock for their entire transfer. A
     // claimed upload that starts afterwards sees the tombstone and skips.
     for fragment in &fragments {
-        let object_id: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM media_objects WHERE audio_file_id=$1")
-                .bind(fragment.id)
-                .fetch_optional(pool)
-                .await?;
+        let object_id = sqlx::query_scalar!(
+            "SELECT id FROM media_objects WHERE audio_file_id=$1",
+            fragment.id
+        )
+        .fetch_optional(pool)
+        .await?;
         purge_source(
             pool,
             media,
@@ -476,9 +546,8 @@ async fn process_with_roots(
         .await?;
     }
     for clip in &clips {
-        let object_id: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM media_objects WHERE clip_id=$1")
-                .bind(&clip.id)
+        let object_id =
+            sqlx::query_scalar!("SELECT id FROM media_objects WHERE clip_id=$1", clip.id)
                 .fetch_optional(pool)
                 .await?;
         if let Some(object_id) = object_id {
@@ -546,55 +615,78 @@ async fn process_with_roots(
     }
     stage(pool, job, "removing_records").await?;
     let mut tx = pool.begin().await?;
-    let owned: Option<String> = sqlx::query_scalar("SELECT id FROM recording_deletion_jobs WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now() FOR UPDATE")
-        .bind(&job.id).bind(&job.token).fetch_optional(&mut *tx).await?;
+    let owned = sqlx::query_scalar!(
+        "SELECT id FROM recording_deletion_jobs WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now() FOR UPDATE",
+        job.id,
+        job.token
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if owned.is_none() {
         return Err(AttemptError::LeaseLost);
     }
     // A new media request may have entered after the initial check. Leave the
     // tombstone in place and retry rather than publish/erase across it.
-    let active: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running'))")
-        .bind(job.guild_id).fetch_one(&mut *tx).await?;
-    if active > 0 {
+    if active_guild_media_jobs(&mut *tx, job.guild_id).await? > 0 {
         return Err(AttemptError::Waiting);
     }
-    sqlx::query("DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1) OR clip_id=ANY($2)")
-        .bind(job.session_id).bind(clips.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM stamps WHERE recording_session_id=$1 OR audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1)")
-        .bind(job.session_id).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM clips WHERE clip_id=ANY($1)")
-        .bind(clips.iter().map(|c| c.id.as_str()).collect::<Vec<_>>())
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM media_jobs WHERE id=ANY($1)")
-        .bind(media_jobs.iter().map(|j| j.id.as_str()).collect::<Vec<_>>())
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM composition_jobs WHERE id=ANY($1)")
-        .bind(
-            composition_jobs
-                .iter()
-                .map(|j| j.id.as_str())
-                .collect::<Vec<_>>(),
-        )
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query(
-        "DELETE FROM clip_source_history WHERE source_clip_id=ANY($1) OR target_clip_id=ANY($1)",
+    let clip_ids = clip_ids(&clips);
+    sqlx::query!(
+        "DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1) OR clip_id=ANY($2)",
+        job.session_id,
+        &clip_ids
     )
-    .bind(clips.iter().map(|c| c.id.as_str()).collect::<Vec<_>>())
     .execute(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM audio_files WHERE recording_session_id=$1")
-        .bind(job.session_id)
+    sqlx::query!(
+        "DELETE FROM stamps WHERE recording_session_id=$1 OR audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1)",
+        job.session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!("DELETE FROM clips WHERE clip_id=ANY($1)", &clip_ids)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM recording_sessions WHERE id=$1 AND deletion_requested_at IS NOT NULL")
-        .bind(job.session_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,error_kind=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2")
-        .bind(&job.id).bind(&job.token).execute(&mut *tx).await?;
+    sqlx::query!(
+        "DELETE FROM media_jobs WHERE id=ANY($1)",
+        &media_jobs.iter().map(|j| j.id.clone()).collect::<Vec<_>>()
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM composition_jobs WHERE id=ANY($1)",
+        &composition_jobs
+            .iter()
+            .map(|j| j.id.clone())
+            .collect::<Vec<_>>()
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM clip_source_history WHERE source_clip_id=ANY($1) OR target_clip_id=ANY($1)",
+        &clip_ids
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM audio_files WHERE recording_session_id=$1",
+        job.session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM recording_sessions WHERE id=$1 AND deletion_requested_at IS NOT NULL",
+        job.session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,error_kind=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2",
+        job.id,
+        job.token
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -608,11 +700,13 @@ async fn purge_source(
 ) -> Result<(), AttemptError> {
     let mut lock = pool.begin().await?;
     if let Some(object_id) = object_id {
-        sqlx::query("SELECT pg_advisory_xact_lock($1,$2)")
-            .bind(ARCHIVE_LOCK_NAMESPACE)
-            .bind(object_id as i32)
-            .execute(&mut *lock)
-            .await?;
+        sqlx::query!(
+            "SELECT pg_advisory_xact_lock($1,$2)",
+            ARCHIVE_LOCK_NAMESPACE,
+            object_id as i32
+        )
+        .execute(&mut *lock)
+        .await?;
     }
     stage(pool, job, "purging_archive").await?;
     if let Some(archive) = media.archive() {
@@ -625,42 +719,84 @@ async fn purge_source(
     Ok(())
 }
 
+/// The session's physical fragments, in upload order.
+async fn session_fragments(
+    executor: impl sqlx::PgExecutor<'_>,
+    session_id: i64,
+) -> Result<Vec<Fragment>, sqlx::Error> {
+    sqlx::query_as!(
+        Fragment,
+        "SELECT id,guild_id,channel_id,year,month,file_name FROM audio_files WHERE recording_session_id=$1 ORDER BY id",
+        session_id
+    )
+    .fetch_all(executor)
+    .await
+}
+
+/// Queued or running media and composition jobs in the guild.
+async fn active_guild_media_jobs(
+    executor: impl sqlx::PgExecutor<'_>,
+    guild_id: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT (SELECT count(*) FROM media_jobs WHERE guild_id=$1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE guild_id=$1 AND state IN ('queued','running')) AS "active!""#,
+        guild_id
+    )
+    .fetch_one(executor)
+    .await
+}
+
+fn clip_ids(clips: &[Clip]) -> Vec<String> {
+    clips.iter().map(|clip| clip.id.clone()).collect()
+}
+
+/// A guild clip as the dependency scan needs it.
+struct GuildClip {
+    clip_id: String,
+    saved_file_name: Option<String>,
+    recording_session_id: Option<i64>,
+    original_file_name: Option<String>,
+    channel_id: Option<i64>,
+    composition: Option<serde_json::Value>,
+}
+
 async fn related_clips(
     connection: &mut sqlx::PgConnection,
     guild_id: i64,
     session_id: i64,
     fragments: &[Fragment],
 ) -> Result<Vec<Clip>, AppError> {
-    let rows = sqlx::query("SELECT clip_id,saved_file_name,recording_session_id,original_file_name,channel_id,composition FROM clips WHERE guild_id=$1")
-        .bind(guild_id).fetch_all(&mut *connection).await?;
+    let rows = sqlx::query_as!(
+        GuildClip,
+        "SELECT clip_id,saved_file_name,recording_session_id,original_file_name,channel_id,composition FROM clips WHERE guild_id=$1",
+        guild_id
+    )
+    .fetch_all(&mut *connection)
+    .await?;
     let mut selected = HashSet::new();
     let mut clips = Vec::new();
     // A composition can depend on any session clip or physical fragment clip.
     // Composed clips cannot themselves be sources, so one pass suffices.
     for row in &rows {
-        let id: String = row.try_get("clip_id")?;
-        let session: Option<i64> = row.try_get("recording_session_id")?;
-        let original: Option<String> = row.try_get("original_file_name")?;
-        let channel: Option<i64> = row.try_get("channel_id")?;
-        if session == Some(session_id)
+        if row.recording_session_id == Some(session_id)
             || fragments.iter().any(|f| {
-                Some(f.channel_id) == channel && original.as_deref() == Some(f.file_name.as_str())
+                Some(f.channel_id) == row.channel_id
+                    && row.original_file_name.as_deref() == Some(f.file_name.as_str())
             })
         {
-            selected.insert(id.clone());
+            selected.insert(row.clip_id.clone());
             clips.push(Clip {
-                id,
-                saved: row.try_get("saved_file_name")?,
+                id: row.clip_id.clone(),
+                saved: row.saved_file_name.clone(),
             });
         }
     }
     for row in &rows {
-        let id: String = row.try_get("clip_id")?;
-        if selected.contains(&id) {
+        if selected.contains(&row.clip_id) {
             continue;
         }
-        let composition: Option<serde_json::Value> = row.try_get("composition")?;
-        let dependent = composition
+        let dependent = row
+            .composition
             .as_ref()
             .and_then(|c| c.get("segments"))
             .and_then(|s| s.as_array())
@@ -673,34 +809,31 @@ async fn related_clips(
                 })
             });
         if dependent {
-            selected.insert(id.clone());
+            selected.insert(row.clip_id.clone());
             clips.push(Clip {
-                id,
-                saved: row.try_get("saved_file_name")?,
+                id: row.clip_id.clone(),
+                saved: row.saved_file_name.clone(),
             });
         }
     }
     // This ledger survives composition-job cleanup and retains dependencies
     // even after a clip was overwritten with an unrelated composition.
-    let sources: Vec<&str> = selected.iter().map(String::as_str).collect();
-    let historical_targets: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT target_clip_id FROM clip_source_history WHERE source_clip_id=ANY($1)",
+    let sources: Vec<String> = selected.iter().cloned().collect();
+    let historical_targets = sqlx::query_scalar!(
+        r#"SELECT DISTINCT target_clip_id AS "target_clip_id!" FROM clip_source_history WHERE source_clip_id=ANY($1)"#,
+        &sources
     )
-    .bind(&sources)
     .fetch_all(&mut *connection)
     .await?;
     for target in historical_targets {
         if selected.contains(&target) {
             continue;
         }
-        if let Some(row) = rows
-            .iter()
-            .find(|row| row.get::<String, _>("clip_id") == target)
-        {
+        if let Some(row) = rows.iter().find(|row| row.clip_id == target) {
             selected.insert(target.clone());
             clips.push(Clip {
                 id: target,
-                saved: row.try_get("saved_file_name")?,
+                saved: row.saved_file_name.clone(),
             });
         }
     }
@@ -711,19 +844,16 @@ async fn related_media_jobs(
     pool: &Pool<Postgres>,
     job: &Claimed,
 ) -> Result<Vec<MediaJob>, AppError> {
-    let rows =
-        sqlx::query("SELECT id FROM media_jobs WHERE guild_id=$1 AND request->>'session_id'=$2")
-            .bind(job.guild_id)
-            .bind(job.session_id.to_string())
-            .fetch_all(pool)
-            .await?;
-    rows.into_iter()
-        .map(|row| {
-            Ok(MediaJob {
-                id: row.try_get("id")?,
-            })
-        })
-        .collect()
+    Ok(sqlx::query_scalar!(
+        "SELECT id FROM media_jobs WHERE guild_id=$1 AND request->>'session_id'=$2",
+        job.guild_id,
+        job.session_id.to_string()
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|id| MediaJob { id })
+    .collect())
 }
 
 async fn related_composition_jobs(
@@ -732,16 +862,16 @@ async fn related_composition_jobs(
     clips: &[Clip],
 ) -> Result<Vec<CompositionJob>, AppError> {
     let clip_ids: HashSet<&str> = clips.iter().map(|clip| clip.id.as_str()).collect();
-    let rows =
-        sqlx::query("SELECT id,result_clip_id,snapshot FROM composition_jobs WHERE guild_id=$1")
-            .bind(job.guild_id)
-            .fetch_all(pool)
-            .await?;
+    let rows = sqlx::query!(
+        "SELECT id,result_clip_id,snapshot FROM composition_jobs WHERE guild_id=$1",
+        job.guild_id
+    )
+    .fetch_all(pool)
+    .await?;
     let mut jobs = Vec::new();
     for row in rows {
-        let target: String = row.try_get("result_clip_id")?;
-        let snapshot: serde_json::Value = row.try_get("snapshot")?;
-        let dependent = snapshot
+        let dependent = row
+            .snapshot
             .get("body")
             .and_then(|body| body.get("segments"))
             .and_then(|segments| segments.as_array())
@@ -753,10 +883,8 @@ async fn related_composition_jobs(
                         .is_some_and(|id| clip_ids.contains(id))
                 })
             });
-        if clip_ids.contains(target.as_str()) || dependent {
-            jobs.push(CompositionJob {
-                id: row.try_get("id")?,
-            });
+        if clip_ids.contains(row.result_clip_id.as_str()) || dependent {
+            jobs.push(CompositionJob { id: row.id });
         }
     }
     Ok(jobs)

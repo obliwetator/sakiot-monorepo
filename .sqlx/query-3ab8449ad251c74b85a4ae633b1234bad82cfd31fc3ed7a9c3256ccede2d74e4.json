@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE clips SET deleted_at=COALESCE(deleted_at,now()) WHERE guild_id=$1 AND clip_id=ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3ab8449ad251c74b85a4ae633b1234bad82cfd31fc3ed7a9c3256ccede2d74e4"
+}
