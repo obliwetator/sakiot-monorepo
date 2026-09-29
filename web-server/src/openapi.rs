@@ -22,8 +22,9 @@ use utoipa::{
     ),
     paths(
         // Intentionally undocumented: /api/dev_login (dev-login feature only),
-        // /healthz, and /api/internal/fbi-agent/grpc-endpoints (internal,
-        // secret-header authenticated, not a client API).
+        // the /livez, /readyz and /healthz probes, and
+        // /internal/fbi-agent/grpc-endpoints (outside /api; accepts loopback
+        // or shared-secret requests from the deploy engine, not a client API).
         crate::admin::cooldowns::delete_user_override,
         crate::admin::cooldowns::get_guild_cooldown,
         crate::admin::cooldowns::list_user_overrides,

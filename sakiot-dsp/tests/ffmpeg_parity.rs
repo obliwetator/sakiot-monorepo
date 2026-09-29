@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 const SAMPLE_RATE: usize = 48_000;
 
 #[test]
-#[ignore = "manual prototype measurement; requires the server's FFmpeg filters"]
+#[ignore = "manual measurement; requires the server's FFmpeg filters"]
 fn measures_current_ffmpeg_eq_chain() -> Result<(), Box<dyn Error>> {
     let input = test_signal(SAMPLE_RATE * 2);
     let cases = [
@@ -62,8 +62,8 @@ fn measures_current_ffmpeg_eq_chain() -> Result<(), Box<dyn Error>> {
             measurement.max_abs,
             measurement.correlation,
         );
-        // Broad regression guard while this test is a measurement spike. The
-        // actual acceptance threshold remains a recorded prototype finding.
+        // Broad regression guard only: this test measures the difference, it
+        // does not define an acceptance threshold.
         assert!(
             measurement.relative_residual_db < -20.0,
             "shared {name} differs substantially from FFmpeg: {measurement:?}"
