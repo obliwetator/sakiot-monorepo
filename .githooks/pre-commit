@@ -4,30 +4,95 @@ set -eu
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
-echo "Formatting Rust..."
-cargo fmt --all
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
 
-echo "Formatting frontend..."
-(
-	cd sakiot-stage
-	bunx biome check --write .
-)
-
-# Re-stage only files that were already staged, so formatting fixes
-# land in this commit without sweeping up unstaged changes. Staged
-# deletions are skipped: that includes `git rm --cached`, whose file
-# still exists on disk (and may now be ignored, which makes `git add`
-# fail).
-git diff --cached --name-only --diff-filter=d | while IFS= read -r f; do
-	[ -e "$f" ] || continue
-	git add -- "$f"
-done
-check_sqlx=false
 # A file list, not `for path in $(...)`: filenames with spaces must survive.
 # Process substitution is not POSIX sh, so the list goes through a temp file.
-changed_list=$(mktemp)
-trap 'rm -f "$changed_list"' EXIT
-git diff --cached --name-only --diff-filter=ACMR >"$changed_list"
+staged_list="$tmp_dir/staged-paths"
+git diff --cached --name-only --diff-filter=ACMR >"$staged_list"
+
+# The edition cargo fmt would pass for $1, read from the nearest Cargo.toml.
+rust_edition() {
+	dir=$(dirname "$1")
+	while [ ! -f "$dir/Cargo.toml" ] && [ "$dir" != . ]; do
+		dir=$(dirname "$dir")
+	done
+	manifest="$dir/Cargo.toml"
+	if grep -Eq '^edition\.workspace *= *true' "$manifest"; then
+		manifest=Cargo.toml
+	fi
+	sed -n 's/^edition *= *"\([0-9]*\)".*/\1/p' "$manifest" | head -n 1
+}
+
+formattable() {
+	case "$1" in
+		*.rs | \
+			sakiot-stage/*.js | sakiot-stage/*.jsx | sakiot-stage/*.mjs | sakiot-stage/*.cjs | \
+			sakiot-stage/*.ts | sakiot-stage/*.tsx | sakiot-stage/*.mts | sakiot-stage/*.cts | \
+			sakiot-stage/*.json | sakiot-stage/*.jsonc | sakiot-stage/*.css)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# Formats stdin as the file $1, writing the result to stdout. Fails on content
+# the formatter cannot parse.
+format_as() {
+	case "$1" in
+		*.rs)
+			edition=$(rust_edition "$1")
+			if [ -z "$edition" ]; then
+				echo "pre-commit: cannot determine the Rust edition of $1" >&2
+				return 1
+			fi
+			rustfmt --edition "$edition"
+			;;
+		sakiot-stage/*)
+			(cd sakiot-stage && bunx biome check --write --stdin-file-path="${1#sakiot-stage/}")
+			;;
+	esac
+}
+
+# Format what is staged, not what is on disk, and write the result back to the
+# index. Re-adding the working-tree file would also commit the unstaged hunks
+# of a partially staged file (git add -p).
+echo "Formatting staged files..."
+while IFS= read -r path; do
+	formattable "$path" || continue
+	entry=$(git ls-files --stage -- ":(literal)$path")
+	mode=${entry%% *}
+	blob=${entry#* }
+	blob=${blob%% *}
+	case "$mode" in
+		100644 | 100755) ;;
+		*) continue ;;
+	esac
+
+	git cat-file blob "$blob" >"$tmp_dir/staged"
+	if ! format_as "$path" <"$tmp_dir/staged" >"$tmp_dir/formatted"; then
+		echo "pre-commit: cannot format the staged version of $path" >&2
+		exit 1
+	fi
+	cmp -s "$tmp_dir/staged" "$tmp_dir/formatted" && continue
+	formatted_blob=$(git hash-object -w --no-filters "$tmp_dir/formatted")
+	git update-index --cacheinfo "$mode" "$formatted_blob" "$path"
+
+	# Mirror the formatting into the working tree. A file identical to its
+	# staged version takes the formatted blob; a partially staged file is
+	# formatted on its own, so its unstaged hunks stay unstaged. Unstaged
+	# edits that do not parse are left alone.
+	[ -f "$path" ] || continue
+	# shellcheck disable=SC2094 # format_as only takes $path as a name.
+	if [ "$(git hash-object -- "$path")" = "$blob" ]; then
+		cat "$tmp_dir/formatted" >"$path"
+	elif format_as "$path" <"$path" >"$tmp_dir/worktree" 2>/dev/null; then
+		cmp -s "$tmp_dir/worktree" "$path" || cat "$tmp_dir/worktree" >"$path"
+	fi
+done <"$staged_list"
+
+check_sqlx=false
 while IFS= read -r path; do
 	case "$path" in
 		sakiot-db/migrations/*.sql)
@@ -42,7 +107,7 @@ while IFS= read -r path; do
 			fi
 			;;
 	esac
-done <"$changed_list"
+done <"$staged_list"
 
 [ "$check_sqlx" = true ] || exit 0
 

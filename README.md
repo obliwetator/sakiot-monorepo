@@ -178,8 +178,10 @@ Enable the repository's checks once per clone:
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook formats Rust and frontend files, re-stages files already
-staged, and checks SQLx metadata when relevant migrations or Rust files change.
+The pre-commit hook formats the staged versions of Rust and frontend files and
+writes them back to the index, so a partially staged file (`git add -p`) commits
+only its staged hunks. It mirrors the formatting into the working tree and
+checks SQLx metadata when relevant migrations or Rust files change.
 The pre-push hook checks Rust formatting, workspace Clippy with warnings denied,
 frontend Biome checks, and generated OpenAPI types. To fix formatting before
 committing:
