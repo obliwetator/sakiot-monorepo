@@ -2,18 +2,19 @@ use actix_web::HttpRequest;
 use tracing::error;
 
 /// Whether a request-supplied file, stem, or segment name is safe to
-/// interpolate into a filesystem path or a process argument: non-empty, no
-/// parent-directory or path-separator sequences, no quotes, and no control
-/// characters. Every audio handler that builds a path or command line from a
+/// interpolate into a filesystem path or a process argument.
+///
+/// An allowlist: ASCII letters, digits, `-`, `_` and `.`, with no leading dot
+/// and no `..`. Every name the services generate fits it (`{ts}-{user_id}`
+/// stems, UUID clip ids, `seg_00001.m4s`), so anything else is rejected rather
+/// than escaped. Every audio handler that builds a path or command line from a
 /// URL segment must gate it through this predicate.
 pub fn is_valid_file_segment(s: &str) -> bool {
     !s.is_empty()
+        && !s.starts_with('.')
         && !s.contains("..")
-        && !s.contains('/')
-        && !s.contains('\\')
-        && !s.contains('\'')
-        && !s.contains('"')
-        && !s.chars().any(char::is_control)
+        && s.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 pub fn get_file_path_root(base_path: &str, path: &(i64, i64, i32, i32, String)) -> String {
@@ -89,6 +90,26 @@ mod tests {
             "1786473460682-183931044829986817.ogg"
         ));
         assert!(is_valid_file_segment("seg_00001.m4s"));
+        assert!(is_valid_file_segment("init.mp4"));
+        assert!(is_valid_file_segment(
+            "8161a145-9b3d-4bdb-bca1-4d12fd6781a2"
+        ));
+    }
+
+    #[test]
+    fn file_segment_rejects_anything_outside_the_allowlist() {
+        for name in [
+            ".hidden.ogg",
+            "has space",
+            "caf\u{e9}",
+            "percent%2F",
+            "colon:name",
+            "semi;colon",
+            "dollar$name",
+            "nul\0byte",
+        ] {
+            assert!(!is_valid_file_segment(name), "{name:?}");
+        }
     }
 
     #[test]
