@@ -265,23 +265,14 @@ The preview role is named `sakiot_slot` because the engine rewrites
 per-slot values; a role containing either would turn into a nonexistent
 per-slot role.
 
-`ops/isolate-environments.sh` moves an existing host to this layout. It is
-idempotent: re-running it after a failure resumes, and restarts what the
-failed run stopped. Run it right after `ops/update-deploy-engine.sh` has
-installed the engine from the same checkout, because an older engine would
-fail to deploy into data directories it no longer owns.
-
-```sh
-ops/update-deploy-engine.sh
-ops/isolate-environments.sh                      # staging, previews, database access
-# after staging has run well on the hardened units:
-ops/isolate-environments.sh --harden-production  # rotates the production password, restarts production
-```
-
-The first run generates passwords for the new roles and backs up each env file
-it rewrites next to it. The production phase rotates the `sakiot` password,
-because staging and preview processes held it until then. It restarts the
-production web server and bot, so the bot finalizes its recordings and rejoins.
+The VPS moved to this layout on 2026-09-29, including production, which
+until then connected as the `postgres` superuser. PostgreSQL accepts TCP only
+from localhost and from Grafana's Docker network (`172.18.0.0/16`, for
+`sakiot_rouvas` only), and Grafana reads through the read-only `grafana_ro`
+role. To rotate a role's password, `ALTER ROLE <role> PASSWORD '...'` as
+`postgres`, update `DATABASE_URL` and `BACKUP_DATABASE_URL` (plus `PGUSER` and
+`PGPASSWORD`, if set) in the env file, and restart the instance's web server
+and bot.
 
 ## Release
 

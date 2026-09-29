@@ -210,7 +210,7 @@ if [[ "$ACTION" = create ]]; then
     # in the env, which would turn the role into a nonexistent per-slot one.
     db_user="$(sed -n 's|^DATABASE_URL=postgres://\([^:]*\):.*|\1|p' "$ENV_FILE" | head -n1)"
     [[ "$db_user" == "sakiot_slot" ]] \
-        || die "DATABASE_URL in ${ENV_FILE} must use the sakiot_slot role (found '${db_user}'); see ops/isolate-environments.sh"
+        || die "DATABASE_URL in ${ENV_FILE} must use the sakiot_slot role (found '${db_user}'); see ops/README.md, Environment isolation"
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
     if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot_slot'" | grep -q 1; then
         [[ -n "$db_pass" ]] || die "could not read the database password from ${ENV_FILE} (DATABASE_URL)"
