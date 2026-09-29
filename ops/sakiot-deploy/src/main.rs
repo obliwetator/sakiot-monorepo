@@ -1,7 +1,4 @@
-#![expect(
-    clippy::print_stderr,
-    reason = "usage and fatal errors go to stderr: `die` parity with the bash engine"
-)]
+#![expect(clippy::print_stderr, reason = "usage and fatal errors go to stderr")]
 
 use anyhow::{Context, Result};
 use sakiot_deploy::admin_api::TonicAdmin;
@@ -12,7 +9,7 @@ use sakiot_deploy::runner::RealRunner;
 use sakiot_deploy::web_api::ReqwestWebApi;
 
 fn main() {
-    // umask 027, as the first line of deploy-release.sh.
+    // umask 027: nothing the deploy creates is world-accessible.
     // SAFETY: umask has no failure modes and no memory effects.
     unsafe {
         libc::umask(0o027);
@@ -57,7 +54,6 @@ fn main() {
     };
 
     if let Err(error) = run(request) {
-        // `die` parity with ops/lib/common.sh.
         eprintln!("error: {error:#}");
         std::process::exit(1);
     }
@@ -90,7 +86,7 @@ fn run(request: Request) -> Result<()> {
     let web = ReqwestWebApi::new()?;
     let clock = SystemClock;
     let free_port = || -> Result<u16> {
-        // Replaces the inline python3 socket bind in deploy-release.sh.
+        // Let the kernel pick a free port for the new bot's gRPC listener.
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .context("failed to pick a free gRPC port")?;
         Ok(listener.local_addr()?.port())

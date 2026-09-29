@@ -1,7 +1,7 @@
 //! Golden command-sequence tests for the deploy orchestrator. Each scenario
 //! scripts the exact subprocess sequence the engine must produce (the
 //! ScriptedRunner fails on any divergence) and checks state files, the
-//! manifest, and the recovery flows the bash engine never had tests for.
+//! manifest, and the recovery flows.
 
 #![allow(clippy::unwrap_used, clippy::panic)]
 
@@ -794,7 +794,7 @@ fn bot_readiness_failure_cancels_drain_and_keeps_state() {
     assert_eq!(error.to_string(), "new FBI Agent failed readiness");
     runner.assert_exhausted().unwrap();
 
-    // 30 readiness probes with a 1s pause after each, like the bash loop.
+    // 30 readiness probes with a 1s pause after each.
     assert_eq!(clock.sleep_count(), 30);
 
     // Old bot remains the recorded current instance; drain was cancelled;

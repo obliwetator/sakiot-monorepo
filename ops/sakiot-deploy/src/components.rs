@@ -1,4 +1,4 @@
-//! Path -> component mapping ported verbatim from ops/lib/components.sh.
+//! Maps changed paths to the components a deploy must build and restart.
 
 use std::fmt;
 
@@ -102,8 +102,7 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
         .collect()
 }
 
-/// Bash globs `compose*.yml|compose*.yaml` match top-level files only (the
-/// case patterns never contain a slash separator for these entries).
+/// `compose*.yml` and `compose*.yaml` match top-level files only.
 fn is_compose_file(path: &str) -> bool {
     path.starts_with("compose")
         && !path.contains('/')
@@ -116,8 +115,6 @@ pub fn component_selected(wanted: Component, components: &[Component]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    //! Ported from ops/tests/components_test.sh.
-
     use super::Component::{Bot, Database, Frontend, Web};
     use super::*;
 
@@ -221,8 +218,8 @@ mod tests {
 
     #[test]
     fn nested_compose_files_are_not_compose_globs() {
-        // compose*.yml in bash case matches the whole string; a nested path
-        // such as deploy/compose.yml falls through to the unknown branch.
+        // compose*.yml matches the whole path, so a nested path such as
+        // deploy/compose.yml falls through to the unknown branch.
         assert_components(&["deploy/compose.yml"], &[Database, Bot, Web, Frontend]);
     }
 }

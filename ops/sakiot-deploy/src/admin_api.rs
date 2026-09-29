@@ -1,6 +1,5 @@
-//! FBI Agent Admin gRPC client. Replaces the grpcurl invocations in
-//! deploy-release.sh; timeouts mirror `grpcurl -max-time 3` with curl-style
-//! 2s connect budget.
+//! FBI Agent Admin gRPC client, with a 2 s connect timeout and a 3 s limit
+//! per call.
 
 use std::time::Duration;
 

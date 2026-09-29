@@ -40,8 +40,6 @@ sqlx = { version = "0.9", features = [
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 time = "0.3.36"
 tonic = "0.14"
-prost = "0.14"
-tonic-prost = "0.14.2"
 bitflags = "2.0.2"
 thiserror = "2"
 tokio-util = "0.7.8"

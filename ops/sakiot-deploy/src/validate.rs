@@ -1,5 +1,4 @@
-//! Validators ported from ops/lib/common.sh. All failures mirror the bash
-//! `die` messages so operator-facing errors stay identical.
+//! Validators for release tags, commit SHAs, database URLs and tag records.
 
 use std::path::Path;
 
@@ -91,8 +90,6 @@ pub fn validate_tag_record(mode: Mode, record: &Path, tag: &str, sha: &str) -> R
 
 #[cfg(test)]
 mod tests {
-    //! Ported from ops/tests/validation_test.sh.
-
     use super::*;
 
     const SHA_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

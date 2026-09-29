@@ -3,15 +3,14 @@ name = "sakiot-deploy"
 version.workspace = true
 edition = "2024"
 
-# Deploy engine for the VPS. Replaces ops/deploy-release.sh + ops/lib/*.sh.
-# Installed out-of-band to /usr/local/lib/sakiot-deploy/bin (see
-# ops/install-production.sh); never built from the release worktree.
+# Deploy engine for the VPS. Installed out-of-band to
+# /usr/local/lib/sakiot-deploy/bin (see ops/install-production.sh); never
+# built from the release worktree.
 
 [dependencies]
 anyhow = "1"
 dotenvy = "0.15"
 libc = "0.2"
-prost = "0.14"
 reqwest = { version = "0.12", default-features = false, features = [
     "charset",
     "http2",
@@ -26,7 +25,6 @@ tempfile = "3"
 time = { version = "0.3", features = ["formatting", "macros"] }
 tokio = { version = "1", features = ["rt", "time"] }
 tonic = "0.14"
-tonic-prost = "0.14.2"
 
 [lints]
 workspace = true

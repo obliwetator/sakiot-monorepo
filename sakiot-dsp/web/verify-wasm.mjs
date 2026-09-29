@@ -168,7 +168,7 @@ console.log(
 	`WASM/native parity: relative=${relativeResidualDb.toFixed(2)} dB, max_abs=${maxAbsolute.toExponential(3)}`,
 );
 if (relativeResidualDb >= -90) {
-	throw new Error("WASM/native residual is above the prototype threshold");
+	throw new Error("WASM/native residual is above the parity threshold");
 }
 
 const smoothingProbe = new WasmSegmentProcessor(48000, 1);
@@ -250,7 +250,7 @@ console.log(
 	`Offline rate/pitch/tail parity: relative=${offlineResidualDb.toFixed(2)} dB, max_abs=${offlineMaxAbsolute.toExponential(3)}, frames=${offlineWasm.length / channels}`,
 );
 if (offlineResidualDb >= -90) {
-	throw new Error("offline native/WASM residual is above the prototype threshold");
+	throw new Error("offline native/WASM residual is above the parity threshold");
 }
 
 // Compare the production block boundary directly with native incremental DSP.

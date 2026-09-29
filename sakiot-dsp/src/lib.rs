@@ -1,4 +1,4 @@
-//! Shared audio processing prototype for the Sakiot clip editor.
+//! Shared audio processing for the Sakiot clip editor.
 //!
 //! The core deliberately has no browser or server dependencies. The optional
 //! `wasm` feature only adds a thin `wasm-bindgen` boundary around the same
@@ -817,9 +817,8 @@ fn equal_power_gains(wet: f32) -> (f32, f32) {
 }
 
 /// Build an FFmpeg filter chain from the canonical coefficients used by this
-/// processor. This adapter is for prototype comparisons and a future native
-/// integration fallback; the existing server continues using its named EQ
-/// filters while the experiment is isolated.
+/// processor. Only the FFmpeg parity test uses it, to check the processor
+/// against FFmpeg's own filters; the server renders with the processor itself.
 pub fn ffmpeg_filter_chain(sample_rate: f64, effects: SegmentEffects) -> Result<String, DspError> {
     if !sample_rate.is_finite() || sample_rate <= 6_000.0 {
         return Err(DspError::InvalidSampleRate);
@@ -1082,8 +1081,9 @@ mod wasm {
         }
     }
 
-    /// Copy-based prototype boundary. A production AudioWorklet may use the
-    /// WASM linear memory directly after profiling this simpler version.
+    /// Copy-based boundary: samples are copied into and out of WASM memory.
+    /// Working in the linear memory directly is an option if profiling calls
+    /// for it.
     #[wasm_bindgen]
     pub struct WasmSegmentProcessor {
         inner: SegmentProcessor,

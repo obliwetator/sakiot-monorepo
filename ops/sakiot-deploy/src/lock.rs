@@ -1,5 +1,5 @@
-//! Deploy mutual exclusion: flock(2) on the same lock file the bash engine
-//! uses, so both engines exclude each other during the transition window.
+//! Deploy mutual exclusion: flock(2) on the deploy lock file, so only one
+//! deploy runs at a time.
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
@@ -12,8 +12,8 @@ pub struct DeployLock {
 }
 
 impl DeployLock {
-    /// Blocks until the exclusive lock is acquired (bash `flock 9`). The lock
-    /// is held for the life of the returned guard.
+    /// Blocks until the exclusive lock is acquired. The lock is held for the
+    /// life of the returned guard.
     pub fn acquire(path: &Path) -> Result<DeployLock> {
         let file = OpenOptions::new()
             .create(true)
@@ -51,7 +51,7 @@ impl DeployLock {
 
 #[cfg(test)]
 mod tests {
-    //! Ported from ops/tests/lock_test.sh: a held lock blocks a second taker.
+    //! A held lock blocks a second taker.
 
     use super::*;
 

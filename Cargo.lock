@@ -1752,7 +1752,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "opus2",
- "prost",
  "rustls 0.23.40",
  "sakiot-paths",
  "sakiot-proto",
@@ -1768,7 +1767,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tonic",
- "tonic-prost",
  "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
@@ -4563,7 +4561,6 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "libc",
- "prost",
  "reqwest 0.12.28",
  "sakiot-proto",
  "serde",
@@ -4573,7 +4570,6 @@ dependencies = [
  "time",
  "tokio",
  "tonic",
- "tonic-prost",
 ]
 
 [[package]]
@@ -6627,7 +6623,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot 0.12.5",
- "prost",
  "reqwest 0.12.28",
  "sakiot-dsp",
  "sakiot-paths",
@@ -6644,7 +6639,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tonic",
- "tonic-prost",
  "tracing",
  "tracing-log",
  "tracing-opentelemetry",

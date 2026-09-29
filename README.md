@@ -231,3 +231,7 @@ A workspace version bump triggers automatic tagging and production promotion
 after staging succeeds. Production accepts strict `vX.Y.Z` tags; `ops/release`
 is the manual fallback. See [deployment operations](ops/README.md),
 [staging](STAGING.md), and [branch previews](PREVIEW.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

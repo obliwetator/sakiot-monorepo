@@ -1,8 +1,5 @@
-//! The deploy orchestrator, ported from the retired bash engine
-//! (ops/deploy-release.sh lines 36-601, since deleted). State files and the
-//! manifest stay byte-compatible with releases the bash engine produced so
-//! they remain valid rollback targets; log lines and error messages may
-//! diverge where accuracy requires.
+//! The deploy orchestrator. State files and the manifest keep a fixed format
+//! so releases already on the server remain valid rollback targets.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -43,12 +40,13 @@ pub struct Deps<'a> {
     /// engine-staleness warning.
     pub engine_src_tree: Option<String>,
     pub free_port: &'a dyn Fn() -> Result<u16>,
-    /// `command -v` parity; injectable so tests don't depend on host PATH.
+    /// Looks a tool up like `command -v`; injectable so tests don't depend on
+    /// host PATH.
     pub require_command: &'a dyn Fn(&str) -> Result<()>,
 }
 
-/// `command -v` parity: the deploy fails up front when a required tool is
-/// missing rather than midway through a release.
+/// Looks a tool up on PATH like `command -v`, so the deploy fails up front
+/// when a required tool is missing rather than midway through a release.
 pub fn require_command(name: &str) -> Result<()> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let found = std::env::split_paths(&path).any(|dir| {
@@ -87,8 +85,7 @@ fn warn_if_engine_stale(deps: &Deps, source_repo: &Path, sha: &str) {
     }
 }
 
-/// Bot blue/green handoff state, shared with the recovery path. Mirrors the
-/// variables read by recover_bot_on_error() in deploy-release.sh.
+/// Bot blue/green handoff state, shared with the recovery path.
 #[derive(Default)]
 struct BotHandoff {
     recovery_required: bool,
@@ -105,7 +102,7 @@ struct BotHandoff {
 }
 
 impl BotHandoff {
-    /// cancel_old_bot_drain() from deploy-release.sh. `reason` names the
+    /// Tells the old bot to stop draining and keep serving. `reason` names the
     /// actual failure; it is logged and sent as the CancelDrain reason.
     fn cancel_old_drain(&self, deps: &Deps, systemctl: &Systemctl, reason: &str) {
         if !self.recovery_required || self.old_bot_grpc.is_empty() {
@@ -123,7 +120,9 @@ impl BotHandoff {
         }
     }
 
-    /// recover_bot_on_error() from deploy-release.sh. Best-effort: every step
+    /// Undoes a failed handoff: stops and disables the new bot, points the
+    /// state files back at the previous bot, re-enables the old unit, cancels
+    /// its drain and re-publishes it in the registry. Best-effort: every step
     /// runs even if earlier ones fail. `reason` names the failure that
     /// triggered the unwind.
     fn recover(
@@ -167,8 +166,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     let tag = &request.tag;
     let sha = &request.sha;
 
-    // deploy-release.sh lines 66-75: tool availability. flock/jq/curl/python3
-    // and grpcurl are no longer shelled out to; their work happens in-process.
+    // Tool availability. Locking, HTTP, JSON and gRPC happen in-process.
     for command in ["git", "cargo", "rsync"] {
         (deps.require_command)(command)?;
     }
@@ -182,7 +180,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         (deps.require_command)("systemctl")?;
     }
 
-    // Lines 77-81: directory layout.
+    // Directory layout.
     for dir in [
         &config.state_dir,
         &config.state_dir.join("tags"),
@@ -204,10 +202,10 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         fsx::ensure_dir_mode(&dir, 0o755)?;
     }
 
-    // Lines 83-84: one deploy at a time; shared with the bash engine.
+    // One deploy at a time.
     let _lock = DeployLock::acquire(&config.state_dir.join("deploy.lock"))?;
 
-    // Lines 86-110: repository cache, tag verification, tag record.
+    // Repository cache, tag verification, tag record.
     let source_repo = config.source_repo();
     git::ensure_cache(deps.runner, &source_repo, &config.repository_url)?;
     if target == Target::Production {
@@ -231,7 +229,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     let previous_sha = fsx::read_line(&config.state_dir.join("current.sha")).unwrap_or_default();
     let previous_tag = fsx::read_line(&config.state_dir.join("current.tag")).unwrap_or_default();
 
-    // Lines 115-122: refuse rollbacks that cross schema changes.
+    // Refuse rollbacks that cross schema changes.
     if mode == Mode::Rollback && !previous_sha.is_empty() && !request.allow_schema_mismatch() {
         let migration_changes = git::diff_names(
             deps.runner,
@@ -245,13 +243,13 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         }
     }
 
-    // Lines 124-133: release identity.
+    // Release identity.
     let timestamp = crate::clock::compact_timestamp(deps.clock.now_utc())?;
     let release_id = release_id(mode, tag, sha, &timestamp);
     let artifact_dir = config.release_root.join(&release_id);
     let worktree_path = config.worktree_root().join(&release_id);
 
-    // Lines 142-152: component selection.
+    // Component selection.
     let mut changed_paths: Option<Vec<String>> = None;
     let components: Vec<Component> = if mode == Mode::Rollback {
         vec![Component::Bot, Component::Web, Component::Frontend]
@@ -288,7 +286,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         );
     }
 
-    // Lines 163-175: artifact reuse on rollback or exact staging promotion.
+    // Artifact reuse on rollback or exact staging promotion.
     let mut reuse_bot: Option<PathBuf> = None;
     let mut reuse_web: Option<PathBuf> = None;
     let mut reuse_frontend: Option<PathBuf> = None;
@@ -363,7 +361,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
 
     fsx::ensure_dir_mode(&artifact_dir, 0o755)?;
 
-    // Lines 135-140: detached worktree at the release SHA, cleaned on exit.
+    // Detached worktree at the release SHA, cleaned on exit.
     let worktree = git::Worktree::add(deps.runner, &source_repo, &worktree_path, sha)?;
 
     // Production and staging intentionally share a Cargo target directory.
@@ -381,7 +379,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         None
     };
 
-    // Lines 177-196: test the Rust workspace when building from source.
+    // Test the Rust workspace when building from source.
     let cargo_target = &config.cargo_target_dir;
     if build_rust {
         (deps.require_command)("protoc")?;
@@ -410,7 +408,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         }
     }
 
-    // Lines 198-232: bot and web binaries (build or reuse).
+    // Bot and web binaries (build or reuse).
     if component_selected(Component::Bot, &components) {
         fsx::ensure_dir_mode(&artifact_dir.join("fbi-agent"), 0o755)?;
         if let Some(reuse) = &reuse_bot {
@@ -473,7 +471,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         }
     }
 
-    // Lines 234-253: frontend bundle (build or reuse).
+    // Frontend bundle (build or reuse).
     if component_selected(Component::Frontend, &components) {
         fsx::ensure_dir_mode(&artifact_dir.join("frontend"), 0o755)?;
         if let Some(reuse) = &reuse_frontend {
@@ -542,13 +540,13 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     };
     drop(cargo_lock);
 
-    // The bash engine ran ops/tests/run.sh from the worktree here. The engine
-    // is no longer shipped in the release tag: its tests run in CI (and in
-    // the legacy local fallback above), while remaining bash suites cover the
-    // out-of-band installed shims. Running them here would validate code that
-    // is not what executes.
+    // ops/tests/run.sh is deliberately not run here: the engine and shims that
+    // execute were installed out-of-band, not taken from this release, so
+    // testing the release's copies would validate code that is not running.
+    // CI runs those suites, and the local `cargo test` above covers the engine
+    // when CI did not verify the commit.
 
-    // Lines 260-280: migrations, with pre-migrate backup on production.
+    // Migrations, with pre-migrate backup on production.
     let migration_head = git::migration_head(&worktree.path().join("sakiot-db/migrations"))?;
     let mut migrations_ran = false;
     if component_selected(Component::Database, &components) {
@@ -587,7 +585,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         migrations_ran = true;
     }
 
-    // Lines 282-539: service handoff under the bot recovery scope.
+    // Service handoff under the bot recovery scope.
     let mut bot = BotHandoff::default();
     let handoff = deploy_services(
         config,
@@ -612,7 +610,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         return Err(error);
     }
 
-    // Lines 541-594: manifest and state recording.
+    // Manifest and state recording.
     let manifest_path = artifact_dir.join("manifest.json");
     let manifest = Manifest {
         target: target.as_str().to_string(),
@@ -659,7 +657,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         ));
     }
 
-    // Lines 596-601: garbage collection and the final summary.
+    // Garbage collection and the final summary.
     if let Err(error) = prune_old_releases(
         &systemctl,
         &config.release_root,
@@ -800,8 +798,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// Bot blue/green handoff, web swap, frontend publish, and handoff
-/// completion (deploy-release.sh lines 360-539). Any error here unwinds
-/// through BotHandoff::recover, mirroring the bash ERR trap.
+/// completion. Any error here unwinds through BotHandoff::recover.
 #[allow(clippy::too_many_arguments)]
 fn deploy_services(
     config: &Config,
@@ -873,8 +870,9 @@ fn deploy_services(
 
         log(format!("starting {}", bot.new_bot_unit));
         if !systemctl.run_ok(&["start", &bot.new_bot_unit]) {
-            // Bash exits 1 here without the full ERR-trap recovery: stop the
-            // unit, cancel the old drain, and leave registry/state untouched.
+            // No full recovery here: state files and the registry still point
+            // at the old bot, so stop the unit, cancel the old drain, and leave
+            // them untouched.
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.cancel_old_drain(
                 deps,
@@ -895,8 +893,8 @@ fn deploy_services(
             deps.clock.sleep(Duration::from_secs(1));
         }
         if !bot_ready {
-            // Same shape as the start failure: bash `die`s here, bypassing
-            // recover_bot_on_error (state files and registry are untouched).
+            // Same shape as the start failure: bypass BotHandoff::recover,
+            // since state files and registry are still untouched.
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.new_bot_started = false;
             bot.cancel_old_drain(
@@ -1071,7 +1069,7 @@ fn deploy_services(
         )?;
     }
 
-    // Lines 516-526: finish the old bot's drain once everything is serving.
+    // Finish the old bot's drain once everything is serving.
     if bot.handoff_pending {
         if bot.old_bot_is_legacy {
             systemctl.run(&["legacy-bot-disable", &bot.old_bot_unit])?;
@@ -1085,7 +1083,7 @@ fn deploy_services(
         )?;
     }
 
-    // Lines 528-536: only the newest bot unit stays enabled.
+    // Only the newest bot unit stays enabled.
     if component_selected(Component::Bot, components) {
         let mut release_dirs: Vec<PathBuf> = std::fs::read_dir(&config.release_root)
             .map(|entries| {
@@ -1110,7 +1108,7 @@ fn deploy_services(
         }
     }
 
-    // Lines 537-539: leave the recovery scope.
+    // Leave the recovery scope.
     bot.recovery_required = false;
     bot.new_bot_started = false;
     bot.old_bot_disabled = false;

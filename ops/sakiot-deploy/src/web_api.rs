@@ -1,6 +1,5 @@
 //! Web server HTTP client: /healthz readiness checks and the FBI Agent gRPC
-//! endpoint registry. Replaces the curl/jq pipelines in deploy-release.sh
-//! with matching timeouts (--connect-timeout 2 --max-time 5).
+//! endpoint registry, with a 2 s connect timeout and a 5 s request timeout.
 
 use std::time::Duration;
 

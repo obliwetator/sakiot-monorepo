@@ -1,5 +1,4 @@
-//! Filesystem tests for artifact reuse and release garbage collection,
-//! ported from ops/tests/reuse_artifact_test.sh and release_gc_test.sh.
+//! Filesystem tests for artifact reuse and release garbage collection.
 
 #![allow(clippy::unwrap_used, clippy::panic)]
 
@@ -55,7 +54,7 @@ fn reuse(releases: &Path, sha: &str, component: Component, exclude: &Path) -> Op
 }
 
 #[test]
-fn reusable_artifact_matches_bash_suite() {
+fn reusable_artifact_picks_the_newest_complete_release_for_the_sha() {
     let root = tempfile::tempdir().unwrap();
     let releases = root.path().join("releases");
     fs::create_dir_all(&releases).unwrap();
@@ -277,7 +276,7 @@ fn prune_uses_configured_staging_unit_prefix() {
     let (release_root, current_root, state_dir) = make_tree(root.path(), STAGING_PREFIX);
 
     // Staging units must be queried (and a draining one kept) under the
-    // staging prefix; the bash engine hardcoded the production prefix here.
+    // staging prefix, not the production one.
     let runner = ScriptedRunner::new(vec![
         ScriptEntry::fail(format!(
             "systemctl is-active --quiet {}",

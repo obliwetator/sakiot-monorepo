@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sakiot-dsp-browser-prototype",
+      "name": "sakiot-dsp-browser",
       "devDependencies": {
         "playwright": "1.62.0",
         "rolldown": "1.0.0-rc.11",

@@ -1,6 +1,6 @@
-//! run_systemctl() from ops/lib/common.sh: either the sudo-gated wrapper
-//! (unit names validated by root-owned ops/systemctl-wrapper) or plain
-//! systemctl for test/dev environments.
+//! systemctl access: either the sudo-gated wrapper (unit names validated by
+//! root-owned ops/systemctl-wrapper) or plain systemctl for test/dev
+//! environments.
 
 use anyhow::Result;
 
@@ -29,12 +29,13 @@ impl<'a> Systemctl<'a> {
         }
     }
 
-    /// Fails the deploy on error (bash `run_systemctl ...` under set -e).
+    /// Fails the deploy on error.
     pub fn run(&self, args: &[&str]) -> Result<()> {
         self.runner.run(&self.cmd(args))
     }
 
-    /// Best-effort / condition form (`run_systemctl ... || true`, `if run_systemctl`).
+    /// Best-effort or condition form: reports success instead of failing the
+    /// deploy.
     pub fn run_ok(&self, args: &[&str]) -> bool {
         self.runner.run_ok(&self.cmd(args))
     }

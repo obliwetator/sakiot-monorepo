@@ -1,6 +1,5 @@
-//! Filesystem helpers replicating the coreutils idioms used by the bash
-//! engine: `install -d -m`, `install -m`, atomic symlink swap, and the
-//! write-then-rename state files.
+//! Filesystem helpers with coreutils semantics: `install -d -m`, `install -m`,
+//! atomic symlink swap, and write-then-rename state files.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -30,8 +29,8 @@ pub fn install_file(src: &Path, dst: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
-/// Mirrors atomic_symlink() from ops/lib/common.sh: create a temporary link
-/// then rename over the destination so readers never see a missing link.
+/// Create a temporary link, then rename it over the destination so readers
+/// never see a missing link.
 pub fn atomic_symlink(target: &Path, link: &Path) -> Result<()> {
     let temporary = link.with_file_name(format!(
         "{}.new.{}",

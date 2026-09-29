@@ -1,5 +1,5 @@
 {
-	"name": "sakiot-dsp-browser-prototype",
+	"name": "sakiot-dsp-browser",
 	"private": true,
 	"type": "module",
 	"scripts": {

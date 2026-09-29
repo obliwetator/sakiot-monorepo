@@ -1,4 +1,4 @@
-//! Git cache and worktree management (deploy-release.sh lines 86-140).
+//! Git cache and worktree management.
 
 use std::path::{Path, PathBuf};
 
@@ -112,9 +112,9 @@ pub fn diff_names(
         .collect())
 }
 
-/// Detached worktree for the release SHA. Removal mirrors the bash EXIT trap:
-/// best-effort `git worktree remove --force`, also run before `add` to clear
-/// any leftover directory from an interrupted run.
+/// Detached worktree for the release SHA. Removal is a best-effort
+/// `git worktree remove --force` on drop, also run before `add` to clear any
+/// leftover directory from an interrupted run.
 pub struct Worktree<'a> {
     runner: &'a dyn CommandRunner,
     source_repo: PathBuf,

@@ -1,5 +1,5 @@
-//! Deploy mode and runtime configuration, ported from the argument and
-//! environment handling at the top of ops/deploy-release.sh.
+//! Deploy mode and runtime configuration: the request's arguments and the
+//! environment.
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +47,7 @@ pub struct Request {
     pub tag: String,
     pub sha: String,
     /// Raw fourth argument; anything other than --allow-schema-mismatch is
-    /// rejected by validate() with the bash error message.
+    /// rejected by validate().
     pub schema_option: Option<String>,
     pub dry_run: bool,
     /// Trusted CI reached the deploy job through `needs: test` and attested
@@ -73,9 +73,9 @@ impl Request {
 }
 
 impl Request {
-    /// Mirrors deploy-release.sh lines 11-34 plus the ops/deploy wrapper
-    /// arity checks. `args` excludes argv[0]. A leading `--dry-run` is a
-    /// local affordance not reachable through the SSH forced command.
+    /// Parses the deploy verb and its arguments, checking their count.
+    /// `args` excludes argv[0]. A leading `--dry-run` is a local affordance
+    /// not reachable through the SSH forced command.
     pub fn parse(mut args: Vec<String>) -> Result<Request, UsageError> {
         let dry_run = args.first().is_some_and(|a| a == "--dry-run");
         if dry_run {
@@ -164,7 +164,7 @@ impl Request {
         }
     }
 
-    /// Validates tag/sha/option shapes; mirrors deploy-release.sh lines 19-23.
+    /// Validates tag/sha/option shapes.
     pub fn validate(&self) -> Result<()> {
         if self.target == Target::Production {
             crate::validate::validate_tag(&self.tag)?;
@@ -196,8 +196,7 @@ impl Request {
 #[derive(Debug)]
 pub struct UsageError(pub &'static str);
 
-/// Everything deploy-release.sh reads from the environment (lines 36-64),
-/// resolved with the same defaults.
+/// Everything the engine reads from the environment, with its defaults.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub env_file: PathBuf,

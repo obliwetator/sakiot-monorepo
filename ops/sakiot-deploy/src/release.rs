@@ -1,5 +1,5 @@
 //! Release identifiers, the manifest, artifact reuse, and release garbage
-//! collection, ported from ops/lib/common.sh and deploy-release.sh.
+//! collection.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,9 @@ use crate::config::Mode;
 use crate::log;
 use crate::systemctl::Systemctl;
 
-/// deploy-release.sh lines 124-131.
+/// The release directory name: `<tag>-<sha12>-<timestamp>`, with `rollback`
+/// before the timestamp for rollbacks and `staging` in place of the tag for
+/// staging deploys.
 pub fn release_id(mode: Mode, tag: &str, sha: &str, timestamp: &str) -> String {
     let short_sha = &sha[..12.min(sha.len())];
     match mode {
@@ -22,8 +24,8 @@ pub fn release_id(mode: Mode, tag: &str, sha: &str, timestamp: &str) -> String {
     }
 }
 
-/// manifest.json. Field order matches the jq template in deploy-release.sh so
-/// output stays byte-compatible (serde_json preserves struct order).
+/// manifest.json. Field order is part of the format: serde_json writes fields in
+/// struct order, and manifests stay byte-compatible with existing releases.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     pub target: String,
@@ -54,7 +56,7 @@ pub struct ManifestReused {
 }
 
 impl Manifest {
-    /// jq pretty-prints with two-space indent and a trailing newline.
+    /// Two-space indent and a trailing newline, like every existing manifest.
     pub fn write(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self).context("failed to render manifest")?;
         std::fs::write(path, format!("{json}\n"))
@@ -197,7 +199,7 @@ pub fn prune_old_releases(
     if !release_root.is_dir() {
         return Ok(());
     }
-    // Bash guards with ^[0-9]+$; integer parse alone would also accept "+5".
+    // Digits only: an integer parse alone would also accept "+5".
     let all_digits = !keep.is_empty() && keep.bytes().all(|b| b.is_ascii_digit());
     let Ok(keep) = keep
         .parse::<usize>()
@@ -277,7 +279,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_ids_match_bash_format() {
+    fn release_ids_keep_their_format() {
         let sha = "0123456789abcdef0123456789abcdef01234567";
         let ts = "20260115T120000Z";
         assert_eq!(
@@ -308,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_serialization_matches_jq_layout() {
+    fn manifest_serialization_keeps_its_layout() {
         let manifest = Manifest {
             target: "production".into(),
             mode: "release".into(),
@@ -335,7 +337,7 @@ mod tests {
         manifest.write(&path).unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
 
-        // jq -n field order, two-space indent, trailing newline.
+        // Stable field order, two-space indent, trailing newline.
         let expected_order = [
             "\"target\"",
             "\"mode\"",
