@@ -33,9 +33,9 @@ import {
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
 } from "../audio-dashboard/playbackShortcuts";
-import { JamIt } from "../audio-dashboard/RangeSlider/JamIt";
 import { ClipWaveform } from "./ClipWaveform";
 import { isComposedClip } from "./composedClip";
+import { JamIt } from "./JamIt";
 
 const ARROW_SEEK_SECONDS = 5;
 const CTRL_ARROW_SEEK_SECONDS = 30;
@@ -501,7 +501,7 @@ export function ClipPlayer(props: {
 					<Button variant="outline" isDisabled={true}>
 						Create clip
 					</Button>
-					<JamIt visible={true} />
+					<JamIt guildId={props.clip.guild_id} clipId={props.clip.clip_id} />
 				</div>
 				<span className="text-muted text-xs leading-5 block mt-2">
 					Clip creation is disabled because this audio is already a clip.

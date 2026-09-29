@@ -34,7 +34,7 @@ fn recording_fingerprint(path: &(i64, i64, i32, i32, String)) -> String {
 
 #[utoipa::path(
     post,
-    path = "/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+    path = "/api/audio/remove-silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
     tag = "audio",
     params(
         ("guild_id" = i64, Path, description = "Discord guild id"),
@@ -56,7 +56,7 @@ fn recording_fingerprint(path: &(i64, i64, i32, i32, String)) -> String {
     ),
     security(("access_token" = [])),
 )]
-#[post("/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
+#[post("/audio/remove-silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}")]
 pub async fn remove_silence(
     req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,

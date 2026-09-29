@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::permissions::{
     AsRoleQuery, listing_channels_for, require_channel_access, require_guild_manager,
-    require_role_preview, visible_channels_for_user,
+    require_role_preview,
 };
 use crate::proto::jammer::JamData;
 use crate::proto::jammer::jam_response::JamResponseEnum;
@@ -23,7 +23,6 @@ use crate::{
     grpc_client,
     media_archive::{MediaArchive, RemoteDisposition},
 };
-use serde_json::json;
 
 pub(crate) fn normalized_clip_name(name: &str) -> Option<&str> {
     let name = name.trim();
@@ -61,7 +60,7 @@ pub struct ClipInfo {
     tag = "clips",
     params(
         ("guild_id" = i64, Path, description = "Discord guild id"),
-        ("clip_id" = String, Path, description = "Clip id or saved file name"),
+        ("clip_id" = String, Path, description = "Clip id"),
     ),
     responses(
         (status = 200, description = "Clip audio", content_type = "audio/ogg"),
@@ -71,11 +70,7 @@ pub struct ClipInfo {
     ),
     security(("access_token" = [])),
 )]
-#[route(
-    "/audio/clips/{guild_id}/{clip_id:.*}",
-    method = "GET",
-    method = "HEAD"
-)]
+#[route("/audio/clips/{guild_id}/{clip_id}", method = "GET", method = "HEAD")]
 pub async fn get_clip(
     req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
@@ -98,18 +93,14 @@ pub async fn get_clip(
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    if let Some(recording_session_id) = row.recording_session_id {
-        crate::audio::sessions::require_session_access(&pool, recording_session_id, token.user_id)
-            .await?;
-    } else {
-        require_channel_access(
-            &pool,
-            guild_id,
-            row.channel_id.ok_or(AppError::ClipNotFound)?,
-            token.user_id,
-        )
-        .await?;
-    }
+    require_clip_source_access(
+        &pool,
+        guild_id,
+        row.channel_id,
+        row.recording_session_id,
+        token.user_id,
+    )
+    .await?;
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = crate::media_archive::clip_local_path(&saved_file_name)?;
@@ -257,79 +248,65 @@ pub async fn get_clips(
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
     Ok(HttpResponse::Ok().json(result))
 }
-#[derive(Deserialize, PartialEq, Debug, utoipa::ToSchema)]
-pub struct JamItBody {
-    #[serde(with = "crate::snowflake_serde::SnowflakeAsStr")]
-    guild_id: i64,
-    clip_name: String,
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct PlayClipResponse {
+    /// `queued`: the clip is in the bot's voice queue for the guild.
+    pub status: &'static str,
 }
 
 #[utoipa::path(
     post,
-    path = "/api/jamit",
+    path = "/api/audio/clips/{guild_id}/{clip_id}/play",
     tag = "clips",
-    request_body = JamItBody,
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("clip_id" = String, Path, description = "Clip id"),
+    ),
     responses(
-        (status = 200, description = "Jam command forwarded to the agent owning the guild"),
-        (status = 400, description = "Invalid request", body = crate::errors::ApiError),
+        (status = 200, description = "The clip was queued in the bot's voice channel", body = PlayClipResponse),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing access to the clip's source", body = crate::errors::ApiError),
         (status = 404, description = "Clip not found", body = crate::errors::ApiError),
-        (status = 500, description = "Server error", body = crate::errors::ApiError),
+        (status = 409, description = "The bot is not in a voice channel in this guild", body = crate::errors::ApiError),
+        (status = 429, description = "The caller played a clip too recently; `retry_after_seconds` says when to retry", body = crate::errors::ApiError),
+        (status = 502, description = "The bot could not play the clip", body = crate::errors::ApiError),
+        (status = 503, description = "The bot could not be reached", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
-#[post("/jamit")]
+#[post("/audio/clips/{guild_id}/{clip_id}/play")]
 pub async fn play_clip(
-    req: HttpRequest,
-    info: web::Json<JamItBody>,
+    path: web::Path<(i64, String)>,
+    token: Option<web::ReqData<Token<Access>>>,
     registry: web::Data<AgentGrpcRegistry>,
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
-    let user_id = req
-        .extensions()
-        .get::<Token<Access>>()
-        .map(|t| t.user_id)
-        .ok_or(AppError::Unauthorized)?;
+    let (guild_id, clip_id) = path.into_inner();
+    let user_id = token.ok_or(AppError::Unauthorized)?.user_id;
     let clip = sqlx::query!(
-        "SELECT clip_id, channel_id, recording_session_id
+        "SELECT channel_id, recording_session_id
            FROM clips
-          WHERE guild_id = $1
-            AND deleted_at IS NULL
-            AND (clip_id = $2 OR name = $2)
-          ORDER BY (clip_id = $2) DESC, created_at, clip_id
-          LIMIT 1",
-        info.guild_id,
-        info.clip_name
+          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+        guild_id,
+        clip_id
     )
     .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or(AppError::ClipNotFound)?;
+    require_clip_source_access(
+        &pool,
+        guild_id,
+        clip.channel_id,
+        clip.recording_session_id,
+        user_id,
+    )
     .await?;
-    let resolved_clip_id = if let Some(clip) = clip {
-        let resolved_clip_id = clip.clip_id;
-        if let Some(session_id) = clip.recording_session_id {
-            crate::audio::sessions::require_session_access(&pool, session_id, user_id).await?;
-        } else if let Some(channel_id) = clip.channel_id {
-            require_channel_access(&pool, info.guild_id, channel_id, user_id).await?;
-        } else {
-            return Err(AppError::Forbidden);
-        }
-        Some(resolved_clip_id)
-    } else if visible_channels_for_user(&pool, info.guild_id, user_id)
-        .await?
-        .is_empty()
-    {
-        return Err(AppError::Forbidden);
-    } else {
-        None
-    };
 
     // Route to the instance that owns this guild's voice connection, which during a
     // blue/green drain is the old instance rather than the active one.
-    let target_address = crate::fbi_agent_registry::agent_address_for_guild(
-        pool.get_ref(),
-        &registry,
-        info.guild_id,
-    )
-    .await;
+    let target_address =
+        crate::fbi_agent_registry::agent_address_for_guild(pool.get_ref(), &registry, guild_id)
+            .await;
     let active_address = registry.active_address();
 
     let connected = match grpc_client::connect_jammer(target_address.clone()).await {
@@ -369,33 +346,56 @@ pub async fn play_clip(
     let (grpc_address, mut client) = connected;
 
     let request = grpc_client::jam_request(JamData {
-        clip_name: resolved_clip_id.unwrap_or_else(|| info.clip_name.clone()),
-        guild_id: info.guild_id,
+        clip_name: clip_id.clone(),
+        guild_id,
         user_id,
     });
+    let response = client
+        .jam_it(request)
+        .await
+        .map_err(|e| {
+            grpc_client::record_failure("jammer_jam_it");
+            error!(
+                grpc_address = %grpc_address,
+                "Failed to jam_it via GRPC: {}",
+                e,
+            );
+            AppError::ClipPlaybackFailed
+        })?
+        .into_inner();
 
-    let response = client.jam_it(request).await.map_err(|e| {
-        grpc_client::record_failure("jammer_jam_it");
-        error!(
-            grpc_address = %grpc_address,
-            "Failed to jam_it via GRPC: {}",
-            e,
-        );
-        AppError::GrpcError(e.to_string())
-    })?;
+    let outcome = response.resp();
+    info!(guild_id, clip_id = %clip_id, ?outcome, "clip playback requested");
+    match outcome {
+        JamResponseEnum::Ok => Ok(HttpResponse::Ok().json(PlayClipResponse { status: "queued" })),
+        JamResponseEnum::NotPresent => Err(AppError::BotNotInVoice),
+        JamResponseEnum::Cooldown => Err(AppError::JamCooldown {
+            retry_after_seconds: response.cooldown_remaining_seconds,
+        }),
+        JamResponseEnum::Unknown => Err(AppError::ClipPlaybackFailed),
+    }
+}
 
-    info!("GRPC response: {:#?}", response);
-
-    let jam_response = response.into_inner();
-    let remaining = jam_response.cooldown_remaining_seconds;
-
-    Ok(match jam_response.resp() {
-        JamResponseEnum::Ok => HttpResponse::Ok().json(json!({"code" : "0"})),
-        JamResponseEnum::NotPresent => HttpResponse::Ok().json(json!({"code" : 1})),
-        JamResponseEnum::Unknown => HttpResponse::Ok().json(json!({"code" : 2})),
-        JamResponseEnum::Cooldown => HttpResponse::TooManyRequests()
-            .json(json!({"code": 3, "cooldown_remaining_seconds": remaining})),
-    })
+/// Rejects a caller who cannot hear the clip's source: every fragment of its
+/// session for a session clip, else its channel.
+async fn require_clip_source_access(
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    channel_id: Option<i64>,
+    recording_session_id: Option<i64>,
+    user_id: i64,
+) -> Result<(), AppError> {
+    if let Some(recording_session_id) = recording_session_id {
+        crate::audio::sessions::require_session_access(pool, recording_session_id, user_id).await?;
+        return Ok(());
+    }
+    require_channel_access(
+        pool,
+        guild_id,
+        channel_id.ok_or(AppError::ClipNotFound)?,
+        user_id,
+    )
+    .await
 }
 
 use crate::audio::StartEnd;

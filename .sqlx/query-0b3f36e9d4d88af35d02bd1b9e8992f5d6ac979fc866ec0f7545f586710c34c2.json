@@ -1,21 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT clip_id, channel_id, recording_session_id\n           FROM clips\n          WHERE guild_id = $1\n            AND deleted_at IS NULL\n            AND (clip_id = $2 OR name = $2)\n          ORDER BY (clip_id = $2) DESC, created_at, clip_id\n          LIMIT 1",
+  "query": "SELECT channel_id, recording_session_id\n           FROM clips\n          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "clip_id",
-        "type_info": "Varchar",
-        "origin": {
-          "Table": {
-            "table": "clips",
-            "name": "clip_id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
         "name": "channel_id",
         "type_info": "Int8",
         "origin": {
@@ -26,7 +15,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "recording_session_id",
         "type_info": "Int8",
         "origin": {
@@ -44,10 +33,9 @@
       ]
     },
     "nullable": [
-      false,
       true,
       true
     ]
   },
-  "hash": "903f7538cb11833a222ec9cd82be878fc35dd6f588d5869eff6488b72556323e"
+  "hash": "0b3f36e9d4d88af35d02bd1b9e8992f5d6ac979fc866ec0f7545f586710c34c2"
 }

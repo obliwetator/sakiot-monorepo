@@ -7,7 +7,6 @@ import WaveFormButton from "../Waveform";
 import { ClipDialog } from "./ClipDialog";
 import { DoubleSlider } from "./DoubleSlider";
 import { DownloadButton } from "./DownloadButton";
-import { JamIt } from "./JamIt";
 import { RangeDetails } from "./RangeDetails";
 import { SilenceButton } from "./SilenceButton";
 import { useRangeSliderState } from "./useRangeSliderState";
@@ -82,7 +81,6 @@ export function RangeSlider(props: {
 					isSilence={props.isSilence}
 					isLive={props.isLive}
 				/>
-				<JamIt visible={props.isClip} />
 			</div>
 		</div>
 	);

@@ -40,6 +40,31 @@ describe("problemFromResponse", () => {
 		expect(isDefiniteRejection(problem)).toBe(true);
 	});
 
+	it("carries a rate limit's retry delay, and only a usable one", async () => {
+		const limited = (retryAfter: unknown) =>
+			problemFromResponse(
+				response(
+					429,
+					JSON.stringify({
+						code: 429,
+						kind: "jam_cooldown",
+						message: "You played a clip too recently.",
+						retry_after_seconds: retryAfter,
+					}),
+				),
+			);
+		expect(await limited(12)).toEqual({
+			cause: "response",
+			status: 429,
+			kind: "jam_cooldown",
+			message: "You played a clip too recently.",
+			retryAfterSeconds: 12,
+		});
+		for (const unusable of [null, "12", -1]) {
+			expect((await limited(unusable)).retryAfterSeconds).toBeUndefined();
+		}
+	});
+
 	it("keeps the message of a kind this build does not know", async () => {
 		const problem = await problemFromResponse(
 			response(

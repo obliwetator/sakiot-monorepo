@@ -4,6 +4,7 @@ use serenity::client::{Cache, Context};
 use serenity::model::id::{ChannelId, UserId};
 use serenity::model::prelude::{ChannelType, CommandOptionType, Permissions};
 
+use crate::cooldown::{CheckResult, JamCooldown};
 use crate::database::DbError;
 use serenity::model::prelude::GuildId;
 use songbird::Songbird;
@@ -19,6 +20,9 @@ pub enum PlayClipError {
     /// the gRPC path can answer `NotPresent` rather than a generic failure.
     #[error("I am not currently in a voice channel.")]
     NotInVoice,
+    /// The clip was ready to play, but the user played one too recently.
+    #[error("On cooldown — {remaining_secs}s remaining.")]
+    Cooldown { remaining_secs: u32 },
     #[error("{0}")]
     User(String),
 }
@@ -28,26 +32,47 @@ impl PlayClipError {
         match self {
             Self::Db(_) => "Database error. Try again later.".to_string(),
             Self::Media(_) => "Clip media is unavailable. Try again later.".to_string(),
-            Self::NotInVoice => self.to_string(),
+            Self::NotInVoice | Self::Cooldown { .. } => self.to_string(),
             Self::User(message) => message.clone(),
         }
     }
 }
 
+/// Queues a clip in the guild's voice call for the user.
+///
+/// The user's jam cooldown is spent last, once this instance is in the call, the
+/// clip is theirs to play, and its media is local, so a failed attempt never costs
+/// them their turn.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the gRPC, slash-command, and replay callers each hold these handles separately"
+)]
 pub async fn play_clip(
     pool: &Pool<Postgres>,
     media_archive: &crate::media_archive::MediaArchive,
     manager: &std::sync::Arc<Songbird>,
     cache: &Cache,
+    cooldown: &JamCooldown,
     guild_id: GuildId,
     clip_id: &str,
     user_id: i64,
 ) -> Result<String, PlayClipError> {
-    let user_id = u64::try_from(user_id)
+    // Answer this from our own songbird, not from the guild cache: the bot user id
+    // is shared with any draining instance, so seeing "the bot" in a voice channel
+    // says nothing about whether *this* process holds that connection. Songbird
+    // also keeps a `Call` after a disconnect, so the call must still have a channel.
+    let Some(handler) = manager.get(guild_id) else {
+        return Err(PlayClipError::NotInVoice);
+    };
+    if handler.lock().await.current_channel().is_none() {
+        return Err(PlayClipError::NotInVoice);
+    }
+
+    let requester = u64::try_from(user_id)
         .ok()
         .filter(|user_id| *user_id != 0)
         .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
-    let visible_channel_ids = visible_voice_channel_ids(cache, guild_id, UserId::new(user_id));
+    let visible_channel_ids = visible_voice_channel_ids(cache, guild_id, UserId::new(requester));
     let clip = crate::database::clips::playable_clip(
         pool,
         guild_id.to_i64(),
@@ -58,28 +83,28 @@ pub async fn play_clip(
     .map_err(PlayClipError::Db)?
     .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
 
-    let handler = match manager.get(guild_id) {
-        Some(h) => h,
-        None => return Err(PlayClipError::NotInVoice),
-    };
-
     let clip_path = media_archive
         .ensure_clip_local(pool, &clip.clip_id, &clip.saved_file_name)
         .await?;
-    let result = songbird::input::File::new(clip_path);
-    let input = songbird::input::Input::from(result);
 
-    crate::database::clips::record_jam_invocation(
-        pool,
-        user_id.to_i64(),
-        guild_id.to_i64(),
-        &clip.clip_id,
-    )
-    .await
-    .map_err(PlayClipError::Db)?;
+    match cooldown
+        .check_and_record(pool, guild_id.to_i64(), user_id)
+        .await
+        .map_err(PlayClipError::Db)?
+    {
+        CheckResult::Allowed => {}
+        CheckResult::OnCooldown { remaining_secs } => {
+            return Err(PlayClipError::Cooldown { remaining_secs });
+        }
+    }
 
-    let handler_lock = handler.lock().await.enqueue(input.into()).await;
-    let _ = handler_lock.set_volume(0.5);
+    let input = songbird::input::Input::from(songbird::input::File::new(clip_path));
+    crate::database::clips::record_jam_invocation(pool, user_id, guild_id.to_i64(), &clip.clip_id)
+        .await
+        .map_err(PlayClipError::Db)?;
+
+    let track = handler.lock().await.enqueue(input.into()).await;
+    let _ = track.set_volume(0.5);
 
     Ok(format!("Now jamming: {}", clip.display_name))
 }

@@ -36,6 +36,7 @@ use web_server::auth::{
 use web_server::clip_editor::{compose_clip, compose_clip_status};
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip, rename_clip};
 use web_server::config::Config;
+use web_server::errors::api_not_found;
 use web_server::fbi_agent_registry::{
     AgentGrpcRegistry, get_agent_grpc_endpoints, register_agent_grpc_endpoints,
 };
@@ -232,6 +233,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
+            .default_service(web::route().to(api_not_found))
             .service(discord_login)
             .service(oauth_start);
         #[cfg(feature = "dev-login")]
@@ -249,11 +251,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete)
             .service(get_clips)
             .service(compose_clip)
-            // Before get_clip: its {clip_id:.*} is greedy and would otherwise
-            // match /audio/clips/{guild_id}/compose/{clip_id} too.
             .service(compose_clip_status)
-            // Before get_clip: its {clip_id:.*} is greedy and would otherwise
-            // match /audio/clips/waveform/... too.
             .service(get_clip_waveform_data)
             .service(rename_clip)
             .service(get_clip)

@@ -1,7 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use sakiot_proto::fbi_agent::jam_response::JamResponseEnum;
+use sakiot_proto::fbi_agent::jammer_server::{Jammer, JammerServer};
+use sakiot_proto::fbi_agent::{JamData, JamResponse};
 use serde_json::json;
 use sqlx::PgPool;
 use tokio::sync::RwLock;
@@ -27,7 +31,10 @@ use web_server::audio::{
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
-use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
+use web_server::clips::{
+    create_clip, delete as delete_clip, get_clip, get_clips, play_clip, rename_clip,
+};
+use web_server::fbi_agent_registry::AgentGrpcRegistry;
 use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
@@ -228,7 +235,7 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
             "/api/audio/clips/create/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
         ),
         format!(
-            "/api/remove_silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
+            "/api/audio/remove-silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/session-allowed-fragment"
         ),
     ] {
         let request = test::TestRequest::post()
@@ -314,7 +321,9 @@ async fn traversal_file_names_are_rejected_by_every_audio_handler(
         }
 
         let post_uris = [
-            format!("/api/remove_silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"),
+            format!(
+                "/api/audio/remove-silence/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"
+            ),
             format!(
                 "/api/audio/clips/create/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/{name}"
             ),
@@ -633,6 +642,199 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     )
     .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+/// Stands in for the bot's Jammer service: answers with scripted responses in
+/// order and records every request it receives.
+#[derive(Clone, Default)]
+struct ScriptedBot {
+    responses: Arc<Mutex<VecDeque<JamResponse>>>,
+    requests: Arc<Mutex<Vec<JamData>>>,
+}
+
+#[tonic::async_trait]
+impl Jammer for ScriptedBot {
+    async fn jam_it(
+        &self,
+        request: tonic::Request<JamData>,
+    ) -> Result<tonic::Response<JamResponse>, tonic::Status> {
+        fn poisoned<T>(_: std::sync::PoisonError<T>) -> tonic::Status {
+            tonic::Status::internal("scripted bot state poisoned")
+        }
+        self.requests
+            .lock()
+            .map_err(poisoned)?
+            .push(request.into_inner());
+        let response = self
+            .responses
+            .lock()
+            .map_err(poisoned)?
+            .pop_front()
+            .ok_or_else(|| tonic::Status::internal("no scripted response left"))?;
+        Ok(tonic::Response::new(response))
+    }
+}
+
+/// Serves `bot` on an ephemeral loopback port and returns its gRPC address.
+async fn serve_bot(bot: ScriptedBot) -> Result<String, Box<dyn std::error::Error>> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(JammerServer::new(bot))
+            .serve_with_incoming(tonic::transport::server::TcpIncoming::from(listener)),
+    );
+    Ok(address)
+}
+
+fn play_request(uri: &str) -> Result<test::TestRequest, Box<dyn std::error::Error>> {
+    Ok(test::TestRequest::post()
+        .uri(uri)
+        .insert_header(("Cookie", access_cookie_value()?))
+        .insert_header(("X-CSRF-Token", CSRF)))
+}
+
+/// The status, `Retry-After` header, and JSON body of a playback response.
+async fn play_outcome(
+    resp: actix_web::dev::ServiceResponse,
+) -> (StatusCode, Option<String>, serde_json::Value) {
+    let status = resp.status();
+    let retry_after = resp
+        .headers()
+        .get(actix_web::http::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    (status, retry_after, test::read_body_json(resp).await)
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn clip_playback_reports_every_bot_outcome_through_the_contract(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let bot = ScriptedBot::default();
+    let outcomes = [
+        (JamResponseEnum::Ok, 0),
+        (JamResponseEnum::NotPresent, 0),
+        (JamResponseEnum::Cooldown, 12),
+        (JamResponseEnum::Unknown, 0),
+    ];
+    bot.responses
+        .lock()
+        .unwrap()
+        .extend(outcomes.map(|(resp, seconds)| JamResponse {
+            resp: resp.into(),
+            cooldown_remaining_seconds: seconds,
+        }));
+    let address = serve_bot(bot.clone()).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(&address)))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
+    )
+    .await;
+    let uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}/own-clip/play");
+
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "status": "queued" }));
+
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["kind"], "bot_not_in_voice");
+
+    let (status, retry_after, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body["kind"], "jam_cooldown");
+    assert_eq!(body["retry_after_seconds"], 12);
+    assert_eq!(retry_after.as_deref(), Some("12"));
+
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(body["kind"], "clip_playback_failed");
+
+    let requests = bot.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), outcomes.len());
+    for request in requests {
+        assert_eq!(
+            (
+                request.clip_name.as_str(),
+                request.guild_id,
+                request.user_id
+            ),
+            ("own-clip", ALLOWED_GUILD_ID, USER_ID),
+            "the bot receives the resolved clip id and the caller"
+        );
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn clip_playback_rejects_unplayable_requests_before_reaching_the_bot(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let bot = ScriptedBot::default();
+    let address = serve_bot(bot.clone()).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(&address)))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
+    )
+    .await;
+
+    // A clip name is not a clip id: playback never falls back to a name lookup.
+    let uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}/no-such-clip/play");
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["kind"], "clip_not_found");
+
+    let uri = format!("/api/audio/clips/{FORBIDDEN_GUILD_ID}/forbidden-clip/play");
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["kind"], "forbidden");
+
+    assert!(
+        bot.requests.lock().unwrap().is_empty(),
+        "rejected requests must not reach the bot"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn clip_playback_reports_an_unreachable_bot(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    // Nothing listens on a port that was bound and immediately released.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(&format!(
+                "http://{closed}"
+            ))))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
+    )
+    .await;
+
+    let uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}/own-clip/play");
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["kind"], "bot_unavailable");
     Ok(())
 }
 
@@ -1023,7 +1225,7 @@ async fn forbidden_cross_guild_requests_are_rejected(
     }
 
     let req = test::TestRequest::post()
-        .uri("/api/remove_silence/2/200/2026/5/forbidden-rec")
+        .uri("/api/audio/remove-silence/2/200/2026/5/forbidden-rec")
         .insert_header(("Cookie", cookie.clone()))
         .insert_header(("X-CSRF-Token", CSRF))
         .insert_header(("Idempotency-Key", "forbidden-test"))

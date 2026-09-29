@@ -325,30 +325,12 @@ async fn handle_jam(
     };
 
     let user_id = application_command.user.id.to_i64();
-    match cooldown
-        .check_and_record(pool, guild_id.to_i64(), user_id)
-        .await
-    {
-        Ok(crate::cooldown::CheckResult::Allowed) => {}
-        Ok(crate::cooldown::CheckResult::OnCooldown { remaining_secs }) => {
-            return (
-                format!("On cooldown — {}s remaining.", remaining_secs),
-                None,
-            );
-        }
-        Err(err) => {
-            warn!(
-                guild_id = guild_id.get(),
-                user_id, "jam cooldown lookup failed: {}", err
-            );
-            return ("Database error. Try again later.".to_string(), None);
-        }
-    }
     match crate::commands::voice_controls::play_clip(
         pool,
         &media_archive,
         &manager,
         &ctx.cache,
+        cooldown,
         guild_id,
         &clip_name,
         user_id,
@@ -384,28 +366,12 @@ async fn replay_clip(
         None => return "This command can only be used in a server.".to_string(),
     };
 
-    match cooldown
-        .check_and_record(pool, guild_id.to_i64(), user_id)
-        .await
-    {
-        Ok(crate::cooldown::CheckResult::Allowed) => {}
-        Ok(crate::cooldown::CheckResult::OnCooldown { remaining_secs }) => {
-            return format!("On cooldown — {}s remaining.", remaining_secs);
-        }
-        Err(err) => {
-            warn!(
-                guild_id = guild_id.get(),
-                user_id, "replay cooldown lookup failed: {}", err
-            );
-            return "Database error. Try again later.".to_string();
-        }
-    }
-
     match crate::commands::voice_controls::play_clip(
         pool,
         &media_archive,
         &manager,
         &ctx.cache,
+        cooldown,
         guild_id,
         clip_id,
         user_id,

@@ -260,6 +260,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/audio/clips/{guild_id}/{clip_id}/play": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["play_clip"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/audio/events/{guild_id}/{channel_id}/{year}/{month}/{stem}": {
 		parameters: {
 			query?: never;
@@ -326,6 +342,22 @@ export interface paths {
 		get: operations["live_segment"];
 		put?: never;
 		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/audio/remove-silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["remove_silence"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -673,22 +705,6 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
-	"/api/jamit": {
-		parameters: {
-			query?: never;
-			header?: never;
-			path?: never;
-			cookie?: never;
-		};
-		get?: never;
-		put?: never;
-		post: operations["play_clip"];
-		delete?: never;
-		options?: never;
-		head?: never;
-		patch?: never;
-		trace?: never;
-	};
 	"/api/logout": {
 		parameters: {
 			query?: never;
@@ -763,22 +779,6 @@ export interface paths {
 		get?: never;
 		put?: never;
 		post: operations["refresh_jwt"];
-		delete?: never;
-		options?: never;
-		head?: never;
-		patch?: never;
-		trace?: never;
-	};
-	"/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}": {
-		parameters: {
-			query?: never;
-			header?: never;
-			path?: never;
-			cookie?: never;
-		};
-		get?: never;
-		put?: never;
-		post: operations["remove_silence"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -977,6 +977,12 @@ export interface components {
 			kind: components["schemas"]["ErrorKind"];
 			/** @description A safe, human-readable explanation. */
 			message: string;
+			/**
+			 * Format: int64
+			 * @description On a rate-limited (429) response, the seconds to wait before retrying,
+			 *     when known. Also sent as the `Retry-After` header.
+			 */
+			retry_after_seconds?: number | null;
 		};
 		ChannelMixGenerationSettings: {
 			participants: components["schemas"]["ChannelMixParticipantSettings"][];
@@ -1250,6 +1256,9 @@ export interface components {
 			| "discord_timeout"
 			| "discord_unavailable"
 			| "bot_unavailable"
+			| "bot_not_in_voice"
+			| "jam_cooldown"
+			| "clip_playback_failed"
 			| "worker_interrupted"
 			| "source_changed"
 			| "source_access_revoked"
@@ -1354,11 +1363,6 @@ export interface components {
 						user_id?: string | null;
 				  }[];
 		};
-		JamItBody: {
-			clip_name: string;
-			/** Format: int64 */
-			guild_id: number;
-		};
 		MediaJobStatus: {
 			/** @description Safe explanation of the last failed attempt; never internal detail. */
 			error?: string | null;
@@ -1369,6 +1373,10 @@ export interface components {
 			progress: number;
 			result_url?: string | null;
 			stage: string;
+			status: string;
+		};
+		PlayClipResponse: {
+			/** @description `queued`: the clip is in the bot's voice queue for the guild. */
 			status: string;
 		};
 		RecordingDeletionStatus: {
@@ -1390,10 +1398,6 @@ export interface components {
 			 *     server.
 			 */
 			opted_out: boolean;
-		};
-		RefreshTokenError: {
-			error: string;
-			message: string;
 		};
 		RefreshTokenResponse: {
 			status: string;
@@ -2733,7 +2737,7 @@ export interface operations {
 			path: {
 				/** @description Discord guild id */
 				guild_id: number;
-				/** @description Clip id or saved file name */
+				/** @description Clip id */
 				clip_id: string;
 			};
 			cookie?: never;
@@ -2900,6 +2904,94 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	play_clip: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Clip id */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The clip was queued in the bot's voice channel */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["PlayClipResponse"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing access to the clip's source */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The bot is not in a voice channel in this guild */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The caller played a clip too recently; `retry_after_seconds` says when to retry */
+			429: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The bot could not play the clip */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The bot could not be reached */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -3164,6 +3256,103 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	remove_silence: {
+		parameters: {
+			query?: never;
+			header: {
+				/** @description Idempotency key for processing request */
+				"Idempotency-Key": string;
+			};
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Discord channel id */
+				channel_id: number;
+				/** @description Recording year */
+				year: number;
+				/** @description Recording month */
+				month: number;
+				/** @description Recording file stem */
+				file_name: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Silence-free file already exists */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RemoveSilenceResponse"];
+				};
+			};
+			/** @description Silence removal durably queued */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["MediaJobStatus"];
+				};
+			};
+			/** @description Invalid file name or missing idempotency key */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Idempotency key reused for another request */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Concurrent processing state unavailable */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -4641,64 +4830,6 @@ export interface operations {
 			};
 		};
 	};
-	play_clip: {
-		parameters: {
-			query?: never;
-			header?: never;
-			path?: never;
-			cookie?: never;
-		};
-		requestBody: {
-			content: {
-				"application/json": components["schemas"]["JamItBody"];
-			};
-		};
-		responses: {
-			/** @description Jam command forwarded to the agent owning the guild */
-			200: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content?: never;
-			};
-			/** @description Invalid request */
-			400: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Missing or invalid access token */
-			401: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Clip not found */
-			404: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Server error */
-			500: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-		};
-	};
 	logout: {
 		parameters: {
 			query?: never;
@@ -4833,12 +4964,14 @@ export interface operations {
 					"application/json": components["schemas"]["RefreshTokenResponse"];
 				};
 			};
-			/** @description Missing, expired, or invalid refresh token */
+			/** @description Missing, expired, or invalid refresh token; the session cookies are cleared */
 			401: {
 				headers: {
 					[name: string]: unknown;
 				};
-				content?: never;
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
 			};
 			/** @description Missing or invalid CSRF token */
 			403: {
@@ -4851,103 +4984,6 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-		};
-	};
-	remove_silence: {
-		parameters: {
-			query?: never;
-			header: {
-				/** @description Idempotency key for processing request */
-				"Idempotency-Key": string;
-			};
-			path: {
-				/** @description Discord guild id */
-				guild_id: number;
-				/** @description Discord channel id */
-				channel_id: number;
-				/** @description Recording year */
-				year: number;
-				/** @description Recording month */
-				month: number;
-				/** @description Recording file stem */
-				file_name: string;
-			};
-			cookie?: never;
-		};
-		requestBody?: never;
-		responses: {
-			/** @description Silence-free file already exists */
-			200: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["RemoveSilenceResponse"];
-				};
-			};
-			/** @description Silence removal durably queued */
-			202: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["MediaJobStatus"];
-				};
-			};
-			/** @description Invalid file name or missing idempotency key */
-			400: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Missing or invalid access token */
-			401: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Missing channel permission */
-			403: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Idempotency key reused for another request */
-			409: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Server error */
-			500: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Concurrent processing state unavailable */
-			503: {
 				headers: {
 					[name: string]: unknown;
 				};

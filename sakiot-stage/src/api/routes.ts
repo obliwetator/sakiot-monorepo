@@ -9,10 +9,9 @@ import type { paths } from "./openapi";
  * updated. Hand-written URL strings could not catch that.
  */
 export const API_ROUTES = {
-	jamIt: "/api/jamit",
 	oauthStart: "/api/oauth/start",
 	removeSilence:
-		"/api/remove_silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
+		"/api/audio/remove-silence/{guild_id}/{channel_id}/{year}/{month}/{file_name}",
 	mediaJob: "/api/media-jobs/{job_id}",
 	mediaJobResult: "/api/media-jobs/{job_id}/result",
 	refresh: "/api/refresh",
@@ -37,6 +36,7 @@ export const API_ROUTES = {
 	sessionClips: "/api/audio/sessions/{recording_session_id}/clips",
 	clips: "/api/audio/clips/{guild_id}",
 	clip: "/api/audio/clips/{guild_id}/{clip_id}",
+	clipPlay: "/api/audio/clips/{guild_id}/{clip_id}/play",
 	clipCompose: "/api/audio/clips/{guild_id}/compose",
 	clipComposeStatus: "/api/audio/clips/{guild_id}/compose/{clip_id}",
 	clipCreate:

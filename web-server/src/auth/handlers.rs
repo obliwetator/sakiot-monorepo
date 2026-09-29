@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, HttpResponse, Responder, get, post, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, ResponseError, get, post, web};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
@@ -39,12 +39,6 @@ pub struct OauthStartQuery {
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct RefreshTokenResponse {
     pub status: &'static str,
-}
-
-#[derive(serde::Serialize, utoipa::ToSchema)]
-pub struct RefreshTokenError {
-    pub error: &'static str,
-    pub message: &'static str,
 }
 
 fn origin_matches_host_suffix(origin: &str, suffix: &str) -> bool {
@@ -117,11 +111,11 @@ fn origin_from_oauth_state(state: &str) -> Option<String> {
 fn require_csrf(req: &HttpRequest, expected: &str) -> Result<(), AppError> {
     let Some(actual) = csrf_header(req) else {
         warn!("CSRF token missing for {}", req.path());
-        return Err(AppError::Forbidden);
+        return Err(AppError::CsrfRejected);
     };
     if !cookie_matches(req, CSRF_COOKIE, expected) {
         warn!("CSRF cookie missing for {}", req.path());
-        return Err(AppError::Forbidden);
+        return Err(AppError::CsrfRejected);
     }
 
     let header_matches = actual.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 1;
@@ -129,25 +123,25 @@ fn require_csrf(req: &HttpRequest, expected: &str) -> Result<(), AppError> {
         Ok(())
     } else {
         warn!("CSRF token mismatch for {}", req.path());
-        Err(AppError::Forbidden)
+        Err(AppError::CsrfRejected)
     }
 }
 
 fn require_cookie_csrf(req: &HttpRequest) -> Result<(), AppError> {
     let Some(actual) = csrf_header(req) else {
         warn!("CSRF token missing for {}", req.path());
-        return Err(AppError::Forbidden);
+        return Err(AppError::CsrfRejected);
     };
     if !cookie_matches(req, CSRF_COOKIE, actual) {
         warn!("CSRF cookie missing for {}", req.path());
-        return Err(AppError::Forbidden);
+        return Err(AppError::CsrfRejected);
     }
 
     if !actual.is_empty() {
         Ok(())
     } else {
         warn!("CSRF token mismatch for {}", req.path());
-        Err(AppError::Forbidden)
+        Err(AppError::CsrfRejected)
     }
 }
 
@@ -333,13 +327,24 @@ pub async fn dev_login(
     Ok(b)
 }
 
+/// The refresh token is missing or no longer valid, so the session is over: a
+/// contract `unauthorized` body that also clears every session cookie.
+fn session_ended() -> Result<HttpResponse, AppError> {
+    let mut response = AppError::Unauthorized.error_response();
+    response.add_cookie(&clear_access_token_cookie())?;
+    response.add_cookie(&clear_refresh_token_cookie())?;
+    response.add_cookie(&clear_csrf_cookie())?;
+    response.add_cookie(&clear_logged_in_cookie())?;
+    Ok(response)
+}
+
 #[utoipa::path(
     post,
     path = "/api/refresh",
     tag = "auth",
     responses(
         (status = 200, description = "New access token issued", body = RefreshTokenResponse),
-        (status = 401, description = "Missing, expired, or invalid refresh token"),
+        (status = 401, description = "Missing, expired, or invalid refresh token; the session cookies are cleared", body = crate::errors::ApiError),
         (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
@@ -366,12 +371,7 @@ pub async fn refresh_jwt(
             "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
             req.path()
         );
-        let mut resp = HttpResponse::Unauthorized().finish();
-        resp.add_cookie(&clear_access_token_cookie())?;
-        resp.add_cookie(&clear_refresh_token_cookie())?;
-        resp.add_cookie(&clear_csrf_cookie())?;
-        resp.add_cookie(&clear_logged_in_cookie())?;
-        return Ok(resp);
+        return session_ended();
     }
 
     let valid_refreshes = refresh_cookies
@@ -383,20 +383,12 @@ pub async fn refresh_jwt(
             "Unauthorized access attempt to refresh_jwt{}: expired or invalid refresh token",
             req.path()
         );
-        let mut resp = HttpResponse::Unauthorized().json(RefreshTokenError {
-            error: "expired_or_invalid_token",
-            message: "The refresh token is expired or invalid. Please login again.",
-        });
-        resp.add_cookie(&clear_access_token_cookie())?;
-        resp.add_cookie(&clear_refresh_token_cookie())?;
-        resp.add_cookie(&clear_csrf_cookie())?;
-        resp.add_cookie(&clear_logged_in_cookie())?;
-        return Ok(resp);
+        return session_ended();
     }
 
     let Some(actual_csrf) = csrf_header(&req) else {
         warn!("CSRF token missing for {}", req.path());
-        return Err(AppError::Forbidden);
+        return Err(AppError::CsrfRejected);
     };
     // Match CSRF before choosing among duplicate cookies from an old path.
     let decoded_refresh = valid_refreshes
@@ -412,7 +404,7 @@ pub async fn refresh_jwt(
         .max_by_key(|token| token.exp)
         .ok_or_else(|| {
             warn!("CSRF token mismatch for {}", req.path());
-            AppError::Forbidden
+            AppError::CsrfRejected
         })?;
     require_csrf(&req, &decoded_refresh.csrf)?;
 
@@ -593,6 +585,73 @@ mod tests {
 
         assert!(require_csrf(&req, "csrf-current").is_ok());
         assert!(require_cookie_csrf(&req).is_ok());
+    }
+
+    #[actix_web::test]
+    async fn refresh_failures_follow_the_error_contract() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use super::super::cookies::{LOGGED_IN_COOKIE, REFRESH_TOKEN_COOKIE};
+        use super::super::jwt::{AccessKeys, AuthKind, Refresh, Token};
+        use super::refresh_jwt;
+        use actix_web::{App, http::StatusCode, web};
+        use jsonwebtoken::{DecodingKey, EncodingKey};
+
+        let keys = AccessKeys {
+            access_encode: EncodingKey::from_secret(b"access"),
+            refresh_encode: EncodingKey::from_secret(b"refresh"),
+            access_decode: DecodingKey::from_secret(b"access"),
+            refresh_decode: DecodingKey::from_secret(b"refresh"),
+        };
+        let refresh = Token::<Refresh>::encode(
+            7,
+            AuthKind::Discord,
+            "csrf-123".into(),
+            &keys.refresh_encode,
+        )?;
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(keys))
+                .service(refresh_jwt),
+        )
+        .await;
+
+        // No refresh token, or one that does not verify: the session is over.
+        for request in [
+            actix_test::TestRequest::post().uri("/refresh"),
+            actix_test::TestRequest::post()
+                .uri("/refresh")
+                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, "not-a-token")),
+        ] {
+            let response = actix_test::call_service(&app, request.to_request()).await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let cleared = response
+                .response()
+                .cookies()
+                .filter(|cookie| cookie.value().is_empty())
+                .map(|cookie| cookie.name().to_owned())
+                .collect::<Vec<_>>();
+            assert!(cleared.iter().any(|name| name == REFRESH_TOKEN_COOKIE));
+            assert!(cleared.iter().any(|name| name == LOGGED_IN_COOKIE));
+            let body: serde_json::Value = actix_test::read_body_json(response).await;
+            assert_eq!(body["code"], 401);
+            assert_eq!(body["kind"], "unauthorized");
+        }
+
+        // A valid refresh token with a stale or missing CSRF token.
+        for csrf_header in [Some("csrf-stale"), None] {
+            let mut request = actix_test::TestRequest::post()
+                .uri("/refresh")
+                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, refresh.clone()))
+                .cookie(Cookie::new(CSRF_COOKIE, "csrf-123"));
+            if let Some(csrf) = csrf_header {
+                request = request.insert_header(("X-CSRF-Token", csrf));
+            }
+            let response = actix_test::call_service(&app, request.to_request()).await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let body: serde_json::Value = actix_test::read_body_json(response).await;
+            assert_eq!(body["kind"], "csrf_rejected");
+        }
+        Ok(())
     }
 
     #[test]

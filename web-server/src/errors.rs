@@ -18,6 +18,10 @@ pub struct ApiError {
     pub kind: ErrorKind,
     /// A safe, human-readable explanation.
     pub message: String,
+    /// On a rate-limited (429) response, the seconds to wait before retrying,
+    /// when known. Also sent as the `Retry-After` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
 }
 
 /// Declares [`ErrorKind`] from one table so the wire name, the parser used for
@@ -89,6 +93,12 @@ error_kinds! {
     DiscordTimeout = "discord_timeout" => "Discord did not respond in time. Try again.",
     DiscordUnavailable = "discord_unavailable" => "Discord is temporarily unavailable. Try again later.",
     BotUnavailable = "bot_unavailable" => "The recording bot could not be reached.",
+    /// The bot holds no voice connection in the guild, so it cannot play a clip.
+    BotNotInVoice = "bot_not_in_voice" => "The bot is not in a voice channel in this server.",
+    /// The caller played a clip too recently; `retry_after_seconds` says when
+    /// they may play another.
+    JamCooldown = "jam_cooldown" => "You played a clip too recently. Wait a moment and try again.",
+    ClipPlaybackFailed = "clip_playback_failed" => "The bot could not play this clip. Try again shortly.",
     /// A background worker stopped (crashed, restarted, or lost its lease)
     /// before the job finished.
     WorkerInterrupted = "worker_interrupted" => "The worker processing this job stopped before it finished.",
@@ -159,9 +169,14 @@ pub enum AppError {
     /// The bot's gRPC endpoint could not be reached.
     #[error("Bot unavailable: {0}")]
     BotUnavailable(String),
-    /// The bot was reached but the call failed.
-    #[error("Upstream gRPC error: {0}")]
-    GrpcError(String),
+    #[error("The bot is not in a voice channel in this guild")]
+    BotNotInVoice,
+    #[error("Jam cooldown: {retry_after_seconds}s remaining")]
+    JamCooldown { retry_after_seconds: u32 },
+    /// The bot was reached but could not play the clip. The cause is logged
+    /// where it is known.
+    #[error("Clip playback failed")]
+    ClipPlaybackFailed,
     #[error("The user already has the maximum number of active media jobs")]
     UserJobLimitReached,
     #[error("The export queue is full")]
@@ -218,6 +233,9 @@ impl AppError {
             Self::MediaInspectionFailed(_) => ErrorKind::MediaInspectionFailed,
             Self::MediaToolUnavailable(_) => ErrorKind::MediaToolsUnavailable,
             Self::BotUnavailable(_) => ErrorKind::BotUnavailable,
+            Self::BotNotInVoice => ErrorKind::BotNotInVoice,
+            Self::JamCooldown { .. } => ErrorKind::JamCooldown,
+            Self::ClipPlaybackFailed => ErrorKind::ClipPlaybackFailed,
             Self::UserJobLimitReached => ErrorKind::UserJobLimitReached,
             Self::ExportQueueFull => ErrorKind::ExportQueueFull,
             Self::ExecutionTimedOut => ErrorKind::ExecutionTimedOut,
@@ -236,8 +254,7 @@ impl AppError {
             | Self::ReqwestError(_)
             | Self::IoError(_)
             | Self::JwtError(_)
-            | Self::HttpError(_)
-            | Self::GrpcError(_) => ErrorKind::InternalError,
+            | Self::HttpError(_) => ErrorKind::InternalError,
         }
     }
 
@@ -248,6 +265,14 @@ impl AppError {
             Self::BadRequest(message) | Self::Conflict(message) => Cow::Owned(message.clone()),
             Self::InvalidParam(name) => Cow::Owned(format!("Invalid request parameter: {name}")),
             Self::ParseError(_) => Cow::Borrowed("A numeric request parameter is invalid."),
+            Self::JamCooldown {
+                retry_after_seconds: 1,
+            } => Cow::Borrowed("You played a clip too recently. Try again in 1 second."),
+            Self::JamCooldown {
+                retry_after_seconds,
+            } => Cow::Owned(format!(
+                "You played a clip too recently. Try again in {retry_after_seconds} seconds."
+            )),
             _ => Cow::Borrowed(self.kind().default_message()),
         }
     }
@@ -267,7 +292,8 @@ impl ResponseError for AppError {
             AppError::Conflict(_)
             | AppError::JobLeaseLost
             | AppError::SourceChanged
-            | AppError::DestinationChanged => StatusCode::CONFLICT,
+            | AppError::DestinationChanged
+            | AppError::BotNotInVoice => StatusCode::CONFLICT,
             AppError::InvalidParam(_) => StatusCode::BAD_REQUEST,
             AppError::UserJobLimitReached
             | AppError::ExportQueueFull
@@ -275,12 +301,15 @@ impl ResponseError for AppError {
             | AppError::WorkerInterrupted(_)
             | AppError::MediaToolUnavailable(_)
             | AppError::MediaArchiveUnavailable(_)
-            | AppError::ArchiveIntegrityFailure(_) => StatusCode::SERVICE_UNAVAILABLE,
-            AppError::DiscordRateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
-            AppError::DiscordTimeout => StatusCode::GATEWAY_TIMEOUT,
-            AppError::MediaInspectionFailed(_) | AppError::DiscordUnavailable(_) => {
-                StatusCode::BAD_GATEWAY
+            | AppError::ArchiveIntegrityFailure(_)
+            | AppError::BotUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::DiscordRateLimited { .. } | AppError::JamCooldown { .. } => {
+                StatusCode::TOO_MANY_REQUESTS
             }
+            AppError::DiscordTimeout => StatusCode::GATEWAY_TIMEOUT,
+            AppError::MediaInspectionFailed(_)
+            | AppError::DiscordUnavailable(_)
+            | AppError::ClipPlaybackFailed => StatusCode::BAD_GATEWAY,
             AppError::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -294,10 +323,18 @@ impl ResponseError for AppError {
         } else {
             tracing::debug!(error = ?self, kind = kind.as_str(), "request rejected");
         }
+        let retry_after_seconds = match self {
+            AppError::DiscordRateLimited { retry_after } => *retry_after,
+            AppError::JamCooldown {
+                retry_after_seconds,
+            } => Some(u64::from(*retry_after_seconds)),
+            _ => None,
+        };
         let error_response = ApiError {
             code: status_code.as_u16(),
             kind,
             message: self.public_message().into_owned(),
+            retry_after_seconds,
         };
         let mut response = HttpResponse::build(status_code);
         if let AppError::RangeNotSatisfiable { total } = self {
@@ -306,14 +343,17 @@ impl ResponseError for AppError {
                 format!("bytes */{total}"),
             ));
         }
-        if let AppError::DiscordRateLimited {
-            retry_after: Some(seconds),
-        } = self
-        {
+        if let Some(seconds) = retry_after_seconds {
             response.insert_header((actix_web::http::header::RETRY_AFTER, seconds.to_string()));
         }
         response.json(error_response)
     }
+}
+
+/// The `/api` scope's default service: an unknown API path answers with the
+/// error contract rather than the site's HTML 404 page.
+pub async fn api_not_found() -> Result<HttpResponse, AppError> {
+    Err(AppError::NotFound)
 }
 
 /// Extractor rejections (malformed JSON bodies, paths, or queries) follow the
@@ -466,6 +506,57 @@ mod tests {
     }
 
     #[test]
+    fn rate_limits_carry_the_retry_delay_in_the_body_and_header() {
+        let cooldown = AppError::JamCooldown {
+            retry_after_seconds: 42,
+        };
+        assert_eq!(
+            body(&cooldown),
+            serde_json::json!({
+                "code": 429,
+                "kind": "jam_cooldown",
+                "message": "You played a clip too recently. Try again in 42 seconds.",
+                "retry_after_seconds": 42,
+            })
+        );
+        let response = cooldown.error_response();
+        assert_eq!(
+            response
+                .headers()
+                .get(actix_web::http::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            Some("42")
+        );
+        assert_eq!(
+            body(&AppError::JamCooldown {
+                retry_after_seconds: 1
+            })["message"],
+            "You played a clip too recently. Try again in 1 second."
+        );
+        assert_eq!(
+            body(&AppError::DiscordRateLimited {
+                retry_after: Some(7)
+            })["retry_after_seconds"],
+            7
+        );
+        let unknown_delay = body(&AppError::DiscordRateLimited { retry_after: None });
+        assert!(unknown_delay.get("retry_after_seconds").is_none());
+    }
+
+    #[test]
+    fn clip_playback_failures_say_whose_fault_they_are() {
+        assert_eq!(AppError::BotNotInVoice.status_code(), StatusCode::CONFLICT);
+        assert_eq!(
+            AppError::BotUnavailable("connection refused".into()).status_code(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            AppError::ClipPlaybackFailed.status_code(),
+            StatusCode::BAD_GATEWAY
+        );
+    }
+
+    #[test]
     fn internal_detail_never_reaches_the_body() {
         let secret = "SELECT secret FROM /srv/sakiot/data/recordings stderr: libopus";
         let leaky = [
@@ -474,7 +565,6 @@ mod tests {
             AppError::FfmpegError(secret.into()),
             AppError::MediaInspectionFailed(secret.into()),
             AppError::BotUnavailable(secret.into()),
-            AppError::GrpcError(secret.into()),
             AppError::MediaArchiveUnavailable(secret.into()),
             AppError::ArchiveIntegrityFailure(secret.into()),
             AppError::DiscordUnavailable(secret.into()),
@@ -530,6 +620,56 @@ mod tests {
         assert_eq!(
             JobError::from_columns(Some("execution_timed_out"), None),
             None
+        );
+    }
+
+    #[actix_rt::test]
+    async fn unknown_api_paths_use_the_contract_and_other_paths_do_not() {
+        use actix_web::{App, HttpResponse, test, web};
+
+        let app = test::init_service(
+            App::new()
+                .service(
+                    web::scope("/api")
+                        .route("/known", web::get().to(HttpResponse::Ok))
+                        .default_service(web::route().to(super::api_not_found)),
+                )
+                .default_service(web::route().to(|| async {
+                    HttpResponse::NotFound()
+                        .content_type("text/html; charset=utf-8")
+                        .body("<html></html>")
+                })),
+        )
+        .await;
+
+        for request in [
+            test::TestRequest::get().uri("/api/no-such-route"),
+            test::TestRequest::post().uri("/api/known"),
+        ] {
+            let response = test::call_service(&app, request.to_request()).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            let body: serde_json::Value = test::read_body_json(response).await;
+            assert_eq!(
+                body,
+                serde_json::json!({
+                    "code": 404,
+                    "kind": "not_found",
+                    "message": "The requested item was not found.",
+                })
+            );
+        }
+
+        let page = test::call_service(
+            &app,
+            test::TestRequest::get().uri("/elsewhere").to_request(),
+        )
+        .await;
+        assert_eq!(page.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            page.headers()
+                .get(actix_web::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/html; charset=utf-8")
         );
     }
 

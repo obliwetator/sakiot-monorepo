@@ -36,6 +36,8 @@ export interface ApiProblem {
 	kind: ErrorKind | null;
 	/** Safe, standalone reason, shown after the screen's own context. */
 	message: string;
+	/** On a rate-limited response, the seconds to wait before retrying. */
+	retryAfterSeconds?: number;
 }
 
 export const NETWORK_MESSAGE =
@@ -71,6 +73,9 @@ const ERROR_KINDS = {
 	discord_timeout: true,
 	discord_unavailable: true,
 	bot_unavailable: true,
+	bot_not_in_voice: true,
+	jam_cooldown: true,
+	clip_playback_failed: true,
 	worker_interrupted: true,
 	source_changed: true,
 	source_access_revoked: true,
@@ -117,7 +122,16 @@ export function problemFromBody(status: number, body: unknown): ApiProblem {
 		if (typeof body.kind === "string" && message) {
 			const kind = isErrorKind(body.kind) ? body.kind : null;
 			// The session message owns 401s so every screen words it the same.
-			return problem(status === 401 ? SESSION_EXPIRED_MESSAGE : message, kind);
+			const contract = problem(
+				status === 401 ? SESSION_EXPIRED_MESSAGE : message,
+				kind,
+			);
+			const retryAfter = body.retry_after_seconds;
+			return typeof retryAfter === "number" &&
+				Number.isFinite(retryAfter) &&
+				retryAfter >= 0
+				? { ...contract, retryAfterSeconds: retryAfter }
+				: contract;
 		}
 		// Older servers sent kind-less bodies. Their 4xx text was public; their
 		// 5xx text was only a status phrase and says nothing useful.

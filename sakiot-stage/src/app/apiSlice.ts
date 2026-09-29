@@ -7,7 +7,6 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import type { components } from "../api/openapi";
 import { API_ROUTES, apiUrl } from "../api/routes";
 import type { Channels, UserGuilds } from "../Constants";
-import type { JamItRespStatus } from "../features/audio-dashboard/RangeSlider/JamIt";
 import {
 	BASE_API_URL,
 	captureCsrfToken,
@@ -34,6 +33,8 @@ export type RemoveSilenceResponse =
 	| MediaJobStatus;
 
 export type CreateClipResponse = ApiSchema["CreateClipResponse"];
+
+export type PlayClipResponse = ApiSchema["PlayClipResponse"];
 
 const baseQuery = fetchBaseQuery({
 	baseUrl: BASE_API_URL,
@@ -150,18 +151,14 @@ export const apiSlice = createApi({
 		"Recordings",
 	],
 	endpoints: (builder) => ({
-		jamIt: builder.mutation<
-			{ code: JamItRespStatus },
-			{ guild_id: string; clip_name: string }
+		playClip: builder.mutation<
+			PlayClipResponse,
+			{ guild_id: string; clip_id: string }
 		>({
-			query: (body) => ({
-				url: apiUrl(API_ROUTES.jamIt),
+			query: ({ guild_id, clip_id }) => ({
+				url: apiUrl(API_ROUTES.clipPlay, { guild_id, clip_id }),
 				method: "POST",
-				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-				},
-				body,
+				headers: { Accept: "application/json" },
 			}),
 		}),
 		removeSilence: builder.mutation<
@@ -723,7 +720,7 @@ export const {
 	useGetComposeClipStatusQuery,
 	useDeleteClipMutation,
 	useRenameClipMutation,
-	useJamItMutation,
+	usePlayClipMutation,
 	useRemoveSilenceMutation,
 	useCheckSilenceFileQuery,
 	useRefreshMutation,

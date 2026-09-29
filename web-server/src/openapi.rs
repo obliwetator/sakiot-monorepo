@@ -122,7 +122,6 @@ use utoipa::{
         crate::audio::sessions::SilenceFreeSessionResponse,
         crate::audio::sessions::SessionTimelineEventDto,
         crate::audio::sessions::SessionWaveformResponse,
-        crate::auth::handlers::RefreshTokenError,
         crate::auth::handlers::RefreshTokenResponse,
         crate::clip_editor::ComposeClipAccepted,
         crate::clip_editor::ComposeClipBody,

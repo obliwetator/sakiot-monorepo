@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
 use serenity::model::prelude::GuildId;
-use songbird::{Songbird, SongbirdKey};
+use songbird::SongbirdKey;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
 use crate::commands::voice_controls::PlayClipError;
-use crate::cooldown::CheckResult;
 
 use super::FbiAgentGrpc;
 use super::proto::jam_response::JamResponseEnum;
@@ -35,38 +32,20 @@ impl Jammer for FbiAgentGrpc {
             return Err(Status::internal("Songbird manager missing from typemap"));
         };
 
-        // Answer this from our own songbird, not from the guild cache: the bot user id
-        // is shared with any draining instance, so seeing "the bot" in a voice channel
-        // says nothing about whether *this* process holds that connection.
-        if !holds_voice_connection(&manager, guild_id).await {
-            return Ok(Response::new(JamResponse {
-                resp: JamResponseEnum::NotPresent.into(),
-                cooldown_remaining_seconds: 0,
-            }));
-        }
-
-        // Only spend the cooldown once we know the clip can actually play.
-        match self
-            .data_cache
-            .jam_cooldown
-            .check_and_record(&self.data_cache.pool, data.guild_id, data.user_id)
-            .await
-        {
-            Ok(CheckResult::Allowed) => {}
-            Ok(CheckResult::OnCooldown { remaining_secs }) => {
-                return Ok(Response::new(JamResponse {
-                    resp: JamResponseEnum::Cooldown.into(),
-                    cooldown_remaining_seconds: remaining_secs,
-                }));
-            }
-            Err(err) => return Err(Status::internal(format!("database error: {err}"))),
-        }
-
+        let response = |resp: JamResponseEnum,
+                        cooldown_remaining_seconds: u32|
+         -> Result<Response<JamResponse>, Status> {
+            Ok(Response::new(JamResponse {
+                resp: resp.into(),
+                cooldown_remaining_seconds,
+            }))
+        };
         match crate::commands::voice_controls::play_clip(
             &self.data_cache.pool,
             &self.data_cache.media_archive,
             &manager,
             &self.data_cache.cache,
+            &self.data_cache.jam_cooldown,
             guild_id,
             &data.clip_name,
             data.user_id,
@@ -75,38 +54,20 @@ impl Jammer for FbiAgentGrpc {
         {
             Ok(message) => {
                 info!(guild_id = guild_id.get(), "{}", message);
-                Ok(Response::new(JamResponse {
-                    resp: JamResponseEnum::Ok.into(),
-                    cooldown_remaining_seconds: 0,
-                }))
+                response(JamResponseEnum::Ok, 0)
+            }
+            Err(PlayClipError::NotInVoice) => response(JamResponseEnum::NotPresent, 0),
+            Err(PlayClipError::Cooldown { remaining_secs }) => {
+                response(JamResponseEnum::Cooldown, remaining_secs)
             }
             Err(PlayClipError::Db(db_err)) => {
                 error!("Failed to handle gRPC jam playback: {}", db_err);
                 Err(Status::internal(format!("database error: {db_err}")))
             }
-            // Lost the call between the check above and playback.
-            Err(PlayClipError::NotInVoice) => Ok(Response::new(JamResponse {
-                resp: JamResponseEnum::NotPresent.into(),
-                cooldown_remaining_seconds: 0,
-            })),
             Err(err) => {
                 error!("Failed to handle gRPC jam playback: {}", err);
-                Ok(Response::new(JamResponse {
-                    resp: JamResponseEnum::Unknown.into(),
-                    cooldown_remaining_seconds: 0,
-                }))
+                response(JamResponseEnum::Unknown, 0)
             }
         }
-    }
-}
-
-/// Whether this process is connected to voice in `guild_id`.
-///
-/// Mirrors `connected_voice_connection_count`: songbird keeps a `Call` around after a
-/// disconnect, so a registered call is not on its own proof of presence.
-async fn holds_voice_connection(manager: &Arc<Songbird>, guild_id: GuildId) -> bool {
-    match manager.get(guild_id) {
-        Some(call) => call.lock().await.current_channel().is_some(),
-        None => false,
     }
 }
