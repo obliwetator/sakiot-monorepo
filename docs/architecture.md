@@ -31,6 +31,7 @@ flowchart TB
         direction TB
         web[web-server<br/>HTTP API]
         agent[fbi-agent<br/>recorder]
+        deploy[sakiot-deploy<br/>deploy engine]
         db[(PostgreSQL)]
         disk[/Media on disk<br/>SAKIOT_DATA_DIR/]
     end
@@ -44,9 +45,10 @@ flowchart TB
     agent -- "clip playback" --> discord
 
     agent -- "per-user Ogg/Opus" --> disk
-    agent -- "sessions, events,<br/>guild cache" --> db
-    agent -. "registers gRPC address" .-> web
-    web -- "gRPC: Jammer, Admin" --> agent
+    agent -- "sessions, events, guild cache,<br/>heartbeats with gRPC address" --> db
+    web -- "gRPC: Jammer" --> agent
+    deploy -. "gRPC: Admin (drain)" .-> agent
+    deploy -. "publishes active/draining<br/>gRPC endpoints" .-> web
 
     web --> db
     web <--> disk
@@ -120,19 +122,30 @@ the `wasm` feature, builds the WASM artifact, and verifies it against native.
 
 ## Service-to-service calls
 
-`web-server` calls `fbi-agent` over gRPC — the contract is
+`fbi-agent` serves two gRPC services, defined in
 `sakiot-proto/proto/fbi_agent.proto`:
 
-- **`Jammer.JamIt`** — play a stored clip back into a voice channel.
-- **`Admin`** — drain, cancel drain, status, shutdown-when-empty, force
-  shutdown. These support zero-downtime deploys: a new agent starts, the old
-  one drains until its voice connections are empty, then exits.
+- **`Jammer.JamIt`**, called by `web-server` — play a stored clip back into a
+  voice channel. The agent answers with an outcome (queued, not in voice, on
+  cooldown, failed) that `web-server` maps onto the error contract below. The
+  user's cooldown is spent only once the clip is ready to play.
+- **`Admin`**, called by the deploy engine — drain, cancel drain, status,
+  shutdown-when-empty, force shutdown. These support zero-downtime deploys: a
+  new agent starts, the old one drains until its voice connections are empty,
+  then exits.
 
-The agent's gRPC address is not configured into `web-server`. The agent
-registers it at runtime (`web-server/src/fbi_agent_registry.rs`), authenticated
-by a shared secret header and compared in constant time. The registry tracks
-one active instance plus any draining ones, which is what makes the drain
-handover work.
+`web-server` picks the agent to call per guild from PostgreSQL
+(`agent_address_for_guild` in `web-server/src/fbi_agent_registry.rs`). Every
+agent heartbeats its gRPC address into `bot_instances`, and
+`voice_session_leases` records which instance holds each guild's voice
+connection, so during a handover a clip still goes to the draining instance
+that is in the channel. The deploy engine also publishes the active and
+draining endpoints to an in-memory registry on `web-server`
+(`/internal/fbi-agent/grpc-endpoints`, outside `/api`). That registry is only
+the fallback when no live heartbeat resolves, and until the first publish it
+holds the configured `GRPC_ADDRESS`. The endpoint accepts requests from
+loopback, or ones carrying `FBI_AGENT_REGISTRY_SECRET` in a header, compared in
+constant time.
 
 ## Authentication and authorization
 
@@ -188,9 +201,13 @@ not drift:
   compile time; `bun run generate:api-types` derives the TypeScript from it and
   `check:api-types` fails CI when the checked-in types are stale.
 - **Errors → users.** Every API error body is `{ code, kind, message }`
-  (`web-server/src/errors.rs`). `kind` is a stable `ErrorKind` that reaches the
-  frontend through the same generated types; `message` is always safe to show,
-  while SQL, paths, subprocess output, and upstream bodies are only logged.
+  (`web-server/src/errors.rs`), plus `retry_after_seconds` on a rate-limited
+  (429) response. Unknown `/api` paths answer the same way. The one deliberate
+  exception is a 409 from channel-mix generation, which returns the mix status
+  document so the page can keep showing the tracks it found. `kind` is a stable
+  `ErrorKind` that reaches the frontend through the same generated types;
+  `message` is always safe to show, while SQL, paths, subprocess output, and
+  upstream bodies are only logged.
   Background jobs persist the kind in `error_kind` and derive their displayed
   text from it, so legacy free-form `error` text is never returned. Retry
   decisions are made on types, never on wording. The frontend normalizes every
