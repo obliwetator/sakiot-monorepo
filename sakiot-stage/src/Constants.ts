@@ -14,8 +14,6 @@ export type AudioParams =
 	| "month"
 	| "year";
 
-export type MonthNumber = number;
-
 export type Dirs = Omit<ApiSchema["Directories"], "months"> & {
 	months: Partial<Record<number, IndividualFileArray>>;
 };

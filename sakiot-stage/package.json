@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "bun run build:dsp && vite",
 		"typecheck": "bun run build:dsp && tsc -b && tsc -p tsconfig.test.json && tsc -p tsconfig.e2e.json",
-		"build": "biome check . && bun run typecheck && bun run build:bundle",
+		"build": "biome check --error-on-warnings . && bun run typecheck && bun run build:bundle",
 		"build:dsp": "bash ../scripts/build-dsp.sh",
 		"build:bundle": "bun run build:dsp && vite build",
 		"analyze": "ANALYZE=1 bun run build:bundle",
@@ -17,7 +17,7 @@
 		"test": "bun run build:dsp && bun test src",
 		"test:e2e": "playwright test",
 		"test:e2e:ci": "playwright test --grep-invert @visual",
-		"lint": "biome lint .",
+		"lint": "biome lint --error-on-warnings .",
 		"format": "biome check --write ."
 	},
 	"dependencies": {

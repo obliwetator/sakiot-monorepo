@@ -8,13 +8,41 @@ const STORAGE_KEY = "sakiot.channel-mix.drafts.v1";
 
 type DraftStore = Record<string, ChannelMixParticipantSettings[]>;
 
+/** A stored participant's settings, or null when the entry is not one. */
+function storedParticipant(
+	value: unknown,
+): ChannelMixParticipantSettings | null {
+	if (typeof value !== "object" || value === null) return null;
+	if (!("user_id" in value) || typeof value.user_id !== "string") return null;
+	return {
+		user_id: value.user_id,
+		gain_db:
+			"gain_db" in value && typeof value.gain_db === "number"
+				? value.gain_db
+				: 0,
+		muted: "muted" in value && value.muted === true,
+	};
+}
+
+/**
+ * Storage outlives the code that wrote it and can be edited by hand, so every
+ * entry is validated; anything that is not a participant list is dropped.
+ */
 function readStore(): DraftStore {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) return {};
 		const parsed: unknown = JSON.parse(raw);
-		if (!parsed || typeof parsed !== "object") return {};
-		return parsed as DraftStore;
+		if (typeof parsed !== "object" || parsed === null) return {};
+		if (Array.isArray(parsed)) return {};
+		const store: DraftStore = {};
+		for (const [sessionId, settings] of Object.entries(parsed)) {
+			if (!Array.isArray(settings)) continue;
+			store[sessionId] = settings.flatMap(
+				(value: unknown) => storedParticipant(value) ?? [],
+			);
+		}
+		return store;
 	} catch {
 		return {};
 	}

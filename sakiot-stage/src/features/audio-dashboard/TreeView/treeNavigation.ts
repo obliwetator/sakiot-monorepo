@@ -1,7 +1,6 @@
 import {
 	type Dirs,
 	type IndividualFile,
-	type MonthNumber,
 	PATH_PREFIX_FOR_LOGGED_USERS,
 } from "../../../Constants";
 
@@ -127,7 +126,7 @@ export function topmostTreeExpansion(data: Dirs[]): string[] {
 		.sort((a, b) => b - a)[0];
 	if (topMonth === undefined) return [`${year.year}`];
 
-	const files = year.months[topMonth as MonthNumber] ?? [];
+	const files = year.months[topMonth] ?? [];
 	let topDay: number | undefined;
 	for (const file of files) {
 		const day = recordingFileDay(file.file);

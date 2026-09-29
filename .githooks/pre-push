@@ -13,7 +13,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "Checking frontend formatting..."
 (
 	cd sakiot-stage
-	bunx biome check .
+	bunx biome check --error-on-warnings .
 )
 
 echo "Checking generated OpenAPI types..."

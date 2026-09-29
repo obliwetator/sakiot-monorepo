@@ -52,6 +52,29 @@ describe("channel mix drafts", () => {
 		]);
 	});
 
+	test("ignores stored drafts that are not participant lists", () => {
+		const corrupt = {
+			notAList: { user_id: "2", gain_db: 4, muted: true },
+			mixed: [
+				null,
+				"2",
+				{ gain_db: 4 },
+				{ user_id: "10", gain_db: "loud", muted: "yes" },
+			],
+		};
+		storage.set("sakiot.channel-mix.drafts.v1", JSON.stringify(corrupt));
+
+		expect(readChannelMixDraft("notAList")).toEqual([]);
+		expect(readChannelMixDraft("mixed")).toEqual([
+			{ user_id: "10", gain_db: 0, muted: false },
+		]);
+
+		for (const raw of ["[1,2]", "null", "{not json"]) {
+			storage.set("sakiot.channel-mix.drafts.v1", raw);
+			expect(readChannelMixDraft("mixed")).toEqual([]);
+		}
+	});
+
 	test("defaults a newly discovered participant and clamps stored gains", () => {
 		writeChannelMixDraft("session", [
 			{ user_id: "2", gain_db: 99, muted: false },

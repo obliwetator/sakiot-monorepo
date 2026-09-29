@@ -1,3 +1,4 @@
+import { skipToken } from "@reduxjs/toolkit/query/react";
 import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
@@ -78,11 +79,8 @@ export function AudioInterface(props: {
 				}
 			: undefined;
 	const { data: recordingState } = useGetLiveStateQuery(
-		recordingStateArgs ?? ({} as never),
-		{
-			skip: !recordingStateArgs,
-			pollingInterval: recordingStateArgs ? 10_000 : 0,
-		},
+		recordingStateArgs ?? skipToken,
+		{ pollingInterval: recordingStateArgs ? 10_000 : 0 },
 	);
 	const isLive = !!recordingState?.live;
 
@@ -98,8 +96,7 @@ export function AudioInterface(props: {
 				}
 			: undefined;
 	const { data: voiceEvents } = useGetRecordingEventsQuery(
-		eventsArgs ?? ({} as never),
-		{ skip: !eventsArgs },
+		eventsArgs ?? skipToken,
 	);
 	const mode: "hls" | "blob" =
 		props.isClip || props.isSilence || hlsFailed
