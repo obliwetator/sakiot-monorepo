@@ -213,6 +213,12 @@ if grep -v '^[[:space:]]*--' "${ownership_sql}" | grep -q "REASSIGN OWNED"; then
   exit 1
 fi
 
+# Slot databases can predate migration 20260919000000, which gave the NOT NULL
+# discriminator its default. PostgreSQL checks NOT NULL before ON CONFLICT, so
+# a dev-login seed without the column fails even when the account exists.
+grep -qF 'INSERT INTO discord_auth_user (id, username, discriminator, avatar)' "${script}" \
+  || { echo "the dev-login seed must set discriminator" >&2; exit 1; }
+
 # 4. An unreadable purge env must degrade to "not configured" instead of
 #    aborting the teardown before the database is dropped. Root bypasses file
 #    permissions, so only assert this when the mode actually denies access.

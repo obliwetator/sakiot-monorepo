@@ -277,10 +277,17 @@ if [[ "$ACTION" = create ]]; then
     # the account is inserted. Seed it on every run (idempotent).
     dev_account="$(sed -n 's/^DEV_ACCOUNT_ID=//p' "$ENV_FILE" | head -n1)"
     if [[ "$dev_account" =~ ^[0-9]+$ && "$dev_account" != "0" ]]; then
-        sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
-            "INSERT INTO discord_auth_user (id, username, avatar) \
-             VALUES ($dev_account, 'dev', '') ON CONFLICT (id) DO NOTHING" >/dev/null
-        log "seeded dev-login account ${dev_account} in ${db}"
+        # Name discriminator: slot databases can predate migration
+        # 20260919000000, which gave the NOT NULL column its default, and
+        # PostgreSQL checks NOT NULL before ON CONFLICT. A failed seed only
+        # breaks dev login, so it warns instead of aborting the setup.
+        if sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" -c \
+            "INSERT INTO discord_auth_user (id, username, discriminator, avatar) \
+             VALUES ($dev_account, 'dev', '0', '') ON CONFLICT (id) DO NOTHING" >/dev/null; then
+            log "seeded dev-login account ${dev_account} in ${db}"
+        else
+            log "warning: could not seed dev-login account ${dev_account} in ${db}; dev login fails until a later run seeds it"
+        fi
     else
         log "warning: DEV_ACCOUNT_ID missing or invalid in ${ENV_FILE}; dev login will fail"
     fi
