@@ -227,14 +227,20 @@ export default function Clips() {
 	const guild =
 		authData?.guilds?.find((g) => g.id === guildId) ?? guildSelected;
 	const { asRoleArg } = useAsRole();
-	const { data, isError, error, refetch, isLoading, isUninitialized } =
-		useGetClipsQuery(
-			{ guild_id: guildId, ...asRoleArg },
-			{
-				skip: !guildId,
-				refetchOnMountOrArgChange: true,
-			},
-		);
+	const {
+		currentData: data,
+		isError,
+		error,
+		refetch,
+		isLoading,
+		isFetching,
+		isUninitialized,
+	} = useGetClipsQuery(
+		{ guild_id: guildId, ...asRoleArg },
+		{
+			skip: !guildId,
+		},
+	);
 
 	// A failed or in-flight request must not read as "no clips": rendering the
 	// same empty page for all three made a broken API look like an empty library.
@@ -251,7 +257,7 @@ export default function Clips() {
 		);
 	}
 
-	if (isLoading || isUninitialized) {
+	if (isLoading || isUninitialized || (!data && isFetching)) {
 		return (
 			<div className="p-3 min-[900px]:p-6">
 				<ViewAsRoleBanner guildId={guildId} />

@@ -31,7 +31,14 @@ export function Stamps() {
 	const guildName = guild?.id === guildId ? guild.name : undefined;
 	const { asRoleArg } = useAsRole();
 
-	const { data, isLoading, isError, error, refetch } = useGetStampsQuery(
+	const {
+		currentData: data,
+		isLoading,
+		isFetching,
+		isError,
+		error,
+		refetch,
+	} = useGetStampsQuery(
 		{ guild_id: guildId, ...asRoleArg },
 		{
 			skip: !guildId,
@@ -48,7 +55,7 @@ export function Stamps() {
 		);
 	}
 
-	if (isLoading) {
+	if (isLoading || (!data && isFetching)) {
 		return (
 			<div className="p-6">
 				<p className="leading-6">Loading stamps…</p>

@@ -1,51 +1,52 @@
-import React, { Suspense } from "react";
 import { Navigate, Route } from "react-router-dom";
 import { GuildAccessBoundary } from "../layouts/GuildAccessBoundary";
 import { LayoutsWithNavbar } from "../layouts/LayoutsWithNavbar";
 import { ProtectedLayout } from "../layouts/ProtectedLayout";
-import { AudioRouteError } from "./AudioRouteError";
-import { audioRouteLoader, shouldRevalidateAudio } from "./audioRouteLoader";
+import { audioRouteLoader } from "./audioRouteLoader";
+import { shouldRevalidateGuildData } from "./guildRouteLoader";
+import {
+	clipsRouteLoader,
+	cooldownsRouteLoader,
+	membersRouteLoader,
+	stampsRouteLoader,
+	voiceSettingsRouteLoader,
+} from "./pageRouteLoaders";
+import { RouteLoadError } from "./RouteLoadError";
 import { RouteState } from "./RouteState";
 
-const Clips = React.lazy(() => import("../features/clips"));
-const ClipEditor = React.lazy(() => import("../features/clip-editor"));
+const loadClipsRoute = () =>
+	import("../features/clips").then((m) => ({ Component: m.default }));
+const loadClipEditorRoute = () =>
+	import("../features/clip-editor").then((m) => ({ Component: m.default }));
 const loadAudioRoute = () =>
 	import("../features/audio-dashboard/YearSelection").then((m) => ({
 		Component: m.YearSelection,
 	}));
-const Stamps = React.lazy(() =>
-	import("../features/stamps").then((m) => ({ default: m.Stamps })),
-);
-const GuildAdminCooldowns = React.lazy(() =>
+const loadStampsRoute = () =>
+	import("../features/stamps").then((m) => ({ Component: m.Stamps }));
+const loadCooldownsRoute = () =>
 	import("../features/admin-cooldowns").then((m) => ({
-		default: m.GuildAdminCooldowns,
-	})),
-);
-const GuildVoiceSettingsPage = React.lazy(() =>
+		Component: m.GuildAdminCooldowns,
+	}));
+const loadVoiceSettingsRoute = () =>
 	import("../features/admin-voice-settings").then((m) => ({
-		default: m.GuildVoiceSettingsPage,
-	})),
-);
-const GuildMembers = React.lazy(() =>
+		Component: m.GuildVoiceSettingsPage,
+	}));
+const loadMembersRoute = () =>
 	import("../features/members").then((m) => ({
-		default: m.GuildMembers,
-	})),
-);
-
-const lazyRoute = (node: React.ReactNode) => (
-	<Suspense fallback={<div className="p-4">Loading Route</div>}>
-		{node}
-	</Suspense>
-);
+		Component: m.GuildMembers,
+	}));
 
 // The route tree is a plain JSX element so the data router in App.tsx can
 // consume it directly: createRoutesFromElements inspects Route/Fragment
 // elements and never renders components.
+// Keep error boundaries above lazy routes so failed imports can render recovery UI.
 export const appRoutesElement = (
 	<>
 		<Route
 			path="/"
 			element={<LayoutsWithNavbar />}
+			errorElement={<RouteLoadError />}
 			hydrateFallbackElement={
 				<p className="p-4" role="status">
 					Loading Route
@@ -54,9 +55,15 @@ export const appRoutesElement = (
 		>
 			<Route index element={<ProtectedLayout />} />
 
-			<Route path="/stamps" element={lazyRoute(<Stamps />)} />
-			<Route path="/stamps/:guild_id" element={<GuildAccessBoundary />}>
-				<Route index element={lazyRoute(<Stamps />)} />
+			<Route path="/stamps" lazy={loadStampsRoute} />
+			<Route
+				path="/stamps/:guild_id"
+				element={<GuildAccessBoundary />}
+				loader={stampsRouteLoader}
+				shouldRevalidate={shouldRevalidateGuildData}
+				errorElement={<RouteLoadError page="stamps page" />}
+			>
+				<Route index lazy={loadStampsRoute} />
 			</Route>
 
 			<Route path="/dashboard">
@@ -66,8 +73,8 @@ export const appRoutesElement = (
 					<Route
 						path="audio"
 						loader={audioRouteLoader}
-						shouldRevalidate={shouldRevalidateAudio}
-						errorElement={<AudioRouteError />}
+						shouldRevalidate={shouldRevalidateGuildData}
+						errorElement={<RouteLoadError page="audio page" />}
 					>
 						<Route index lazy={loadAudioRoute} />
 						<Route path="session/:session_id" lazy={loadAudioRoute} />
@@ -76,22 +83,41 @@ export const appRoutesElement = (
 							lazy={loadAudioRoute}
 						/>
 					</Route>
-					<Route path="clips">
-						<Route path="" element={lazyRoute(<Clips />)} />
-						<Route path="editor" element={lazyRoute(<ClipEditor />)} />
-						<Route path=":file_name" element={lazyRoute(<Clips />)} />
+					<Route
+						path="clips"
+						loader={clipsRouteLoader}
+						shouldRevalidate={shouldRevalidateGuildData}
+						errorElement={<RouteLoadError page="clips page" />}
+					>
+						<Route index lazy={loadClipsRoute} />
+						<Route path="editor" lazy={loadClipEditorRoute} />
+						<Route path=":file_name" lazy={loadClipsRoute} />
 					</Route>
-					<Route path="admin">
+					<Route
+						path="admin"
+						errorElement={<RouteLoadError page="settings page" />}
+					>
 						<Route
 							path="cooldowns"
-							element={lazyRoute(<GuildAdminCooldowns />)}
+							lazy={loadCooldownsRoute}
+							loader={cooldownsRouteLoader}
+							shouldRevalidate={shouldRevalidateGuildData}
 						/>
 						<Route
 							path="voice-settings"
-							element={lazyRoute(<GuildVoiceSettingsPage />)}
+							lazy={loadVoiceSettingsRoute}
+							loader={voiceSettingsRouteLoader}
+							shouldRevalidate={shouldRevalidateGuildData}
 						/>
 					</Route>
-					<Route path="members" element={lazyRoute(<GuildMembers />)} />
+					<Route
+						path="members"
+						loader={membersRouteLoader}
+						shouldRevalidate={shouldRevalidateGuildData}
+						errorElement={<RouteLoadError page="members page" />}
+					>
+						<Route index lazy={loadMembersRoute} />
+					</Route>
 				</Route>
 			</Route>
 			<Route path="*" element={<RouteState kind="not-found" />} />

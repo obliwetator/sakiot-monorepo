@@ -54,7 +54,7 @@ export function ClipEditor(props: { guildId: string }) {
 		| null
 	>(null);
 	const { asRoleArg } = useAsRole();
-	const { data: clips, isError: clipsError } = useGetClipsQuery(
+	const { currentData: clips, isError: clipsError } = useGetClipsQuery(
 		{ guild_id: props.guildId, ...asRoleArg },
 		{ skip: !props.guildId },
 	);
