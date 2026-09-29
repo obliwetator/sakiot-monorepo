@@ -266,13 +266,52 @@ per-slot values; a role containing either would turn into a nonexistent
 per-slot role.
 
 The VPS moved to this layout on 2026-09-29, including production, which
-until then connected as the `postgres` superuser. PostgreSQL accepts TCP only
-from localhost and from Grafana's Docker network (`172.18.0.0/16`, for
-`sakiot_rouvas` only), and Grafana reads through the read-only `grafana_ro`
+until then connected as the `postgres` superuser. PostgreSQL listens on
+localhost and on the observability Docker network's gateway (`172.18.0.1`,
+`conf.d/listen.conf`), and `pg_hba.conf` admits that network for
+`sakiot_rouvas` only, where Grafana reads through the read-only `grafana_ro`
 role. To rotate a role's password, `ALTER ROLE <role> PASSWORD '...'` as
 `postgres`, update `DATABASE_URL` and `BACKUP_DATABASE_URL` (plus `PGUSER` and
 `PGPASSWORD`, if set) in the env file, and restart the instance's web server
 and bot.
+
+### Sandbox denials
+
+systemd builds each runtime unit's sandbox when it starts the process; from
+then on the kernel enforces it, and nothing logs a denial as such. The
+forbidden call just fails, and the service logs the error like any other.
+Check the journal for the error texts:
+
+```sh
+journalctl -u 'sakiot-*' --since -1d | grep -iE 'denied|not permitted|EACCES|read-only file system'
+```
+
+| Error in the log | Cause |
+|---|---|
+| `Read-only file system (os error 30)` | A write outside the data directory (`ProtectSystem=strict`). |
+| `Permission denied (os error 13)` | A file of another user, such as another environment's env file or data, or anything under `/home` (`ProtectHome`). |
+| `Operation not permitted (os error 1)` | A system call outside `SystemCallFilter=@system-service`, or a privileged operation (no capabilities). |
+| `Address family not supported by protocol` | A socket type outside `RestrictAddressFamilies`. |
+| `No such file or directory` for a device | A device outside the minimal `/dev` (`PrivateDevices`). |
+
+PostgreSQL's `permission denied for <object>` also matches the grep, but it is
+a database privilege, not the sandbox. Code paths that run rarely (archiving,
+pruning, crash recovery, unusual ffmpeg inputs) fail only when they first run,
+so check again a day after a unit or path changes.
+
+If the service should be allowed what it tried, change the unit in
+`ops/systemd/`: a writable path goes in `ReadWritePaths=`, or better
+`StateDirectory=`/`CacheDirectory=`, which systemd creates for the unit's
+user. Otherwise fix the code. To reproduce outside the service, run the
+command in a throwaway sandbox with the same settings, adding `strace -f` to
+see the failing call, and list a unit's effective settings with
+`systemd-analyze security`:
+
+```sh
+sudo systemd-run --pty -p User=sakiot -p ProtectSystem=strict \
+  -p ReadWritePaths=/var/lib/sakiot/data <command>
+systemd-analyze security sakiot-web.service
+```
 
 ## Release
 
