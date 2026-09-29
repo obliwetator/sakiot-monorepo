@@ -248,8 +248,9 @@ is separated per environment:
 - **Data and releases.** Each runtime user owns its data directory. The setgid
   bit keeps new files in its group, which `sakiot` joins to deploy and import
   fixtures, and staging and preview units set `UMask=0007` for the same
-  reason. Releases are reachable through the group of `/srv/<instance>/releases`
-  and `current`.
+  reason. Production's units set it too, so nothing the other users can read
+  appears in `/var/lib/sakiot/data`. Releases are reachable through the group
+  of `/srv/<instance>/releases` and `current`.
 - **Database.** Each role owns its database, and `CONNECT` is revoked from
   `PUBLIC`, so no role can open another environment's database.
 - **Sandbox.** Every runtime unit uses `ProtectSystem=strict`, with the data

@@ -19,6 +19,9 @@ BEGIN
     EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), new_owner);
     EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
     EXECUTE format('GRANT USAGE, CREATE ON SCHEMA public TO %I', new_owner);
+    -- Databases created before PostgreSQL 15 still let every role create in
+    -- public, which would let a read-only role such as grafana_ro write.
+    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
     FOR object IN
         SELECT tablename FROM pg_tables

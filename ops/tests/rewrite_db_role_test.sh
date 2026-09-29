@@ -49,6 +49,27 @@ if "${rewrite}" "${work_dir}/empty.env" sakiot_staging pass >/dev/null 2>&1; the
 fi
 [[ "$(cat "${work_dir}/empty.env")" == "PORT=1" ]] || fail "a failed rewrite modified the file"
 
+# Values sourced by the backup scripts may be quoted, and the libpq defaults
+# follow the role.
+quoted_env="${work_dir}/production.env"
+cat >"${quoted_env}" <<'ENV'
+DATABASE_URL=postgres://postgres:old-secret@localhost/sakiot_rouvas
+BACKUP_DATABASE_URL="postgres://postgres:old-secret@localhost/sakiot_rouvas"
+PGUSER="postgres"
+PGPASSWORD=old-secret
+PGHOST=localhost
+ENV
+"${rewrite}" "${quoted_env}" sakiot N3w-pass >/dev/null
+expected="$(cat <<'ENV'
+DATABASE_URL=postgres://sakiot:N3w-pass@localhost/sakiot_rouvas
+BACKUP_DATABASE_URL="postgres://sakiot:N3w-pass@localhost/sakiot_rouvas"
+PGUSER="sakiot"
+PGPASSWORD=N3w-pass
+PGHOST=localhost
+ENV
+)"
+[[ "$(cat "${quoted_env}")" == "${expected}" ]] || fail "unexpected quoted rewrite: $(cat "${quoted_env}")"
+
 # A release copy is rewritten in place, leaving no copy of the old credentials.
 release_env="${work_dir}/service.env"
 printf 'RELEASE_ID=r1\nDATABASE_URL=postgres://sakiot:old-secret@127.0.0.1/sakiot_preview_zz\n' >"${release_env}"

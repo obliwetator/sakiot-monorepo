@@ -5,8 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# UMask keeps production's data out of reach of the staging and preview
+# users, like theirs is from each other.
 User=sakiot
 Group=sakiot
+UMask=0007
 WorkingDirectory=/var/lib/sakiot/data
 EnvironmentFile=/etc/sakiot/production.env
 EnvironmentFile=/srv/sakiot/current/web/service.env

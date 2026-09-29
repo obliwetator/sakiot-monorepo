@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Points an env file's DATABASE_URL and BACKUP_DATABASE_URL at another
-# PostgreSQL role, keeping host, database, and query. The previous file is kept
+# PostgreSQL role, keeping host, database, and query, and quoted or not. The
+# libpq defaults PGUSER and PGPASSWORD, if set, follow. The previous file is kept
 # next to it as <file>.bak-<timestamp>, with the same owner and mode, unless
 # --no-backup is given (for copies whose old credentials should not linger).
 #
@@ -28,14 +29,24 @@ password="$3"
 
 rewritten="$(mktemp "${env_file}.XXXXXX")"
 trap 'rm -f "${rewritten}"' EXIT
-awk -v credentials="${role}:${password}@" '
-  /^(BACKUP_)?DATABASE_URL=postgres(ql)?:\/\/[^\/@]*@/ {
+awk -v role="${role}" -v password="${password}" '
+  /^(BACKUP_)?DATABASE_URL=["\047]?postgres(ql)?:\/\/[^\/@]*@/ {
     prefix = $0
     sub(/:\/\/.*/, "://", prefix)
     rest = $0
     sub(/^[^:]*:\/\/[^\/@]*@/, "", rest)
-    print prefix credentials rest
+    print prefix role ":" password "@" rest
     changed++
+    next
+  }
+  # Keep the quote style: a trailing quote closes the leading one.
+  /^PG(USER|PASSWORD)=/ {
+    name = $0
+    sub(/=.*/, "", name)
+    value = substr($0, length(name) + 2)
+    quote = substr(value, 1, 1)
+    if (quote != "\"" && quote != "\047") quote = ""
+    print name "=" quote (name == "PGUSER" ? role : password) quote
     next
   }
   { print }
