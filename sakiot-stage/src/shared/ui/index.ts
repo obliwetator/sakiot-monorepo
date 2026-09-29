@@ -25,7 +25,7 @@ export {
 	type TextProps,
 } from "./Layout";
 export { Link } from "./Link";
-export { Menu, MenuItem, MenuTrigger, Popover } from "./Menu";
+export { Menu, MenuItem, MenuSection, MenuTrigger, Popover } from "./Menu";
 export {
 	Notice,
 	type NoticeAnnouncement,

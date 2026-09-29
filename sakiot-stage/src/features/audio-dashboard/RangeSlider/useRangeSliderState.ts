@@ -9,10 +9,13 @@ const ArrowKeySkip = 5;
 const CtrlArrowKeySkip = 30;
 const MinDistance = 1;
 
+/** The selected range in seconds: playhead start and end. */
+export type StartEnd = [start: number, end: number];
+
 export interface RangeSliderState {
 	playing: boolean;
-	startEnd: number[];
-	setStartEnd: Dispatch<SetStateAction<number[]>>;
+	startEnd: StartEnd;
+	setStartEnd: Dispatch<SetStateAction<StartEnd>>;
 	durationSec: number;
 	handleChange: (values: number[]) => void;
 	togglePlay: () => void;
@@ -34,7 +37,7 @@ export function useRangeSliderState(args: {
 				: 0;
 	const [actualDuration, setActualDuration] = useState(initialDuration);
 	const [playing, setPlaying] = useState(false);
-	const [startEnd, setStartEnd] = useState<number[]>([
+	const [startEnd, setStartEnd] = useState<StartEnd>([
 		args.audioRef.currentTime || 0,
 		actualDuration,
 	]);
@@ -182,17 +185,19 @@ export function useRangeSliderState(args: {
 	}, [togglePlay]);
 
 	const handleChange = (newValue: number[]) => {
-		if (newValue[0] !== startEnd[0]) {
+		const [nextStart, nextEnd] = newValue;
+		if (nextStart === undefined || nextEnd === undefined) return;
+		if (nextStart !== startEnd[0]) {
 			const newStart = Math.max(
 				0,
-				Math.min(newValue[0], startEnd[1] - MinDistance),
+				Math.min(nextStart, startEnd[1] - MinDistance),
 			);
 			args.audioRef.currentTime = newStart;
 			setStartEnd([newStart, startEnd[1]]);
 		} else {
 			const newEnd = Math.min(
 				actualDuration,
-				Math.max(newValue[1], startEnd[0] + MinDistance),
+				Math.max(nextEnd, startEnd[0] + MinDistance),
 			);
 			const newStart = Math.min(startEnd[0], Math.max(0, newEnd - MinDistance));
 			setStartEnd([newStart, newEnd]);

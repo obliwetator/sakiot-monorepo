@@ -52,7 +52,7 @@ test("prompts for the dev-login secret and sends it as X-Dev-Login-Secret", asyn
 
 	await expect.poll(() => devLoginHeaders.length).toBeGreaterThan(0);
 	expect(dialogs).toContain("prompt");
-	expect(devLoginHeaders[0]["x-dev-login-secret"]).toBe("prompted-secret");
+	expect(devLoginHeaders[0]?.["x-dev-login-secret"]).toBe("prompted-secret");
 });
 
 test("a dismissed dev-login prompt sends no request", async ({

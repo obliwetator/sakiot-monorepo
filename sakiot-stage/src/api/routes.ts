@@ -66,6 +66,7 @@ export const API_ROUTES = {
 	roleChannels: "/api/admin/guilds/{guild_id}/roles/{role_id}/channels",
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
+	recordingOptOut: "/api/users/current/guilds/{guild_id}/recording-opt-out",
 } satisfies Record<string, keyof paths & string>;
 
 export type ApiRoute = (typeof API_ROUTES)[keyof typeof API_ROUTES];

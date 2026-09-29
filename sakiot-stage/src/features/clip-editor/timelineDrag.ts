@@ -241,11 +241,11 @@ export function groupTrackCollision(
 		member,
 		track: Math.max(0, member.originTrack + trackDelta),
 	}));
-	for (let i = 0; i < targets.length; i += 1) {
-		for (let j = i + 1; j < targets.length; j += 1) {
-			if (targets[i].track !== targets[j].track) continue;
-			const a = targets[i].member;
-			const b = targets[j].member;
+	for (const [index, first] of targets.entries()) {
+		for (const second of targets.slice(index + 1)) {
+			if (first.track !== second.track) continue;
+			const a = first.member;
+			const b = second.member;
 			if (
 				a.originStart < b.originStart + b.duration &&
 				b.originStart < a.originStart + a.duration

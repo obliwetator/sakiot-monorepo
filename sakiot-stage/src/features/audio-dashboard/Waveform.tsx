@@ -116,8 +116,8 @@ function WaveFormButton(props: {
 				const { min, max } = decodeWaveformPeaks(base64Data);
 				if (min.length === 0) return;
 				const peaks: number[] = [];
-				for (let i = 0; i < min.length; i++) {
-					peaks.push(min[i], max[i]);
+				for (const [index, low] of min.entries()) {
+					peaks.push(low, max[index] ?? 0);
 				}
 
 				const duration = (length * samplesPerPixel) / sampleRate;
@@ -143,12 +143,9 @@ function WaveFormButton(props: {
 
 	// Update waveform position based on startEnd
 	useEffect(() => {
-		if (wavesurfer && props.startEnd && props.startEnd.length > 0) {
-			const duration = wavesurfer.getDuration();
-			if (duration > 0) {
-				const time = props.startEnd[0];
-				wavesurfer.setTime(time);
-			}
+		const time = props.startEnd?.[0];
+		if (wavesurfer && time !== undefined && wavesurfer.getDuration() > 0) {
+			wavesurfer.setTime(time);
 		}
 	}, [props.startEnd, wavesurfer]);
 

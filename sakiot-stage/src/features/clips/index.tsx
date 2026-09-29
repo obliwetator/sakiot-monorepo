@@ -143,7 +143,7 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 	const [deleteClip, deleteState] = useDeleteClipMutation();
 	const [error, setError] = useState<string | null>(null);
 
-	const handleYes = async () => {
+	const handleDelete = async () => {
 		if (!params.guild_id) {
 			setOpen(false);
 			return;
@@ -200,16 +200,15 @@ function AlertDialog(props: { clip_id: string; canDelete: boolean }) {
 					)}
 				</div>
 				<div className="flex justify-end gap-2 border-t border-ui-border px-5 py-3">
-					<Button variant="primary" onPress={handleClose}>
-						No
+					<Button variant="primary" autoFocus onPress={handleClose}>
+						Cancel
 					</Button>
 					<Button
-						variant="primary"
-						autoFocus
+						variant="danger"
 						isDisabled={deleteState.isLoading}
-						onPress={handleYes}
+						onPress={handleDelete}
 					>
-						{error ? "Try again" : "YEP"}
+						{error ? "Try again" : "Delete clip"}
 					</Button>
 				</div>
 			</Modal>

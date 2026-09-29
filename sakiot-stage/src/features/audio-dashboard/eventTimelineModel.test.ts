@@ -23,9 +23,9 @@ describe("buildEventTimelineModel", () => {
 
 		expect(model.totalEvents).toBe(2);
 		expect(model.lanes).toHaveLength(1);
-		expect(model.lanes[0].id).toBe("mute");
-		expect(model.lanes[0].points).toEqual([]);
-		expect(model.lanes[0].intervals).toMatchObject([
+		expect(model.lanes[0]?.id).toBe("mute");
+		expect(model.lanes[0]?.points).toEqual([]);
+		expect(model.lanes[0]?.intervals).toMatchObject([
 			{
 				startMs: 60_000,
 				endMs: 180_000,
@@ -125,10 +125,10 @@ describe("buildEventTimelineModel", () => {
 			"connection",
 			"other",
 		]);
-		expect(model.lanes[0].intervals).toMatchObject([
+		expect(model.lanes[0]?.intervals).toMatchObject([
 			{ startMs: 1_000, endMs: 2_000, label: "Network pause" },
 		]);
-		expect(model.lanes[2].points[0].color).toBe("#ef4444");
+		expect(model.lanes[2]?.points[0]?.color).toBe("#ef4444");
 	});
 
 	it("drops events outside playable timeline", () => {
@@ -142,7 +142,7 @@ describe("buildEventTimelineModel", () => {
 		);
 
 		expect(model.totalEvents).toBe(1);
-		expect(model.lanes[0].points).toHaveLength(1);
+		expect(model.lanes[0]?.points).toHaveLength(1);
 	});
 });
 

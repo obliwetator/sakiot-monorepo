@@ -38,9 +38,10 @@ export function parseSessionTimecode(
 	if (parts.some((part) => !/^\d+$/.test(part))) return null;
 
 	const values = parts.map(Number);
-	const hours = showHours ? values[0] : 0;
-	const minutes = showHours ? values[1] : values[0];
-	const seconds = showHours ? values[2] : values[1];
+	const [hours, minutes, seconds] = showHours ? values : [0, ...values];
+	if (hours === undefined || minutes === undefined || seconds === undefined) {
+		return null;
+	}
 	if (minutes >= 60 || seconds >= 60) return null;
 	const totalSeconds = hours * 3_600 + minutes * 60 + seconds;
 	return totalSeconds <= durationSeconds ? totalSeconds : null;

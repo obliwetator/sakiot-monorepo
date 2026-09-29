@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { fulfillRecordingOptOut } from "./fixtures";
 
 export const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -67,6 +68,7 @@ export async function mockClipEditorApi(page: Page) {
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
+		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
 
 		const fulfillJson = async (body: unknown, status = 200) => {
 			await route.fulfill({

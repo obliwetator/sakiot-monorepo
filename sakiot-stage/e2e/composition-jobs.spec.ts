@@ -105,7 +105,7 @@ test("a lost submission response retries the same request after reload", async (
 	consoleAudit.allow(
 		/net::ERR_FAILED.*\/api\/audio\/clips\/guild-123\/compose/,
 	);
-	const requests: { key: string; body: unknown }[] = [];
+	const requests: { key: string | undefined; body: unknown }[] = [];
 	await page.route(
 		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose`,
 		async (route) => {
@@ -154,10 +154,11 @@ test("a lost submission response retries the same request after reload", async (
 		(key) => JSON.parse(localStorage.getItem(key) ?? "null"),
 		storageKey,
 	);
-	expect(kept).toMatchObject({ key: requests[0].key, jobId: null });
+	expect(requests).toHaveLength(1);
+	expect(kept).toMatchObject({ key: requests[0]?.key, jobId: null });
 	await page.reload();
 	await expect.poll(() => requests.length).toBe(2);
-	expect(requests[0].key).toBeTruthy();
+	expect(requests[0]?.key).toBeTruthy();
 	expect(requests[1]).toEqual(requests[0]);
 	await expect
 		.poll(() => page.evaluate((key) => localStorage.getItem(key), storageKey))
@@ -206,7 +207,7 @@ async function routeCompose(
 	page: import("@playwright/test").Page,
 	replies: { status: number; json: unknown }[],
 ) {
-	const requests: { key: string; body: unknown }[] = [];
+	const requests: { key: string | undefined; body: unknown }[] = [];
 	await page.route(
 		`${API_ORIGIN}/api/audio/clips/${GUILD_ID}/compose`,
 		async (route) => {
@@ -276,7 +277,7 @@ test("a definite rejection explains itself and keeps the edit", async ({
 	).toBeVisible();
 	expect(requests).toHaveLength(2);
 	// A rejected request may be replaced by a fresh one.
-	expect(requests[1].key).not.toBe(requests[0].key);
+	expect(requests[1]?.key).not.toBe(requests[0]?.key);
 });
 
 test("an unclassified server fault keeps the request for an identical resend", async ({

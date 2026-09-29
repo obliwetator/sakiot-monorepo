@@ -808,11 +808,11 @@ export function resizeSelectedSegments(
 		const group = next.segments
 			.filter((s) => ids.includes(s.id) && s.track === track)
 			.sort((a, b) => a.timelineStart - b.timelineStart);
-		if (group.length < 2) continue;
-		let previousStart = group[0].timelineStart;
-		for (let i = 1; i < group.length; i += 1) {
-			const current = group[i];
-			const previous = group[i - 1];
+		const [head, ...tail] = group;
+		if (head === undefined || tail.length === 0) continue;
+		let previous = head;
+		let previousStart = head.timelineStart;
+		for (const current of tail) {
 			const originalStart = current.timelineStart;
 			const previousOldEnd = oldEnds.get(previous.id) ?? 0;
 			const previousNewEnd = previousStart + segmentDuration(previous);
@@ -824,6 +824,7 @@ export function resizeSelectedSegments(
 				next = updateSegment(next, current.id, { timelineStart: start });
 			}
 			previousStart = start;
+			previous = current;
 		}
 	}
 

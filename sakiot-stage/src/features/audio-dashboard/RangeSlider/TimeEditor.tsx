@@ -1,13 +1,14 @@
 import type React from "react";
 import { useState } from "react";
 import { TextField } from "../../../shared/ui";
+import type { StartEnd } from "./useRangeSliderState";
 
 type Edge = "start" | "end";
 
 function TimeEditor(props: {
 	edge: Edge;
-	startEnd: number[];
-	setStartEnd: React.Dispatch<React.SetStateAction<number[]>>;
+	startEnd: StartEnd;
+	setStartEnd: React.Dispatch<React.SetStateAction<StartEnd>>;
 	audioRef: HTMLAudioElement;
 	durationSec: number;
 	onPinEnd?: () => void;
@@ -70,11 +71,15 @@ function TimeEditor(props: {
 					isInvalid={isError}
 					description={isError ? "Out of range" : ""}
 					onChange={(value) => {
-						const raw = value;
-						if (
-							f.clampHour &&
-							(raw as unknown as number) * 3600 > props.durationSec
-						) {
+						if (value === "") return;
+						const nextValue = Number.parseInt(value, 10);
+						// A number input can still hand over "-" or "e"; NaN or a
+						// negative field would corrupt the selected range.
+						if (!Number.isFinite(nextValue) || nextValue < 0) {
+							setIsError(true);
+							return;
+						}
+						if (f.clampHour && nextValue * 3600 > props.durationSec) {
 							setIsError(true);
 							props.audioRef.currentTime = props.durationSec;
 							props.setStartEnd([
@@ -83,13 +88,11 @@ function TimeEditor(props: {
 							]);
 							return;
 						}
-						if (typeof raw !== "string" || raw === "") return;
-						setIsError(false);
-						const nextValue = parseInt(raw, 10);
 						if (nextValue > 60) {
 							setIsError(true);
 							return;
 						}
+						setIsError(false);
 						setNewTime(nextValue, f.value, f.multiplier);
 					}}
 					inputMode={"numeric"}
@@ -101,8 +104,8 @@ function TimeEditor(props: {
 }
 
 export function TimeEditors(props: {
-	startEnd: number[];
-	setStartEnd: React.Dispatch<React.SetStateAction<number[]>>;
+	startEnd: StartEnd;
+	setStartEnd: React.Dispatch<React.SetStateAction<StartEnd>>;
 	audioRef: HTMLAudioElement;
 	durationSec: number;
 	onPinEnd?: () => void;

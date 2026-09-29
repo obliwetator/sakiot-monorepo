@@ -65,7 +65,8 @@ export interface TimelinePointCluster {
 	offsetMs: number;
 	startMs: number;
 	endMs: number;
-	points: TimelinePoint[];
+	/** Never empty: a cluster exists because it holds at least one point. */
+	points: [TimelinePoint, ...TimelinePoint[]];
 }
 
 type StateTransition = {
@@ -598,9 +599,9 @@ export function clusterTimelinePoints(
 		let centerMs = 0;
 
 		const flush = () => {
-			if (current.length === 0) return;
-			const first = current[0];
-			const last = current[current.length - 1];
+			const [first, ...rest] = current;
+			if (first === undefined) return;
+			const last = rest.at(-1) ?? first;
 			clusters.push({
 				id: current.map((point) => point.id).join("|"),
 				laneId: first.laneId,
@@ -611,7 +612,7 @@ export function clusterTimelinePoints(
 				),
 				startMs: first.offsetMs,
 				endMs: last.offsetMs,
-				points: current,
+				points: [first, ...rest],
 			});
 			current = [];
 			centerMs = 0;

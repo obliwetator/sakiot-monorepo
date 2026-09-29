@@ -3,13 +3,14 @@ import type { AudioParams } from "../../../Constants";
 import { formatDuration } from "../../../utils/formatTime";
 import { PlaybackSpeedSlider } from "./PlaybackSpeedSlider";
 import { TimeEditors } from "./TimeEditor";
+import type { StartEnd } from "./useRangeSliderState";
 import { VolumeSlider } from "./VolumeSlider";
 
 export function RangeDetails(props: {
 	audioRef: HTMLAudioElement;
 	params: Readonly<Partial<Record<AudioParams, string>>>;
-	startEnd: number[];
-	setStartEnd: Dispatch<SetStateAction<number[]>>;
+	startEnd: StartEnd;
+	setStartEnd: Dispatch<SetStateAction<StartEnd>>;
 	durationSec: number;
 	onPinEnd: () => void;
 	recordingStartedAtMs?: number | null;

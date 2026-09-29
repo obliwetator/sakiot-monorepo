@@ -56,8 +56,8 @@ export function historyApply<Edit>(
 export function historyUndo<Edit>(
 	state: HistoryState<Edit>,
 ): HistoryState<Edit> {
-	if (state.past.length === 0) return state;
-	const last = state.past[state.past.length - 1];
+	const last = state.past.at(-1);
+	if (last === undefined) return state;
 	return {
 		...state,
 		past: state.past.slice(0, -1),
@@ -70,8 +70,8 @@ export function historyUndo<Edit>(
 export function historyRedo<Edit>(
 	state: HistoryState<Edit>,
 ): HistoryState<Edit> {
-	if (state.future.length === 0) return state;
 	const [first, ...rest] = state.future;
+	if (first === undefined) return state;
 	return {
 		...state,
 		past: [...state.past, state.present].slice(-HISTORY_LIMIT),

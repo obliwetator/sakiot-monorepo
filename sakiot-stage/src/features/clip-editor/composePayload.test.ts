@@ -107,7 +107,7 @@ describe("serializeEdit", () => {
 			reverse: true,
 		};
 		const payload = serializeEdit(edit(base));
-		expect(payload.segments[0].effects).toEqual({
+		expect(payload.segments[0]?.effects).toEqual({
 			volume_db: -6,
 			pitch_cents: 300,
 			rate: 1.5,
@@ -257,11 +257,8 @@ function segmentPayload() {
 
 describe("deserializeEdit", () => {
 	test("round-trips a serializeEdit payload", () => {
-		const sourceEdit = edit(
-			segment("clip-1", 0, 2.5, 1, 5),
-			segment("clip-2", 1, 8, 0, 3),
-		);
-		sourceEdit.segments[1].effects = {
+		const second = segment("clip-2", 1, 8, 0, 3);
+		second.effects = {
 			...DEFAULT_EFFECTS,
 			volumeDb: -6,
 			tailSeconds: 2,
@@ -279,6 +276,7 @@ describe("deserializeEdit", () => {
 			reverbSeed: 42,
 			reverse: true,
 		};
+		const sourceEdit = edit(segment("clip-1", 0, 2.5, 1, 5), second);
 		sourceEdit.mutedTracks[1] = true;
 		const restored = deserializeEdit(serializeEdit(sourceEdit, "remix"));
 		expect(restored).not.toBeNull();
@@ -294,7 +292,7 @@ describe("deserializeEdit", () => {
 			sourceOut: 5,
 			timelineStart: 2.5,
 		});
-		expect(restored?.segments[1].effects).toMatchObject({
+		expect(restored?.segments[1]?.effects).toMatchObject({
 			volumeDb: -6,
 			tailSeconds: 2,
 			pitchCents: 300,
@@ -311,7 +309,7 @@ describe("deserializeEdit", () => {
 			reverbSeed: 42,
 			reverse: true,
 		});
-		expect(restored?.segments[0].id).not.toBe(restored?.segments[1].id);
+		expect(restored?.segments[0]?.id).not.toBe(restored?.segments[1]?.id);
 	});
 
 	test("round-trips merged units so they re-import grouped", () => {
@@ -321,9 +319,9 @@ describe("deserializeEdit", () => {
 		second.mergeGroup = "group-7";
 		const restored = deserializeEdit(serializeEdit(edit(first, second)));
 		expect(restored).not.toBeNull();
-		expect(restored?.segments[0].mergeGroup).toBe("group-7");
-		expect(restored?.segments[1].mergeGroup).toBe("group-7");
-		expect(restored?.segments[0].id).not.toBe(restored?.segments[1].id);
+		expect(restored?.segments[0]?.mergeGroup).toBe("group-7");
+		expect(restored?.segments[1]?.mergeGroup).toBe("group-7");
+		expect(restored?.segments[0]?.id).not.toBe(restored?.segments[1]?.id);
 	});
 
 	test("compositions without the reverse flag deserialize forward", () => {
@@ -332,7 +330,7 @@ describe("deserializeEdit", () => {
 			master_volume_db: 0,
 		});
 		expect(restored).not.toBeNull();
-		expect(restored?.segments[0].effects.reverse).toBe(false);
+		expect(restored?.segments[0]?.effects.reverse).toBe(false);
 		expect(restored?.mutedTracks).toEqual([false]);
 	});
 
@@ -344,7 +342,7 @@ describe("deserializeEdit", () => {
 			master_volume_db: 0,
 		});
 		expect(restored).not.toBeNull();
-		expect(restored?.segments[0].effects.midDb).toBe(0);
+		expect(restored?.segments[0]?.effects.midDb).toBe(0);
 	});
 
 	test("rejects a non-boolean reverse flag", () => {
@@ -365,8 +363,8 @@ describe("deserializeEdit", () => {
 			segments: [segmentPayload()],
 			master_volume_db: 0,
 		});
-		expect(restored).not.toBeNull();
-		expect(restored?.segments[0].mergeGroup).toBeUndefined();
+		expect(restored?.segments).toHaveLength(1);
+		expect(restored?.segments[0]?.mergeGroup).toBeUndefined();
 	});
 
 	test("rejects an empty merge group id", () => {

@@ -111,7 +111,7 @@ describe("authedFetch", () => {
 		await authedFetch("clips", { method: "POST", body: "x" });
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const [url, init] = fetchMock.mock.calls[0];
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(url).toBe(`${BASE_API_URL}clips`);
 		expect(init?.credentials).toBe("include");
 		expect(new Headers(init?.headers).get("X-CSRF-Token")).toBe("csrf-123");
@@ -126,7 +126,7 @@ describe("authedFetch", () => {
 
 		await authedFetch("/api/audio/waveform/recording");
 
-		expect(fetchMock.mock.calls[0][0]).toBe(
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(
 			`${new URL(BASE_API_URL).origin}/api/audio/waveform/recording`,
 		);
 	});
@@ -157,7 +157,7 @@ describe("authedFetch", () => {
 			`${BASE_API_URL}refresh`,
 			`${BASE_API_URL}protected`,
 		]);
-		const [, refreshInit] = fetchMock.mock.calls[1];
+		const [, refreshInit] = fetchMock.mock.calls[1] ?? [];
 		expect(refreshInit?.method).toBe("POST");
 		expect(new Headers(refreshInit?.headers).get("X-CSRF-Token")).toBe(
 			"csrf-123",

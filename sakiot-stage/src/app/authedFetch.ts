@@ -32,7 +32,7 @@ export function getCsrfToken(): string | null {
 			/(?:^|;\s*)(?:__Host-sakiot-xsrf_token|xsrf_token)=([^;]*)/g,
 		),
 	];
-	return matches.length > 0 ? matches[matches.length - 1][1] : null;
+	return matches.at(-1)?.[1] ?? null;
 }
 
 export function captureCsrfToken(response: Response): void {

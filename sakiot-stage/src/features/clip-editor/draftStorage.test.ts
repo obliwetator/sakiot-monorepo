@@ -58,13 +58,14 @@ describe("draftKey", () => {
 describe("saveDraft / loadDraft", () => {
 	test("round-trips an edit through the composition payload", () => {
 		const store = storage();
-		const source = edit(segment("clip-1", 1, 5));
-		source.mutedTracks[1] = true;
-		source.segments[0].effects = {
+		const clip = segment("clip-1", 1, 5);
+		clip.effects = {
 			...DEFAULT_EFFECTS,
 			rate: 1.5,
 			reverse: true,
 		};
+		const source = edit(clip);
+		source.mutedTracks[1] = true;
 		saveDraft("42", "clip-9", source, store);
 		const restored = loadDraft("42", "clip-9", store);
 		expect(restored).not.toBeNull();
@@ -76,7 +77,7 @@ describe("saveDraft / loadDraft", () => {
 			sourceIn: 1,
 			sourceOut: 5,
 		});
-		expect(restored?.segments[0].effects).toMatchObject({
+		expect(restored?.segments[0]?.effects).toMatchObject({
 			rate: 1.5,
 			reverse: true,
 		});

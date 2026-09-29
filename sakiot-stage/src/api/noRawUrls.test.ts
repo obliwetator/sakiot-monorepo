@@ -24,7 +24,7 @@ export function rawUrlOffenders(source: string): string[] {
 
 		const urlMatch = /url:\s*(["'`])([\s\S]*)$/.exec(line);
 		if (urlMatch) {
-			const [, quote, rest] = urlMatch;
+			const [, quote, rest = ""] = urlMatch;
 			const builtByRegistry =
 				rest.startsWith("apiUrl(") ||
 				(quote === "`" && rest.startsWith("${apiUrl("));
@@ -41,14 +41,14 @@ export function rawUrlOffenders(source: string): string[] {
 		}
 
 		const fetchMatch = /fetchWithBQ\(\s*(["'`])([\s\S]*)$/.exec(line);
-		if (fetchMatch && !fetchMatch[2].startsWith("apiUrl(")) {
+		if (fetchMatch && !fetchMatch[2]?.startsWith("apiUrl(")) {
 			offenders.push(`${index + 1}: ${line.trim()}`);
 		}
 
 		// `authedFetch` takes the relative path directly, so a hand-written
 		// template literal here bypasses the route registry just the same.
 		const authedMatch = /authedFetch\(\s*(["'`])([\s\S]*)$/.exec(line);
-		if (authedMatch && !authedMatch[2].startsWith("apiUrl(")) {
+		if (authedMatch && !authedMatch[2]?.startsWith("apiUrl(")) {
 			offenders.push(`${index + 1}: ${line.trim()}`);
 		}
 		const declaresAuthedFetch =

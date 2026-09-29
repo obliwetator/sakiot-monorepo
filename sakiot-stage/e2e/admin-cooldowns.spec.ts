@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, fulfillRecordingOptOut, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -93,6 +93,7 @@ async function mockApi(
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
+		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
 
 		const fulfillJson = async (body: unknown, status = 200) => {
 			await route.fulfill({
@@ -181,14 +182,13 @@ async function mockApi(
 			return;
 		}
 
-		const overrideMatch = path.match(new RegExp(`^${overridesPath}/([^/]+)$`));
-		if (overrideMatch && method === "PUT") {
+		const userId = path.match(new RegExp(`^${overridesPath}/([^/]+)$`))?.[1];
+		if (userId !== undefined && method === "PUT") {
 			if (state.failNextOverrideSave) {
 				state.failNextOverrideSave = false;
 				await fulfillJson({ detail: "save failed" }, 500);
 				return;
 			}
-			const userId = overrideMatch[1];
 			const body = request.postDataJSON() as { cooldown_seconds: number };
 			const existing = state.overrides.find(
 				(override) => override.user_id === userId,
@@ -205,13 +205,12 @@ async function mockApi(
 			await fulfillJson({});
 			return;
 		}
-		if (overrideMatch && method === "DELETE") {
+		if (userId !== undefined && method === "DELETE") {
 			if (state.failNextDelete) {
 				state.failNextDelete = false;
 				await fulfillJson({ detail: "delete failed" }, 500);
 				return;
 			}
-			const userId = overrideMatch[1];
 			state.overrides = state.overrides.filter(
 				(override) => override.user_id !== userId,
 			);
@@ -250,8 +249,14 @@ test("account menu and server picker support keyboard dismissal and restore focu
 	await expect(
 		page.getByRole("menu", { name: "Open user menu" }),
 	).toBeVisible();
+	// The selected server's recording toggle comes first, then the account
+	// action; opening from the keyboard focuses the first item.
+	await expect(
+		page.getByRole("menuitemcheckbox", {
+			name: "Record my voice in Test Guild",
+		}),
+	).toBeFocused();
 	await expect(page.getByRole("menuitem")).toHaveText(["Log out"]);
-	await expect(page.getByRole("menuitem").first()).toBeFocused();
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("menu")).toHaveCount(0);
 	await expect(trigger).toBeFocused();

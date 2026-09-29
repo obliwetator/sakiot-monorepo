@@ -82,8 +82,8 @@ export function drawSessionWaveform(
 			point < Math.min(pointCount, last);
 			point += 1
 		) {
-			min = Math.min(min, peaks.min[point]);
-			max = Math.max(max, peaks.max[point]);
+			min = Math.min(min, peaks.min[point] ?? 0);
+			max = Math.max(max, peaks.max[point] ?? 0);
 		}
 		context.moveTo(x, center - clampAmplitude(max) * center);
 		context.lineTo(x, center - clampAmplitude(min) * center);

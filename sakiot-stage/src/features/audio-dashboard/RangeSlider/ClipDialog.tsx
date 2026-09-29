@@ -10,10 +10,11 @@ import { downloadFile } from "../../../app/download";
 import type { AudioParams } from "../../../Constants";
 import { BaseDialog } from "../../../shared/BaseDialog";
 import { Button, TextField } from "../../../shared/ui";
+import type { StartEnd } from "./useRangeSliderState";
 
 export function ClipDialog(props: {
 	params: Readonly<Params<AudioParams>>;
-	startEnd: number[];
+	startEnd: StartEnd;
 	disabled: boolean;
 }) {
 	const [open, setOpen] = useState(false);

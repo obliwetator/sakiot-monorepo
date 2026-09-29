@@ -3,6 +3,7 @@ import type { VoiceEvent } from "../../../app/apiSlice";
 import { Slider } from "../../../shared/ui";
 import { formatDuration } from "../../../utils/formatTime";
 import { AudioEventTimeline } from "../AudioEventTimeline";
+import type { StartEnd } from "./useRangeSliderState";
 
 function TinyText({ children }: { children: React.ReactNode }) {
 	return (
@@ -13,8 +14,8 @@ function TinyText({ children }: { children: React.ReactNode }) {
 }
 
 export function DoubleSlider(props: {
-	startEnd: number[];
-	setStartEnd: React.Dispatch<React.SetStateAction<number[]>>;
+	startEnd: StartEnd;
+	setStartEnd: React.Dispatch<React.SetStateAction<StartEnd>>;
 	handleChange: (values: number[]) => void;
 	audioRef: HTMLAudioElement;
 	durationSec: number;

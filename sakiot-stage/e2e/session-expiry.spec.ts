@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, fulfillRecordingOptOut, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const GUILD_ID = "guild-123";
@@ -26,6 +26,7 @@ async function mockExpiredSession(page: Page) {
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
+		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
 		const json = async (body: unknown, status = 200) => {
 			await route.fulfill({
 				status,

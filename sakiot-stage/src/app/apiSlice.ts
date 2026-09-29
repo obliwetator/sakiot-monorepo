@@ -108,6 +108,7 @@ export type SessionManifest = ApiSchema["SessionManifestDto"];
 export type SessionSegment = ApiSchema["SessionSegmentDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 export type GuildRecordingPolicy = ApiSchema["GuildRecordingPolicy"];
+export type RecordingOptOut = ApiSchema["RecordingOptOut"];
 export type RecordingDeletionStatus = ApiSchema["RecordingDeletionStatus"];
 
 export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
@@ -145,6 +146,7 @@ export const apiSlice = createApi({
 		"UserOverrides",
 		"GuildVoiceSettings",
 		"GuildRecordingPolicy",
+		"RecordingOptOut",
 		"Recordings",
 	],
 	endpoints: (builder) => ({
@@ -617,6 +619,25 @@ export const apiSlice = createApi({
 				{ type: "GuildRecordingPolicy", id: guild_id },
 			],
 		}),
+		getRecordingOptOut: builder.query<RecordingOptOut, string>({
+			query: (guild_id) => apiUrl(API_ROUTES.recordingOptOut, { guild_id }),
+			providesTags: (_r, _e, guild_id) => [
+				{ type: "RecordingOptOut", id: guild_id },
+			],
+		}),
+		setRecordingOptOut: builder.mutation<
+			RecordingOptOut,
+			{ guild_id: string; opted_out: boolean }
+		>({
+			query: ({ guild_id, opted_out }) => ({
+				url: apiUrl(API_ROUTES.recordingOptOut, { guild_id }),
+				method: "PUT",
+				body: { opted_out },
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				{ type: "RecordingOptOut", id: guild_id },
+			],
+		}),
 		deleteRecording: builder.mutation<
 			RecordingDeletionStatus,
 			{ guild_id: string; recording_session_id: string }
@@ -725,6 +746,8 @@ export const {
 	useDeleteGuildVoiceSettingsMutation,
 	useGetGuildRecordingPolicyQuery,
 	useSetGuildRecordingPolicyMutation,
+	useGetRecordingOptOutQuery,
+	useSetRecordingOptOutMutation,
 	useDeleteRecordingMutation,
 	useGetRecordingDeletionQuery,
 	useGetGuildRolesQuery,

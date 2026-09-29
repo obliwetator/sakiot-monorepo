@@ -19,8 +19,9 @@ export function roleSwatchBackground(
 	role: Pick<GuildRole, "color" | "color_secondary" | "color_tertiary">,
 ): string {
 	const colors = roleHexColors(role);
-	if (colors.length === 0) return "var(--color-muted)";
-	if (colors.length === 1) return colors[0];
+	const [only, ...others] = colors;
+	if (only === undefined) return "var(--color-muted)";
+	if (others.length === 0) return only;
 	return `linear-gradient(90deg, ${colors.join(", ")})`;
 }
 

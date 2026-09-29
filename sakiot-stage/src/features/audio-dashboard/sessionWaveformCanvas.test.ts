@@ -23,7 +23,7 @@ function canvasContext(): WaveformCanvasContext {
 function drawnColumns(context: WaveformCanvasContext): [number, number][] {
 	const tops = (context.moveTo as ReturnType<typeof mock>).mock.calls;
 	const bottoms = (context.lineTo as ReturnType<typeof mock>).mock.calls;
-	return tops.map((top, index) => [top[1], bottoms[index][1]]);
+	return tops.map((top, index) => [top[1], bottoms[index]?.[1]]);
 }
 
 describe("drawSessionWaveform", () => {
