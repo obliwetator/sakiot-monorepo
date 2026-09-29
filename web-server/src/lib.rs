@@ -17,6 +17,7 @@ pub mod openapi;
 pub mod permissions;
 pub mod proto;
 pub mod recording_deletion;
+pub mod recording_opt_out;
 pub mod security_headers;
 pub mod snowflake_serde;
 pub mod stamps;

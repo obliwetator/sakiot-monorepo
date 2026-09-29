@@ -833,6 +833,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/users/current/guilds/{guild_id}/recording-opt-out": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_recording_opt_out"];
+		put: operations["put_recording_opt_out"];
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1367,6 +1383,13 @@ export interface components {
 			stage: string;
 			state: string;
 			status_url: string;
+		};
+		RecordingOptOut: {
+			/**
+			 * @description True when the bot does not record the current user's voice in this
+			 *     server.
+			 */
+			opted_out: boolean;
 		};
 		RefreshTokenError: {
 			error: string;
@@ -5059,6 +5082,74 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_recording_opt_out: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Whether the bot skips recording the current user in this guild */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingOptOut"];
+				};
+			};
+			/** @description Not a member of this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_recording_opt_out: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["RecordingOptOut"];
+			};
+		};
+		responses: {
+			/** @description The stored recording preference */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingOptOut"];
+				};
+			};
+			/** @description Not a member of this guild */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};

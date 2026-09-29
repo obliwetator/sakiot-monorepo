@@ -1,3 +1,4 @@
+pub mod recording;
 pub mod stamp;
 pub mod voice_controls;
 
@@ -14,6 +15,7 @@ pub async fn register_global_commands(ctx: &Context) {
             voice_controls::register_stop(),
             voice_controls::register_join(),
             stamp::register_stamp(),
+            recording::register_recording(),
         ],
     )
     .await

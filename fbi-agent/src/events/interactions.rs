@@ -88,6 +88,15 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                         .await,
                     )
                 }
+                "recording" => {
+                    response_msg = response_msg.content(
+                        crate::commands::recording::handle_recording(
+                            &application_command,
+                            &_self.database,
+                        )
+                        .await,
+                    )
+                }
                 other => {
                     response_msg = response_msg.content(format!(
                         "Unknown application_command with the name {}",

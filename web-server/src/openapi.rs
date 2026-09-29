@@ -84,6 +84,8 @@ use utoipa::{
         crate::stamps::get_stamps,
         crate::user::get_current_user,
         crate::user::get_current_user_guilds,
+        crate::recording_opt_out::get_recording_opt_out,
+        crate::recording_opt_out::put_recording_opt_out,
     ),
     components(schemas(
         crate::admin::cooldowns::CooldownBody,
@@ -137,6 +139,7 @@ use utoipa::{
         crate::members::RoleView,
         crate::media_jobs::MediaJobStatus,
         crate::recording_deletion::RecordingDeletionStatus,
+        crate::recording_opt_out::RecordingOptOut,
         crate::stamps::StampInfo,
         crate::user::GuildDataForFrontEnd,
         crate::user::UserDataForFrontEnd,

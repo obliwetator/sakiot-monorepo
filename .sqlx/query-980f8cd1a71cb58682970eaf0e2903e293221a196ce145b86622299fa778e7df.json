@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_opt_outs (guild_id, user_id) VALUES ($1, $2)\n             ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "980f8cd1a71cb58682970eaf0e2903e293221a196ce145b86622299fa778e7df"
+}

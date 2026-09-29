@@ -6,6 +6,7 @@
 //! - [`lifecycle`]: opening, writing, heartbeating, and finalizing recordings
 //! - [`link`]: the voice connection state machine (handoffs, reconnect windows)
 //! - [`policy`]: channel-exclusion suspension and the speakers to reopen
+//! - [`opt_out`]: speakers skipped because they opted out of recording
 //! - [`recovery`]: pause/resume, disconnect recovery, deadlines, stale reaping
 //! - [`packets`]: RTP payload extraction and disconnect command mapping
 //! - [`env`]: the narrow Discord client surface the actor depends on
@@ -14,6 +15,7 @@ mod env;
 mod handle;
 mod lifecycle;
 mod link;
+mod opt_out;
 mod packets;
 mod policy;
 mod recovery;
@@ -38,6 +40,7 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, watch};
 
 use link::{Link, PlannedHandoff};
+use opt_out::OptedOutSpeakers;
 use policy::RecordingPolicy;
 
 use super::{
@@ -48,6 +51,10 @@ use super::{
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const REAPER_INTERVAL: Duration = Duration::from_secs(60);
 const DEADLINE_INTERVAL: Duration = Duration::from_secs(1);
+
+fn timestamp(at_ms: i64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now)
+}
 
 struct RecorderActor {
     pool: Pool<Postgres>,
@@ -69,6 +76,7 @@ struct RecorderActor {
     has_afk_channel: bool,
     pending_cap_seconds: i64,
     policy: RecordingPolicy,
+    opted_out: OptedOutSpeakers,
     /// Registry entry for this guild; the actor removes itself on exit so a
     /// later reconnect starts with fresh state. `None` for unregistered actors.
     registry: Option<Arc<super::RecordingCoordinatorRegistry>>,

@@ -30,6 +30,7 @@ use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::clips::{create_clip, delete as delete_clip, get_clip, get_clips, rename_clip};
 use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
+use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -1704,5 +1705,102 @@ async fn live_state_reports_no_end_for_a_finalized_recording_without_one(
         serde_json::Value::Null,
         "an unknown end must stay unknown, not become the start timestamp"
     );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn members_manage_only_their_own_recording_opt_out(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_recording_opt_out)
+                    .service(put_recording_opt_out),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_value()?;
+    let uri = format!("/api/users/current/guilds/{ALLOWED_GUILD_ID}/recording-opt-out");
+
+    // Recording is on by default.
+    let initial: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(initial, json!({"opted_out": false}));
+
+    // A change is a write, so it needs the CSRF token like every other one.
+    let forged = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .set_json(json!({"opted_out": true}))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(forged.status(), StatusCode::FORBIDDEN);
+
+    // Setting the same value twice is harmless.
+    for opted_out in [true, true, false] {
+        let stored: serde_json::Value = test::call_and_read_body_json(
+            &app,
+            test::TestRequest::put()
+                .uri(&uri)
+                .insert_header(("Cookie", cookie.clone()))
+                .insert_header(("X-CSRF-Token", CSRF))
+                .set_json(json!({ "opted_out": opted_out }))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(stored, json!({ "opted_out": opted_out }));
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM recording_opt_outs WHERE guild_id = $1 AND user_id = $2",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(USER_ID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(rows, i64::from(opted_out));
+    }
+
+    // A server the user is not a member of is off limits either way.
+    let foreign_uri = format!("/api/users/current/guilds/{FORBIDDEN_GUILD_ID}/recording-opt-out");
+    let foreign_get = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&foreign_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(foreign_get.status(), StatusCode::FORBIDDEN);
+    let foreign_put = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&foreign_uri)
+            .insert_header(("Cookie", cookie))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({"opted_out": true}))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(foreign_put.status(), StatusCode::FORBIDDEN);
+    let foreign_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM recording_opt_outs WHERE guild_id = $1")
+            .bind(FORBIDDEN_GUILD_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(foreign_rows, 0);
     Ok(())
 }

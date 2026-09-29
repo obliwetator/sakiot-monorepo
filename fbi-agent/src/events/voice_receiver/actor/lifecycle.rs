@@ -7,7 +7,7 @@ use std::{collections::HashMap, fs::File, io::BufWriter, sync::atomic::Ordering}
 use serenity::model::{guild::Member, id::UserId};
 use tracing::{debug, error, info, warn};
 
-use super::{RecorderActor, VoicePacket};
+use super::{RecorderActor, VoicePacket, timestamp};
 use crate::cast::ToI64;
 use crate::events::ogg_opus_writer::OggOpusWriter;
 use crate::events::voice_receiver::{
@@ -119,6 +119,14 @@ impl RecorderActor {
                 );
                 return;
             }
+            Err(crate::database::DbError::RecordingOptedOut) => {
+                debug!(
+                    guild_id = self.guild_id.get(),
+                    user_id, ssrc, "not recording: the user opted out"
+                );
+                self.opted_out.remember(user_id, ssrc);
+                return;
+            }
             Err(_) => {
                 error!("Failed to create recording path for ssrc {}", ssrc);
                 return;
@@ -190,6 +198,7 @@ impl RecorderActor {
                 ssrc,
             },
         );
+        self.opted_out.forget(user_id);
 
         crate::database::user_names::observe(
             &self.pool,
@@ -236,6 +245,7 @@ impl RecorderActor {
             .map(|packet| (packet.ssrc, packet.opus))
             .collect();
         let active_ssrcs = self.recordings.active_non_bot_ssrcs();
+        let mut failed_ssrcs = Vec::new();
 
         for ssrc in active_ssrcs {
             let Some(recording) = self.recordings.active_get_mut(ssrc) else {
@@ -283,6 +293,23 @@ impl RecorderActor {
 
             if let Err(err) = result {
                 error!("Writer error for ssrc {}: {}", ssrc, err);
+                failed_ssrcs.push(ssrc);
+            }
+        }
+
+        // A failed write has already advanced the writer's timeline past what
+        // reached the file, so the writer cannot continue. Close it once instead
+        // of failing again on every tick. As after a failed setup, the user's
+        // next speaking update opens a fresh writer.
+        for ssrc in failed_ssrcs {
+            if let Some(recording) = self.recordings.remove_active_by_ssrc(ssrc) {
+                self.finalize_recording(
+                    ssrc,
+                    recording,
+                    VoiceEventType::WriterError,
+                    timestamp(at_ms),
+                )
+                .await;
             }
         }
     }
@@ -389,7 +416,10 @@ impl RecorderActor {
         .await
         {
             Ok(handle) => Ok(handle),
-            Err(err @ crate::database::DbError::RecordingExcluded) => Err(err),
+            Err(
+                err @ (crate::database::DbError::RecordingExcluded
+                | crate::database::DbError::RecordingOptedOut),
+            ) => Err(err),
             Err(err) => {
                 error!("failed to create recording db/path handle: {}", err);
                 self.metrics

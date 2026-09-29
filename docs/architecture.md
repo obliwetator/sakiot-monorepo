@@ -65,12 +65,15 @@ single owners of the layout and the schema.
    `voice_receiver/actor/packets.rs` extracts the raw Opus payload from each
    packet, skipping any RTP header extension.
 2. **Write.** `events/ogg_opus_writer.rs` writes that payload through
-   unmodified - one Opus packet per Ogg page, so a partially written file is
-   always playable, and no decode/re-encode cycle in the recording path. One
-   writer per user. On ticks where a tracked user produced no packet it writes a
-   pre-encoded 20 ms silent frame instead, so each file's timeline matches
-   wallclock and the per-user files stay mutually aligned. Discord's frames are
-   stereo 48 kHz at 960 samples.
+   unmodified, so there is no decode/re-encode cycle in the recording path. It
+   batches packets into Ogg pages of about 500 ms (25 packets, within RFC 7845's
+   recommended range) behind a buffered file writer. A growing file is readable
+   up to its last complete page; a crash loses at most the page in progress and
+   the writer's unflushed buffer. One writer per user. On ticks where a tracked
+   user produced no packet it writes a pre-encoded 20 ms silent frame instead,
+   so each file's timeline matches wallclock and the per-user files stay
+   mutually aligned. Discord's frames are stereo 48 kHz at 960 samples. A writer
+   whose write fails is closed at once as a writer error.
 3. **Track.** The recorder actor (`events/voice_receiver/`) owns the writers and
    the session lifecycle: joins, moves, pauses, policy suspensions, recovery.
    Session and event rows go to PostgreSQL as they happen.
@@ -145,6 +148,20 @@ role and membership revocations take effect without a new login
 (`web-server/src/permissions.rs`). Guild owners are resolved from `guilds.owner_id` or the
 agent-maintained `user_guilds.owner` flag. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order.
+
+## Recording controls
+
+Recording is on by default. Two controls narrow it, and both are enforced in
+one place, `create_fragment_in` (`fbi-agent/src/database/logical_recordings.rs`),
+under the guild's advisory lock:
+
+- **Channel exclusions**, set by guild managers in the recording policy.
+- **Member opt-outs** (`recording_opt_outs`), set per server by members
+  themselves with `/recording opt-out` or the web app's account menu.
+
+The recorder re-checks both once per second, closes writers as soon as either
+applies, and suspends recording when it cannot read them. Opting out keeps
+earlier recordings.
 
 ## Media lifecycle
 

@@ -4,12 +4,13 @@
 //! sessions remain pending in PostgreSQL and resume as a new channel-bound
 //! fragment with an explicit silence gap.
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use serenity::model::id::{ChannelId, UserId};
 use tracing::{info, warn};
 
-use super::{RecorderActor, link::Departure};
+use super::{RecorderActor, link::Departure, timestamp};
 use crate::cast::ToI64;
 use crate::events::voice_receiver::state::VoiceEventType;
 
@@ -21,6 +22,7 @@ impl RecorderActor {
             return;
         }
 
+        self.opted_out.forget(user_id);
         self.pause_user_recording(user_id, None, "disconnect", true, at_ms)
             .await;
     }
@@ -44,6 +46,7 @@ impl RecorderActor {
         let disconnected = new_channel_id.is_none();
 
         if left_current {
+            self.opted_out.forget(user_id);
             let (reason, starts_grace) = if disconnected {
                 ("disconnect", true)
             } else if entered_afk {
@@ -397,6 +400,7 @@ impl RecorderActor {
         self.channel_metrics = self
             .metrics
             .channel_metrics(self.guild_id.get(), channel_id.get());
+        self.opted_out.clear();
         self.link.connected();
         // Re-evaluate the policy for the channel just entered before resuming
         // anything: a handoff into an excluded channel must not reopen logical
@@ -424,7 +428,8 @@ impl RecorderActor {
     }
 
     /// Re-evaluates the guild's channel exclusion for the channel the actor is
-    /// connected to, at most once per second.
+    /// connected to, and each speaker's recording opt-out, at most once per
+    /// second.
     ///
     /// A violation suspends recording without terminating the actor. Terminating
     /// it here used to leave the Songbird receiver attached to a dead handle, so
@@ -436,7 +441,10 @@ impl RecorderActor {
         }
         match self.channel_is_excluded(self.channel_id).await {
             Ok(true) => self.suspend_recording_for_policy(at_ms).await,
-            Ok(false) => self.resume_recording_after_policy(at_ms).await,
+            Ok(false) => {
+                self.resume_recording_after_policy(at_ms).await;
+                self.apply_user_opt_outs(at_ms).await;
+            }
             Err(error) => {
                 warn!(
                     guild_id = self.guild_id.get(),
@@ -447,6 +455,69 @@ impl RecorderActor {
                 self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
                 self.suspend_recording_for_policy(at_ms).await;
             }
+        }
+    }
+
+    /// Closes the writers of users who opted out of recording since the last
+    /// check and reopens those who opted back in, so a change from the web app
+    /// or `/recording` takes effect within a second. A failed check suspends
+    /// recording, like a failed channel policy check.
+    async fn apply_user_opt_outs(&mut self, at_ms: i64) {
+        let recorded = self.recordings.user_ssrc_pairs();
+        let remembered = self.opted_out.user_ids();
+        if recorded.is_empty() && remembered.is_empty() {
+            return;
+        }
+        let candidates: Vec<i64> = recorded
+            .iter()
+            .map(|(user_id, _)| user_id.to_i64())
+            .chain(remembered.iter().map(|user_id| user_id.to_i64()))
+            .collect();
+        let opted_out: HashSet<i64> = match crate::database::opt_outs::opted_out_among(
+            &self.pool,
+            self.guild_id.to_i64(),
+            &candidates,
+        )
+        .await
+        {
+            Ok(user_ids) => user_ids.into_iter().collect(),
+            Err(error) => {
+                warn!(
+                    guild_id = self.guild_id.get(),
+                    channel_id = self.channel_id.get(),
+                    "recording opt-out check failed; suspending recording to preserve privacy: {}",
+                    error
+                );
+                self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+                self.suspend_recording_for_policy(at_ms).await;
+                return;
+            }
+        };
+
+        for (user_id, ssrc) in recorded {
+            if !opted_out.contains(&user_id.to_i64()) {
+                continue;
+            }
+            info!(
+                guild_id = self.guild_id.get(),
+                user_id, "closing writer: the user opted out of recording"
+            );
+            self.pause_user_recording(user_id, Some(self.channel_id), "opted_out", false, at_ms)
+                .await;
+            self.opted_out.remember(user_id, ssrc);
+        }
+
+        let opted_back_in: Vec<(u64, u32)> = remembered
+            .into_iter()
+            .filter(|user_id| !opted_out.contains(&user_id.to_i64()))
+            .filter_map(|user_id| self.opted_out.forget(user_id).map(|ssrc| (user_id, ssrc)))
+            .collect();
+        if !opted_back_in.is_empty() {
+            let reopened = self.reopen_suspended_speakers(opted_back_in).await;
+            info!(
+                guild_id = self.guild_id.get(),
+                reopened, "users opted back in to recording"
+            );
         }
     }
 
@@ -676,10 +747,6 @@ impl RecorderActor {
             })
             .collect()
     }
-}
-
-fn timestamp(at_ms: i64) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_else(chrono::Utc::now)
 }
 
 /// Whether a teardown result commits the actor to exiting.

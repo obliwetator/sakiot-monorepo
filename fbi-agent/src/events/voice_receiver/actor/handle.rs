@@ -77,6 +77,7 @@ impl RecorderHandle {
             has_afk_channel: false,
             pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
             policy: super::RecordingPolicy::new(stats.clone()),
+            opted_out: super::OptedOutSpeakers::default(),
             registry,
             actor_id: Arc::clone(&actor_id),
         };

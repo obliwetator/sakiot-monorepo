@@ -29,6 +29,10 @@ Sakiot application:
 
 - Connects to Discord using Serenity and Songbird.
 - Records Discord voice audio into the shared Sakiot recording layout.
+  Recording is on by default; a member can stop it for themselves in one
+  server with `/recording opt-out` (or the web app's account menu) and resume
+  it with `/recording opt-in`. Open recordings close within a second, and
+  earlier recordings are kept.
 - Stores guild, channel, user, recording, and runtime metadata in Postgres.
 - Provides gRPC APIs for administration and bot control.
 - Supports drain-aware release deployment through the root `../ops/` pipeline.

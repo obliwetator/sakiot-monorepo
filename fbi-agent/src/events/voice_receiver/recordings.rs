@@ -246,7 +246,6 @@ impl Recordings {
     }
 
     /// Remove an active writer by SSRC, also dropping its `user_ssrcs` entry.
-    #[cfg(test)]
     pub(super) fn remove_active_by_ssrc(&mut self, ssrc: u32) -> Option<UserRecording> {
         let recording = self.active.remove(&ssrc);
         if let Some(recording) = &recording {

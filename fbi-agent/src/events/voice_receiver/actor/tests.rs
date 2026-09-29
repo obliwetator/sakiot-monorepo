@@ -3,9 +3,15 @@
 //! These drive the real run loop against a [`RecorderEnv`] built from an empty
 //! cache and a dummy HTTP client, so they need neither a live Discord gateway
 //! nor a database: queries go to an already-closed pool and fail immediately. They exist because the actor used to be untestable, which is
-//! why a teardown that awaited its own termination shipped unnoticed.
+//! why a teardown that awaited its own termination shipped unnoticed. Where a
+//! test needs state the handle cannot reach, such as an open writer, it seeds a
+//! [`detached_actor`] and calls the handler directly.
 
-use std::sync::{Arc, atomic::Ordering};
+use std::io::BufWriter;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
 
 use serenity::{
     model::id::{ChannelId, GuildId},
@@ -13,10 +19,13 @@ use serenity::{
 };
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
-use super::{RecorderCommand, RecorderEnv, RecorderHandle};
+use super::{RecorderActor, RecorderCommand, RecorderEnv, RecorderHandle};
+use crate::events::ogg_opus_writer::OggOpusWriter;
 use crate::events::voice::coordinator::{VoiceCoordinatorRegistry, VoiceCoordinatorRegistryKey};
 use crate::events::voice_receiver::{
     RecordingCoordinatorRegistry, RecordingCoordinatorRegistryKey,
+    recordings::{RecorderStats, Recordings},
+    state::UserRecording,
 };
 
 const GUILD_BASE: u64 = 9_000_000_000_000_000;
@@ -85,6 +94,35 @@ async fn spawn(
     guild: u64,
 ) -> RecorderHandle {
     spawn_with_pool(data, metrics, guild, 1, closed_pool().await).await
+}
+
+/// An actor for channel 1 that is never spawned, so a test can seed its state
+/// and call its handlers directly.
+fn detached_actor(guild: u64, metrics: Arc<crate::BotMetrics>, pool: PgPool) -> RecorderActor {
+    let stats = Arc::new(RecorderStats::default());
+    let guild_metrics = metrics.guild_metrics(guild);
+    let channel_metrics = metrics.channel_metrics(guild, 1);
+    RecorderActor {
+        pool,
+        env: RecorderEnv::for_test(Arc::new(RwLock::new(TypeMap::new()))),
+        guild_id: GuildId::new(guild),
+        channel_id: ChannelId::new(1),
+        metrics,
+        guild_metrics,
+        channel_metrics,
+        recording_owner_instance_id: "test-instance".to_string(),
+        stats: Arc::clone(&stats),
+        recordings: Recordings::new(Arc::clone(&stats)),
+        link: super::Link::default(),
+        current_channel_id: Arc::new(AtomicU64::new(1)),
+        stopping: Arc::new(AtomicBool::new(false)),
+        has_afk_channel: false,
+        pending_cap_seconds: crate::database::logical_recordings::DEFAULT_PENDING_CAP_SECONDS,
+        policy: super::RecordingPolicy::new(stats),
+        opted_out: super::OptedOutSpeakers::default(),
+        registry: None,
+        actor_id: Arc::new(()),
+    }
 }
 
 /// A recoverable disconnect whose 60 s deadline is already in the past, so the
@@ -349,4 +387,152 @@ async fn excluded_channel_suspends_and_reenabling_resumes_without_terminating(po
     tokio::time::timeout(TERMINATION_TIMEOUT, handle.wait_terminated())
         .await
         .expect("the actor must terminate after the policy round trip");
+}
+
+/// A writer whose write fails is closed once instead of being retried on every
+/// tick. Retrying logged an error per speaker every 20 ms while the heartbeat
+/// kept the recording's row looking healthy.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_failed_write_closes_the_writer_instead_of_retrying_every_tick() {
+    const GUILD: u64 = GUILD_BASE + 9;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let mut actor = detached_actor(GUILD, Arc::clone(&metrics), closed_pool().await);
+
+    // /dev/full accepts the open and fails every write with ENOSPC. The
+    // BufWriter absorbs the Ogg headers, so the failure surfaces mid-tick.
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let writer = OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap();
+    actor.recordings.insert_active(
+        USER,
+        SSRC,
+        UserRecording {
+            writer,
+            audio_file_id: 1,
+            recording_session_id: 1,
+            file_name: "dev-full".to_string(),
+            start_time: chrono::Utc::now(),
+            user_id: USER,
+            ssrc: SSRC,
+        },
+    );
+    metrics.track_recording_started(&actor.guild_metrics, &actor.channel_metrics, GUILD, 1, USER);
+
+    // Claim this second's policy check: against the closed pool it would fail
+    // closed and suspend recording before any write happened.
+    let at_ms = chrono::Utc::now().timestamp_millis();
+    assert!(actor.policy.check_due(at_ms));
+
+    // 200 s of silence debt overflows the BufWriter within this one tick.
+    actor.handle_voice_tick(at_ms, Vec::new(), 10_000).await;
+
+    assert!(
+        !actor.recordings.has_active_ssrc(SSRC),
+        "the failed writer must be closed"
+    );
+    assert_eq!(metrics.recordings_finished.load(Ordering::Relaxed), 1);
+    assert_eq!(metrics.active_recordings.load(Ordering::Relaxed), 0);
+
+    actor.handle_voice_tick(at_ms + 20, Vec::new(), 0).await;
+    assert_eq!(
+        metrics.recordings_finished.load(Ordering::Relaxed),
+        1,
+        "the writer must be finalized exactly once"
+    );
+}
+
+/// An opted-out speaker gets no writer, but is remembered with their SSRC so a
+/// writer can reopen the moment they opt back in.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn an_opted_out_speaker_gets_no_writer(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 10;
+    let mut actor = detached_actor(GUILD, Arc::new(crate::BotMetrics::default()), pool.clone());
+    crate::database::opt_outs::set_opted_out(&pool, GUILD as i64, 42, true)
+        .await
+        .unwrap();
+
+    actor
+        .open_user_recording(42, 7, &serenity::model::guild::Member::default())
+        .await;
+
+    assert!(!actor.recordings.has_active_ssrc(7));
+    assert_eq!(actor.opted_out.user_ids(), vec![42]);
+}
+
+/// Opting out mid-session closes the open writer and pauses the user's
+/// logical session within one policy check; opting back in forgets them so a
+/// writer reopens (here the user is not in the cached channel, so none does).
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn opting_out_mid_session_closes_the_writer(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 11;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    sqlx::query(
+        "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)
+         VALUES ('test-instance', 'active', 'active', now(), now())",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut actor = detached_actor(GUILD, Arc::new(crate::BotMetrics::default()), pool.clone());
+    let handle = crate::database::recordings::create_recording_for_test(
+        &pool,
+        GUILD as i64,
+        1,
+        USER as i64,
+        chrono::Utc::now(),
+        "test-instance",
+        root.path(),
+    )
+    .await
+    .unwrap();
+    let file = std::fs::File::create(format!("{}.ogg", handle.path)).unwrap();
+    actor.recordings.insert_active(
+        USER,
+        SSRC,
+        UserRecording {
+            writer: OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap(),
+            audio_file_id: handle.audio_file_id,
+            recording_session_id: handle.recording_session_id,
+            file_name: handle.file_name,
+            start_time: handle.start_time,
+            user_id: USER,
+            ssrc: SSRC,
+        },
+    );
+
+    crate::database::opt_outs::set_opted_out(&pool, GUILD as i64, USER as i64, true)
+        .await
+        .unwrap();
+    let at_ms = chrono::Utc::now().timestamp_millis();
+    actor.refresh_recording_policy(at_ms).await;
+
+    assert!(!actor.recordings.has_active_ssrc(SSRC));
+    assert_eq!(actor.opted_out.user_ids(), vec![USER]);
+    let closed: bool =
+        sqlx::query_scalar("SELECT end_ts IS NOT NULL FROM audio_files WHERE id = $1")
+            .bind(handle.audio_file_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(closed, "the fragment must be finalized");
+    let pending_reason: Option<String> =
+        sqlx::query_scalar("SELECT pending_reason FROM recording_sessions WHERE id = $1")
+            .bind(handle.recording_session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pending_reason.as_deref(), Some("opted_out"));
+
+    crate::database::opt_outs::set_opted_out(&pool, GUILD as i64, USER as i64, false)
+        .await
+        .unwrap();
+    actor.refresh_recording_policy(at_ms + 1_000).await;
+    assert!(actor.opted_out.user_ids().is_empty());
 }

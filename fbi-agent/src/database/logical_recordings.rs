@@ -120,6 +120,9 @@ pub async fn create_fragment_in(
     if excluded {
         return Err(DbError::RecordingExcluded);
     }
+    if crate::database::opt_outs::is_opted_out(&mut *tx, guild_id, user_id).await? {
+        return Err(DbError::RecordingOptedOut);
+    }
     lock_user_session(&mut tx, guild_id, user_id).await?;
     expire_user_pending_in_tx(&mut tx, guild_id, user_id, now_ms).await?;
 
@@ -1025,6 +1028,36 @@ mod tests {
             .fetch_one(&pool)
             .await?;
         assert_eq!(rows, 0);
+        Ok(())
+    }
+
+    /// Opting out is per guild and per user: the opted-out user gets no
+    /// fragment, while the same user elsewhere and other users here still do.
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn opted_out_user_cannot_create_recording(pool: PgPool) -> Result<(), DbError> {
+        sqlx::query(
+            "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)
+             VALUES ('test', 'active', 'active', now(), now())",
+        )
+        .execute(&pool)
+        .await?;
+        let root = tempfile::tempdir().unwrap();
+        assert!(crate::database::opt_outs::set_opted_out(&pool, 1, 3, true).await?);
+        assert!(!crate::database::opt_outs::set_opted_out(&pool, 1, 3, true).await?);
+
+        let result =
+            create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await;
+        assert!(matches!(result, Err(DbError::RecordingOptedOut)));
+        create_fragment_in(&pool, 1, 2, 4, chrono::Utc::now(), "test", root.path()).await?;
+        create_fragment_in(&pool, 9, 2, 3, chrono::Utc::now(), "test", root.path()).await?;
+        let recorded_users: Vec<(i64, i64)> =
+            sqlx::query_as("SELECT guild_id, user_id FROM audio_files ORDER BY guild_id")
+                .fetch_all(&pool)
+                .await?;
+        assert_eq!(recorded_users, vec![(1, 4), (9, 3)]);
+
+        assert!(crate::database::opt_outs::set_opted_out(&pool, 1, 3, false).await?);
+        create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await?;
         Ok(())
     }
 

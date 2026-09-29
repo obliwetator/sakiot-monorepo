@@ -158,7 +158,9 @@ and recovery. No test should use the runtime database.
 
 Guild managers configure opt-in retention and voice-channel exclusions at
 `/api/admin/guilds/{guild_id}/recording-policy`. Retention is disabled by
-default. The manager-only
+default. Any member can opt out of being recorded in a server, for themselves
+only, at `/api/users/current/guilds/{guild_id}/recording-opt-out` (the bot's
+`/recording` command writes the same table). Earlier recordings are kept. The manager-only
 `DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}`
 returns `202` and a durable, auditable status URL. By default it immediately
 soft-deletes: the session and related clips disappear from view, while their

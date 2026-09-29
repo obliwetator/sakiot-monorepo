@@ -50,6 +50,7 @@ use web_server::members::{get_guild_roles, get_role_members, get_role_view};
 use web_server::recording_deletion::{
     DeletionPolicy, delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
 };
+use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::security_headers::SecurityHeaders;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
@@ -300,7 +301,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(put_recording_policy);
         let api_scope = api_scope
             .service(delete_recording)
-            .service(get_recording_deletion);
+            .service(get_recording_deletion)
+            .service(get_recording_opt_out)
+            .service(put_recording_opt_out);
 
         let (json_config, path_config, query_config) = web_server::errors::extractor_configs();
         App::new()

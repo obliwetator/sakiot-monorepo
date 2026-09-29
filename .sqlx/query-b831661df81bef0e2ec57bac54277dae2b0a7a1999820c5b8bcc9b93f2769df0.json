@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n             SELECT 1 FROM user_guilds WHERE id = $1 AND user_id = $2\n           ) AS \"member!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "member!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b831661df81bef0e2ec57bac54277dae2b0a7a1999820c5b8bcc9b93f2769df0"
+}
