@@ -99,10 +99,13 @@ ops/preview-slot.sh clip-editor --remove
   Cloudflare API; `--no-dns` skips this when a wildcard record is in place.
 - Creates `/etc/sakiot/preview.env` from `ops/preview.env.example` only if it
   does not exist yet (base values; the engine namespaces them per slot).
-- Creates the per-slot directories owned by `sakiot` (data/deploy/backups
-  under `/var/lib/sakiot-preview-<slot>`, releases/current under
-  `/srv/sakiot-preview-<slot>`, the per-slot cache, and the frontend web
-  root) — the deploy engine expects these to pre-exist.
+- Creates the `sakiot-preview` runtime user and `sakiot_slot` database role
+  once (every slot shares them), and the per-slot directories the deploy engine
+  expects: deploy/backups under `/var/lib/sakiot-preview-<slot>`, the per-slot
+  cache, and the frontend web root owned by `sakiot`; releases/current under
+  `/srv/sakiot-preview-<slot>` in the `sakiot-preview` group; and the data
+  directory owned by `sakiot-preview`. A slot cannot read production's or
+  staging's env files, data, processes, or databases.
 - On first database creation, copies the staging database and local media tree
   when available. Re-provisioning preserves slot-local data. Staging must have
   a migrated schema before this bootstrap; the script then seeds the configured
@@ -164,7 +167,9 @@ Two equivalent setups, pick one:
 | thing            | staging                          | preview slot                     |
 |------------------|----------------------------------|----------------------------------|
 | web port         | 8901                             | **8903+ (auto-assigned)**        |
+| runtime user     | `sakiot-staging`                 | **`sakiot-preview` (shared)**    |
 | database         | `sakiot_staging`                 | `sakiot_preview_<slot>`          |
+| database role    | `sakiot_staging`                 | **`sakiot_slot` (shared)**       |
 | Discord bot      | DEBUG bot                        | **none (web + frontend only)**   |
 | web unit         | `sakiot-staging-web.service`     | `sakiot-preview-<slot>-web.service` |
 | data dir         | `/var/lib/sakiot-staging/data`   | `/var/lib/sakiot-preview-<slot>/data` |

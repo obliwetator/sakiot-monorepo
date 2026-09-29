@@ -52,13 +52,30 @@ As root:
 ops/install-production.sh /root/github-deploy-key.pub
 $EDITOR /etc/sakiot/production.env
 $EDITOR /etc/sakiot/staging.env
-createdb sakiot_staging
+sudo -u postgres psql   # create the staging role and database, below
 systemctl enable sakiot-web.service
 ```
 
-The installer creates the `sakiot` user, persistent directories for both the
-production and staging instances, systemd units, restricted `authorized_keys`,
-and a root-owned systemd command validator behind narrowly scoped sudo rules. It
+Each environment has its own database role, and only that role may connect to
+its database. Use the passwords set in each env file's `DATABASE_URL`:
+
+```sql
+CREATE ROLE sakiot_staging LOGIN PASSWORD 'replace_me';
+CREATE DATABASE sakiot_staging OWNER sakiot_staging;
+REVOKE CONNECT, TEMPORARY ON DATABASE sakiot_staging FROM PUBLIC;
+REVOKE CONNECT, TEMPORARY ON DATABASE sakiot_rouvas FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE sakiot_rouvas TO sakiot;
+```
+
+Preview slots create their shared `sakiot_slot` role themselves
+(`ops/preview-slot.sh`).
+
+The installer creates the `sakiot` user, which deploys every instance and runs
+production, and the `sakiot-staging` and `sakiot-preview` runtime users (see
+[Environment isolation](#environment-isolation)). It also creates persistent
+directories for the production and staging instances, systemd units, restricted
+`authorized_keys`, and a root-owned systemd command validator behind narrowly
+scoped sudo rules. It
 also installs production backup scripts under
 `/usr/local/lib/sakiot-deploy/backup`, creates `/var/lib/sakiot/backups`, and
 enables hourly, nightly, and monthly restore-test timers.
@@ -212,6 +229,58 @@ web server's startup config). Slots are bootstrapped and torn down with
 Full docs in `PREVIEW.md`; remember to re-run `ops/update-deploy-engine.sh`
 after changing `ops/` so the `preview-ci`/`preview-up`/`preview-remove` forced
 command verbs and the sudo rule are installed.
+
+## Environment isolation
+
+Staging and preview slots run code production has not shipped, and previews
+are reachable by anyone who has the URL, so neither may reach production. The
+`sakiot` user deploys all three instances and runs production. Everything else
+is separated per environment:
+
+| | production | staging | preview slots |
+|---|---|---|---|
+| runtime user | `sakiot` | `sakiot-staging` | `sakiot-preview` (shared) |
+| database role | `sakiot` | `sakiot_staging` | `sakiot_slot` (shared) |
+| writable path | `/var/lib/sakiot/data` | `/var/lib/sakiot-staging/data` | `/var/lib/sakiot-preview-<slot>/data` |
+
+- **Files.** The env files and the backup key stay `root:sakiot`. systemd reads
+  `EnvironmentFile=` as root, so a runtime user never needs them.
+- **Data and releases.** Each runtime user owns its data directory. The setgid
+  bit keeps new files in its group, which `sakiot` joins to deploy and import
+  fixtures, and staging and preview units set `UMask=0007` for the same
+  reason. Releases are reachable through the group of `/srv/<instance>/releases`
+  and `current`.
+- **Database.** Each role owns its database, and `CONNECT` is revoked from
+  `PUBLIC`, so no role can open another environment's database.
+- **Sandbox.** Every runtime unit uses `ProtectSystem=strict`, with the data
+  directory as the only writable path, plus a system-call filter and
+  kernel-surface restrictions.
+- **Processes.** A different user cannot read another user's
+  `/proc/<pid>/environ`, where the database password lives while a service
+  runs.
+
+The preview role is named `sakiot_slot` because the engine rewrites
+`sakiot_preview` and `sakiot-preview` everywhere in `preview.env` to derive
+per-slot values; a role containing either would turn into a nonexistent
+per-slot role.
+
+`ops/isolate-environments.sh` moves an existing host to this layout. It is
+idempotent: re-running it after a failure resumes, and restarts what the
+failed run stopped. Run it right after `ops/update-deploy-engine.sh` has
+installed the engine from the same checkout, because an older engine would
+fail to deploy into data directories it no longer owns.
+
+```sh
+ops/update-deploy-engine.sh
+ops/isolate-environments.sh                      # staging, previews, database access
+# after staging has run well on the hardened units:
+ops/isolate-environments.sh --harden-production  # rotates the production password, restarts production
+```
+
+The first run generates passwords for the new roles and backs up each env file
+it rewrites next to it. The production phase rotates the `sakiot` password,
+because staging and preview processes held it until then. It restarts the
+production web server and bot, so the bot finalizes its recordings and rejoins.
 
 ## Release
 

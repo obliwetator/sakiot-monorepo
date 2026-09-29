@@ -192,15 +192,13 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     ] {
         fsx::ensure_dir_mode(dir, 0o750)?;
     }
-    for dir in [
-        config.data_dir.clone(),
-        config.data_dir.join("voice_recordings"),
-        config.data_dir.join("no_silence_voice_recordings"),
-        config.data_dir.join("waveform_data"),
-        config.data_dir.join("clips"),
-    ] {
-        fsx::ensure_dir_mode(&dir, 0o755)?;
-    }
+    // The data directory belongs to the instance's runtime user, which for
+    // staging and previews is not the deploy user (install-production.sh,
+    // preview-slot.sh), and the services create what they write inside it.
+    // Only make sure it exists: changing its mode would fail for another
+    // owner and strip the group access the deploy user relies on.
+    std::fs::create_dir_all(&config.data_dir)
+        .with_context(|| format!("failed to create {}", config.data_dir.display()))?;
 
     // One deploy at a time.
     let _lock = DeployLock::acquire(&config.state_dir.join("deploy.lock"))?;

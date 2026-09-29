@@ -545,10 +545,12 @@ mod tests {
                 "sakiot-preview-web.service",
                 "sakiot-preview-clip-editor-web.service",
             ),
+            // Only the database is per slot. The shared sakiot_slot role
+            // contains no base token, so it survives the rewrite.
             (
                 "DATABASE_URL",
-                "postgres://sakiot:pw@127.0.0.1/sakiot_preview",
-                "postgres://sakiot:pw@127.0.0.1/sakiot_preview_clip-editor",
+                "postgres://sakiot_slot:pw@127.0.0.1/sakiot_preview",
+                "postgres://sakiot_slot:pw@127.0.0.1/sakiot_preview_clip-editor",
             ),
             (
                 "SAKIOT_FRONTEND_ROOT",

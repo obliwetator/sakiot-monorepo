@@ -1,7 +1,9 @@
 # Staging
 
-Staging is live on the **same VPS** as production, as a fully separate instance
-under the shared `sakiot` user. Pushes to `main` deploy it, except
+Staging is live on the **same VPS** as production, as a fully separate instance.
+The `sakiot` user deploys both, but staging runs as `sakiot-staging` with its own
+`sakiot_staging` database role, so it cannot read production's env file, backup
+key, data, processes, or database. Pushes to `main` deploy it, except
 Markdown/license-only changes. Production ships only on strict `vX.Y.Z` tags.
 
 Feature branches use separate **preview slots** at
@@ -27,7 +29,9 @@ ops/release vX.Y.Z      # validates clean tree/branch/semver/no-dup + staging ma
 | thing            | production            | staging                          |
 |------------------|-----------------------|----------------------------------|
 | web port         | 8900                  | **8901**                         |
+| runtime user     | `sakiot`              | **`sakiot-staging`**             |
 | database         | `sakiot_rouvas`       | **`sakiot_staging`** (separate)  |
+| database role    | `sakiot`              | **`sakiot_staging`**             |
 | Discord bot      | RELEASE bot           | **DEBUG bot**                    |
 | web unit         | `sakiot-web.service`  | `sakiot-staging-web.service`     |
 | bot unit         | `sakiot-fbi-agent@<id>` | `sakiot-staging-fbi-agent@<id>` |

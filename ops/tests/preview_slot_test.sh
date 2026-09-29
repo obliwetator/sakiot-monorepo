@@ -188,19 +188,30 @@ assert_cleanup_ran "${output}"
 grep -q "slot zz-ops-test removed$" "${output}" \
   || { echo "missing success log: $(cat "${output}")" >&2; exit 1; }
 
-# The create path must hand restored objects to the slot's role: migrations run
-# as sakiot, so creating an index on a restored table needs ownership and any
-# DDL in public needs CREATE on the schema. Without this the slot's first
-# migration fails with "must be owner of table".
-ownership_sql="$(awk "/<<'SQL'/{flag=1;next}/^SQL$/{flag=0}flag" "${script}")"
+# The create path must hand restored objects to the slot's own role:
+# migrations run as sakiot_slot, so creating an index on a restored table,
+# replacing a function, or extending an enum needs ownership, and any DDL in
+# public needs CREATE on the schema. Without this the slot's first migration
+# fails with "must be owner of ...". No other role may connect.
+grep -qF -- '-v owner=sakiot_slot -d "$db"' "${script}" \
+  || { echo "the slot database is not handed to sakiot_slot" >&2; exit 1; }
+ownership_sql="${repo_root}/ops/sql/own-public-schema.sql"
 for statement in \
-  "GRANT USAGE, CREATE ON SCHEMA public TO sakiot" \
-  "ALTER TABLE public.%I OWNER TO sakiot" \
-  "ALTER SEQUENCE public.%I OWNER TO sakiot" \
-  "ALTER VIEW public.%I OWNER TO sakiot"; do
-  grep -qF "${statement}" <<<"${ownership_sql}" \
-    || { echo "frontend/ownership repair missing: ${statement}" >&2; exit 1; }
+  "ALTER DATABASE %I OWNER TO %I" \
+  "REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC" \
+  "GRANT USAGE, CREATE ON SCHEMA public TO %I" \
+  "ALTER TABLE public.%I OWNER TO %I" \
+  "ALTER SEQUENCE public.%I OWNER TO %I" \
+  "ALTER VIEW public.%I OWNER TO %I" \
+  "ALTER ROUTINE %s OWNER TO %I" \
+  "ALTER TYPE public.%I OWNER TO %I"; do
+  grep -qF "${statement}" "${ownership_sql}" \
+    || { echo "ownership repair missing: ${statement}" >&2; exit 1; }
 done
+if grep -v '^[[:space:]]*--' "${ownership_sql}" | grep -q "REASSIGN OWNED"; then
+  echo "REASSIGN OWNED would also move other databases the role owns" >&2
+  exit 1
+fi
 
 # 4. An unreadable purge env must degrade to "not configured" instead of
 #    aborting the teardown before the database is dropped. Root bypasses file

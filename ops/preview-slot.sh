@@ -169,34 +169,55 @@ if [[ "$ACTION" = create ]]; then
     if [[ "${#placeholder_secrets[@]}" -gt 0 ]]; then
         die "${ENV_FILE} still contains placeholder secrets: ${placeholder_secrets[*]}; set real values and re-run"
     fi
-    # The database password is a local-only credential (127.0.0.1) and one
-    # Postgres role is shared by production, staging and every slot, so
-    # rotating it is a coordinated change across all of them. Warn rather
-    # than block provisioning; the internet-facing secrets above stay fatal.
+    # The database password is a local-only credential (127.0.0.1) for the
+    # preview role, which reaches no other environment's database. Warn
+    # rather than block provisioning; the internet-facing secrets above stay
+    # fatal.
     if grep -q '://[^:]*:replace_me@' "$ENV_FILE"; then
-        log "warning: ${ENV_FILE} still uses the template database password 'replace_me'; rotate it across every env file when convenient"
+        log "warning: ${ENV_FILE} still uses the template database password 'replace_me'"
     fi
 
-    # ---- per-slot directories (mirrors install-production.sh; the deploy
-    # engine, running as sakiot, expects these to exist and be writable) -----
+    # ---- runtime user (shared by every slot; created once) -----------------
+    # Slots run as sakiot-preview, which cannot read production's or
+    # staging's env files, data, or processes. The sakiot deploy user joins
+    # its group to publish releases into the slot and manage slot data.
+    if ! id sakiot-preview >/dev/null 2>&1; then
+        useradd --system --user-group --home-dir /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin sakiot-preview
+        log "created runtime user sakiot-preview"
+    fi
+    usermod -a -G sakiot-preview sakiot
+
+    # ---- per-slot directories (mirrors install-production.sh) --------------
     install -d -o sakiot -g sakiot -m 0750 \
-        "/var/lib/sakiot-preview-${SLOT}/data" \
         "/var/lib/sakiot-preview-${SLOT}/deploy" \
         "/var/lib/sakiot-preview-${SLOT}/backups" \
-        "/srv/sakiot-preview-${SLOT}/releases" \
-        "/srv/sakiot-preview-${SLOT}/current" \
         "/var/cache/sakiot-preview-${SLOT}"
+    # The runtime user reaches its binaries through these directories' group.
+    install -d -o sakiot -g sakiot-preview -m 0750 \
+        "/srv/sakiot-preview-${SLOT}/releases" \
+        "/srv/sakiot-preview-${SLOT}/current"
     install -d -o sakiot -g sakiot -m 0755 "/var/www/${SUBDOMAIN}"
+    # Slot data belongs to the runtime user. The setgid bit keeps new files
+    # in its group, so the deploy user can manage them too.
+    data_dir="/var/lib/sakiot-preview-${SLOT}/data"
+    install -d -o sakiot-preview -g sakiot-preview -m 2770 "$data_dir"
     log "created per-slot directories for ${SLOT}"
 
-    # ---- database role (shared by every instance; created once) ------------
+    # ---- database role (shared by every slot; created once) ----------------
+    # The role name must not contain the engine's per-slot tokens
+    # (sakiot_preview, sakiot-preview): the engine rewrites those everywhere
+    # in the env, which would turn the role into a nonexistent per-slot one.
+    db_user="$(sed -n 's|^DATABASE_URL=postgres://\([^:]*\):.*|\1|p' "$ENV_FILE" | head -n1)"
+    [[ "$db_user" == "sakiot_slot" ]] \
+        || die "DATABASE_URL in ${ENV_FILE} must use the sakiot_slot role (found '${db_user}'); see ops/isolate-environments.sh"
     db_pass="$(sed -n 's|^DATABASE_URL=postgres://[^:]*:\([^@]*\)@.*|\1|p' "$ENV_FILE" | head -n1)"
-    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot'" | grep -q 1; then
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='sakiot_slot'" | grep -q 1; then
         [[ -n "$db_pass" ]] || die "could not read the database password from ${ENV_FILE} (DATABASE_URL)"
         # The password is fed on stdin: `psql -c` would expose it in argv.
-        printf "CREATE ROLE sakiot LOGIN PASSWORD '%s';\n" "${db_pass//\'/\'\'}" \
+        printf "CREATE ROLE sakiot_slot LOGIN PASSWORD '%s';\n" "${db_pass//\'/\'\'}" \
             | sudo -u postgres psql -v ON_ERROR_STOP=1 -f - >/dev/null
-        log "created role sakiot"
+        log "created role sakiot_slot"
     fi
     if [[ "$db_pass" == "replace_me" ]]; then
         log "warning: DATABASE_URL in ${ENV_FILE} still uses the 'replace_me' password; set a real one or deploys will fail"
@@ -208,7 +229,7 @@ if [[ "$ACTION" = create ]]; then
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
         log "database ${db} already exists"
     else
-        sudo -u postgres createdb -O sakiot "$db"
+        sudo -u postgres createdb -O sakiot_slot "$db"
         log "created database ${db}"
         db_created=1
     fi
@@ -225,46 +246,29 @@ if [[ "$ACTION" = create ]]; then
             log "copied sakiot_staging database into ${db}"
         fi
         if [[ -d /var/lib/sakiot-staging/data ]]; then
-            cp -a /var/lib/sakiot-staging/data/. "/var/lib/sakiot-preview-${SLOT}/data/"
+            cp -a /var/lib/sakiot-staging/data/. "${data_dir}/"
             log "copied staging data files into the preview slot"
         fi
     fi
 
-    # ---- database ownership and grants -------------------------------------
-    # The snapshot restores postgres-owned objects, and older slots were
-    # created before this repair existed, so normalize on every run. The slot
-    # connects as sakiot and runs migrations as sakiot: a migration creating an
-    # index on a restored table needs ownership of that table, and any DDL in
-    # public needs CREATE on the schema. REASSIGN OWNED BY postgres is refused
-    # ("objects ... required by the database system"), so ownership moves per
-    # object; indexes follow their table automatically.
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$db" <<'SQL' >/dev/null
-GRANT USAGE, CREATE ON SCHEMA public TO sakiot;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO sakiot;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO sakiot;
-DO $$
-DECLARE object record;
-BEGIN
-    FOR object IN
-        SELECT tablename FROM pg_tables
-         WHERE schemaname = 'public' AND tableowner <> 'sakiot'
-    LOOP
-        EXECUTE format('ALTER TABLE public.%I OWNER TO sakiot', object.tablename);
-    END LOOP;
-    FOR object IN
-        SELECT sequencename FROM pg_sequences
-         WHERE schemaname = 'public' AND sequenceowner <> 'sakiot'
-    LOOP
-        EXECUTE format('ALTER SEQUENCE public.%I OWNER TO sakiot', object.sequencename);
-    END LOOP;
-    FOR object IN
-        SELECT viewname FROM pg_views
-         WHERE schemaname = 'public' AND viewowner <> 'sakiot'
-    LOOP
-        EXECUTE format('ALTER VIEW public.%I OWNER TO sakiot', object.viewname);
-    END LOOP;
-END $$;
-SQL
+    # ---- data ownership ----------------------------------------------------
+    # Copied staging files, and slots created before the runtime user
+    # existed, belong to other users; hand them to sakiot-preview. Files it
+    # already owns are skipped, so a re-run stays cheap.
+    find "$data_dir" \! -user sakiot-preview -exec chown -h sakiot-preview:sakiot-preview {} +
+    find "$data_dir" -type d \! -perm -2070 -exec chmod u+rwx,g+rwxs,o-rwx {} +
+    find "$data_dir" -type f \! -perm -0060 -exec chmod u+rw,g+rw,o-rwx {} +
+
+    # ---- database ownership ------------------------------------------------
+    # The snapshot restores staging-owned objects, and older slots were owned
+    # by the role production used, so normalize on every run: the slot runs
+    # migrations as sakiot_slot, which must own every object they alter,
+    # and no other role may connect.
+    # On stdin, read by root: the postgres user may not be able to read the
+    # checkout.
+    # shellcheck disable=SC2024
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -v owner=sakiot_slot -d "$db" \
+        -f - <"$OPS_DIR/sql/own-public-schema.sql" >/dev/null
     log "normalized database ownership for ${db}"
 
     # ---- dev-login account --------------------------------------------------
@@ -282,10 +286,8 @@ SQL
     fi
 
     # ---- systemd unit (web only; preview slots run no FBI Agent) ------------
-    sed \
-        -e "s|sakiot-staging|sakiot-preview-${SLOT}|g" \
-        -e "s|/etc/sakiot/staging.env|${ENV_FILE}|g" \
-        "$OPS_DIR/systemd/sakiot-staging-web.service" > "/etc/systemd/system/sakiot-preview-${SLOT}-web.service"
+    "$OPS_DIR/render-preview-unit.sh" "$SLOT" "$ENV_FILE" \
+        > "/etc/systemd/system/sakiot-preview-${SLOT}-web.service"
     log "installed unit sakiot-preview-${SLOT}-web.service"
     systemctl daemon-reload
     if ! systemctl enable "sakiot-preview-${SLOT}-web.service" >/dev/null 2>&1; then

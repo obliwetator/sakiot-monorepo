@@ -275,6 +275,14 @@ fn import_manifest_fragment(bundle: &FixtureBundle, selector: &str) -> Result<Ve
     Ok(output.into_bytes())
 }
 
+/// Staging's data directory belongs to its runtime user, and the import writes
+/// through their shared group. Imported files must stay group-writable, or the
+/// runtime could read them but never delete or replace them; directories keep
+/// the setgid bit so what they gain stays in the group. The destination's group
+/// comes from that bit, not from the source. Only a directory's owner may set
+/// its times, and existing ones belong to the runtime user.
+const STAGING_RSYNC_FLAGS: [&str; 3] = ["--chmod=D2770,F0660", "--no-group", "--omit-dir-times"];
+
 fn publish_to_staging<R: CommandRunner + ?Sized>(
     runner: &R,
     config: &Config,
@@ -324,7 +332,12 @@ fn publish_direct<R: CommandRunner + ?Sized>(
     } else {
         format!("{}:{}/", ssh, destination.display())
     };
-    runner.run(&Cmd::new("rsync").args(["-a", &source, &target]))?;
+    runner.run(
+        &Cmd::new("rsync")
+            .arg("-a")
+            .args(STAGING_RSYNC_FLAGS)
+            .args([&source, &target]),
+    )?;
     append_remote_file(runner, ssh, manifest, fragment)
 }
 
@@ -343,12 +356,13 @@ fn publish_with_rsync_path<R: CommandRunner + ?Sized>(
     } else {
         format!("{}:{}/", ssh, destination.display())
     };
-    runner.run(&Cmd::new("rsync").args([
-        "-a",
-        &format!("--rsync-path={rsync_path}"),
-        &source,
-        &target,
-    ]))?;
+    runner.run(
+        &Cmd::new("rsync")
+            .arg("-a")
+            .args(STAGING_RSYNC_FLAGS)
+            .arg(format!("--rsync-path={rsync_path}"))
+            .args([&source, &target]),
+    )?;
     append_remote_file(runner, ssh, manifest, fragment)
 }
 
@@ -378,7 +392,8 @@ fn publish_via_stage<R: CommandRunner + ?Sized>(
     fs::write(&fragment_path, fragment)?;
     if ssh == "local" {
         let install = format!(
-            "rsync -a {} {} && cat {} >> {}",
+            "rsync -a {} {} {} && cat {} >> {}",
+            STAGING_RSYNC_FLAGS.join(" "),
             quote_shell(&format!("{}/", stage_media.display())),
             quote_shell(&format!("{}/", destination.display())),
             quote_shell(&fragment_path.display().to_string()),
@@ -399,7 +414,8 @@ fn publish_via_stage<R: CommandRunner + ?Sized>(
             &format!("{ssh}:{remote_stage}/"),
         ]))?;
         let install = format!(
-            "rsync -a {} {} && cat {} >> {}",
+            "rsync -a {} {} {} && cat {} >> {}",
+            STAGING_RSYNC_FLAGS.join(" "),
             quote_shell(&format!("{remote_stage}/media/")),
             quote_shell(&format!("{}/", destination.display())),
             quote_shell(&format!("{remote_stage}/.import-manifest")),

@@ -271,3 +271,9 @@ Override unusual layouts with
 `SAKIOT_DEV_STAGING_ENV_FILE`, `SAKIOT_DEV_STAGING_DB`,
 `SAKIOT_DEV_STAGING_DATA`, `SAKIOT_DEV_STAGING_PSQL` and
 `SAKIOT_DEV_STAGING_RSYNC_PATH`.
+
+Staging's data directory belongs to its `sakiot-staging` runtime user, and the
+import writes into it as `sakiot` through their shared group (see
+[environment isolation](../ops/README.md#environment-isolation)). Imported files
+are therefore written group-writable (`rsync --chmod=D2770,F0660`), so staging
+can later replace or delete them like its own.

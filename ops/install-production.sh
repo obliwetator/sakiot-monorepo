@@ -18,6 +18,16 @@ if ! id sakiot >/dev/null 2>&1; then
   useradd --create-home --home-dir /var/lib/sakiot --shell /bin/bash sakiot
 fi
 passwd -l sakiot >/dev/null
+# Staging and preview slots run as their own users, which cannot read
+# production's env file, backup key, data, or processes. sakiot deploys and
+# runs production, and joins their groups to publish releases and manage data.
+for runtime_user in sakiot-staging sakiot-preview; do
+  if ! id "${runtime_user}" >/dev/null 2>&1; then
+    useradd --system --user-group --home-dir /nonexistent --no-create-home \
+      --shell /usr/sbin/nologin "${runtime_user}"
+  fi
+done
+usermod -a -G sakiot-staging,sakiot-preview sakiot
 
 install -d -o root -g sakiot -m 0750 /etc/sakiot
 install -d -o sakiot -g sakiot -m 0750 \
@@ -30,14 +40,17 @@ install -d -o sakiot -g sakiot -m 0750 \
   /srv/sakiot/current
 install -d -o sakiot -g sakiot -m 0755 /var/www/patrykstyla.com
 
-# Staging instance: same user, separate layout.
+# Staging instance: deployed by sakiot, run by sakiot-staging. The runtime
+# user reaches its binaries through the release directories' group and owns
+# its data; setgid keeps new data files in its group for the deploy user.
 install -d -o sakiot -g sakiot -m 0750 \
-  /var/lib/sakiot-staging/data \
   /var/lib/sakiot-staging/deploy \
   /var/lib/sakiot-staging/backups \
-  /var/cache/sakiot-staging \
+  /var/cache/sakiot-staging
+install -d -o sakiot -g sakiot-staging -m 0750 \
   /srv/sakiot-staging/releases \
   /srv/sakiot-staging/current
+install -d -o sakiot-staging -g sakiot-staging -m 2770 /var/lib/sakiot-staging/data
 install -d -o sakiot -g sakiot -m 0755 /var/www/staging.patrykstyla.com
 
 rm -rf "${install_root}"
@@ -151,4 +164,4 @@ else
 fi
 echo "production + staging skeleton installed"
 echo "edit /etc/sakiot/production.env before the first tag"
-echo "edit /etc/sakiot/staging.env and run 'createdb sakiot_staging' before the first main push"
+echo "edit /etc/sakiot/staging.env, create the sakiot_staging role and database (ops/README.md), before the first main push"

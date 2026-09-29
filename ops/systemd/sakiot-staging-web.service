@@ -5,8 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=sakiot
-Group=sakiot
+# Staging and previews run as their own user, which cannot read production's
+# env file, backup key, data, or processes. UMask keeps what it writes
+# writable by its group, which the sakiot deploy user joins for fixture
+# imports.
+User=sakiot-staging
+Group=sakiot-staging
+UMask=0007
 WorkingDirectory=/var/lib/sakiot-staging/data
 EnvironmentFile=/etc/sakiot/staging.env
 EnvironmentFile=/srv/sakiot-staging/current/web/service.env
@@ -17,6 +22,25 @@ TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+# Read-only filesystem except the instance's own data directory.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sakiot-staging/data
+PrivateDevices=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

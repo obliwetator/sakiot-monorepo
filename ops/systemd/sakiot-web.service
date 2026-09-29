@@ -17,6 +17,25 @@ TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+# Read-only filesystem except the instance's own data directory.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sakiot/data
+PrivateDevices=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
