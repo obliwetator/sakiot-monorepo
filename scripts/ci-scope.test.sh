@@ -78,10 +78,21 @@ assert_scope \
   "compose.dev.yml"
 
 assert_scope \
-  "CI config only" \
-  false false false false false \
+  "workflows run the injection guard" \
+  false false false false true \
   ".github/workflows/ci.yml" \
   ".github/workflows/cache-cleanup.yml"
+
+assert_scope \
+  "other GitHub config only" \
+  false false false false false \
+  ".github/dependabot.yml"
+
+assert_scope \
+  "OpenAPI generator toolchain" \
+  false false true true false \
+  "sakiot-stage/scripts/codegen/package.json" \
+  "sakiot-stage/scripts/codegen/bun.lock"
 
 assert_scope \
   "shared DSP" \

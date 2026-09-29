@@ -11,9 +11,13 @@ on:
 permissions:
   contents: read
 
+# Queue rather than cancel: cancelling a run mid-deploy drops the SSH session
+# under the deploy engine and leaves staging half-deployed. A newer pending run
+# still replaces an older pending one, so a burst of pushes deploys only the
+# latest commit after the current deploy finishes.
 concurrency:
   group: staging-deployment
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:

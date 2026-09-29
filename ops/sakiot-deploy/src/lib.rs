@@ -19,12 +19,13 @@ pub mod validate;
 pub mod web_api;
 
 use std::fmt::Display;
+use std::io::Write;
 
-/// Mirrors `log()` from ops/lib/common.sh.
-#[expect(
-    clippy::print_stdout,
-    reason = "deploy progress is reported on stdout, mirroring the bash engine"
-)]
+/// Reports deploy progress on stdout.
+///
+/// Write errors are ignored. When the CI job's SSH client goes away, stdout is
+/// a closed pipe; `println!` would panic there (Rust ignores SIGPIPE) and cut
+/// short whatever step was logging, including failure handling.
 pub fn log(message: impl Display) {
-    println!("[deploy] {message}");
+    let _ = writeln!(std::io::stdout(), "[deploy] {message}");
 }

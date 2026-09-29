@@ -43,6 +43,7 @@ while IFS= read -r path; do
       ops=true
       ;;
     sakiot-stage/scripts/generate-api-types.ts|\
+    sakiot-stage/scripts/codegen/*|\
     sakiot-stage/src/api/openapi.ts|\
     sakiot-stage/package.json|sakiot-stage/bun.lock)
       frontend=true
@@ -50,6 +51,11 @@ while IFS= read -r path; do
       ;;
     sakiot-stage/*)
       frontend=true
+      ;;
+    # The ops suite includes the workflow injection guard, which must run
+    # whenever a workflow changes.
+    .github/workflows/*)
+      ops=true
       ;;
     .github/*)
       ;;
