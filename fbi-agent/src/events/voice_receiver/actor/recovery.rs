@@ -412,6 +412,11 @@ impl RecorderActor {
                     .await;
             }
             Ok(true) => {
+                info!(
+                    guild_id = self.guild_id.get(),
+                    channel_id = channel_id.get(),
+                    "joined a channel excluded by guild policy; not recording while connected here"
+                );
                 self.policy.entered_channel(false);
             }
             Err(error) => {
