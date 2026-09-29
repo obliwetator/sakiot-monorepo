@@ -20,10 +20,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Suites affected since the last commit a successful staging run verified.
+  # A version bump is promoted to production without another CI pass, so it
+  # runs every suite.
   test:
+    needs: release-candidate
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/ci.yml
     with:
-      full: false
+      full: ${{ needs.release-candidate.outputs.tag != '' }}
+      baseline_workflow: deploy-staging.yml
 
   release-candidate:
     runs-on: ubuntu-latest

@@ -100,4 +100,31 @@ assert_scope \
   "sakiot-dsp/src/lib.rs" \
   "sakiot-dsp/pkg/sakiot_dsp_bg.wasm"
 
+assert_scope \
+  "workspace manifest also lints the wasm feature" \
+  true true true false false \
+  "Cargo.toml" \
+  "Cargo.lock"
+
+assert_scope \
+  "toolchain also builds the WASM" \
+  true true false true false \
+  "rust-toolchain.toml"
+
+assert_scope \
+  "Cargo config also builds the WASM" \
+  true true false true false \
+  ".cargo/config.toml"
+
+assert_scope \
+  "Clippy config also lints the wasm feature" \
+  true true false false false \
+  "clippy.toml"
+
+assert_scope \
+  "Git hooks run the hook tests" \
+  false false false false true \
+  ".githooks/pre-commit" \
+  ".githooks/pre-push"
+
 echo "ci-scope tests passed"

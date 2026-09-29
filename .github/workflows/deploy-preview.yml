@@ -3,8 +3,10 @@ name: Deploy preview
 # Automatic per-branch preview instances. Every push to a non-main branch
 # (docs-only pushes skipped) provisions a slot named after the branch and
 # deploys the pushed commit into it; deleting the branch tears the slot down
-# again (DNS record, cert, vhost, unit, and database). Manual deploys keep
-# the explicit branch + slot inputs. The VPS must be bootstrapped once:
+# again (DNS record, cert, vhost, unit, and database). A manual deploy runs on
+# the branch it is dispatched from ("Use workflow from"), so CI tests the exact
+# commit that gets deployed; only the slot is an input. The VPS must be
+# bootstrapped once:
 # ops/update-deploy-engine.sh as root (installs the preview-up /
 # preview-remove forced-command verbs and the sudo rule), plus the shared
 # /etc/sakiot/preview.env with real credentials (see PREVIEW.md).
@@ -19,10 +21,6 @@ on:
   delete:
   workflow_dispatch:
     inputs:
-      branch:
-        description: Branch to deploy
-        required: true
-        default: main
       slot:
         description: Preview slot (DNS-safe name, e.g. clip-editor)
         required: true
@@ -32,17 +30,22 @@ permissions:
   contents: read
 
 jobs:
+  # Suites affected since the last commit a successful preview run verified on
+  # this branch; a new branch runs every suite.
   test:
     if: github.event_name != 'delete'
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/ci.yml
     with:
       full: false
+      baseline_workflow: deploy-preview.yml
 
   compute:
     runs-on: ubuntu-latest
     outputs:
       slot: ${{ steps.derive.outputs.slot }}
-      branch: ${{ steps.derive.outputs.branch }}
     steps:
       - name: Derive preview slot
         id: derive
@@ -50,7 +53,6 @@ jobs:
           # Passed through the environment, never interpolated into the script:
           # a branch or input containing quotes would otherwise run as shell.
           EVENT_REF: ${{ github.event.ref }}
-          INPUT_BRANCH: ${{ inputs.branch }}
           INPUT_SLOT: ${{ inputs.slot }}
         run: |
           set -euo pipefail
@@ -75,7 +77,7 @@ jobs:
               slot="$(slug "${branch}")"
               ;;
             workflow_dispatch)
-              branch="${INPUT_BRANCH}"
+              branch="${GITHUB_REF_NAME}"
               slot="${INPUT_SLOT}"
               ;;
           esac
@@ -91,7 +93,6 @@ jobs:
             exit 1
           fi
           echo "slot=${slot}" >>"${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >>"${GITHUB_OUTPUT}"
 
   deploy:
     if: github.event_name != 'delete' && needs.compute.outputs.slot != ''
@@ -126,22 +127,12 @@ jobs:
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "preview-up ${PREVIEW_SLOT}"
 
-      - name: Checkout branch (manual deploys)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.compute.outputs.branch }}
-          fetch-depth: 0
-
+      # The commit the test job verified, for pushes and dispatches alike.
       - name: Resolve deploy commit
         id: sha
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            sha="${GITHUB_SHA}"
-          else
-            sha="$(git rev-parse HEAD)"
-          fi
+          sha="${GITHUB_SHA}"
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
           echo "sha=${sha}" >>"${GITHUB_OUTPUT}"
 

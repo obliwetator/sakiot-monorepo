@@ -20,9 +20,13 @@ concurrency:
 
 jobs:
   # Manual/raw tag releases retain full CI. Auto-tag dispatches only after the
-  # same SHA passed CI and staging produced a digest-verified promotion.
+  # same SHA passed every CI suite in its staging run (a version bump always
+  # runs them all) and staging produced a digest-verified promotion.
   test:
     if: github.event_name != 'workflow_dispatch' || inputs.promoted != true
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/ci.yml
     with:
       full: true

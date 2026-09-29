@@ -97,8 +97,13 @@ installs root-owned `/usr/local/lib/sakiot-deploy/bin/sakiot-deploy`. It is
 never built from the release worktree, so a broken commit cannot brick
 deploys. Engine tests run in CI (`cargo nextest run`). Authenticated `*-ci`
 forced-command verbs are reachable only after the Actions test job succeeds.
-They receive that job's read-only `GITHUB_TOKEN` on stdin, force authenticated
-Git protocol v2 for the source fetch, and skip the duplicate VPS test pass.
+That job runs every suite affected since the last commit a successful run of
+the same workflow verified on that branch (`scripts/ci-baseline.sh`), not
+since the previous push: a push whose run failed or was superseded is still
+covered. It runs every suite when no such commit is found, and for a version
+bump. The verbs receive that job's read-only `GITHUB_TOKEN` on stdin, force
+authenticated Git protocol v2 for the source fetch, and skip the duplicate VPS
+test pass.
 Legacy/local verbs still test on the VPS. The bash suites for the
 out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
 frontend publish) run in CI on every PR and on the VPS via
@@ -192,7 +197,8 @@ provisions a slot per pushed non-`main` branch automatically (`preview-up`
 runs `ops/preview-slot.sh` as root via a narrow sudo rule), deploys the pushed
 commit with `preview-ci <slot> <sha>` after CI, and tears the slot down
 (`preview-remove`) when the branch is deleted. Manual `workflow_dispatch`
-deploys with explicit branch + slot inputs still work.
+deploys still work: dispatch the workflow from the branch to deploy and pass
+the slot, so the deployed commit is the one CI tested.
 Each slot is a fully separate instance: its own port (`8903 + hash(slot)`),
 `sakiot_preview_<slot>` database, `/var/lib/sakiot-preview-<slot>` +
 `/srv/sakiot-preview-<slot>`, the `sakiot-preview-<slot>-web` unit, and
@@ -217,7 +223,9 @@ single source of truth:
    updates with it — run `cargo check`).
 2. Merge to `main`. The `release-candidate` job compares the workspace
    version against the latest release tag before staging deployment. A higher
-   version selects a production bundle to prepare during the staging build.
+   version selects a production bundle to prepare during the staging build,
+   and makes the staging run's CI test every suite, because nothing tests the
+   commit again before production.
 3. After staging succeeds, `auto-tag` verifies staging is serving this exact
    commit, tags `v<version>`, pushes the tag, and dispatches
    `deploy-release.yml` on it.
@@ -225,7 +233,7 @@ single source of truth:
    own `GITHUB_TOKEN` does not trigger the tag-push event (GitHub's recursion
    guard); `workflow_dispatch` is exempt. No personal access token is
    involved, so the release path is not tied to any individual account.
-4. The dispatched run skips duplicate CI, requires the exact tag/SHA promotion,
+4. The dispatched run skips the now-duplicate CI, requires the exact tag/SHA promotion,
    re-verifies every digest, copies it into the production release directory,
    and deploys it. A missing or modified promotion fails before migrations or
    service changes. Manual/raw tag pushes still run full CI and can build on the

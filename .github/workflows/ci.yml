@@ -11,17 +11,30 @@ on:
         description: Run every suite for a trusted deployment gate
         type: boolean
         default: true
+      baseline_workflow:
+        description: >-
+          Workflow file whose newest successful run on this branch marks the
+          last verified commit; suites are selected by the diff since then.
+          Without it, a partial run selects every suite.
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
+# Keyed by the calling workflow too, so a preview deploy dispatched from main
+# cannot cancel the staging gate's run on main.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   scope:
     runs-on: ubuntu-latest
+    # actions: read lists the baseline workflow's runs. Callers must grant it.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       dsp: ${{ steps.scope.outputs.dsp }}
@@ -34,13 +47,32 @@ jobs:
           fetch-depth: 0
 
       - name: Test suite selection rules
-        run: bash scripts/ci-scope.test.sh
+        run: |
+          bash scripts/ci-scope.test.sh
+          bash scripts/ci-baseline.test.sh
+
+      # A deployment gate diffs from the last commit a successful gate
+      # verified, never from the previous push (see scripts/ci-baseline.sh).
+      - name: Resolve verified baseline
+        id: baseline
+        if: github.event_name != 'pull_request' && !inputs.full && inputs.baseline_workflow != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASELINE_WORKFLOW: ${{ inputs.baseline_workflow }}
+        run: |
+          set -euo pipefail
+          base="$(scripts/ci-baseline.sh "${BASELINE_WORKFLOW}" "${GITHUB_REF_NAME}" "${GITHUB_SHA}")"
+          if [[ -n "${base}" ]]; then
+            echo "::notice::Selecting suites affected since verified commit ${base}"
+          fi
+          echo "sha=${base}" >>"${GITHUB_OUTPUT}"
 
       - name: Select affected suites
         id: scope
         env:
           FULL: ${{ inputs.full || false }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || steps.baseline.outputs.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail

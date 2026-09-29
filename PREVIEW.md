@@ -49,9 +49,10 @@ read-only for `sakiot`, and validates its slot argument, so it can only
 create/remove DNS records, vhosts, units, certs, and databases for valid slot
 names.
 
-Manual deploys still work: **Actions → Deploy preview → Run workflow**, pick
-the `branch` and the `slot`. The slot is provisioned on demand too, so the
-manual bootstrap below is optional.
+Manual deploys still work: **Actions → Deploy preview → Run workflow**, choose
+the branch under **Use workflow from**, and enter the `slot`. The run tests and
+deploys that branch's head commit. The slot is provisioned on demand too, so
+the manual bootstrap below is optional.
 
 ## Slot lifecycle (one time per slot, as root)
 

@@ -60,7 +60,7 @@ marker="${temporary}/injected"
 run_derive() {
   GITHUB_EVENT_NAME="$1" \
     EVENT_REF="$2" \
-    INPUT_BRANCH="$3" \
+    GITHUB_REF_NAME="$3" \
     INPUT_SLOT="$4" \
     GITHUB_OUTPUT="$5" \
     bash -c "${derive_script}"

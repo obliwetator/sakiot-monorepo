@@ -13,13 +13,26 @@ while IFS= read -r path; do
   case "${path}" in
     *.md|LICENSE*|docs/*)
       ;;
+    # The root manifest also carries the workspace lints, which the DSP job's
+    # wasm-feature Clippy pass applies.
     Cargo.toml|Cargo.lock)
       rust=true
+      dsp=true
       api_contract=true
       ;;
-    rust-toolchain.toml|clippy.toml|.cargo/*|.sqlx/*|\
-    fbi-agent/*|sakiot-paths/*|sakiot-storage/*|sakiot-db/migrations/*|\
-    scripts/sqlx-*)
+    # The toolchain and Cargo config also build the WASM that the DSP and
+    # frontend suites compile.
+    rust-toolchain.toml|.cargo/*)
+      rust=true
+      dsp=true
+      frontend=true
+      ;;
+    clippy.toml)
+      rust=true
+      dsp=true
+      ;;
+    .sqlx/*|fbi-agent/*|sakiot-paths/*|sakiot-storage/*|\
+    sakiot-db/migrations/*|scripts/sqlx-*)
       rust=true
       ;;
     sakiot-proto/*)
@@ -53,8 +66,8 @@ while IFS= read -r path; do
       frontend=true
       ;;
     # The ops suite includes the workflow injection guard, which must run
-    # whenever a workflow changes.
-    .github/workflows/*)
+    # whenever a workflow changes, and the Git hook tests.
+    .github/workflows/*|.githooks/*)
       ops=true
       ;;
     .github/*)
