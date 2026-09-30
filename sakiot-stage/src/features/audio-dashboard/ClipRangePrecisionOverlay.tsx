@@ -37,11 +37,7 @@ export function ClipRangePrecisionOverlay({
 							}}
 							size={"sm"}
 						>
-							{dragFeedback.multiplier >= 100
-								? "Ultra ×100"
-								: dragFeedback.multiplier >= 10
-									? "Fine ×10"
-									: "Normal ×1"}
+							{dragFeedback.multiplier >= 100 ? "Ultra ×100" : "Fine ×10"}
 						</Badge>
 					</div>
 					{precisionBoundaries.map(
