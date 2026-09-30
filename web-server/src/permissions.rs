@@ -517,18 +517,21 @@ pub async fn visible_channels_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, crate::errors::AppError> {
-    let membership = sqlx::query!(
-        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
-        guild_id,
-        user_id
-    )
-    .fetch_optional(pool.get_ref())
-    .await?;
-    if membership.is_none() {
-        return Err(crate::errors::AppError::Forbidden);
-    }
+    crate::server_timing::measure("perm", async {
+        let membership = sqlx::query!(
+            "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
+            guild_id,
+            user_id
+        )
+        .fetch_optional(pool.get_ref())
+        .await?;
+        if membership.is_none() {
+            return Err(crate::errors::AppError::Forbidden);
+        }
 
-    get_available_channels_for_user(pool, guild_id, user_id).await
+        get_available_channels_for_user(pool, guild_id, user_id).await
+    })
+    .await
 }
 
 pub async fn require_channel_access(

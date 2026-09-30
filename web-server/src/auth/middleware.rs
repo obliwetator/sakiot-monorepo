@@ -76,6 +76,7 @@ where
             return Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) });
         }
 
+        let started = std::time::Instant::now();
         let keys = match req.app_data::<web::Data<AccessKeys>>() {
             Some(k) => k,
             None => {
@@ -120,6 +121,7 @@ where
 
         let csrf = decoded_access.csrf.clone();
         req.extensions_mut().insert(decoded_access);
+        crate::server_timing::record("auth", started.elapsed());
         let res = self.service.call(req);
         Box::pin(async move {
             let mut response = res.await?.map_into_left_body();

@@ -198,6 +198,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cors_oauth_openers = cfg.oauth_allowed_opener_origins.clone();
     let host = cfg.host.clone();
     let port = cfg.port;
+    let server_timing_header = cfg.server_timing_header;
     let cfg_data = web::Data::new(cfg);
     let discord_http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -341,7 +342,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // SecurityHeaders outermost: covers CORS preflights and 404/5xx.
             // Cors short-circuits preflights before metrics.
             // HttpMetrics innermost at app level: measures handler+auth latency only.
-            .wrap(HttpMetrics)
+            .wrap(HttpMetrics {
+                server_timing_header,
+            })
             .wrap(cors)
             .wrap(SecurityHeaders)
     })

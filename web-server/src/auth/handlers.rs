@@ -483,6 +483,7 @@ mod tests {
             port: 8900,
             db_max_connections: 20,
             recording_permanent_delete_enabled: false,
+            server_timing_header: false,
         }
     }
 

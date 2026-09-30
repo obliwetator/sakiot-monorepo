@@ -441,6 +441,7 @@ pub async fn get_live_stems(
     let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
+    let started = std::time::Instant::now();
     let rows = sqlx::query!(
         "SELECT af.file_name, af.channel_id
            FROM audio_files af
@@ -469,6 +470,7 @@ pub async fn get_live_stems(
     )
     .fetch_all(pool.get_ref())
     .await?;
+    crate::server_timing::record("stems", started.elapsed());
 
     let stems: Vec<String> = rows
         .into_iter()
@@ -532,15 +534,23 @@ pub async fn get_current_month_permission(
         ),
     };
 
-    let mut dirs_vec = get_session_tree(
-        &pool,
-        guild_id_as_int,
-        &permission_hashset,
-        channel_access.as_ref(),
+    let mut dirs_vec = crate::server_timing::measure(
+        "tree",
+        get_session_tree(
+            &pool,
+            guild_id_as_int,
+            &permission_hashset,
+            channel_access.as_ref(),
+        ),
     )
     .await?;
 
-    if let Err(e) = enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec).await {
+    if let Err(e) = crate::server_timing::measure(
+        "names",
+        enrich_display_names(&pool, guild_id_as_int, &mut dirs_vec),
+    )
+    .await
+    {
         tracing::error!("enrich_display_names failed: {}", e);
     }
 

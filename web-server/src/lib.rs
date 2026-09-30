@@ -19,6 +19,7 @@ pub mod proto;
 pub mod recording_deletion;
 pub mod recording_opt_out;
 pub mod security_headers;
+pub mod server_timing;
 pub mod snowflake_serde;
 pub mod stamps;
 pub mod telemetry;

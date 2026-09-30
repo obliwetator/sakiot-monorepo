@@ -21,6 +21,7 @@ use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
 use crate::permissions::require_channel_access;
+use crate::server_timing::measure;
 
 use super::super::live::mark_cache_access;
 use super::{AudioFragment, SessionAccess, fragment_path, load_fragments, require_session_access};
@@ -345,12 +346,18 @@ pub async fn get_session_channel_mix(
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, token.user_id).await?;
-    let plan = build_mix_plan(&pool, &access, token.user_id, query.scope()).await?;
-    let mut response = mix_response(&plan, &access, &container, true).await?;
+    let plan = measure(
+        "plan",
+        build_mix_plan(&pool, &access, token.user_id, query.scope()),
+    )
+    .await?;
+    let mut response = measure("status", mix_response(&plan, &access, &container, true)).await?;
     let resource = format!("session-mix:{session_id}:{}", query.scope().as_str());
-    if let Some(job) =
-        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_mix", &resource)
-            .await?
+    if let Some(job) = measure(
+        "jobs",
+        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_mix", &resource),
+    )
+    .await?
     {
         response.status = ChannelMixStatus::Processing;
         response.progress = job.progress;
@@ -588,7 +595,7 @@ async fn build_mix_plan(
     scope: ChannelMixScope,
 ) -> Result<MixPlan, AppError> {
     let selected_timeline_end_ms = super::timeline_end_ms(access);
-    let selected_fragments = load_fragments(pool, access.session_id)
+    let selected_fragments = measure("fragments", load_fragments(pool, access.session_id))
         .await?
         .into_iter()
         .filter(|fragment| {
@@ -602,13 +609,16 @@ async fn build_mix_plan(
         ChannelMixScope::SelectedSession => {
             let windows =
                 fallback_mix_windows(access, &selected_fragments, selected_timeline_end_ms);
-            let inputs = load_mix_candidates(
-                pool,
-                access,
-                &windows,
-                access.started_at_ms,
-                selected_timeline_end_ms,
-                Some(access.user_id),
+            let inputs = measure(
+                "candidates",
+                load_mix_candidates(
+                    pool,
+                    access,
+                    &windows,
+                    access.started_at_ms,
+                    selected_timeline_end_ms,
+                    Some(access.user_id),
+                ),
             )
             .await?;
             (
@@ -620,11 +630,14 @@ async fn build_mix_plan(
             )
         }
         ChannelMixScope::AllRecordings => {
-            let mut windows = load_bot_occupancy_windows(
-                pool,
-                access,
-                &selected_fragments,
-                selected_timeline_end_ms,
+            let mut windows = measure(
+                "windows",
+                load_bot_occupancy_windows(
+                    pool,
+                    access,
+                    &selected_fragments,
+                    selected_timeline_end_ms,
+                ),
             )
             .await?;
             if windows.is_empty() {
@@ -641,13 +654,16 @@ async fn build_mix_plan(
                 .map(|window| window.end_ms)
                 .max()
                 .unwrap_or(selected_timeline_end_ms);
-            let inputs = load_mix_candidates(
-                pool,
-                access,
-                &windows,
-                timeline_start_ms,
-                timeline_end_ms,
-                None,
+            let inputs = measure(
+                "candidates",
+                load_mix_candidates(
+                    pool,
+                    access,
+                    &windows,
+                    timeline_start_ms,
+                    timeline_end_ms,
+                    None,
+                ),
             )
             .await?;
             (
@@ -730,15 +746,18 @@ async fn build_mix_plan(
         }
     }
 
-    let participants = participant_metadata(
-        pool,
-        access.guild_id,
-        (scope == ChannelMixScope::SelectedSession).then_some((
-            access.user_id,
-            access.session_id,
-            source_anchor_fragments.as_slice(),
-        )),
-        &contributors,
+    let participants = measure(
+        "participants",
+        participant_metadata(
+            pool,
+            access.guild_id,
+            (scope == ChannelMixScope::SelectedSession).then_some((
+                access.user_id,
+                access.session_id,
+                source_anchor_fragments.as_slice(),
+            )),
+            &contributors,
+        ),
     )
     .await?;
     let tracks = build_tracks(

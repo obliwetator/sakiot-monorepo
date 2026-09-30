@@ -49,6 +49,16 @@ Sakiot application:
   `/scalar`.
 - Emits HTTP metrics and telemetry for observability.
 
+Every request's latency is split into named segments (`auth`, `perm`,
+`session`, `tree`, `plan`, and so on) that feed the
+`http_server_segment_duration` histogram. With
+`SAKIOT_SERVER_TIMING_HEADER=true`, which local, staging, and preview set and
+production must not, the same segments come back as a `Server-Timing` header
+and appear in the browser's DevTools under Network > Timing. A segment sums
+all its calls and notes the count, so a query repeated per row stands out.
+Segments may nest, so they do not add up to `total`. Wrap new work in
+`server_timing::measure("name", future)` to add a segment.
+
 Export the same OpenAPI document without starting the service or connecting to
 the database:
 

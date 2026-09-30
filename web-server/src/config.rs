@@ -34,6 +34,8 @@ pub struct Config {
     pub port: u16,
     pub db_max_connections: u32,
     pub recording_permanent_delete_enabled: bool,
+    /// Return each request's timing breakdown as a `Server-Timing` header.
+    pub server_timing_header: bool,
 }
 
 fn require(key: &'static str) -> Result<String, ConfigError> {
@@ -105,6 +107,7 @@ impl Config {
                 "SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED",
                 false,
             )?,
+            server_timing_header: parse("SAKIOT_SERVER_TIMING_HEADER", false)?,
         })
     }
 }

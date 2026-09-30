@@ -23,7 +23,8 @@ pub async fn get_session_manifest(
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, token.user_id).await?;
-    Ok(HttpResponse::Ok().json(build_manifest(&pool, access).await?))
+    let manifest = crate::server_timing::measure("manifest", build_manifest(&pool, access)).await?;
+    Ok(HttpResponse::Ok().json(manifest))
 }
 
 #[utoipa::path(

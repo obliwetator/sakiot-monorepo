@@ -5,6 +5,18 @@ pub(crate) async fn require_session_access(
     recording_session_id: i64,
     viewer_user_id: i64,
 ) -> Result<SessionAccess, AppError> {
+    crate::server_timing::measure(
+        "session",
+        load_session_access(pool, recording_session_id, viewer_user_id),
+    )
+    .await
+}
+
+async fn load_session_access(
+    pool: &web::Data<Pool<Postgres>>,
+    recording_session_id: i64,
+    viewer_user_id: i64,
+) -> Result<SessionAccess, AppError> {
     let row = sqlx::query!(
         r#"SELECT id,
                 guild_id,
