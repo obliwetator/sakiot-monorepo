@@ -1,6 +1,8 @@
 import {
 	API_ORIGIN,
 	corsHeaders,
+	draftRecord,
+	GENERIC_DRAFT_KEY,
 	GUILD_ID,
 	mockClipEditorApi,
 } from "./clip-editor-fixture";
@@ -34,16 +36,13 @@ const draft = {
 test.beforeEach(async ({ page }) => {
 	await mockClipEditorApi(page);
 	await page.addInitScript(
-		({ draft, guild }) => {
+		({ key, record }) => {
 			if (!localStorage.getItem("test:draft-seeded")) {
-				localStorage.setItem(
-					`sakiot:clip-editor:${guild}:draft`,
-					JSON.stringify(draft),
-				);
+				localStorage.setItem(key, record);
 				localStorage.setItem("test:draft-seeded", "yes");
 			}
 		},
-		{ draft, guild: GUILD_ID },
+		{ key: GENERIC_DRAFT_KEY, record: draftRecord(draft) },
 	);
 });
 

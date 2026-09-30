@@ -1,5 +1,7 @@
+import { useState } from "react";
+import { FileTrigger } from "react-aria-components/FileTrigger";
 import { BaseDialog } from "../../shared/BaseDialog";
-import { Switch } from "../../shared/ui";
+import { Button, Switch } from "../../shared/ui";
 import type { EditorOptions } from "./editorOptions";
 
 /**
@@ -12,13 +14,29 @@ export function EditorOptionsDialog(props: {
 	onClose: () => void;
 	options: EditorOptions;
 	onChange: (options: EditorOptions) => void;
+	/** Opens a downloaded draft; resolves to an error message, or null. */
+	onOpenDraftFile: (file: File) => Promise<string | null>;
 }) {
+	const [fileError, setFileError] = useState<string | null>(null);
+	const close = () => {
+		setFileError(null);
+		props.onClose();
+	};
+	const openDraftFile = async (file: File) => {
+		const error = await props.onOpenDraftFile(file);
+		if (error) {
+			setFileError(error);
+			return;
+		}
+		close();
+	};
 	return (
 		<BaseDialog
 			open={props.open}
-			onClose={props.onClose}
+			onClose={close}
 			title="Editor options"
 			closeLabel="Done"
+			error={fileError ?? undefined}
 		>
 			<Switch
 				isSelected={props.options.marqueeMultiTrack}
@@ -59,6 +77,25 @@ export function EditorOptionsDialog(props: {
 				When enabled, Ctrl/Cmd+C copies every selected element. When disabled,
 				it copies only the earliest selected element in the timeline.
 			</span>
+			<div className="border-t border-ui-border pt-3">
+				<p className="text-sm">Draft files</p>
+				<span className="text-muted block text-xs leading-5">
+					Drafts save in this browser automatically. To continue a draft you
+					downloaded, open it here. It replaces the current edit, and undo
+					brings the current edit back.
+				</span>
+				<FileTrigger
+					acceptedFileTypes={["application/json", ".json"]}
+					onSelect={(files) => {
+						const file = files?.[0];
+						if (file) void openDraftFile(file);
+					}}
+				>
+					<Button variant="outline" size="sm" className="mt-2">
+						Open draft file…
+					</Button>
+				</FileTrigger>
+			</div>
 		</BaseDialog>
 	);
 }

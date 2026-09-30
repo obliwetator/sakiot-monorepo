@@ -1,7 +1,10 @@
 import {
 	corsHeaders,
+	draftRecord,
+	GENERIC_DRAFT_KEY,
 	GUILD_ID,
 	mockClipEditorApi,
+	singleSegmentComposition,
 } from "./clip-editor-fixture";
 import { expect, test } from "./fixtures";
 
@@ -43,35 +46,11 @@ test("pausing keeps the playhead, and playing to the end rewinds it", async ({
 		},
 	);
 	await page.addInitScript(
-		({ guild, seconds }) => {
-			localStorage.setItem(
-				`sakiot:clip-editor:${guild}:draft`,
-				JSON.stringify({
-					master_volume_db: 0,
-					muted_tracks: [],
-					segments: [
-						{
-							source: "clip",
-							source_id: "working-source",
-							source_in: 0,
-							source_out: seconds,
-							timeline_start: 0,
-							track: 0,
-							effects: {
-								volume_db: 0,
-								pitch_cents: 0,
-								rate: 1,
-								bass_db: 0,
-								mid_db: 0,
-								treble_db: 0,
-								reverse: false,
-							},
-						},
-					],
-				}),
-			);
+		({ key, record }) => localStorage.setItem(key, record),
+		{
+			key: GENERIC_DRAFT_KEY,
+			record: draftRecord(singleSegmentComposition(SOURCE_SECONDS)),
 		},
-		{ guild: GUILD_ID, seconds: SOURCE_SECONDS },
 	);
 	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
 

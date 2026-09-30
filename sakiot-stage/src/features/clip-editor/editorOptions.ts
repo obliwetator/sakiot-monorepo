@@ -1,3 +1,5 @@
+import { optionalStorage, type StorageLike } from "./browserStorage";
+
 export interface EditorOptions {
 	/** Marquee click-drag selection covers every track the rectangle spans
 	 * instead of only the track the drag started on. */
@@ -16,15 +18,7 @@ export const DEFAULT_EDITOR_OPTIONS: EditorOptions = {
 
 const STORAGE_KEY = "sakiot:clip-editor:options";
 
-export interface StorageLike {
-	getItem(key: string): string | null;
-	setItem(key: string, value: string): void;
-}
-
-const defaultStorage = (): StorageLike | null =>
-	typeof globalThis.localStorage === "undefined"
-		? null
-		: globalThis.localStorage;
+export type { StorageLike };
 
 /**
  * Load the saved options, falling back to defaults per key so unknown or
@@ -32,13 +26,13 @@ const defaultStorage = (): StorageLike | null =>
  * editor.
  */
 export function loadEditorOptions(
-	storage: StorageLike | null = defaultStorage(),
+	storage: StorageLike | null = optionalStorage(),
 ): EditorOptions {
 	const options = { ...DEFAULT_EDITOR_OPTIONS };
 	if (!storage) return options;
-	const raw = storage.getItem(STORAGE_KEY);
-	if (!raw) return options;
 	try {
+		const raw = storage.getItem(STORAGE_KEY);
+		if (!raw) return options;
 		const parsed = JSON.parse(raw) as Record<string, unknown>;
 		if (typeof parsed.marqueeMultiTrack === "boolean") {
 			options.marqueeMultiTrack = parsed.marqueeMultiTrack;
@@ -58,7 +52,7 @@ export function loadEditorOptions(
 /** Persist the options; failures (quota, privacy mode) are swallowed. */
 export function saveEditorOptions(
 	options: EditorOptions,
-	storage: StorageLike | null = defaultStorage(),
+	storage: StorageLike | null = optionalStorage(),
 ): void {
 	if (!storage) return;
 	try {

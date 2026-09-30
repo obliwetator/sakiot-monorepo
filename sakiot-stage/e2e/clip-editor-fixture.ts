@@ -4,6 +4,53 @@ import { fulfillRecordingOptOut } from "./fixtures";
 export const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
 export const GUILD_ID = "guild-123";
+export const CURRENT_USER_ID = "current-user";
+/** Where the editor keeps the mocked user's generic (no `?source=`) draft. */
+export const GENERIC_DRAFT_KEY = draftKey(null);
+
+/** The editor's storage key for the mocked user's draft of a source clip. */
+export function draftKey(sourceClipId: string | null): string {
+	const scope = sourceClipId ? `clip:${sourceClipId}` : "generic";
+	return `sakiot:clip-editor:drafts:v1:${CURRENT_USER_ID}:${GUILD_ID}:${scope}`;
+}
+
+/** A stored draft record, as the editor writes it, around a composition. */
+export function draftRecord(composition: unknown): string {
+	return JSON.stringify({
+		version: 1,
+		composition,
+		revision: 1,
+		writer: "e2e-seed",
+		savedAt: 0,
+	});
+}
+
+/** A one-segment composition of `working-source`. */
+export function singleSegmentComposition(sourceOut: number) {
+	return {
+		master_volume_db: 0,
+		muted_tracks: [],
+		segments: [
+			{
+				source: "clip",
+				source_id: "working-source",
+				source_in: 0,
+				source_out: sourceOut,
+				timeline_start: 0,
+				track: 0,
+				effects: {
+					volume_db: 0,
+					pitch_cents: 0,
+					rate: 1,
+					bass_db: 0,
+					mid_db: 0,
+					treble_db: 0,
+					reverse: false,
+				},
+			},
+		],
+	};
+}
 
 export const corsHeaders = {
 	"Access-Control-Allow-Credentials": "true",
@@ -82,7 +129,7 @@ export async function mockClipEditorApi(page: Page) {
 			await fulfillJson({
 				avatar: "",
 				is_dev: false,
-				user_id: "current-user",
+				user_id: CURRENT_USER_ID,
 				username: "Mobile Editor User",
 			});
 			return;

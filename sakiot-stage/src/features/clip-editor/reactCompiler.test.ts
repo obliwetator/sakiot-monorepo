@@ -11,6 +11,7 @@ import reactCompiler, { type LoggerEvent } from "babel-plugin-react-compiler";
  */
 const COMPILED_HOOKS = [
 	"useClipEditor.ts",
+	"useDraftPersistence.ts",
 	"usePlaybackTransport.ts",
 	"useSourceBuffers.ts",
 	"useTimelineViewport.ts",

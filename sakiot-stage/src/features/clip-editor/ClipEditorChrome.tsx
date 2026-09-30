@@ -18,6 +18,8 @@ import {
 	WithTooltip,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
+import { DraftStatusIndicator } from "./DraftStatus";
+import type { DraftStatus } from "./draftPersistence";
 import { addTrack } from "./model";
 import {
 	BROWSER_PREVIEW_LIMIT_MESSAGE,
@@ -32,6 +34,7 @@ export function ClipEditorToolbar(props: {
 	canRestore: boolean;
 	onRestore: () => void;
 	onOpenOptions: () => void;
+	draftStatus: DraftStatus;
 }) {
 	const { editor } = props;
 	return (
@@ -39,6 +42,7 @@ export function ClipEditorToolbar(props: {
 			<h6 className="font-medium tracking-[0.001em] text-xl truncate flex-1 min-w-0">
 				Clip Editor
 			</h6>
+			<DraftStatusIndicator status={props.draftStatus} />
 			<TooltipIconButton
 				label="Undo (Ctrl+Z)"
 				icon={<UndoIcon size={16} />}

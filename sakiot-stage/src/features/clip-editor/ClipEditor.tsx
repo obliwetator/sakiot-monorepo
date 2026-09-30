@@ -1,6 +1,5 @@
 import { FolderOpen as FolderOpenIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { type ClipData, useGetClipsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
 import { Button, Drawer, Notice, useMediaQuery } from "../../shared/ui";
@@ -9,7 +8,8 @@ import { ClipBin } from "./ClipBin";
 import { ClipEditorMonitor, ClipEditorToolbar } from "./ClipEditorChrome";
 import { ClipExportDialog } from "./ClipExportDialog";
 import { deserializeEdit, serializeEdit } from "./composePayload";
-import { loadDraft, saveDraft } from "./draftStorage";
+import { DraftNotices } from "./DraftStatus";
+import { DraftPersistence } from "./draftPersistence";
 import { EditorOptionsDialog } from "./EditorOptionsDialog";
 import { EffectLimitsDialog } from "./EffectLimitsDialog";
 import { EffectSettingsJsonDialog } from "./EffectSettingsJsonDialog";
@@ -24,7 +24,13 @@ import {
 	saveEffectLimits,
 } from "./effectLimits";
 import { Inspector } from "./Inspector";
-import { addSegment, emptyEdit, makeSegment, segmentDuration } from "./model";
+import {
+	addSegment,
+	type ClipEdit,
+	emptyEdit,
+	makeSegment,
+	segmentDuration,
+} from "./model";
 import {
 	type MobileBinDragPreview,
 	type MobileBinDropRequest,
@@ -35,8 +41,17 @@ import { useClipBuffer } from "./useClipBuffer";
 import { useClipEditor } from "./useClipEditor";
 import { useClipEditorKeyboardShortcuts } from "./useClipEditorKeyboardShortcuts";
 import { useCompositionExport } from "./useCompositionExport";
+import { useDraftPersistence } from "./useDraftPersistence";
 
-export function ClipEditor(props: { guildId: string }) {
+/**
+ * One editing session: one user, guild and source clip. The page remounts
+ * the editor when any of them changes, so a session never outlives its draft.
+ */
+export function ClipEditor(props: {
+	guildId: string;
+	userId: string;
+	sourceClipId: string | null;
+}) {
 	const isDesktop = useMediaQuery("(min-width: 900px)");
 	const isTouchInput = useMediaQuery("(hover: none), (pointer: coarse)");
 	const [clipBinOpen, setClipBinOpen] = useState(false);
@@ -62,16 +77,46 @@ export function ClipEditor(props: { guildId: string }) {
 	const [options, setOptions] = useState<EditorOptions>(() =>
 		loadEditorOptions(),
 	);
+	const { sourceClipId } = props;
+	// Restores synchronously, so the editor opens on the stored draft and
+	// nothing can be saved before restoration has happened.
+	const [drafts] = useState(
+		() =>
+			new DraftPersistence({
+				userId: props.userId,
+				guildId: props.guildId,
+				sourceClipId,
+			}),
+	);
 	const editor = useClipEditor({
 		copyAllSelected: options.copyAllSelected,
+		initialEdit: drafts.initialEdit,
 	});
-	// Any undoable or redoable history step means the page holds work.
-	const { dialog: unsavedDialog } = useUnsavedChangesGuard(
-		editor.canUndo || editor.canRedo,
+	// What the editor opened with. Without a stored draft a source clip still
+	// has to load before the editor knows its original version; until then
+	// this is null and nothing is saved.
+	const [baseline, setBaseline] = useState<ClipEdit | null>(() =>
+		drafts.restored || !sourceClipId ? drafts.initialEdit : null,
 	);
-	const [searchParams] = useSearchParams();
-	const sourceClipId = searchParams.get("source");
-	const seededForRef = useRef<string | null>(null);
+	const replaceEdit = useCallback(
+		(next: ClipEdit) => {
+			editor.apply(() => next);
+			editor.select(null);
+			void editor.preloadSources(
+				props.guildId,
+				next.segments.map((segment) => segment.sourceId),
+			);
+		},
+		[editor, props.guildId],
+	);
+	const draft = useDraftPersistence({
+		session: drafts,
+		edit: editor.edit,
+		committed: editor.committed,
+		baseline,
+		replaceEdit,
+	});
+	const { dialog: unsavedDialog } = useUnsavedChangesGuard(draft);
 
 	useEffect(() => {
 		if (isDesktop) {
@@ -138,97 +183,69 @@ export function ClipEditor(props: { guildId: string }) {
 		error: sourceError,
 	} = useClipBuffer(props.guildId, sourceClipId);
 
-	// The working draft lives in localStorage per session context (the source
-	// clip it was seeded from, or one generic draft). Restore it before the
-	// seed effect so a refresh comes back to the last saved state; marking the
-	// source as seeded keeps the database payload from overwriting the draft.
-	const draftRestoredRef = useRef(false);
-	useEffect(() => {
-		if (draftRestoredRef.current) return;
-		draftRestoredRef.current = true;
-		const draft = loadDraft(props.guildId, sourceClipId);
-		if (!draft || draft.segments.length === 0) return;
-		editor.reset(draft);
-		editor.select(draft.segments[0]?.id ?? null);
-		seededForRef.current = sourceClipId;
-		// The draft's sources still need their buffers so the timeline plays.
-		void editor.preloadSources(
-			props.guildId,
-			draft.segments.map((segment) => segment.sourceId),
-		);
-	}, [editor, props.guildId, sourceClipId]);
-
-	// Persist the draft after every committed change; the debounce folds drag
-	// previews into one write. Empty edits are not stored, so a fresh session
-	// never creates a draft that shadows a later seed.
-	useEffect(() => {
-		if (editor.edit.segments.length === 0) return;
-		const timeout = window.setTimeout(
-			() => saveDraft(props.guildId, sourceClipId, editor.edit),
-			400,
-		);
-		return () => window.clearTimeout(timeout);
-	}, [editor.edit, props.guildId, sourceClipId]);
-
-	// Loads the original version of the source clip - its stored composition
-	// or a single plain segment - into the editor. Returns whether the seed
-	// could be built (the clip data may still be loading).
-	const seedFromSource = useCallback((): boolean => {
-		if (!sourceClipId) return false;
+	// The original version of the source clip: its stored composition, or one
+	// plain segment. "loading" until the clip list and audio have arrived;
+	// "unavailable" when the clip cannot be opened.
+	const originalEdit = useCallback((): ClipEdit | "loading" | "unavailable" => {
+		if (!sourceClipId) return "unavailable";
 		const source = clips?.find((c) => c.clip_id === sourceClipId);
-		const edit = source?.composition
+		const composed = source?.composition
 			? deserializeEdit(source.composition)
 			: null;
-		if (edit && edit.segments.length > 0) {
-			// Composed clip: restore the whole edit, then load every source
-			// buffer so the timeline plays as it did when it was exported.
-			// Reset (not apply) makes the restored edit the undo baseline.
-			editor.reset(edit);
-			editor.select(edit.segments[0]?.id ?? null);
-			void editor.preloadSources(
-				props.guildId,
-				edit.segments.map((segment) => segment.sourceId),
-			);
-			return true;
-		}
-		if (!sourceBuffer) return false;
+		if (composed && composed.segments.length > 0) return composed;
 		// The composition marker only exists in the clips list; without it a
 		// composed source would be seeded as a single plain segment, so wait
 		// for the list before assuming the source is a plain clip.
-		if (clips === undefined && !clipsError) return false;
+		if (clips === undefined && !clipsError) return "loading";
+		if (!sourceBuffer) {
+			return sourceStatus === "error" ? "unavailable" : "loading";
+		}
 		editor.registerBuffer(sourceClipId, sourceBuffer);
 		const lengthSec = source?.length ?? sourceBuffer.duration;
 		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
-		editor.reset(addSegment(editor.edit, segment));
-		editor.select(segment.id);
-		return true;
-	}, [clips, clipsError, editor, props.guildId, sourceBuffer, sourceClipId]);
+		return addSegment(emptyEdit(), segment);
+	}, [clips, clipsError, editor, sourceBuffer, sourceClipId, sourceStatus]);
 
+	// Without a stored draft, open the source clip's original version. Reset
+	// (not apply) makes it the undo baseline. If the user edits first, or the
+	// clip cannot be opened, keep the current edit and start saving it.
 	useEffect(() => {
-		if (seededForRef.current === sourceClipId || !sourceClipId) return;
-		if (seedFromSource()) seededForRef.current = sourceClipId;
-	}, [seedFromSource, sourceClipId]);
+		if (baseline !== null) return;
+		if (editor.edit !== drafts.initialEdit) {
+			setBaseline(drafts.initialEdit);
+			return;
+		}
+		const original = originalEdit();
+		if (original === "loading") return;
+		if (original === "unavailable") {
+			setBaseline(drafts.initialEdit);
+			return;
+		}
+		editor.reset(original);
+		setBaseline(original);
+	}, [baseline, drafts, editor, originalEdit]);
+
+	// Once the editor has opened on a draft or the original clip, select its
+	// first segment and load every source so the timeline plays.
+	const openedRef = useRef<ClipEdit | null>(null);
+	useEffect(() => {
+		if (baseline === null || openedRef.current === baseline) return;
+		openedRef.current = baseline;
+		if (editor.edit !== baseline) return;
+		editor.select(baseline.segments[0]?.id ?? null);
+		void editor.preloadSources(
+			props.guildId,
+			baseline.segments.map((segment) => segment.sourceId),
+		);
+	}, [baseline, editor, props.guildId]);
 
 	// Rebuilds the clip's original version on demand; apply (not reset) keeps
 	// the restore undoable, and the draft save picks up the change.
 	const restoreOriginal = useCallback(() => {
-		if (!sourceClipId) return;
-		const source = clips?.find((c) => c.clip_id === sourceClipId);
-		const edit = source?.composition
-			? deserializeEdit(source.composition)
-			: null;
-		if (edit && edit.segments.length > 0) {
-			editor.apply(() => edit);
-			editor.select(edit.segments[0]?.id ?? null);
-			return;
-		}
-		if (!sourceBuffer) return;
-		if (clips === undefined && !clipsError) return;
-		const lengthSec = source?.length ?? sourceBuffer.duration;
-		const segment = makeSegment("clip", sourceClipId, 0, lengthSec, 0, 0);
-		editor.apply(() => addSegment(emptyEdit(), segment));
-		editor.select(segment.id);
-	}, [clips, clipsError, editor, sourceBuffer, sourceClipId]);
+		const original = originalEdit();
+		if (typeof original === "string") return;
+		replaceEdit(original);
+	}, [originalEdit, replaceEdit]);
 
 	const completeMobileBinLoad = useCallback(
 		(success: boolean) => {
@@ -362,12 +379,14 @@ export function ClipEditor(props: { guildId: string }) {
 		<div className="h-full min-h-0 flex flex-col">
 			<ClipEditorToolbar
 				editor={editor}
+				draftStatus={draft.status}
 				onExport={() => setComposeOpen(true)}
 				canExport={editor.edit.segments.length > 0}
 				canRestore={sourceClipId !== null}
 				onRestore={restoreOriginal}
 				onOpenOptions={() => setOptionsOpen(true)}
 			/>
+			<DraftNotices draft={draft} />
 			<div className="flex-1 min-h-0 min-w-0 flex flex-col min-[900px]:flex-row overflow-hidden">
 				{isDesktop ? (
 					<ClipBin
@@ -496,6 +515,7 @@ export function ClipEditor(props: { guildId: string }) {
 				onClose={() => setOptionsOpen(false)}
 				options={options}
 				onChange={updateOptions}
+				onOpenDraftFile={draft.openFile}
 			/>
 			{unsavedDialog}
 			{editor.mergeWarning !== null && (

@@ -47,6 +47,8 @@ export function useEditHistory(initial: ClipEdit) {
 
 	return {
 		edit: state.present,
+		/** The last committed step: `edit` without the pending gesture preview. */
+		committed: state.base,
 		preview,
 		flush,
 		apply,

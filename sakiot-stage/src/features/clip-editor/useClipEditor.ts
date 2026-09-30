@@ -39,11 +39,23 @@ export interface PasteTarget {
  * clipboard, and the edit operations. Playback, source buffers, and the
  * timeline viewport live in their own hooks, composed here.
  */
-export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
+export function useClipEditor(
+	options: { copyAllSelected?: boolean; initialEdit?: ClipEdit } = {},
+) {
 	const copyAllSelected = options.copyAllSelected ?? true;
-	const history = useEditHistory(emptyEdit());
-	const { edit, preview, flush, apply, undo, redo, canUndo, canRedo, reset } =
-		history;
+	const history = useEditHistory(options.initialEdit ?? emptyEdit());
+	const {
+		edit,
+		committed,
+		preview,
+		flush,
+		apply,
+		undo,
+		redo,
+		canUndo,
+		canRedo,
+		reset,
+	} = history;
 	const [engine] = useState(() => new ClipEditorEngine());
 	const draggingRef = useRef(false);
 	const sources = useSourceBuffers();
@@ -317,6 +329,7 @@ export function useClipEditor(options: { copyAllSelected?: boolean } = {}) {
 
 	return {
 		edit,
+		committed,
 		preview,
 		flush,
 		apply,

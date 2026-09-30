@@ -1,3 +1,5 @@
+import { optionalStorage, type StorageLike } from "./browserStorage";
+
 type NumberRange = readonly [minimum: number, maximum: number];
 
 /**
@@ -115,15 +117,7 @@ export function withLimitPair(
 	return { ...limits, [key]: [minimum, maximum] };
 }
 
-export interface StorageLike {
-	getItem(key: string): string | null;
-	setItem(key: string, value: string): void;
-}
-
-const defaultStorage = (): StorageLike | null =>
-	typeof globalThis.localStorage === "undefined"
-		? null
-		: globalThis.localStorage;
+export type { StorageLike };
 
 function loadRange(
 	key: keyof EffectLimits,
@@ -146,13 +140,13 @@ function loadRange(
 
 /** Load the saved limits, or the doubled defaults when unset or corrupted. */
 export function loadEffectLimits(
-	storage: StorageLike | null = defaultStorage(),
+	storage: StorageLike | null = optionalStorage(),
 ): EffectLimits {
 	const limits = structuredClone(DEFAULT_EFFECT_LIMITS);
 	if (!storage) return limits;
-	const raw = storage.getItem(STORAGE_KEY);
-	if (!raw) return limits;
 	try {
+		const raw = storage.getItem(STORAGE_KEY);
+		if (!raw) return limits;
 		const parsed = JSON.parse(raw) as Record<string, unknown>;
 		for (const key of EFFECT_LIMIT_KEYS) {
 			limits[key] = loadRange(key, parsed[key], limits[key]);
@@ -166,7 +160,7 @@ export function loadEffectLimits(
 /** Persist the adjusted limits; failures (quota, privacy mode) are swallowed. */
 export function saveEffectLimits(
 	limits: EffectLimits,
-	storage: StorageLike | null = defaultStorage(),
+	storage: StorageLike | null = optionalStorage(),
 ): void {
 	if (!storage) return;
 	try {

@@ -1,4 +1,10 @@
-import { GUILD_ID, mockClipEditorApi } from "./clip-editor-fixture";
+import {
+	draftRecord,
+	GENERIC_DRAFT_KEY,
+	GUILD_ID,
+	mockClipEditorApi,
+	singleSegmentComposition,
+} from "./clip-editor-fixture";
 import { expect, test } from "./fixtures";
 
 test("oversized browser preview is explained while export stays available", async ({
@@ -6,35 +12,11 @@ test("oversized browser preview is explained while export stays available", asyn
 }) => {
 	await mockClipEditorApi(page);
 	await page.addInitScript(
-		({ guild }) => {
-			localStorage.setItem(
-				`sakiot:clip-editor:${guild}:draft`,
-				JSON.stringify({
-					master_volume_db: 0,
-					muted_tracks: [],
-					segments: [
-						{
-							source: "clip",
-							source_id: "working-source",
-							source_in: 0,
-							source_out: 180,
-							timeline_start: 0,
-							track: 0,
-							effects: {
-								volume_db: 0,
-								pitch_cents: 0,
-								rate: 1,
-								bass_db: 0,
-								mid_db: 0,
-								treble_db: 0,
-								reverse: false,
-							},
-						},
-					],
-				}),
-			);
+		({ key, record }) => localStorage.setItem(key, record),
+		{
+			key: GENERIC_DRAFT_KEY,
+			record: draftRecord(singleSegmentComposition(180)),
 		},
-		{ guild: GUILD_ID },
 	);
 	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
 	await expect(
