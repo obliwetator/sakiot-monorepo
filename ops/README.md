@@ -259,6 +259,13 @@ is separated per environment:
 - **Processes.** A different user cannot read another user's
   `/proc/<pid>/environ`, where the database password lives while a service
   runs.
+- **Loopback.** Every instance listens on `127.0.0.1`, which any local user can
+  reach, so the internal endpoints authenticate the caller rather than trust
+  the address: the agent's gRPC services (`Jammer`, and `Admin` with its force
+  shutdown) and web-server's `/internal/fbi-agent/grpc-endpoints` all require
+  the env file's `FBI_AGENT_REGISTRY_SECRET`. Give each env file its own value;
+  a secret shared with staging or preview would let their code call
+  production. Release builds of the agent refuse to start without one.
 
 The preview role is named `sakiot_slot` because the engine rewrites
 `sakiot_preview` and `sakiot-preview` everywhere in `preview.env` to derive

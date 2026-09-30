@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
+use sakiot_proto::INTERNAL_SECRET_HEADER;
+use tonic::metadata::errors::InvalidMetadataValue;
 use tonic::transport::Channel;
 
 use crate::proto::jammer::{JamData, jammer_client::JammerClient};
@@ -40,9 +42,49 @@ pub async fn connect_jammer(
     Ok((address, JammerClient::new(channel)))
 }
 
-/// Builds a `jam_it` request with the call timeout applied.
-pub fn jam_request(data: JamData) -> tonic::Request<JamData> {
+/// Builds a `jam_it` request with the call timeout applied, carrying the
+/// agent's internal secret when one is configured. The agent rejects calls
+/// without it (see fbi-agent's `grpc::auth`).
+pub fn jam_request(
+    data: JamData,
+    secret: Option<&str>,
+) -> Result<tonic::Request<JamData>, InvalidMetadataValue> {
     let mut request = tonic::Request::new(data);
     request.set_timeout(CALL_TIMEOUT);
-    request
+    if let Some(secret) = secret {
+        request
+            .metadata_mut()
+            .insert(INTERNAL_SECRET_HEADER, secret.parse()?);
+    }
+    Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn jam() -> JamData {
+        JamData {
+            clip_name: "clip".into(),
+            guild_id: 1,
+            user_id: 2,
+        }
+    }
+
+    #[test]
+    fn jam_requests_carry_the_configured_secret() {
+        let request = jam_request(jam(), Some("s3cret")).unwrap();
+        assert_eq!(
+            request.metadata().get(INTERNAL_SECRET_HEADER).unwrap(),
+            "s3cret"
+        );
+
+        let request = jam_request(jam(), None).unwrap();
+        assert!(request.metadata().get(INTERNAL_SECRET_HEADER).is_none());
+    }
+
+    #[test]
+    fn a_secret_that_cannot_be_metadata_is_an_error() {
+        assert!(jam_request(jam(), Some("line\nbreak")).is_err());
+    }
 }

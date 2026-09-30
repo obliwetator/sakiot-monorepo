@@ -56,6 +56,7 @@ chrono = "0.4"
 serde = "1"
 tonic = "0.14"
 sakiot-proto = { path = "../sakiot-proto" }
+subtle = "2"
 rustls = { version = "0.23", default-features = false, features = [
 	"logging",
 	"ring",

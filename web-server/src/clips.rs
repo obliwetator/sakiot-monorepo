@@ -302,6 +302,19 @@ pub async fn play_clip(
     )
     .await?;
 
+    let request = grpc_client::jam_request(
+        JamData {
+            clip_name: clip_id.clone(),
+            guild_id,
+            user_id,
+        },
+        registry.secret(),
+    )
+    .map_err(|e| {
+        error!("FBI_AGENT_REGISTRY_SECRET cannot be sent as gRPC metadata: {e}");
+        AppError::InternalError
+    })?;
+
     // Route to the instance that owns this guild's voice connection, which during a
     // blue/green drain is the old instance rather than the active one.
     let target_address =
@@ -345,11 +358,6 @@ pub async fn play_clip(
     };
     let (grpc_address, mut client) = connected;
 
-    let request = grpc_client::jam_request(JamData {
-        clip_name: clip_id.clone(),
-        guild_id,
-        user_id,
-    });
     let response = client
         .jam_it(request)
         .await

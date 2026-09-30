@@ -1798,6 +1798,7 @@ dependencies = [
  "serenity",
  "songbird",
  "sqlx",
+ "subtle",
  "symphonia",
  "sysinfo",
  "tempfile",

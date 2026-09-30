@@ -9,6 +9,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use sakiot_proto::INTERNAL_SECRET_HEADER;
 use sakiot_proto::fbi_agent::{BotRole, DrainStatus, VoicePresence};
 
 use crate::admin_api::AdminApi;
@@ -65,7 +66,7 @@ fn http_get_json(url: &str, secret: &str) -> Result<serde_json::Value> {
     runtime.block_on(async {
         let mut request = client.get(url);
         if !secret.is_empty() {
-            request = request.header("X-FBI-Agent-Registry-Secret", secret);
+            request = request.header(INTERNAL_SECRET_HEADER, secret);
         }
         let response = request.send().await.with_context(|| format!("GET {url}"))?;
         let status = response.status();

@@ -4,9 +4,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use sakiot_proto::INTERNAL_SECRET_HEADER;
 use serde::Serialize;
-
-pub const REGISTRY_SECRET_HEADER: &str = "X-FBI-Agent-Registry-Secret";
 
 #[derive(Debug, Serialize)]
 struct RegistryBody<'a> {
@@ -78,7 +77,7 @@ impl WebApi for ReqwestWebApi {
                 .header("Content-Type", "application/json")
                 .json(&body);
             if !secret.is_empty() {
-                request = request.header(REGISTRY_SECRET_HEADER, secret);
+                request = request.header(INTERNAL_SECRET_HEADER, secret);
             }
             request.send().await?.error_for_status()?;
             Ok::<(), reqwest::Error>(())

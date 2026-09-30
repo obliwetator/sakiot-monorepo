@@ -148,7 +148,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let waveform_progress = web::Data::new(WaveformProgressContainer(RwLock::new(HashMap::new())));
     let live_container = web::Data::new(LiveContainer::default());
     let session_mix_container = web::Data::new(SessionMixContainer::default());
-    let agent_grpc_registry = web::Data::new(AgentGrpcRegistry::new(&cfg.grpc_address));
+    let agent_grpc_registry = web::Data::new(AgentGrpcRegistry::new(
+        &cfg.grpc_address,
+        cfg.fbi_agent_registry_secret.clone(),
+    ));
 
     let pool = PgPoolOptions::new()
         .max_connections(cfg.db_max_connections)

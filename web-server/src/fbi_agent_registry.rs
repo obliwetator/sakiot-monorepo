@@ -1,21 +1,22 @@
-use std::net::IpAddr;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
+use sakiot_proto::INTERNAL_SECRET_HEADER;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use subtle::ConstantTimeEq;
 use tracing::{info, warn};
 
-use crate::{config::Config, errors::AppError};
-
-const REGISTRY_SECRET_HEADER: &str = "X-FBI-Agent-Registry-Secret";
+use crate::errors::AppError;
 
 #[derive(Clone)]
 pub struct AgentGrpcRegistry {
     state: Arc<RwLock<AgentGrpcState>>,
+    /// `FBI_AGENT_REGISTRY_SECRET`: presented on every call to an agent, and
+    /// required from the deploy engine when it publishes here.
+    secret: Option<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,14 +34,19 @@ pub struct RegisterAgentGrpcRequest {
 }
 
 impl AgentGrpcRegistry {
-    pub fn new(initial_active: &str) -> Self {
+    pub fn new(initial_active: &str, secret: Option<String>) -> Self {
         Self {
             state: Arc::new(RwLock::new(AgentGrpcState {
                 active: normalize_grpc_address(initial_active),
                 draining: Vec::new(),
                 updated_at: None,
             })),
+            secret: secret.map(Into::into),
         }
+    }
+
+    pub fn secret(&self) -> Option<&str> {
+        self.secret.as_deref()
     }
 
     pub fn active_address(&self) -> String {
@@ -143,10 +149,9 @@ async fn agent_grpc_address_for_guild(
 pub async fn register_agent_grpc_endpoints(
     req: HttpRequest,
     body: web::Json<RegisterAgentGrpcRequest>,
-    cfg: web::Data<Config>,
     registry: web::Data<AgentGrpcRegistry>,
 ) -> Result<HttpResponse, AppError> {
-    if !authorized_internal_request(&req, &cfg) {
+    if !authorized_internal_request(&req, &registry) {
         return Err(AppError::Unauthorized);
     }
 
@@ -168,40 +173,29 @@ pub async fn register_agent_grpc_endpoints(
 #[get("/internal/fbi-agent/grpc-endpoints")]
 pub async fn get_agent_grpc_endpoints(
     req: HttpRequest,
-    cfg: web::Data<Config>,
     registry: web::Data<AgentGrpcRegistry>,
 ) -> Result<HttpResponse, AppError> {
-    if !authorized_internal_request(&req, &cfg) {
+    if !authorized_internal_request(&req, &registry) {
         return Err(AppError::Unauthorized);
     }
 
     Ok(HttpResponse::Ok().json(registry.snapshot()))
 }
 
-fn authorized_internal_request(req: &HttpRequest, cfg: &Config) -> bool {
-    req.peer_addr()
-        .map(|addr| addr.ip())
-        .is_some_and(is_loopback_ip)
-        || cfg
-            .fbi_agent_registry_secret
-            .as_ref()
-            .is_some_and(|expected| header_matches(req, expected))
+/// A configured secret is the only credential: production, staging and every
+/// preview slot share the host's loopback, so a local peer proves nothing.
+/// Without one (local development) only loopback callers get in.
+fn authorized_internal_request(req: &HttpRequest, registry: &AgentGrpcRegistry) -> bool {
+    match registry.secret() {
+        Some(expected) => header_matches(req, expected),
+        None => req.peer_addr().is_some_and(|addr| addr.ip().is_loopback()),
+    }
 }
 
 fn header_matches(req: &HttpRequest, expected: &str) -> bool {
-    let Some(actual) = req
-        .headers()
-        .get(REGISTRY_SECRET_HEADER)
-        .and_then(|header| header.to_str().ok())
-    else {
-        return false;
-    };
-
-    actual.as_bytes().ct_eq(expected.as_bytes()).into()
-}
-
-fn is_loopback_ip(ip: IpAddr) -> bool {
-    ip.is_loopback()
+    req.headers()
+        .get(INTERNAL_SECRET_HEADER)
+        .is_some_and(|actual| actual.as_bytes().ct_eq(expected.as_bytes()).into())
 }
 
 fn normalize_grpc_address(address: &str) -> String {
@@ -215,7 +209,12 @@ fn normalize_grpc_address(address: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentGrpcRegistry, agent_grpc_address_for_guild, resolve_agent_address};
+    use super::{
+        AgentGrpcRegistry, agent_grpc_address_for_guild, authorized_internal_request,
+        resolve_agent_address,
+    };
+    use actix_web::test::TestRequest;
+    use sakiot_proto::INTERNAL_SECRET_HEADER;
     use sqlx::PgPool;
 
     const GUILD: i64 = 4242;
@@ -242,9 +241,52 @@ mod tests {
         Ok(())
     }
 
+    fn internal_request(peer: &str, secret: Option<&str>) -> actix_web::HttpRequest {
+        let request = TestRequest::get().peer_addr(peer.parse().unwrap());
+        match secret {
+            Some(secret) => request.insert_header((INTERNAL_SECRET_HEADER, secret)),
+            None => request,
+        }
+        .to_http_request()
+    }
+
+    #[test]
+    fn a_configured_secret_is_required_even_from_loopback() {
+        let registry = AgentGrpcRegistry::new("127.0.0.1:50052", Some("s3cret".into()));
+
+        assert!(authorized_internal_request(
+            &internal_request("127.0.0.1:40000", Some("s3cret")),
+            &registry
+        ));
+        for (peer, secret) in [
+            ("127.0.0.1:40000", None),
+            ("[::1]:40000", Some("wrong")),
+            ("203.0.113.9:40000", None),
+        ] {
+            assert!(
+                !authorized_internal_request(&internal_request(peer, secret), &registry),
+                "{peer} presenting {secret:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_secret_only_loopback_callers_get_in() {
+        let registry = AgentGrpcRegistry::new("127.0.0.1:50052", None);
+
+        assert!(authorized_internal_request(
+            &internal_request("[::1]:40000", None),
+            &registry
+        ));
+        assert!(!authorized_internal_request(
+            &internal_request("203.0.113.9:40000", Some("anything")),
+            &registry
+        ));
+    }
+
     #[test]
     fn registry_normalizes_host_port_addresses() {
-        let registry = AgentGrpcRegistry::new("127.0.0.1:59877");
+        let registry = AgentGrpcRegistry::new("127.0.0.1:59877", None);
 
         assert_eq!(registry.active_address(), "http://127.0.0.1:59877");
     }

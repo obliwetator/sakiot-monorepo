@@ -41,6 +41,14 @@ pub fn grpc_addr() -> String {
     }
 }
 
+/// The secret every gRPC caller must present (see `grpc::auth`); `None` when
+/// unset or blank.
+pub fn internal_secret() -> Option<String> {
+    env::var("FBI_AGENT_REGISTRY_SECRET")
+        .ok()
+        .filter(|secret| !secret.trim().is_empty())
+}
+
 /// The address other services dial to reach this instance's gRPC server, published to
 /// `bot_instances.grpc_address` so the web server can route a jam to whichever instance
 /// owns a guild's voice connection.

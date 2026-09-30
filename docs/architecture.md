@@ -134,6 +134,14 @@ the `wasm` feature, builds the WASM artifact, and verifies it against native.
   new agent starts, the old one drains until its voice connections are empty,
   then exits.
 
+Every call presents the environment's `FBI_AGENT_REGISTRY_SECRET` in the
+`x-fbi-agent-registry-secret` metadata (`sakiot_proto::INTERNAL_SECRET_HEADER`),
+which the agent checks in constant time before either service runs
+(`fbi-agent/src/grpc/auth.rs`). All environments bind their agents to the same
+host's loopback, so reaching the port proves nothing. A release build of the
+agent refuses to start without the secret; a debug build runs open for local
+development.
+
 `web-server` picks the agent to call per guild from PostgreSQL
 (`agent_address_for_guild` in `web-server/src/fbi_agent_registry.rs`). Every
 agent heartbeats its gRPC address into `bot_instances`, and
@@ -143,9 +151,10 @@ that is in the channel. The deploy engine also publishes the active and
 draining endpoints to an in-memory registry on `web-server`
 (`/internal/fbi-agent/grpc-endpoints`, outside `/api`). That registry is only
 the fallback when no live heartbeat resolves, and until the first publish it
-holds the configured `GRPC_ADDRESS`. The endpoint accepts requests from
-loopback, or ones carrying `FBI_AGENT_REGISTRY_SECRET` in a header, compared in
-constant time.
+holds the configured `GRPC_ADDRESS`. When `FBI_AGENT_REGISTRY_SECRET` is set,
+the endpoint requires it in the same header, compared in constant time, even
+from loopback. Without it, which only local development does, it accepts
+loopback callers.
 
 ## Authentication and authorization
 

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use sakiot_proto::INTERNAL_SECRET_HEADER;
 use sakiot_proto::fbi_agent::jam_response::JamResponseEnum;
 use sakiot_proto::fbi_agent::jammer_server::{Jammer, JammerServer};
 use sakiot_proto::fbi_agent::{JamData, JamResponse};
@@ -646,11 +647,13 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
 }
 
 /// Stands in for the bot's Jammer service: answers with scripted responses in
-/// order and records every request it receives.
+/// order and records every request it receives, with the internal secret it
+/// presented.
 #[derive(Clone, Default)]
 struct ScriptedBot {
     responses: Arc<Mutex<VecDeque<JamResponse>>>,
     requests: Arc<Mutex<Vec<JamData>>>,
+    secrets: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 #[tonic::async_trait]
@@ -662,6 +665,12 @@ impl Jammer for ScriptedBot {
         fn poisoned<T>(_: std::sync::PoisonError<T>) -> tonic::Status {
             tonic::Status::internal("scripted bot state poisoned")
         }
+        let secret = request
+            .metadata()
+            .get(INTERNAL_SECRET_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        self.secrets.lock().map_err(poisoned)?.push(secret);
         self.requests
             .lock()
             .map_err(poisoned)?
@@ -732,7 +741,10 @@ async fn clip_playback_reports_every_bot_outcome_through_the_contract(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
-            .app_data(web::Data::new(AgentGrpcRegistry::new(&address)))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(
+                &address,
+                Some("registry-secret".into()),
+            )))
             .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
     )
     .await;
@@ -773,6 +785,11 @@ async fn clip_playback_reports_every_bot_outcome_through_the_contract(
             "the bot receives the resolved clip id and the caller"
         );
     }
+    assert_eq!(
+        *bot.secrets.lock().unwrap(),
+        vec![Some("registry-secret".to_owned()); outcomes.len()],
+        "every call presents the configured internal secret"
+    );
     Ok(())
 }
 
@@ -787,7 +804,7 @@ async fn clip_playback_rejects_unplayable_requests_before_reaching_the_bot(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
-            .app_data(web::Data::new(AgentGrpcRegistry::new(&address)))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(&address, None)))
             .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
     )
     .await;
@@ -823,9 +840,10 @@ async fn clip_playback_reports_an_unreachable_bot(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
-            .app_data(web::Data::new(AgentGrpcRegistry::new(&format!(
-                "http://{closed}"
-            ))))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(
+                &format!("http://{closed}"),
+                None,
+            )))
             .service(web::scope("/api").wrap(AuthMiddleware).service(play_clip)),
     )
     .await;

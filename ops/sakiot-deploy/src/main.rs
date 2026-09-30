@@ -61,7 +61,7 @@ fn main() {
 
 fn status(target: sakiot_deploy::config::Target, slot: Option<&str>) -> Result<()> {
     let config = Config::load(target, slot)?;
-    let admin = TonicAdmin::new()?;
+    let admin = TonicAdmin::new(&config.registry_secret)?;
     sakiot_deploy::status::run(target, &config, &admin)
 }
 
@@ -82,7 +82,7 @@ fn engine_src_tree() -> Option<String> {
 fn run(request: Request) -> Result<()> {
     let config = Config::load(request.target, request.slot.as_deref())?;
     let runner = RealRunner;
-    let admin = TonicAdmin::new()?;
+    let admin = TonicAdmin::new(&config.registry_secret)?;
     let web = ReqwestWebApi::new()?;
     let clock = SystemClock;
     let free_port = || -> Result<u16> {

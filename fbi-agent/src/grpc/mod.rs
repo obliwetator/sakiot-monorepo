@@ -9,6 +9,7 @@ pub mod proto {
 }
 
 mod admin;
+mod auth;
 mod jammer;
 
 #[derive(Clone)]
@@ -26,6 +27,8 @@ impl FbiAgentGrpc {
 pub(crate) enum GrpcServerError {
     #[error("invalid gRPC address")]
     InvalidAddress(#[source] AddrParseError),
+    #[error("FBI_AGENT_REGISTRY_SECRET is required: release builds refuse unauthenticated gRPC")]
+    MissingSecret,
     #[error("gRPC server failed")]
     Serve(#[source] tonic::transport::Error),
 }
@@ -38,13 +41,20 @@ pub(crate) fn spawn_server(
         let addr: SocketAddr = crate::config::grpc_addr()
             .parse()
             .map_err(GrpcServerError::InvalidAddress)?;
+        let auth =
+            auth::RequireSecret::resolve(crate::config::internal_secret(), cfg!(debug_assertions))?;
 
         let jammer = FbiAgentGrpc::new(data_cache);
         info!("gRPC server listening on {}", addr);
 
         Server::builder()
-            .add_service(proto::jammer_server::JammerServer::new(jammer.clone()))
-            .add_service(proto::admin_server::AdminServer::new(jammer))
+            .add_service(proto::jammer_server::JammerServer::with_interceptor(
+                jammer.clone(),
+                auth.clone(),
+            ))
+            .add_service(proto::admin_server::AdminServer::with_interceptor(
+                jammer, auth,
+            ))
             .serve_with_shutdown(addr, async move {
                 let mut rx = shutdown_rx;
                 while !*rx.borrow() {
