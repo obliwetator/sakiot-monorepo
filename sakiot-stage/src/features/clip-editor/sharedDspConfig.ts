@@ -2,6 +2,14 @@ import type { SegmentEffects } from "./model";
 
 export const SHARED_DSP_EFFECT_CONFIG_VERSION = 2 as const;
 
+/**
+ * The rate every editor stage runs at: decoding, the worker, and the
+ * playback graph. It is the server renderer's canonical rate, so preview and
+ * export process identical samples; only the browser's final conversion of
+ * the mix to the output device's rate differs.
+ */
+export const SHARED_DSP_SAMPLE_RATE = 48_000;
+
 /** The only JavaScript-to-WASM effect schema. Rust rejects unknown versions
  * and incomplete objects instead of interpreting them positionally.
  */

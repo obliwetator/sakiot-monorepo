@@ -16,6 +16,7 @@ import {
 	type WorkletResources,
 	warmSharedDspAudioWorklet,
 } from "./sharedDspAudioWorklet";
+import { SHARED_DSP_SAMPLE_RATE } from "./sharedDspConfig";
 
 /**
  * Source-buffer window a segment must play to fill the given timeline range.
@@ -488,7 +489,11 @@ export class ClipEditorEngine {
 
 	private ensureContext(): AudioContext {
 		if (!this.ctx) {
-			this.ctx = new AudioContext();
+			// A device-rate context would run the live effects at, say, 44.1
+			// kHz on input the browser resampled: close to the export, but
+			// not the same samples. At the shared rate only the final mix is
+			// converted for the device.
+			this.ctx = new AudioContext({ sampleRate: SHARED_DSP_SAMPLE_RATE });
 			this.audioGraph = this.createAudioGraph(this.ctx);
 		}
 		if (this.ctx.state === "suspended") void this.ctx.resume();

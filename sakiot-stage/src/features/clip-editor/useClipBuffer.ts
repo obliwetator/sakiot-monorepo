@@ -8,12 +8,12 @@ import {
 import { authedFetch } from "../../app/authedFetch";
 
 import { PcmBudget, SOURCE_CACHE_BYTES } from "./pcmBudget";
+import { SHARED_DSP_SAMPLE_RATE } from "./sharedDspConfig";
 
 const cacheBudget = new PcmBudget<string>(SOURCE_CACHE_BYTES);
 let decodeQueue: Promise<unknown> = Promise.resolve();
 const bufferCache = new Map<string, Promise<AudioBuffer>>();
 let decodeContext: AudioContext | null = null;
-const SHARED_DSP_SAMPLE_RATE = 48_000;
 const LOAD_FAILED = "Clip audio could not be loaded.";
 
 function contextForDecoding(): AudioContext {

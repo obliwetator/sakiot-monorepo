@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { ClipEditorEngine, type EditorAudioGraphFactory } from "./engine";
 import { type ClipEdit, DEFAULT_EFFECTS, type TimelineSegment } from "./model";
 import { warmSharedDsp } from "./sharedDsp";
+import { SHARED_DSP_SAMPLE_RATE } from "./sharedDspConfig";
 
 beforeAll(async () => {
 	await warmSharedDsp();
@@ -188,6 +189,26 @@ describe("ClipEditorEngine playback", () => {
 			);
 			await Bun.sleep(120);
 			expect(contexts[0]?.sources.length ?? 0).toBeGreaterThan(1);
+		} finally {
+			engine.dispose();
+			globalThis.AudioContext = previousAudioContext;
+		}
+	});
+
+	test("plays at the shared DSP rate whatever the device rate", () => {
+		const options: (AudioContextOptions | undefined)[] = [];
+		const previousAudioContext = globalThis.AudioContext;
+		globalThis.AudioContext = class extends MockAudioContext {
+			constructor(contextOptions?: AudioContextOptions) {
+				super();
+				options.push(contextOptions);
+			}
+		} as unknown as typeof AudioContext;
+		const engine = new ClipEditorEngine(createMockAudioGraph);
+		try {
+			engine.play(edit, 0, buffers, false);
+			expect(options).toEqual([{ sampleRate: SHARED_DSP_SAMPLE_RATE }]);
+			expect(SHARED_DSP_SAMPLE_RATE).toBe(48_000);
 		} finally {
 			engine.dispose();
 			globalThis.AudioContext = previousAudioContext;

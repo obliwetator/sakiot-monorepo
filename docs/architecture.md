@@ -113,7 +113,28 @@ environments. `sakiot-dsp` is compiled twice:
   (`features/clip-editor/sharedDspAudioWorklet.ts`) for live preview.
 
 Both sides run the same `SegmentProcessor`, so what the user previews is what
-gets rendered. The crate core deliberately has no browser or server
+gets rendered. Every stored recording and clip is 48 kHz Opus, and the editor
+decodes and plays at 48 kHz whatever the output device's rate, the rate the
+renderer uses; the browser converts only the final mix for the device.
+
+User uploads do not exist yet. If they are added, convert each upload once on
+arrival to 48 kHz stereo Opus and store only that file, so everything
+downstream sees what recordings already provide. The preview and the export
+each convert audio on their own, and for other formats they would not quite
+agree:
+
+- The browser and ffmpeg resample with different converters.
+- The editor reads only the first two channels
+  (`features/clip-editor/sharedDsp.ts`), which drops the center of a 5.1 file.
+  The export's `-ac 2` downmix mixes it in.
+- MP3 and AAC encoder delay can be trimmed differently, moving trims by tens of
+  milliseconds.
+- Clip cutting copies the Opus stream without re-encoding
+  (`web-server/src/clips.rs`).
+
+Every clip access check goes through a channel, so an upload should belong to
+a channel the uploader can access and follow that channel's permissions.
+Decided with the owner on 2026-09-30. The crate core deliberately has no browser or server
 dependencies; the `wasm` feature only adds a thin `wasm-bindgen` boundary.
 
 `sakiot-dsp` is a member of the root Cargo workspace, so the workspace build,
