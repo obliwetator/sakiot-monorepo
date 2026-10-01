@@ -1,4 +1,5 @@
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::resource::EnvResourceDetector;
 use std::error::Error;
 use std::io::IsTerminal;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -29,7 +30,10 @@ pub fn init_telemetry() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let instance_id = std::env::var("BOT_INSTANCE_ID")
         .unwrap_or_else(|_| format!("{}-{}", crate::config::SERVICE_NAME, std::process::id()));
+    // OTEL_RESOURCE_ATTRIBUTES adds attributes per environment, such as
+    // deployment.environment=staging; the attributes set here take precedence.
     let resource = Resource::builder_empty()
+        .with_detector(Box::new(EnvResourceDetector::new()))
         .with_attributes([
             opentelemetry::KeyValue::new("service.name", crate::config::SERVICE_NAME),
             opentelemetry::KeyValue::new("service.instance.id", instance_id),

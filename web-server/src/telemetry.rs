@@ -1,4 +1,5 @@
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::resource::EnvResourceDetector;
 use std::env;
 use std::io::{IsTerminal, Write};
 use tracing_subscriber::{
@@ -81,7 +82,10 @@ pub fn init_telemetry(port: u16) {
         }
     };
 
+    // OTEL_RESOURCE_ATTRIBUTES adds attributes per environment, such as
+    // deployment.environment=staging; the attributes set here take precedence.
     let resource = Resource::builder_empty()
+        .with_detector(Box::new(EnvResourceDetector::new()))
         .with_attributes([
             opentelemetry::KeyValue::new("service.name", SERVICE_NAME),
             opentelemetry::KeyValue::new("service.instance.id", service_instance_id(port)),
