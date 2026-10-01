@@ -1,6 +1,9 @@
 services:
   postgres:
     image: postgres:18-alpine
+    # Back after a reboot, so tests find it; `docker compose stop` or
+    # `cargo dev down` keeps it down.
+    restart: unless-stopped
     environment:
       POSTGRES_DB: sakiot_rouvas
       POSTGRES_USER: postgres
