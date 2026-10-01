@@ -9,8 +9,10 @@ use actix_web::http::header::{HeaderName, HeaderValue};
 use futures_util::future::LocalBoxFuture;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Histogram;
+use opentelemetry::trace::TraceContextExt;
 use tracing::Instrument;
 use tracing::field::Empty;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::server_timing::Collector;
 
@@ -79,7 +81,6 @@ where
         // is only known once routing has run, so it is filled in afterwards.
         let span = tracing::info_span!(
             "request",
-            otel.name = Empty,
             otel.kind = "server",
             otel.status_code = Empty,
             http.request.method = %method,
@@ -109,9 +110,14 @@ where
                 ),
             };
 
-            span.record("otel.name", format!("{method} {route}"));
+            // The OpenTelemetry span exists from the first poll on, and
+            // tracing-opentelemetry ignores a later `otel.name`; rename it
+            // directly.
+            span.context()
+                .span()
+                .update_name(format!("{method} {route}"));
             span.record("http.route", route.as_str());
-            span.record("http.response.status_code", status);
+            span.record("http.response.status_code", i64::from(status));
             if status >= 500 {
                 span.record("otel.status_code", "ERROR");
             }
