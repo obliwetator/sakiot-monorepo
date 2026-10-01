@@ -7,6 +7,9 @@
 //! `SAKIOT_SERVER_TIMING_HEADER` is on are the segments also sent back as a
 //! `Server-Timing` header, which DevTools shows in a request's Timing tab.
 //!
+//! Inside a request, each measured call is also a child span of the request's
+//! trace, so a stored trace shows the same breakdown call by call.
+//!
 //! A segment is the sum of every call with that name, so a query run once per
 //! row shows up as one entry with its call count. Segments of different names
 //! may nest (`session` includes `perm`), so they do not add up to the total.
@@ -20,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Histogram;
+use tracing::Instrument;
 
 tokio::task_local! {
     static SEGMENTS: Rc<RefCell<Segments>>;
@@ -122,9 +126,15 @@ pub fn record(name: &'static str, elapsed: Duration) {
 }
 
 /// Runs `fut` and adds its duration to the current request's `name` segment.
+/// Inside a request it also runs in a child span of the request's trace.
 pub async fn measure<F: Future>(name: &'static str, fut: F) -> F::Output {
+    let span = if SEGMENTS.try_with(|_| ()).is_ok() {
+        tracing::info_span!("segment", otel.name = name)
+    } else {
+        tracing::Span::none()
+    };
     let start = Instant::now();
-    let output = fut.await;
+    let output = fut.instrument(span).await;
     record(name, start.elapsed());
     output
 }

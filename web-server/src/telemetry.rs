@@ -2,7 +2,10 @@ use opentelemetry_sdk::Resource;
 use std::env;
 use std::io::{IsTerminal, Write};
 use tracing_subscriber::{
-    Layer, Registry, filter::LevelFilter, layer::SubscriberExt, registry::LookupSpan,
+    Layer, Registry,
+    filter::{LevelFilter, Targets},
+    layer::SubscriberExt,
+    registry::LookupSpan,
 };
 
 pub const SERVICE_NAME: &str = "web_server";
@@ -100,7 +103,12 @@ pub fn init_telemetry(port: u16) {
     opentelemetry::global::set_meter_provider(meter_provider);
 
     let tracer = opentelemetry::global::tracer(SERVICE_NAME);
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    // Traces carry only this crate's spans: the request and its segments.
+    // Library spans (h2 frames, connection pools) were most of the volume
+    // and explained nothing about a request.
+    let telemetry = tracing_opentelemetry::layer()
+        .with_tracer(tracer)
+        .with_filter(Targets::new().with_target("web_server", LevelFilter::INFO));
 
     // The level cap must be global, not per-layer: the OpenTelemetry layer is
     // otherwise enabled for every dependency's DEBUG/TRACE span and event, and

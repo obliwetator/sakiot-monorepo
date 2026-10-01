@@ -5,7 +5,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{
     Layer, Registry,
-    filter::{EnvFilter, LevelFilter},
+    filter::{EnvFilter, FilterExt, LevelFilter, Targets},
     layer::SubscriberExt,
     registry::LookupSpan,
 };
@@ -52,9 +52,15 @@ pub fn init_telemetry() -> Result<(), Box<dyn Error + Send + Sync>> {
     let tracer = opentelemetry::global::tracer(crate::config::SERVICE_NAME);
     let log_filter = log_filter()?;
 
+    // Traces carry only this crate's spans. serenity's and songbird's gateway
+    // heartbeat and receive spans were a dozen a second and all of the volume.
     let telemetry = tracing_opentelemetry::layer()
         .with_tracer(tracer)
-        .with_filter(log_filter.clone());
+        .with_filter(
+            log_filter
+                .clone()
+                .and(Targets::new().with_target("fbi_agent", LevelFilter::TRACE)),
+        );
 
     let file_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)

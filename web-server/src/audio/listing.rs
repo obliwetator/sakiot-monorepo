@@ -441,9 +441,10 @@ pub async fn get_live_stems(
     let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
-    let started = std::time::Instant::now();
-    let rows = sqlx::query!(
-        "SELECT af.file_name, af.channel_id
+    let rows = crate::server_timing::measure(
+        "stems",
+        sqlx::query!(
+            "SELECT af.file_name, af.channel_id
            FROM audio_files af
           WHERE af.guild_id = $1
             AND af.end_ts IS NULL
@@ -465,12 +466,12 @@ pub async fn get_live_stems(
                        AND NOT (sibling.channel_id = ANY($2))
                 )
             )",
-        guild_id,
-        &permitted_channels
+            guild_id,
+            &permitted_channels
+        )
+        .fetch_all(pool.get_ref()),
     )
-    .fetch_all(pool.get_ref())
     .await?;
-    crate::server_timing::record("stems", started.elapsed());
 
     let stems: Vec<String> = rows
         .into_iter()

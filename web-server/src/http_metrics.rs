@@ -9,6 +9,8 @@ use actix_web::http::header::{HeaderName, HeaderValue};
 use futures_util::future::LocalBoxFuture;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Histogram;
+use tracing::Instrument;
+use tracing::field::Empty;
 
 use crate::server_timing::Collector;
 
@@ -73,11 +75,23 @@ where
         let method = req.method().as_str().to_owned();
         let start = Instant::now();
         let collector = Collector::default();
-        let fut = collector.sync_scope(|| self.service.call(req));
+        // The request's trace root; segments become its children. The route
+        // is only known once routing has run, so it is filled in afterwards.
+        let span = tracing::info_span!(
+            "request",
+            otel.name = Empty,
+            otel.kind = "server",
+            otel.status_code = Empty,
+            http.request.method = %method,
+            url.path = %req.path(),
+            http.route = Empty,
+            http.response.status_code = Empty,
+        );
+        let fut = span.in_scope(|| collector.sync_scope(|| self.service.call(req)));
         let server_timing_header = self.server_timing_header;
 
         Box::pin(async move {
-            let mut res = collector.scope(fut).await;
+            let mut res = collector.scope(fut).instrument(span.clone()).await;
             let elapsed = start.elapsed();
             let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
 
@@ -94,6 +108,13 @@ where
                     err.as_response_error().status_code().as_u16(),
                 ),
             };
+
+            span.record("otel.name", format!("{method} {route}"));
+            span.record("http.route", route.as_str());
+            span.record("http.response.status_code", status);
+            if status >= 500 {
+                span.record("otel.status_code", "ERROR");
+            }
 
             let segments = collector.take();
             segments.export(&route);
