@@ -1,11 +1,17 @@
 use opentelemetry_sdk::Resource;
 use std::error::Error;
+use std::io::IsTerminal;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{
     Layer, Registry,
     filter::{EnvFilter, LevelFilter},
     layer::SubscriberExt,
+    registry::LookupSpan,
 };
+
+/// Days of JSON log files kept in `logs/`; older files are deleted on rotation.
+const LOG_FILE_DAYS: usize = 14;
 
 const SUPPRESSED_SONGBIRD_UDP_RX_LOGS: [&str; 2] = [
     "songbird::driver::tasks::udp_rx=off",
@@ -50,7 +56,11 @@ pub fn init_telemetry() -> Result<(), Box<dyn Error + Send + Sync>> {
         .with_tracer(tracer)
         .with_filter(log_filter.clone());
 
-    let file_appender = tracing_appender::rolling::daily("logs", "fbi-agent.log");
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("fbi-agent.log")
+        .max_log_files(LOG_FILE_DAYS)
+        .build("logs")?;
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     // We intentionally leak the guard so the background writer stays alive.
@@ -64,15 +74,33 @@ pub fn init_telemetry() -> Result<(), Box<dyn Error + Send + Sync>> {
         .with_span_events(FmtSpan::NONE)
         .with_filter(log_filter.clone());
 
-    let subscriber = Registry::default().with(telemetry).with(file_layer).with(
-        tracing_subscriber::fmt::layer()
-            .pretty()
-            .with_span_events(FmtSpan::NONE)
-            .with_filter(log_filter),
-    );
+    let subscriber = Registry::default()
+        .with(telemetry)
+        .with(file_layer)
+        .with(console_layer().with_filter(log_filter));
 
     tracing::subscriber::set_global_default(subscriber)?;
     Ok(())
+}
+
+/// Colored multi-line output in a terminal; one plain line per event under
+/// systemd, so the journal and Loki hold whole events without color escapes.
+fn console_layer<S>() -> Box<dyn Layer<S> + Send + Sync>
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+{
+    if std::io::stdout().is_terminal() {
+        tracing_subscriber::fmt::layer()
+            .pretty()
+            .with_span_events(FmtSpan::NONE)
+            .boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .with_span_events(FmtSpan::NONE)
+            .boxed()
+    }
 }
 
 fn log_filter() -> Result<EnvFilter, Box<dyn Error + Send + Sync>> {

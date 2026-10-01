@@ -1,7 +1,9 @@
 use opentelemetry_sdk::Resource;
 use std::env;
-use std::io::Write;
-use tracing_subscriber::{Registry, filter::LevelFilter, layer::SubscriberExt};
+use std::io::{IsTerminal, Write};
+use tracing_subscriber::{
+    Layer, Registry, filter::LevelFilter, layer::SubscriberExt, registry::LookupSpan,
+};
 
 pub const SERVICE_NAME: &str = "web_server";
 
@@ -21,13 +23,29 @@ fn service_instance_id(port: u16) -> String {
         })
 }
 
+/// Colored multi-line output in a terminal; one plain line per event under
+/// systemd, so the journal and Loki hold whole events without color escapes.
+fn console_layer<S>() -> Box<dyn Layer<S> + Send + Sync>
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+{
+    if std::io::stdout().is_terminal() {
+        tracing_subscriber::fmt::layer().pretty().boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .compact()
+            .with_ansi(false)
+            .boxed()
+    }
+}
+
 /// Stderr-only logging for short-lived child processes (and the fallback when
 /// OTLP export cannot start). Children inherit the service's stderr, so their
 /// errors land in the same journal as the parent's.
 pub fn init_stderr_logging() {
     let subscriber = Registry::default()
         .with(LevelFilter::INFO)
-        .with(tracing_subscriber::fmt::layer().pretty());
+        .with(console_layer());
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
@@ -91,7 +109,7 @@ pub fn init_telemetry(port: u16) {
     let subscriber = Registry::default()
         .with(LevelFilter::INFO)
         .with(telemetry)
-        .with(tracing_subscriber::fmt::layer().pretty());
+        .with(console_layer());
 
     if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
         warn_startup(&format!("failed to set global tracing subscriber: {e}"));
