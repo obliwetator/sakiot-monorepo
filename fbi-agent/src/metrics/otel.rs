@@ -203,6 +203,11 @@ fn register_process_gauges(instruments: &Instruments) {
         u64::from(m.active_recordings.load(Relaxed))
     });
     instruments.guild_gauge(
+        "guild_recorder_queue_depth",
+        "Commands waiting in the guild recorder's queue at its last tick",
+        |g| u64::from(g.recorder_queue_depth.load(Relaxed)),
+    );
+    instruments.guild_gauge(
         "guild_active_recordings",
         "Number of active recordings per guild",
         |g| u64::from(g.active_recordings.load(Relaxed)),

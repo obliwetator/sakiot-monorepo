@@ -350,6 +350,7 @@ impl RecorderActor {
         event_type: VoiceEventType,
         close_time: chrono::DateTime<chrono::Utc>,
     ) {
+        let finalize_started = std::time::Instant::now();
         let mut finalize_reason = finalize_reason(event_type);
         if let Err(err) = recording.writer.finish() {
             error!("Failed to finalize writer for ssrc {}: {}", ssrc, err);
@@ -395,6 +396,8 @@ impl RecorderActor {
             );
             self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
         }
+        self.metrics
+            .track_recording_finalize_duration(finalize_started.elapsed().as_secs_f64());
 
         self.insert_receiver_voice_event(user_id, rec_ssrc, event_type, "Writer closed")
             .await;

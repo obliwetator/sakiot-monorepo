@@ -7,6 +7,10 @@ pub struct GuildRecordingMetrics {
     pub audio_packets_received: AtomicU64,
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
+    /// Commands waiting in the recorder's queue at the last delivered tick.
+    /// Rising toward the queue's capacity means the recorder is falling
+    /// behind and ticks will soon be dropped.
+    pub recorder_queue_depth: AtomicU32,
 }
 
 impl GuildRecordingMetrics {
@@ -17,6 +21,7 @@ impl GuildRecordingMetrics {
             audio_packets_received: AtomicU64::new(0),
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),
+            recorder_queue_depth: AtomicU32::new(0),
         }
     }
 }

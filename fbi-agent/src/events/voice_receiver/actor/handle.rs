@@ -114,6 +114,9 @@ impl RecorderHandle {
     /// delivery must not compete with the bounded packet/control queue.
     pub(in crate::events::voice_receiver) fn request_shutdown(&self, at_ms: i64) {
         self.stopping.store(true, Ordering::Release);
+        self.guild_metrics
+            .recorder_queue_depth
+            .store(0, Ordering::Relaxed);
         self.shutdown_tx.send_replace(Some(at_ms));
     }
 
@@ -167,7 +170,10 @@ impl RecorderHandle {
             packets,
             silence_ticks: owed,
         }) {
-            Ok(()) => {}
+            Ok(()) => self.guild_metrics.recorder_queue_depth.store(
+                (COMMAND_CAPACITY - self.tx.capacity()) as u32,
+                Ordering::Relaxed,
+            ),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 // Put the whole debt back, plus this tick, for the next
                 // delivery.

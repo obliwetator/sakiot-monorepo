@@ -23,6 +23,8 @@ pub struct BotMetrics {
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
     pub(super) recording_duration_seconds: Histogram<f64>,
+    /// Time to close a recording: flushing its writer and updating its row.
+    recording_finalize_seconds: Histogram<f64>,
     /// Actor-initiated teardowns after a recoverable disconnect timed out.
     pub recovery_teardowns: AtomicU64,
     /// Of those teardowns, the ones that found no Songbird manager.
@@ -181,6 +183,10 @@ impl BotMetrics {
             .remove(&VoiceUserKey { guild_id, user_id });
     }
 
+    pub fn track_recording_finalize_duration(&self, seconds: f64) {
+        self.recording_finalize_seconds.record(seconds, &[]);
+    }
+
     pub fn track_recording_finalize_error(&self) {
         self.recording_finalize_errors
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -248,6 +254,17 @@ impl BotMetrics {
             .store(timestamp_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
+    fn recording_finalize_histogram() -> Histogram<f64> {
+        opentelemetry::global::meter(crate::config::SERVICE_NAME)
+            .f64_histogram("recording_finalize_seconds")
+            .with_description("Time to close a recording: flush its writer and update its row")
+            .with_unit("s")
+            .with_boundaries(vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ])
+            .build()
+    }
+
     fn recording_duration_histogram() -> Histogram<f64> {
         opentelemetry::global::meter(crate::config::SERVICE_NAME)
             .f64_histogram("recording_duration_seconds")
@@ -272,6 +289,7 @@ impl Default for BotMetrics {
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),
             recording_duration_seconds: Self::recording_duration_histogram(),
+            recording_finalize_seconds: Self::recording_finalize_histogram(),
             recovery_teardowns: AtomicU64::new(0),
             recovery_teardown_manager_missing: AtomicU64::new(0),
             recording_policy_suspensions: AtomicU64::new(0),
