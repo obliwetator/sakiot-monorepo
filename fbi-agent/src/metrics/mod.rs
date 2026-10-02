@@ -1,4 +1,5 @@
 mod bot;
+pub mod db_pool;
 mod otel;
 mod presence;
 mod recording;

@@ -2,7 +2,7 @@ use std::{error::Error, sync::Arc};
 
 use serenity::{all::ApplicationId, prelude::*};
 use songbird::{Config, SerenityInit, driver::DecodeMode};
-use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
+use sqlx::{Pool, Postgres};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{error, info, warn};
 
@@ -415,10 +415,12 @@ async fn ensure_recording_dir() -> AppResult<()> {
 
 async fn connect_database() -> AppResult<Pool<Postgres>> {
     let db_url = crate::config::db_url()?;
-    Ok(PgPoolOptions::new()
+    let pool = crate::metrics::db_pool::pool_options()
         .max_connections(5)
         .connect(&db_url)
-        .await?)
+        .await?;
+    crate::metrics::db_pool::observe(&pool);
+    Ok(pool)
 }
 
 async fn build_discord_client(

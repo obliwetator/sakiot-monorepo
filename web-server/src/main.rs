@@ -1,6 +1,5 @@
 use actix_cors::Cors;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
-use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
 use web_server::http_metrics::HttpMetrics;
 use web_server::telemetry::{init_stderr_logging, init_telemetry};
@@ -153,10 +152,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         cfg.fbi_agent_registry_secret.clone(),
     ));
 
-    let pool = PgPoolOptions::new()
+    let pool = web_server::db_pool_metrics::pool_options()
         .max_connections(cfg.db_max_connections)
         .connect(&cfg.database_url)
         .await?;
+    web_server::db_pool_metrics::observe(&pool);
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());
