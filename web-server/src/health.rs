@@ -108,6 +108,9 @@ struct HealthMetrics {
     oldest_seconds: Gauge<u64>,
     failed_workers: Gauge<u64>,
     ready: Gauge<u64>,
+    /// Always 1, labelled with the running release, so dashboards can mark
+    /// deploys where the label changes.
+    build_info: Gauge<u64>,
 }
 
 fn metrics() -> &'static HealthMetrics {
@@ -120,6 +123,7 @@ fn metrics() -> &'static HealthMetrics {
             oldest_seconds: meter.u64_gauge("media_queue_oldest_age_seconds").build(),
             failed_workers: meter.u64_gauge("media_worker_failed").build(),
             ready: meter.u64_gauge("web_server_ready").build(),
+            build_info: meter.u64_gauge("web_server_build_info").build(),
         }
     })
 }
@@ -162,6 +166,9 @@ fn record_metrics(queues: &QueueHealth, failed: &[&'static str], ready: bool) {
 }
 
 async fn probe(pool: &Pool<Postgres>, state: &HealthState) -> HealthResponse {
+    metrics()
+        .build_info
+        .record(1, &[KeyValue::new("release_id", release_id())]);
     let failed = failed_workers(state);
     match tokio::time::timeout(PROBE_TIMEOUT, queue_health(pool)).await {
         Ok(Ok(queues)) => {
