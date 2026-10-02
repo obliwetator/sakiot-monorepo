@@ -21,6 +21,7 @@ pub mod permissions;
 pub mod proto;
 pub mod recording_deletion;
 pub mod recording_opt_out;
+pub mod runtime_metrics;
 pub mod security_headers;
 pub mod server_timing;
 pub mod snowflake_serde;

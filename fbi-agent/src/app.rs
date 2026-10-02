@@ -49,6 +49,7 @@ pub(crate) async fn run() -> AppResult<()> {
     dotenvy::dotenv().ok();
     install_crypto_provider()?;
     crate::telemetry::init_telemetry()?;
+    crate::metrics::observe_runtime("main".to_string());
     ensure_recording_dir().await?;
     let media_archive = crate::media_archive::MediaArchive::from_env().await?;
 

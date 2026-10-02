@@ -204,7 +204,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
 
+    // The main runtime runs the background workers; each HTTP worker below
+    // runs on its own single-threaded runtime.
+    web_server::runtime_metrics::observe_current("main".to_string());
     let server = HttpServer::new(move || {
+        web_server::runtime_metrics::observe_current(
+            std::thread::current()
+                .name()
+                .unwrap_or("http-worker")
+                .to_string(),
+        );
         let cors_exact = cors_exact.clone();
         let cors_sub = cors_subdomain.clone();
         let cors_oauth_openers = cors_oauth_openers.clone();
