@@ -16,6 +16,7 @@ pub mod media_archive;
 pub mod media_jobs;
 pub mod members;
 pub mod openapi;
+pub mod outbound_metrics;
 pub mod permissions;
 pub mod proto;
 pub mod recording_deletion;

@@ -35,11 +35,47 @@ pub fn record_failure(operation: &'static str) {
 pub async fn connect_jammer(
     address: String,
 ) -> Result<(String, JammerClient<Channel>), tonic::transport::Error> {
-    let channel = tonic::transport::Endpoint::from_shared(address.clone())?
-        .connect_timeout(CONNECT_TIMEOUT)
-        .connect()
-        .await?;
-    Ok((address, JammerClient::new(channel)))
+    let started = std::time::Instant::now();
+    let channel = match tonic::transport::Endpoint::from_shared(address.clone()) {
+        Ok(endpoint) => endpoint.connect_timeout(CONNECT_TIMEOUT).connect().await,
+        Err(error) => Err(error),
+    };
+    crate::outbound_metrics::record(
+        "fbi_agent",
+        "connect",
+        if channel.is_ok() { "ok" } else { "error" },
+        started.elapsed().as_secs_f64(),
+    );
+    Ok((address, JammerClient::new(channel?)))
+}
+
+/// Records a finished `jam_it` call; failures are labelled by gRPC status code.
+pub fn record_jam_it<T>(result: &Result<T, tonic::Status>, started: std::time::Instant) {
+    let outcome = match result {
+        Ok(_) => "ok",
+        Err(status) => grpc_code_name(status.code()),
+    };
+    crate::outbound_metrics::record(
+        "fbi_agent",
+        "jam_it",
+        outcome,
+        started.elapsed().as_secs_f64(),
+    );
+}
+
+fn grpc_code_name(code: tonic::Code) -> &'static str {
+    match code {
+        tonic::Code::Ok => "ok",
+        tonic::Code::Cancelled => "cancelled",
+        tonic::Code::DeadlineExceeded => "deadline_exceeded",
+        tonic::Code::Unavailable => "unavailable",
+        tonic::Code::Unauthenticated => "unauthenticated",
+        tonic::Code::PermissionDenied => "permission_denied",
+        tonic::Code::NotFound => "not_found",
+        tonic::Code::ResourceExhausted => "resource_exhausted",
+        tonic::Code::Internal => "internal",
+        _ => "other",
+    }
 }
 
 /// Builds a `jam_it` request with the call timeout applied, carrying the

@@ -40,6 +40,7 @@ pub async fn get_user(
     pool: &web::Data<Pool<Postgres>>,
 ) -> Result<User, AppError> {
     let user = parse_discord_response(
+        "users_me",
         client
             .get(format!("{}users/@me", BASE_URL))
             .bearer_auth(access_token),
@@ -110,6 +111,7 @@ pub async fn get_user_guilds(
     pool: &web::Data<Pool<Postgres>>,
 ) -> Result<Vec<UserGuilds>, AppError> {
     let user_guilds: Vec<UserGuilds> = parse_discord_response(
+        "users_me_guilds",
         client
             .get(format!("{}users/@me/guilds", BASE_URL))
             .bearer_auth(access_token),

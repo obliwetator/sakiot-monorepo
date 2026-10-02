@@ -42,22 +42,27 @@ pub struct DiscordTokenData {
 /// Discord error bodies are deliberately never passed through to clients.
 /// OAuth code rejection is a client-auth failure; rate limiting and upstream
 /// failures remain distinct so callers can retry appropriately.
+///
+/// `operation` names the call in `outbound_request_duration_seconds`.
 pub async fn parse_discord_response<T: DeserializeOwned>(
+    operation: &'static str,
     request: RequestBuilder,
     token_exchange: bool,
 ) -> Result<T, AppError> {
-    let response = request.send().await.map_err(|error| {
-        if error.is_timeout() {
-            AppError::DiscordTimeout
-        } else {
-            AppError::DiscordUnavailable(error.to_string())
-        }
-    })?;
-    check_discord_status(&response, token_exchange)?;
-    response
-        .json::<T>()
-        .await
-        .map_err(|error| AppError::DiscordUnavailable(format!("invalid response body: {error}")))
+    crate::outbound_metrics::discord(operation, async {
+        let response = request.send().await.map_err(|error| {
+            if error.is_timeout() {
+                AppError::DiscordTimeout
+            } else {
+                AppError::DiscordUnavailable(error.to_string())
+            }
+        })?;
+        check_discord_status(&response, token_exchange)?;
+        response.json::<T>().await.map_err(|error| {
+            AppError::DiscordUnavailable(format!("invalid response body: {error}"))
+        })
+    })
+    .await
 }
 
 fn check_discord_status(response: &Response, token_exchange: bool) -> Result<(), AppError> {
@@ -104,6 +109,7 @@ async fn request_access_token_at(
     };
 
     parse_discord_response(
+        "oauth_token_exchange",
         client.post(format!("{base_url}oauth2/token")).form(&data),
         true,
     )
@@ -123,6 +129,7 @@ pub async fn request_refresh_token(
     };
 
     parse_discord_response(
+        "oauth_token_refresh",
         client.post(format!("{}oauth2/token", BASE_URL)).form(&data),
         true,
     )
@@ -158,7 +165,7 @@ mod tests {
             .timeout(std::time::Duration::from_millis(30))
             .build()
             .unwrap();
-        parse_discord_response::<DiscordTokenData>(client.post(url), true)
+        parse_discord_response::<DiscordTokenData>("test", client.post(url), true)
             .await
             .unwrap_err()
     }

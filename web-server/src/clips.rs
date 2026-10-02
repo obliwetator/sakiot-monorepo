@@ -358,9 +358,10 @@ pub async fn play_clip(
     };
     let (grpc_address, mut client) = connected;
 
-    let response = client
-        .jam_it(request)
-        .await
+    let started = std::time::Instant::now();
+    let response = client.jam_it(request).await;
+    grpc_client::record_jam_it(&response, started);
+    let response = response
         .map_err(|e| {
             grpc_client::record_failure("jammer_jam_it");
             error!(
