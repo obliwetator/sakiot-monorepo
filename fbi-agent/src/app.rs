@@ -120,6 +120,7 @@ async fn run_registered_instance(
     BotMetrics::register_otel_metrics(process_metrics, runtime.clone());
 
     let shard_manager = client.shard_manager.clone();
+    crate::metrics::observe_gateway_latency(shard_manager.clone());
     let shutdown_data = client.data.clone();
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
