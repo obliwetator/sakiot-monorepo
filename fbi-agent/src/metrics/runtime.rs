@@ -30,13 +30,18 @@ pub fn observe_current(runtime: String) {
         .with_description("Tasks waiting in the runtime's global queue for a worker")
         .with_callback(move |o| o.observe(m.global_queue_depth() as u64, &l))
         .build();
-    // Needs tokio_unstable, which .cargo/config.toml sets for every build.
-    let (m, l) = (metrics.clone(), labels.clone());
-    meter
-        .u64_observable_gauge("tokio_runtime_blocking_threads")
-        .with_description("Threads in the runtime's blocking pool")
-        .with_callback(move |o| o.observe(m.num_blocking_threads() as u64, &l))
-        .build();
+    // Needs tokio_unstable, which .cargo/config.toml sets. A RUSTFLAGS
+    // environment variable (as in CI) replaces it, so the build must work
+    // without.
+    #[cfg(tokio_unstable)]
+    {
+        let (m, l) = (metrics.clone(), labels.clone());
+        meter
+            .u64_observable_gauge("tokio_runtime_blocking_threads")
+            .with_description("Threads in the runtime's blocking pool")
+            .with_callback(move |o| o.observe(m.num_blocking_threads() as u64, &l))
+            .build();
+    }
     meter
         .f64_observable_counter("tokio_runtime_busy_seconds")
         .with_description("Total time the runtime's workers spent running tasks")

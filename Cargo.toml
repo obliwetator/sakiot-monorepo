@@ -27,6 +27,11 @@ debug = "line-tables-only"
 # (allow-unwrap-in-tests etc.); intentional prints in the deploy CLI carry
 # scoped `#[expect]`s. CI enforces with
 # `cargo clippy --workspace --all-targets -- -D warnings`.
+[workspace.lints.rust]
+# Set by .cargo/config.toml; code that needs it must still build without it,
+# since a RUSTFLAGS environment variable (as in CI) replaces that setting.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
+
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
