@@ -602,6 +602,7 @@ async fn run_attempt(
 }
 
 async fn execute(pool: Pool<Postgres>, media: MediaArchive, job: ClaimedMediaJob) {
+    let started = std::time::Instant::now();
     let result = {
         let mut interval = tokio::time::interval(Duration::from_secs(20));
         interval.tick().await;
@@ -629,6 +630,11 @@ async fn execute(pool: Pool<Postgres>, media: MediaArchive, job: ClaimedMediaJob
             }
         }
     };
+    crate::job_metrics::record(
+        job.request.kind(),
+        crate::job_metrics::outcome(&result),
+        started.elapsed(),
+    );
     if let Err(error) = finish(&pool, &job, result).await {
         tracing::error!(job_id=%job.id, ?error, "media job completion failed");
     }

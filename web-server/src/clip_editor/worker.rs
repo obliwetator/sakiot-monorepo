@@ -25,7 +25,7 @@ pub fn spawn_compose_worker(pool: Pool<Postgres>) -> tokio::task::JoinHandle<()>
                 last_cleanup = Some(std::time::Instant::now());
             }
             match queue::claim(&pool).await {
-                Ok(Some((id, token))) => match supervise(&pool, &id, &token).await {
+                Ok(Some((id, token))) => match timed_supervise(&pool, &id, &token).await {
                     Ok(()) => {}
                     // The new owner reports this job; a stale attempt must not.
                     Err(AppError::JobLeaseLost) => {
@@ -61,6 +61,18 @@ impl Drop for ProcessGroup {
             libc::kill(-self.0, libc::SIGKILL);
         }
     }
+}
+
+/// One attempt, recorded in `media_job_duration_seconds` as `composition`.
+async fn timed_supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), AppError> {
+    let started = std::time::Instant::now();
+    let result = supervise(pool, id, token).await;
+    crate::job_metrics::record(
+        "composition",
+        crate::job_metrics::outcome(&result),
+        started.elapsed(),
+    );
+    result
 }
 
 async fn supervise(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<(), AppError> {
