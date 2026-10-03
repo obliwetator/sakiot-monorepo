@@ -13,11 +13,8 @@ export function useSegmentedSessionPlayback(options: SegmentedSessionOptions) {
 		engine.setCallbacks(options.onError, options.onLoopDisabled);
 	});
 	useEffect(() => {
-		engine.setSegments(options.segments);
-	}, [engine, options.segments]);
-	useEffect(() => {
-		engine.setDurationMs(options.durationMs);
-	}, [engine, options.durationMs]);
+		engine.setTimeline(options.segments, options.durationMs);
+	}, [engine, options.segments, options.durationMs]);
 	useEffect(() => {
 		engine.setPlaybackRate(options.playbackRate);
 	}, [engine, options.playbackRate]);

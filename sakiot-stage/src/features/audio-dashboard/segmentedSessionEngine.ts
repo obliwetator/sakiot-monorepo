@@ -8,6 +8,7 @@ import { attachHlsAudio, prefersNativeHls } from "../../shared/attachHls";
 import {
 	clampPlaybackPosition,
 	isSameMediaSegment,
+	isSameTimelineSegment,
 	segmentAtPosition,
 	shouldRetryMediaLoad,
 } from "./logicalSessionPlaybackState";
@@ -55,6 +56,12 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 	private generation = 0;
 	private mediaRetry = false;
 	private activeSegment: PlaybackSegment | null = null;
+	/**
+	 * A live fragment whose media ended before the manifest said where it
+	 * ends; playback continues from that end once the manifest catches up.
+	 */
+	private endedLive: { generation: number; segment: PlaybackSegment } | null =
+		null;
 	private readonly bound: PlaybackBound;
 
 	constructor(options: SegmentedSessionOptions) {
@@ -91,18 +98,30 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		this.onLoopDisabled = onLoopDisabled;
 	}
 
-	setSegments(segments: PlaybackSegment[]): void {
+	/**
+	 * Takes a new manifest revision. While a session records, every revision
+	 * extends its live fragment or trailing silence; the playing source reads
+	 * its end from here rather than from when it started.
+	 */
+	setTimeline(segments: PlaybackSegment[], durationMs: number): void {
 		this.segments = segments;
-	}
-
-	setDurationMs(durationMs: number): void {
 		this.durationMs = durationMs;
-		const { positionMs, seekPreviewMs } = this.snapshot;
+		const { positionMs, seekPreviewMs, playing } = this.snapshot;
 		this.publish({
-			positionMs: Math.min(positionMs, durationMs),
+			// A live fragment plays slightly past the end the manifest last
+			// reported; the next revision overtakes it.
+			positionMs: playing ? positionMs : Math.min(positionMs, durationMs),
 			seekPreviewMs:
 				seekPreviewMs === null ? null : Math.min(seekPreviewMs, durationMs),
 		});
+		const ended = this.endedLive;
+		if (ended && ended.generation === this.generation) {
+			const end = this.segmentEnd(ended.segment);
+			if (Number.isFinite(end)) {
+				this.endedLive = null;
+				this.continueAfter(end);
+			}
+		}
 	}
 
 	setPlaybackRate(rate: number): void {
@@ -162,8 +181,28 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		this.publish({ playing: false });
 	}
 
+	/**
+	 * Where `segment` ends according to the latest manifest. A live fragment
+	 * has no end yet: its media element waits at the live edge and ends when
+	 * the recording finalizes the fragment.
+	 */
+	private segmentEnd(segment: PlaybackSegment): number {
+		const latest =
+			this.segments.find((candidate) =>
+				isSameTimelineSegment(candidate, segment),
+			) ?? segment;
+		if (latest.kind === "active_hls") return Number.POSITIVE_INFINITY;
+		return Math.min(latest.end_ms, this.durationMs);
+	}
+
+	/** Moves on from the end of a segment: the bound, the next one, or stop. */
+	private continueAfter(endMs: number): void {
+		if (!this.bound.apply(endMs)) this.startAt(endMs, endMs < this.durationMs);
+	}
+
 	readonly startAt = (requestedPosition: number, autoplay: boolean): void => {
 		this.generation += 1;
+		this.endedLive = null;
 		const generation = this.generation;
 		this.stopSource();
 		const durationMs = this.durationMs;
@@ -182,7 +221,6 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		}
 		this.activeSegment = segment;
 		this.publish({ playing: true });
-		const segmentLimit = Math.min(segment.end_ms, durationMs);
 		if (segment.kind === "silence") {
 			const wallStart = performance.now();
 			const logicalStart = position;
@@ -190,8 +228,9 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 				if (this.generation !== generation || !this.snapshot.playing) return;
 				const next = logicalStart + (wallNow - wallStart) * this.rate;
 				if (this.bound.apply(next)) return;
-				if (next >= segmentLimit) {
-					this.startAt(segmentLimit, segmentLimit < durationMs);
+				const end = this.segmentEnd(segment);
+				if (next >= end) {
+					this.startAt(end, end < this.durationMs);
 					return;
 				}
 				this.publish({ positionMs: next });
@@ -202,9 +241,7 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		}
 		const mediaUrl = segment.media_url;
 		if (!mediaUrl) {
-			if (!this.bound.apply(segmentLimit)) {
-				this.startAt(segmentLimit, segmentLimit < durationMs);
-			}
+			this.continueAfter(Math.min(segment.end_ms, durationMs));
 			return;
 		}
 		const audio = new Audio();
@@ -265,10 +302,9 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 			if (!Number.isFinite(mediaSeconds)) return true;
 			const logical = segment.start_ms + mediaSeconds * 1_000;
 			if (this.bound.apply(logical)) return false;
-			if (logical >= segmentLimit - 20) {
-				if (!this.bound.apply(segmentLimit)) {
-					this.startAt(segmentLimit, segmentLimit < durationMs);
-				}
+			const end = this.segmentEnd(segment);
+			if (logical >= end - 20) {
+				this.continueAfter(end);
 				return false;
 			}
 			this.publish({ positionMs: logical });
@@ -292,8 +328,13 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		});
 		audio.addEventListener("ended", () => {
 			if (this.generation !== generation) return;
-			if (!this.bound.apply(segmentLimit)) {
-				this.startAt(segmentLimit, segmentLimit < durationMs);
+			const end = this.segmentEnd(segment);
+			if (Number.isFinite(end)) {
+				this.continueAfter(end);
+			} else {
+				// The recording finalized the fragment before the manifest
+				// poll noticed: wait for the revision that says where it ended.
+				this.endedLive = { generation, segment };
 			}
 		});
 		audio.addEventListener("error", retryOrFail);
@@ -311,6 +352,13 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 					onFatal: () => retryOrFail(),
 					onManifestParsed: begin,
 					unlimitedMaxLatency: true,
+					// Without it hls.js starts a live playlist at its live
+					// edge and seeks there after `begin`, so the playhead
+					// jumps away from where playback was asked to start.
+					startPositionSeconds: Math.max(
+						0,
+						(position - segment.start_ms) / 1_000,
+					),
 				}).then((result) => {
 					if (this.generation !== generation) return;
 					if (result.kind === "direct") {

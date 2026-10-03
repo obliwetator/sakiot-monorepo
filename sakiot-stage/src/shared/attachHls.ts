@@ -32,6 +32,8 @@ export function prefersNativeHls(audio: HTMLAudioElement): boolean {
  * - `unlimitedMaxLatency` — disables hls.js's max-live-latency enforcement
  *   for callers that manage drift themselves (segmented session and the
  *   live AudioInterface); channel mix keeps hls.js defaults.
+ * - `startPositionSeconds` — where hls.js starts loading and playing. Live
+ *   playlists otherwise start at the live edge.
  * - `isActive` — re-checked after the dynamic import resolves so a cancelled
  *   caller never receives a leaked `Hls` instance.
  *
@@ -45,6 +47,7 @@ export async function attachHlsAudio(options: {
 	onFatal?: (message: string) => void;
 	onManifestParsed?: () => void;
 	unlimitedMaxLatency?: boolean;
+	startPositionSeconds?: number;
 }): Promise<HlsAttachResult> {
 	const { audio, playlistUrl } = options;
 	if (prefersNativeHls(audio)) {
@@ -80,6 +83,9 @@ export async function attachHlsAudio(options: {
 		liveSyncDuration: 2,
 		...(options.unlimitedMaxLatency
 			? { liveMaxLatencyDuration: Number.MAX_SAFE_INTEGER }
+			: {}),
+		...(options.startPositionSeconds !== undefined
+			? { startPosition: options.startPositionSeconds }
 			: {}),
 	});
 	if (options.onManifestParsed) {

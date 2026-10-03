@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	clampPlaybackPosition,
 	isSameMediaSegment,
+	isSameTimelineSegment,
 	parseSessionDeepLink,
 	segmentAtPosition,
 	selectionForTab,
@@ -59,6 +60,22 @@ describe("playback state helpers", () => {
 		expect(isSameMediaSegment(audio("1", 0, 1_000), audio("2", 0, 1_000))).toBe(
 			false,
 		);
+	});
+
+	test("follows a growing segment across manifest revisions", () => {
+		const live: PlaybackSegment = {
+			...audio("1", 0, 1_000),
+			kind: "active_hls",
+		};
+		expect(isSameTimelineSegment(live, audio("1", 0, 4_000))).toBe(true);
+		expect(isSameTimelineSegment(live, audio("2", 0, 4_000))).toBe(false);
+		const silence = (start_ms: number, end_ms: number): PlaybackSegment => ({
+			kind: "silence",
+			start_ms,
+			end_ms,
+		});
+		expect(isSameTimelineSegment(silence(5, 10), silence(5, 30))).toBe(true);
+		expect(isSameTimelineSegment(silence(5, 10), silence(6, 30))).toBe(false);
 	});
 
 	test("allows exactly one auth retry until successful load resets it", () => {

@@ -67,3 +67,22 @@ export function isSameMediaSegment(
 	}
 	return Boolean(left.media_url && left.media_url === right.media_url);
 }
+
+/**
+ * The same stretch of timeline across manifest revisions, whose end may have
+ * moved: a fragment by its audio file (its kind changes from `active_hls` to
+ * a file when the recording finalizes it), silence by where it starts.
+ */
+export function isSameTimelineSegment(
+	left: PlaybackSegment,
+	right: PlaybackSegment,
+): boolean {
+	if (left.audio_file_id && right.audio_file_id) {
+		return left.audio_file_id === right.audio_file_id;
+	}
+	return (
+		left.kind === "silence" &&
+		right.kind === "silence" &&
+		left.start_ms === right.start_ms
+	);
+}
