@@ -171,6 +171,24 @@ describe("SegmentedSessionEngine while the session records", () => {
 		expect(engine.getSnapshot().positionMs).toBe(6_000);
 	});
 
+	test("seeking near the end of a live fragment stays behind its live edge", () => {
+		fakeBrowser();
+		const { engine } = segmented([liveFragment(15_000)], 15_000);
+		engine.startAt(1_000, true);
+		const audio = FakeAudio.created[0];
+		if (!audio) throw new Error("no media element");
+		// hls.js reports the playlist's end as the element's duration; the
+		// manifest's end ("now") is further on.
+		audio.duration = 10;
+		audio.dispatchEvent(new Event("loadedmetadata"));
+		engine.seek(14_500, [0, 15_000], false);
+		expect(audio.currentTime).toBe(8);
+		expect(engine.getSnapshot().positionMs).toBe(8_000);
+		engine.seek(5_000, [0, 15_000], false);
+		expect(audio.currentTime).toBe(5);
+		expect(engine.getSnapshot().positionMs).toBe(5_000);
+	});
+
 	test("a finalized fragment continues into the next one", () => {
 		fakeBrowser();
 		const { engine } = segmented([liveFragment(5_000)], 5_000);

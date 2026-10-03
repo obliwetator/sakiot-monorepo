@@ -1,5 +1,12 @@
 import type Hls from "hls.js";
 
+/**
+ * How far behind the end of a live playlist playback starts or seeks. The
+ * newest audio is still being written; at the very end the element stalls
+ * until the next 2 s chunk arrives. Matches hls.js's `liveSyncDuration`.
+ */
+export const LIVE_EDGE_MARGIN_SECONDS = 2;
+
 /** Result of an `attachHlsAudio` attempt. */
 export type HlsAttachResult =
 	| { kind: "native"; hls: null }
@@ -27,12 +34,14 @@ export function prefersNativeHls(audio: HTMLAudioElement): boolean {
  *   can serve the playlist (result `kind: "direct"`).
  * - `onFatal` — invoked for fatal hls.js errors and for the
  *   unsupported/failed-import cases when no fallback URL is given.
- * - `onManifestParsed` — the hls.js start signal; the native path relies on
+ * - `onManifestParsed` — the hls.js start signal, given the start position
+ *   used when `startPositionSeconds` is set; the native path relies on
  *   the caller's own `loadedmetadata`/`canplay` listeners.
  * - `unlimitedMaxLatency` — disables hls.js's max-live-latency enforcement
  *   for callers that manage drift themselves (segmented session and the
  *   live AudioInterface); channel mix keeps hls.js defaults.
- * - `startPositionSeconds` — where hls.js starts loading and playing. Live
+ * - `startPositionSeconds` — where hls.js starts loading and playing, kept
+ *   `LIVE_EDGE_MARGIN_SECONDS` behind the end of a live playlist. Live
  *   playlists otherwise start at the live edge.
  * - `isActive` — re-checked after the dynamic import resolves so a cancelled
  *   caller never receives a leaked `Hls` instance.
@@ -45,7 +54,7 @@ export async function attachHlsAudio(options: {
 	fallbackUrl?: string;
 	isActive?: () => boolean;
 	onFatal?: (message: string) => void;
-	onManifestParsed?: () => void;
+	onManifestParsed?: (startSeconds?: number) => void;
 	unlimitedMaxLatency?: boolean;
 	startPositionSeconds?: number;
 }): Promise<HlsAttachResult> {
@@ -80,17 +89,30 @@ export async function attachHlsAudio(options: {
 		xhrSetup: (request) => {
 			request.withCredentials = true;
 		},
-		liveSyncDuration: 2,
+		liveSyncDuration: LIVE_EDGE_MARGIN_SECONDS,
 		...(options.unlimitedMaxLatency
 			? { liveMaxLatencyDuration: Number.MAX_SAFE_INTEGER }
 			: {}),
+		// The start position depends on the playlist, so loading waits for it.
 		...(options.startPositionSeconds !== undefined
-			? { startPosition: options.startPositionSeconds }
+			? { autoStartLoad: false }
 			: {}),
 	});
-	if (options.onManifestParsed) {
-		hls.on(HlsClass.Events.MANIFEST_PARSED, options.onManifestParsed);
-	}
+	const requestedStart = options.startPositionSeconds;
+	hls.on(HlsClass.Events.MANIFEST_PARSED, (_event, data) => {
+		let start = requestedStart;
+		if (start !== undefined) {
+			const details = data.levels[0]?.details;
+			if (details?.live) {
+				start = Math.min(
+					start,
+					Math.max(0, details.edge - LIVE_EDGE_MARGIN_SECONDS),
+				);
+			}
+			hls.startLoad(start);
+		}
+		options.onManifestParsed?.(start);
+	});
 	hls.on(HlsClass.Events.ERROR, (_event, data) => {
 		if (data.fatal) {
 			options.onFatal?.(`hls fatal: ${data.type}/${data.details}`);

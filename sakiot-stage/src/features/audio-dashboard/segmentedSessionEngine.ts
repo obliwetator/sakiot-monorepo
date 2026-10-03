@@ -4,7 +4,11 @@ import {
 	refreshForMediaRetry,
 	SESSION_EXPIRED_MESSAGE,
 } from "../../app/authedFetch";
-import { attachHlsAudio, prefersNativeHls } from "../../shared/attachHls";
+import {
+	attachHlsAudio,
+	LIVE_EDGE_MARGIN_SECONDS,
+	prefersNativeHls,
+} from "../../shared/attachHls";
 import {
 	clampPlaybackPosition,
 	isSameMediaSegment,
@@ -255,13 +259,18 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 			this.publish({ playing: false });
 			this.bound.clear();
 		};
-		const begin = () => {
+		const begin = (startSeconds?: number) => {
 			if (this.generation !== generation) return;
 			this.mediaRetry = false;
-			const localSeconds = Math.max(0, (position - segment.start_ms) / 1_000);
-			audio.currentTime = Number.isFinite(audio.duration)
-				? Math.min(localSeconds, Math.max(0, audio.duration - 0.01))
-				: localSeconds;
+			const localSeconds = playableSeconds(
+				audio,
+				segment,
+				startSeconds ?? Math.max(0, (position - segment.start_ms) / 1_000),
+			);
+			audio.currentTime = localSeconds;
+			// Near the end of a live fragment playback starts earlier than
+			// asked; the playhead shows where.
+			this.publish({ positionMs: segment.start_ms + localSeconds * 1_000 });
 			void audio.play().catch((error: unknown) => {
 				if (this.generation !== generation) return;
 				if (error instanceof DOMException && error.name === "AbortError")
@@ -342,7 +351,9 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 			const hlsUrl = absoluteMediaUrl(segment.hls_playlist_url);
 			if (prefersNativeHls(audio)) {
 				audio.src = hlsUrl;
-				audio.addEventListener("loadedmetadata", begin, { once: true });
+				audio.addEventListener("loadedmetadata", () => begin(), {
+					once: true,
+				});
 			} else {
 				void attachHlsAudio({
 					audio,
@@ -362,14 +373,16 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 				}).then((result) => {
 					if (this.generation !== generation) return;
 					if (result.kind === "direct") {
-						audio.addEventListener("loadedmetadata", begin, { once: true });
+						audio.addEventListener("loadedmetadata", () => begin(), {
+							once: true,
+						});
 					}
 					this.hls = result.hls;
 				});
 			}
 		} else {
 			audio.src = absoluteMediaUrl(mediaUrl);
-			audio.addEventListener("loadedmetadata", begin, { once: true });
+			audio.addEventListener("loadedmetadata", () => begin(), { once: true });
 		}
 	};
 
@@ -397,14 +410,16 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 			isSameMediaSegment(this.activeSegment, targetSegment)
 		) {
 			try {
-				const localSeconds = Math.max(
-					0,
-					(position - (targetSegment?.start_ms ?? 0)) / 1_000,
-				);
-				audio.currentTime = Number.isFinite(audio.duration)
-					? Math.min(localSeconds, Math.max(0, audio.duration - 0.01))
-					: localSeconds;
-				this.publish({ positionMs: position });
+				const segmentStart = targetSegment?.start_ms ?? 0;
+				const localSeconds = targetSegment
+					? playableSeconds(
+							audio,
+							targetSegment,
+							Math.max(0, (position - segmentStart) / 1_000),
+						)
+					: 0;
+				audio.currentTime = localSeconds;
+				this.publish({ positionMs: segmentStart + localSeconds * 1_000 });
 				return;
 			} catch {
 				// Replacing the source below handles media that cannot seek in place.
@@ -412,4 +427,20 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		}
 		this.startAt(position, this.snapshot.playing);
 	}
+}
+
+/**
+ * Where a fragment's media can play from, near `seconds`. A live fragment's
+ * duration is the end of its playlist, which is still being written: stay
+ * `LIVE_EDGE_MARGIN_SECONDS` behind it rather than stall at the very end.
+ */
+function playableSeconds(
+	audio: HTMLAudioElement,
+	segment: PlaybackSegment,
+	seconds: number,
+): number {
+	if (!Number.isFinite(audio.duration)) return seconds;
+	const margin =
+		segment.kind === "active_hls" ? LIVE_EDGE_MARGIN_SECONDS : 0.01;
+	return Math.min(seconds, Math.max(0, audio.duration - margin));
 }
