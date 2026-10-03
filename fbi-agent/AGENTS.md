@@ -92,4 +92,10 @@ Normal post-deploy state can include:
 - one active release handling Discord Gateway/events/commands
 - zero or more old draining releases while they still have voice connections
 
+Only the active release writes the guild cache (guilds, roles, channels,
+overwrites, member roles, `guilds_present`). A draining release keeps recording
+but skips those writes, including the periodic resync. A drain is cancelled
+only when a deploy rolls back; the instance then resumes writing and runs a
+full resync straight away to catch up on what it skipped.
+
 Only the newest active release should be enabled on boot.

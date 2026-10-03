@@ -196,7 +196,9 @@ impl EventHandler for Handler {
 
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
-        database::update_guild_present(ready.guilds, &self.database).await;
+        if self.runtime.maintains_caches() {
+            database::update_guild_present(ready.guilds, &self.database).await;
+        }
         commands::register_global_commands(&ctx).await;
     }
 

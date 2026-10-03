@@ -44,6 +44,16 @@ impl Admin for FbiAgentGrpc {
         )
         .await
         .map_err(|err| Status::internal(format!("database error: {err}")))?;
+
+        // A cancelled drain is a rolled-back deploy: this instance skipped
+        // guild-cache writes while draining, and the replacement that covered
+        // them is gone. Resync now rather than at the next periodic tick.
+        let custom = self.data_cache.clone();
+        tokio::spawn(async move {
+            if let Err(err) = crate::database::guild_cache::resync_guild_cache(&custom).await {
+                tracing::error!(error = %err, "guild cache resync after cancelled drain failed");
+            }
+        });
         Ok(Response::new(self.status("drain cancelled").await))
     }
 

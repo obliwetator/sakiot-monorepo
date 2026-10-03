@@ -619,6 +619,9 @@ pub(crate) fn spawn_cache_resync(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    if !custom.runtime.maintains_caches() {
+                        continue;
+                    }
                     if let Err(err) = resync_guild_cache(&custom).await {
                         error!(error = %err, "periodic guild cache resync failed");
                     }

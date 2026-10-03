@@ -8,7 +8,10 @@ pub async fn guild_role_create(
     _ctx: Context,
     new: serenity::model::guild::Role,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_live_role(&handler.database, &new).await {
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::sync_live_role(&handler.database, &new).await
+    {
         error!(
             error = %err,
             guild_id = new.guild_id.get(),
@@ -25,8 +28,9 @@ pub async fn guild_role_delete(
     removed_role_id: serenity::model::id::RoleId,
     _removed_role_data_if_available: Option<serenity::model::guild::Role>,
 ) {
-    if let Err(err) =
-        crate::database::guild_cache::delete_live_role(&handler.database, removed_role_id).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::delete_live_role(&handler.database, removed_role_id).await
     {
         error!(
             error = %err,
@@ -43,7 +47,10 @@ pub async fn guild_role_update(
     _old_data_if_available: Option<serenity::model::guild::Role>,
     new: serenity::model::guild::Role,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_live_role(&handler.database, &new).await {
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::sync_live_role(&handler.database, &new).await
+    {
         error!(
             error = %err,
             guild_id = new.guild_id.get(),

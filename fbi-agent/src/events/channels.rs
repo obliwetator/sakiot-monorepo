@@ -8,8 +8,9 @@ pub async fn channel_create(
     _ctx: Context,
     channel: serenity::model::channel::GuildChannel,
 ) {
-    if let Err(err) =
-        crate::database::guild_cache::sync_live_channel(&handler.database, &channel).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::sync_live_channel(&handler.database, &channel).await
     {
         error!(
             error = %err,
@@ -25,8 +26,9 @@ pub async fn channel_delete(
     _ctx: Context,
     channel: serenity::model::channel::GuildChannel,
 ) {
-    if let Err(err) =
-        crate::database::guild_cache::delete_live_channel(&handler.database, channel.id).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::delete_live_channel(&handler.database, channel.id).await
     {
         error!(
             error = %err,
@@ -42,8 +44,9 @@ pub async fn channel_update(
     _ctx: Context,
     channel: serenity::model::channel::GuildChannel,
 ) {
-    if let Err(err) =
-        crate::database::guild_cache::sync_live_channel(&handler.database, &channel).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::sync_live_channel(&handler.database, &channel).await
     {
         error!(
             error = %err,

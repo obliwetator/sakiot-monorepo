@@ -9,7 +9,9 @@ pub async fn guild_create(
     guild: serenity::model::guild::Guild,
     _is_new: Option<bool>,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_new_guild(&handler.database, &guild).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::sync_new_guild(&handler.database, &guild).await
     {
         error!(
             error = %err,
@@ -33,8 +35,10 @@ pub async fn guild_delete(
     if incomplete.unavailable {
         return;
     }
-    if let Err(err) =
-        crate::database::guild_cache::remove_guild_present(&handler.database, incomplete.id).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::remove_guild_present(&handler.database, incomplete.id)
+                .await
     {
         error!(
             error = %err,
@@ -51,8 +55,10 @@ pub async fn guild_member_removal(
     user: serenity::model::prelude::User,
     _member_data_if_available: Option<serenity::model::guild::Member>,
 ) {
-    if let Err(err) =
-        crate::database::guild_cache::delete_live_member(&handler.database, guild_id, user.id).await
+    if handler.runtime.maintains_caches()
+        && let Err(err) =
+            crate::database::guild_cache::delete_live_member(&handler.database, guild_id, user.id)
+                .await
     {
         error!(
             error = %err,
@@ -68,13 +74,14 @@ pub async fn guild_member_addition(
     _ctx: Context,
     new_member: serenity::model::guild::Member,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_live_member_roles(
-        &handler.database,
-        new_member.guild_id,
-        new_member.user.id,
-        &new_member.roles,
-    )
-    .await
+    if handler.runtime.maintains_caches()
+        && let Err(err) = crate::database::guild_cache::sync_live_member_roles(
+            &handler.database,
+            new_member.guild_id,
+            new_member.user.id,
+            &new_member.roles,
+        )
+        .await
     {
         error!(
             error = %err,
@@ -102,13 +109,14 @@ pub async fn guild_member_update(
     new: Option<serenity::model::guild::Member>,
     event: serenity::model::event::GuildMemberUpdateEvent,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_live_member_roles(
-        &handler.database,
-        event.guild_id,
-        event.user.id,
-        &event.roles,
-    )
-    .await
+    if handler.runtime.maintains_caches()
+        && let Err(err) = crate::database::guild_cache::sync_live_member_roles(
+            &handler.database,
+            event.guild_id,
+            event.user.id,
+            &event.roles,
+        )
+        .await
     {
         error!(
             error = %err,
@@ -155,12 +163,13 @@ pub async fn guild_update(
     _old_data_if_available: Option<serenity::model::guild::Guild>,
     new_guild: serenity::model::guild::PartialGuild,
 ) {
-    if let Err(err) = crate::database::guild_cache::sync_guild_owner(
-        &handler.database,
-        new_guild.id,
-        new_guild.owner_id,
-    )
-    .await
+    if handler.runtime.maintains_caches()
+        && let Err(err) = crate::database::guild_cache::sync_guild_owner(
+            &handler.database,
+            new_guild.id,
+            new_guild.owner_id,
+        )
+        .await
     {
         error!(
             guild_id = new_guild.id.get(),

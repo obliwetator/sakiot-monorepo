@@ -104,6 +104,16 @@ impl RuntimeState {
         self.draining.load(Ordering::SeqCst)
     }
 
+    /// Whether this instance writes the guild cache (guilds, roles, channels,
+    /// overwrites and member roles). Only the non-draining instance does: a
+    /// deploy starts the new release before the old one drains, so an active
+    /// writer always exists, and its startup sync covers anything a draining
+    /// instance would have seen. A draining release that kept writing could
+    /// overwrite newer state with its own stale view for as long as it drains.
+    pub fn maintains_caches(&self) -> bool {
+        !self.is_draining()
+    }
+
     pub fn shutdown_when_empty(&self) -> bool {
         self.shutdown_when_empty.load(Ordering::SeqCst)
     }
@@ -189,6 +199,24 @@ mod tests {
             initial_role: BotRole::Active,
             drain_timeout: Duration::from_secs(30),
         })
+    }
+
+    #[test]
+    fn only_a_non_draining_instance_maintains_caches() {
+        let runtime = runtime();
+        assert!(runtime.maintains_caches());
+
+        runtime.start_drain(false);
+        assert!(!runtime.maintains_caches());
+
+        assert!(runtime.cancel_drain());
+        assert!(runtime.maintains_caches());
+
+        let started_draining = RuntimeState::new(RuntimeConfig {
+            initial_role: BotRole::Drain,
+            ..runtime.config().clone()
+        });
+        assert!(!started_draining.maintains_caches());
     }
 
     #[test]

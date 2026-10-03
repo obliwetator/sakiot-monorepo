@@ -25,7 +25,9 @@ pub async fn cache_ready(handler: &Handler, ctx: Context, guilds: Vec<GuildId>) 
         .collect();
 
     seed_voice_presence_metrics(handler, &ctx, &guild_cached).await;
-    let _ = database::update_info(handler, &ctx, &guilds).await;
+    if handler.runtime.maintains_caches() {
+        database::update_info(handler, &ctx, &guilds).await;
+    }
     database::user_names::seed_from_guilds(&handler.database, &guild_cached).await;
 }
 
