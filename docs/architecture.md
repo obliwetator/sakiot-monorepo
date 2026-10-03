@@ -198,8 +198,28 @@ role assignments or overwrites half rewritten. It removes member role
 assignments only when its cached member list is complete. On the read side,
 each authorization result runs its queries in one `REPEATABLE READ, READ ONLY`
 transaction (`begin_snapshot`), so a cache write committing mid-check cannot
-mix old and new state. Guild owners are resolved from `guilds.owner_id` or the
-agent-maintained `user_guilds.owner` flag. Channel visibility applies `@everyone`, role and member overwrites in
+mix old and new state. Membership comes from the agent's roster, not from the
+guild list Discord returned at login (`membership` in `permissions.rs`):
+
+- A Discord login owns a guild only per `guilds.owner_id`, and belongs to it
+  only when listed on its complete roster (`guild_members` with
+  `guild_projection_state.roster_complete_at` set). The last complete roster
+  stays authoritative after the bot leaves or stops.
+- While the bot is in a guild whose roster is not complete yet, nobody but
+  the owner can be answered: requests fail with a retryable 503
+  `membership_unavailable` (Retry-After 5) rather than a guess, and the
+  dashboard repeats reads for about half a minute
+  (`sakiot-stage/src/app/membershipRetry.ts`). The guild picker
+  (`/api/users/current/guilds`) lists such a guild only once its roster is
+  complete, with the bot's live name, icon and the calculated permissions.
+- A dev login (local, staging and preview builds) keeps the seeded
+  `user_guilds` rows, including their owner flag, since staging's bot is in a
+  different server. Every check, realtime socket and background job carries
+  the login kind (`Viewer`; `requester_dev` on media and composition jobs).
+
+`user_guilds` is still written at login, for dev seeding.
+`ops/sql/membership-parity.sql` lists who a deploy of this rule would cut
+off. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
 VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the
 channels the agent records: voice (type 2) and stage (type 13). Stage channels
@@ -241,7 +261,9 @@ comes from the existing authorized endpoints.
   viewers the HTTP listing would show the item to. A viewer who may have seen
   a session before a change hid it gets an identifier-free `changed` instead.
   Opt-outs reach only their owner, settings only managers, and role previews
-  follow the role-preview rule above.
+  follow the role-preview rule above. A refused scope (not a member yet, or a
+  roster still loading) stays pending: the next permission event that grants
+  it sends `subscribed`, then `access_changed` for the guild list.
 - **Socket** (`GET /api/realtime`, `web-server/src/realtime/socket.rs`)
   accepts only the exact origins in `CORS_ALLOWED_ORIGIN` and
   `OAUTH_ALLOWED_OPENER_ORIGINS`, with no subdomain wildcard. It sends a
@@ -278,8 +300,9 @@ comes from the existing authorized endpoints.
 The agent keeps two projections of its gateway cache: `guild_members`, the
 current roster, and `voice_presence`, who is in which voice or stage channel
 (`sakiot-db/migrations/20261004000000_member_presence_projections.sql`,
-`fbi-agent/src/projections.rs`). They are not used for authorization yet;
-`user_guilds` still decides membership.
+`fbi-agent/src/projections.rs`). The roster decides membership (see
+Authorization); joining, leaving and a roster becoming complete send `perm`,
+so open sockets are re-authorized.
 
 - **Ownership**: one instance writes a guild's projections, recorded in
   `guild_projection_state` with a generation. Every write locks that row and
