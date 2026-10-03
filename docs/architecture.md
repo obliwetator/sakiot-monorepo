@@ -188,7 +188,11 @@ bundle.
 Authorization reimplements Discord's permission model against the agent's role
 cache rather than trusting the permission snapshot from the OAuth login, so
 role and membership revocations take effect without a new login
-(`web-server/src/permissions.rs`). Guild owners are resolved from `guilds.owner_id` or the
+(`web-server/src/permissions.rs`). The agent writes that cache one guild per
+transaction and only where it differs from Discord
+(`fbi-agent/src/database/guild_cache.rs`), so a request never sees a guild's
+role assignments or overwrites half rewritten. It removes member role
+assignments only when its cached member list is complete. Guild owners are resolved from `guilds.owner_id` or the
 agent-maintained `user_guilds.owner` flag. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
 VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the
@@ -261,8 +265,8 @@ not drift:
   in `.sqlx`, refreshed by `scripts/sqlx-prepare.sh` against a disposable
   database, and the pre-commit hook re-checks it when migrations or
   SQLx-using files are staged. The deliberate runtime-checked exceptions are
-  variable-arity multi-row inserts built with `QueryBuilder` (the bot's guild
-  cache sync and `user_guilds` in `web-server/src/user.rs`), the `sakiot-dev`
+  variable-arity multi-row inserts built with `QueryBuilder` (`user_guilds`
+  in `web-server/src/user.rs`), the `sakiot-dev`
   tooling that runs caller-supplied SQL against arbitrary databases, and test
   fixtures.
 - **Version → release.** `[workspace.package] version` is the only release

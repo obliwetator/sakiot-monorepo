@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_roles (user_id, role_id)\n         SELECT wanted.user_id, r.role_id\n           FROM UNNEST($2::bigint[], $3::bigint[]) AS wanted(user_id, role_id)\n           JOIN roles r ON r.role_id = wanted.role_id AND r.guild_id = $1\n         ON CONFLICT (user_id, role_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "72144099fff46a0f446d16a0786480094dd4d8f0e200b718daeb91c4bc8e9667"
+}

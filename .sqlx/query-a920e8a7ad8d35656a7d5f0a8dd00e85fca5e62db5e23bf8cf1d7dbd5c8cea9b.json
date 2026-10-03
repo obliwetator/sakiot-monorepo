@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO roles\n            (guild_id, role_id, permission, name, color, color_secondary, color_tertiary)\n         SELECT *\n           FROM UNNEST($1::bigint[], $2::bigint[], $3::bigint[], $4::text[],\n                       $5::bigint[], $6::bigint[], $7::bigint[])\n         ON CONFLICT (role_id) DO UPDATE SET\n             guild_id = EXCLUDED.guild_id,\n             permission = EXCLUDED.permission,\n             name = EXCLUDED.name,\n             color = EXCLUDED.color,\n             color_secondary = EXCLUDED.color_secondary,\n             color_tertiary = EXCLUDED.color_tertiary\n          WHERE (roles.guild_id, roles.permission, roles.name, roles.color,\n                 roles.color_secondary, roles.color_tertiary)\n                IS DISTINCT FROM\n                (EXCLUDED.guild_id, EXCLUDED.permission, EXCLUDED.name, EXCLUDED.color,\n                 EXCLUDED.color_secondary, EXCLUDED.color_tertiary)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "TextArray",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a920e8a7ad8d35656a7d5f0a8dd00e85fca5e62db5e23bf8cf1d7dbd5c8cea9b"
+}

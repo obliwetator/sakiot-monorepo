@@ -3,16 +3,11 @@ use crate::database::DbResult;
 use crate::event_handler::Handler;
 use serenity::{
     all::UnavailableGuild,
-    model::prelude::{Guild, GuildChannel, GuildId, Role, RoleId, UserId},
+    model::prelude::{Guild, GuildChannel, GuildId, PermissionOverwriteType, Role, RoleId, UserId},
     prelude::Context,
 };
-use sqlx::{Pool, Postgres};
+use sqlx::{PgConnection, Pool, Postgres};
 use tracing::error;
-
-/// PostgreSQL's bind-parameter limit. Bulk cache syncs are chunked multi-row
-/// `QueryBuilder` inserts whose arity varies with the chunk, so they are the
-/// only runtime-checked SQL here; every fixed statement uses `query!`.
-const BIND_LIMIT: usize = 65535;
 
 pub(crate) async fn update_info(handler: &Handler, ctx: &Context, guilds: &[GuildId]) {
     let guild_cached: Vec<Guild> = guilds
@@ -34,11 +29,36 @@ pub(crate) async fn update_info(handler: &Handler, ctx: &Context, guilds: &[Guil
 }
 
 async fn sync_info(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    update_guilds(pool, guild_cached).await?;
-    update_roles(pool, guild_cached).await?;
-    update_user_roles(pool, guild_cached).await?;
-    update_channels(pool, guild_cached).await?;
-    update_permissions(pool, guild_cached).await?;
+    for guild in guild_cached {
+        sync_guild(pool, guild).await?;
+    }
+    Ok(())
+}
+
+/// One guild's full cache sync, in one transaction that writes only real
+/// differences. Readers see the old or the new cache state, never a guild
+/// with its role assignments or channel overwrites half rewritten, and a
+/// resync that finds nothing new writes no rows.
+async fn sync_guild(pool: &Pool<Postgres>, guild: &Guild) -> DbResult<()> {
+    let guild_id = guild.id.to_i64();
+    let mut transaction = pool.begin().await?;
+
+    upsert_guild_owner(&mut transaction, guild_id, guild.owner_id.to_i64()).await?;
+
+    let roles: Vec<&Role> = guild.roles.values().collect();
+    upsert_roles(&mut transaction, &roles).await?;
+    let role_ids: Vec<i64> = roles.iter().map(|role| role.id.to_i64()).collect();
+    prune_stale_roles(&mut transaction, guild_id, &role_ids).await?;
+
+    let channels: Vec<&GuildChannel> = guild.channels.values().collect();
+    upsert_channels(&mut transaction, &channels).await?;
+    let channel_ids: Vec<i64> = channels.iter().map(|channel| channel.id.to_i64()).collect();
+    prune_stale_channels(&mut transaction, guild_id, &channel_ids).await?;
+    sync_channel_permissions(&mut transaction, guild_id, &channels, None).await?;
+
+    sync_guild_user_roles(&mut transaction, guild).await?;
+
+    transaction.commit().await?;
     Ok(())
 }
 
@@ -84,66 +104,9 @@ pub(crate) async fn remove_guild_present(
     Ok(())
 }
 
-async fn update_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    for guild in guild_cached {
-        let roles: Vec<_> = guild.roles.iter().collect();
-        for chunk in roles.chunks(BIND_LIMIT / 7) {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> = sqlx::QueryBuilder::new(
-                "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary, color_tertiary) ",
-            );
-            query_builder
-                .push_values(chunk, |mut b, role| {
-                    b.push_bind(role.1.guild_id.to_i64())
-                        .push_bind(role.0.to_i64())
-                        .push_bind(role.1.permissions.bits().to_i64())
-                        .push_bind(&role.1.name)
-                        .push_bind(role.1.colours.primary_colour.0 as i64)
-                        .push_bind(role.1.colours.secondary_colour.map(|c| c.0 as i64))
-                        .push_bind(role.1.colours.tertiary_colour.map(|c| c.0 as i64));
-                })
-                .push(
-                    " ON CONFLICT (role_id) DO UPDATE SET \
-                     guild_id = EXCLUDED.guild_id, \
-                     permission = EXCLUDED.permission, \
-                     name = EXCLUDED.name, \
-                     color = EXCLUDED.color, \
-                     color_secondary = EXCLUDED.color_secondary, \
-                     color_tertiary = EXCLUDED.color_tertiary",
-                );
-
-            query_builder.build().execute(pool).await?;
-        }
-
-        let role_ids: Vec<i64> = roles.iter().map(|role| role.0.to_i64()).collect();
-        prune_stale_roles(pool, guild.id.to_i64(), &role_ids).await?;
-    }
-
-    Ok(())
-}
-
 pub(crate) async fn sync_live_role(pool: &Pool<Postgres>, role: &Role) -> DbResult<()> {
-    sqlx::query!(
-        "INSERT INTO roles (guild_id, role_id, permission, name, color, color_secondary, color_tertiary)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (role_id) DO UPDATE SET
-             guild_id = EXCLUDED.guild_id,
-             permission = EXCLUDED.permission,
-             name = EXCLUDED.name,
-             color = EXCLUDED.color,
-             color_secondary = EXCLUDED.color_secondary,
-             color_tertiary = EXCLUDED.color_tertiary",
-        role.guild_id.to_i64(),
-        role.id.to_i64(),
-        role.permissions.bits().to_i64(),
-        role.name,
-        role.colours.primary_colour.0 as i64,
-        role.colours.secondary_colour.map(|c| c.0 as i64),
-        role.colours.tertiary_colour.map(|c| c.0 as i64)
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
+    let mut connection = pool.acquire().await?;
+    upsert_roles(&mut connection, &[role]).await
 }
 
 pub(crate) async fn delete_live_role(pool: &Pool<Postgres>, role_id: RoleId) -> DbResult<()> {
@@ -166,31 +129,80 @@ pub(crate) async fn delete_live_role(pool: &Pool<Postgres>, role_id: RoleId) -> 
     Ok(())
 }
 
-async fn update_user_roles(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    for guild in guild_cached {
-        delete_user_roles_for_guild(pool, guild.id.to_i64()).await?;
-
-        let mut user_roles = Vec::new();
-        for (user_id, user) in guild.members.iter() {
-            for role in &user.roles {
-                user_roles.push((user_id.to_i64(), role.to_i64()));
-            }
-        }
-
-        for chunk in user_roles.chunks(BIND_LIMIT / 2) {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> =
-                sqlx::QueryBuilder::new("INSERT INTO user_roles (user_id, role_id) ");
-
-            query_builder
-                .push_values(chunk, |mut b, pair| {
-                    b.push_bind(pair.0).push_bind(pair.1);
-                })
-                .push(" ON CONFLICT (user_id, role_id) DO NOTHING");
-
-            query_builder.build().execute(pool).await?;
+/// Member role assignments for a full sync. Discord sends a large guild's
+/// members only partially, so assignments are pruned for every member only
+/// when the cache holds the whole member list; otherwise only cached members'
+/// assignments are corrected and absent members keep theirs.
+async fn sync_guild_user_roles(connection: &mut PgConnection, guild: &Guild) -> DbResult<()> {
+    let mut user_ids = Vec::new();
+    let mut role_ids = Vec::new();
+    for (user_id, member) in &guild.members {
+        for role_id in &member.roles {
+            user_ids.push(user_id.to_i64());
+            role_ids.push(role_id.to_i64());
         }
     }
+    let cached_members: Vec<i64> = guild
+        .members
+        .keys()
+        .map(|user_id| user_id.to_i64())
+        .collect();
+    let complete = u64::try_from(cached_members.len()).unwrap_or(u64::MAX) >= guild.member_count;
 
+    write_user_roles(
+        connection,
+        guild.id.to_i64(),
+        &user_ids,
+        &role_ids,
+        (!complete).then_some(cached_members.as_slice()),
+    )
+    .await
+}
+
+/// Make `user_roles` match the given (user, role) pairs for one guild,
+/// writing only the difference. `only_users` limits removals to those
+/// members; `None` removes every other assignment in the guild.
+async fn write_user_roles(
+    connection: &mut PgConnection,
+    guild_id: i64,
+    user_ids: &[i64],
+    role_ids: &[i64],
+    only_users: Option<&[i64]>,
+) -> DbResult<()> {
+    sqlx::query!(
+        "DELETE FROM user_roles ur
+          USING roles r
+         WHERE ur.role_id = r.role_id
+           AND r.guild_id = $1
+           AND ($4::bigint[] IS NULL OR ur.user_id = ANY($4))
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM UNNEST($2::bigint[], $3::bigint[]) AS wanted(user_id, role_id)
+                WHERE wanted.user_id = ur.user_id
+                  AND wanted.role_id = ur.role_id
+           )",
+        guild_id,
+        user_ids,
+        role_ids,
+        only_users
+    )
+    .execute(&mut *connection)
+    .await?;
+
+    // Joining through roles keeps an out-of-order unknown role fail-closed:
+    // known revoked roles stay removed without violating the foreign key.
+    sqlx::query!(
+        "INSERT INTO user_roles (user_id, role_id)
+         SELECT wanted.user_id, r.role_id
+           FROM UNNEST($2::bigint[], $3::bigint[]) AS wanted(user_id, role_id)
+           JOIN roles r ON r.role_id = wanted.role_id AND r.guild_id = $1
+         ON CONFLICT (user_id, role_id) DO NOTHING",
+        guild_id,
+        user_ids,
+        role_ids
+    )
+    .execute(&mut *connection)
+    .await?;
     Ok(())
 }
 
@@ -200,41 +212,19 @@ pub(crate) async fn sync_live_member_roles(
     user_id: UserId,
     role_ids: &[RoleId],
 ) -> DbResult<()> {
-    let mut transaction = pool.begin().await?;
-    let guild_id = guild_id.to_i64();
     let user_id = user_id.to_i64();
     let role_ids: Vec<i64> = role_ids.iter().copied().map(ToI64::to_i64).collect();
+    let user_ids = vec![user_id; role_ids.len()];
 
-    sqlx::query!(
-        "DELETE FROM user_roles ur
-          USING roles r
-         WHERE ur.role_id = r.role_id
-           AND ur.user_id = $1
-           AND r.guild_id = $2",
-        user_id,
-        guild_id
+    let mut transaction = pool.begin().await?;
+    write_user_roles(
+        &mut transaction,
+        guild_id.to_i64(),
+        &user_ids,
+        &role_ids,
+        Some(&[user_id]),
     )
-    .execute(&mut *transaction)
     .await?;
-
-    // Joining through roles keeps an out-of-order unknown role fail-closed:
-    // known revoked roles stay removed without violating the foreign key.
-    if !role_ids.is_empty() {
-        sqlx::query!(
-            "INSERT INTO user_roles (user_id, role_id)
-             SELECT $1, r.role_id
-               FROM roles r
-              WHERE r.guild_id = $2
-                AND r.role_id = ANY($3)
-             ON CONFLICT (user_id, role_id) DO NOTHING",
-            user_id,
-            guild_id,
-            &role_ids
-        )
-        .execute(&mut *transaction)
-        .await?;
-    }
-
     transaction.commit().await?;
     Ok(())
 }
@@ -271,163 +261,209 @@ pub(crate) async fn delete_live_member(
     Ok(())
 }
 
-async fn update_permissions(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    for guild in guild_cached {
-        delete_channel_permissions_for_guild(pool, guild.id.to_i64()).await?;
-
-        let mut overwrites = Vec::new();
-        for channel in guild.channels.values() {
-            for p in &channel.permission_overwrites {
-                let kind = match p.kind {
-                    serenity::model::prelude::PermissionOverwriteType::Member(target_id) => {
-                        ("user", target_id.to_i64())
-                    }
-                    serenity::model::prelude::PermissionOverwriteType::Role(target_id) => {
-                        ("role", target_id.to_i64())
-                    }
-                    _ => {
-                        error!(
-                            channel_id = channel.id.get(),
-                            "unknown permission overwrite type"
-                        );
-                        continue;
-                    }
-                };
-                overwrites.push((
-                    channel.id.to_i64(),
-                    kind.1,
-                    kind.0,
-                    p.allow.bits().to_i64(),
-                    p.deny.bits().to_i64(),
-                ));
-            }
-        }
-
-        for chunk in overwrites.chunks(BIND_LIMIT / 5) {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> = sqlx::QueryBuilder::new(
-                "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny) ",
-            );
-
-            query_builder
-                .push_values(chunk, |mut b, overwrite| {
-                    b.push_bind(overwrite.0)
-                        .push_bind(overwrite.1)
-                        .push_bind(overwrite.2)
-                        .push_bind(overwrite.3)
-                        .push_bind(overwrite.4);
-                })
-                .push(" ON CONFLICT (channel_id, target_id) DO UPDATE SET kind = EXCLUDED.kind, allow = EXCLUDED.allow, deny = EXCLUDED.deny");
-
-            query_builder.build().execute(pool).await?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn update_guilds(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    if guild_cached.is_empty() {
-        return Ok(());
-    }
-
-    let mut transaction = pool.begin().await?;
-    for chunk in guild_cached.chunks(BIND_LIMIT / 2) {
-        let mut query_builder: sqlx::QueryBuilder<Postgres> =
-            sqlx::QueryBuilder::new("INSERT INTO guilds (id, owner_id) ");
-
-        query_builder
-            .push_values(chunk, |mut b, guild| {
-                b.push_bind(guild.id.to_i64())
-                    .push_bind(guild.owner_id.to_i64());
-            })
-            .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
-
-        query_builder.build().execute(&mut *transaction).await?;
-    }
-
-    // `web-server` grants owner rights from either `guilds.owner_id` or the
-    // OAuth-snapshot `user_guilds.owner` flag. Keep the flag in step here as
-    // `sync_guild_owner` does, or an ownership change the gateway never
-    // delivered (one made while the bot was offline) leaves the previous owner
-    // with full permissions until their next login. Only rows that disagree
-    // are written.
-    let guild_ids: Vec<i64> = guild_cached.iter().map(|guild| guild.id.to_i64()).collect();
-    sqlx::query!(
-        "UPDATE user_guilds ug
-            SET owner = (ug.user_id = g.owner_id)
-           FROM guilds g
-          WHERE g.id = ug.id
-            AND g.id = ANY($1)
-            AND ug.owner IS DISTINCT FROM (ug.user_id = g.owner_id)",
-        &guild_ids
-    )
-    .execute(&mut *transaction)
-    .await?;
-
-    transaction.commit().await?;
-    Ok(())
-}
-
 pub(crate) async fn sync_guild_owner(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
     owner_id: UserId,
 ) -> DbResult<()> {
-    let guild_id = guild_id.to_i64();
-    let owner_id = owner_id.to_i64();
     let mut transaction = pool.begin().await?;
-
-    sqlx::query!(
-        "INSERT INTO guilds (id, owner_id)
-         VALUES ($1, $2)
-         ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id",
-        guild_id,
-        owner_id
-    )
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query!(
-        "UPDATE user_guilds
-            SET owner = (user_id = $2)
-          WHERE id = $1",
-        guild_id,
-        owner_id
-    )
-    .execute(&mut *transaction)
-    .await?;
-
+    upsert_guild_owner(&mut transaction, guild_id.to_i64(), owner_id.to_i64()).await?;
     transaction.commit().await?;
     Ok(())
 }
 
-async fn update_channels(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResult<()> {
-    for guild in guild_cached {
-        let channels: Vec<_> = guild.channels.values().collect();
-        for chunk in channels.chunks(BIND_LIMIT / 4) {
-            let mut query_builder: sqlx::QueryBuilder<Postgres> =
-                sqlx::QueryBuilder::new("INSERT INTO channels (channel_id, guild_id, type, name) ");
+/// Record a guild's owner. `web-server` grants owner rights from either
+/// `guilds.owner_id` or the OAuth-snapshot `user_guilds.owner` flag, so both
+/// move together; otherwise an ownership change the gateway never delivered
+/// (one made while the bot was offline) would leave the previous owner with
+/// full permissions until their next login. Only rows that disagree are
+/// written.
+async fn upsert_guild_owner(
+    connection: &mut PgConnection,
+    guild_id: i64,
+    owner_id: i64,
+) -> DbResult<()> {
+    sqlx::query!(
+        "INSERT INTO guilds (id, owner_id)
+         VALUES ($1, $2)
+         ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id
+          WHERE guilds.owner_id IS DISTINCT FROM EXCLUDED.owner_id",
+        guild_id,
+        owner_id
+    )
+    .execute(&mut *connection)
+    .await?;
+    sqlx::query!(
+        "UPDATE user_guilds
+            SET owner = (user_id = $2)
+          WHERE id = $1
+            AND owner IS DISTINCT FROM (user_id = $2)",
+        guild_id,
+        owner_id
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
 
-            query_builder
-                .push_values(chunk, |mut b, channel| {
-                    b.push_bind(channel.id.to_i64())
-                        .push_bind(channel.guild_id.to_i64())
-                        .push_bind(u8::from(channel.kind) as i32)
-                        .push_bind(channel.name());
-                })
-                .push(
-                    " ON CONFLICT (channel_id) DO UPDATE SET \
-                     guild_id = EXCLUDED.guild_id, \
-                     type = EXCLUDED.type, \
-                     name = EXCLUDED.name",
-                );
-
-            query_builder.build().execute(pool).await?;
-        }
-
-        let channel_ids: Vec<i64> = channels.iter().map(|channel| channel.id.to_i64()).collect();
-        prune_stale_channels(pool, guild.id.to_i64(), &channel_ids).await?;
+async fn upsert_roles(connection: &mut PgConnection, roles: &[&Role]) -> DbResult<()> {
+    let mut guild_ids = Vec::with_capacity(roles.len());
+    let mut role_ids = Vec::with_capacity(roles.len());
+    let mut permissions = Vec::with_capacity(roles.len());
+    let mut names = Vec::with_capacity(roles.len());
+    let mut colors = Vec::with_capacity(roles.len());
+    let mut secondary_colors = Vec::with_capacity(roles.len());
+    let mut tertiary_colors = Vec::with_capacity(roles.len());
+    for role in roles {
+        guild_ids.push(role.guild_id.to_i64());
+        role_ids.push(role.id.to_i64());
+        permissions.push(role.permissions.bits().to_i64());
+        names.push(role.name.clone());
+        colors.push(i64::from(role.colours.primary_colour.0));
+        secondary_colors.push(role.colours.secondary_colour.map(|c| i64::from(c.0)));
+        tertiary_colors.push(role.colours.tertiary_colour.map(|c| i64::from(c.0)));
     }
 
+    sqlx::query!(
+        "INSERT INTO roles
+            (guild_id, role_id, permission, name, color, color_secondary, color_tertiary)
+         SELECT *
+           FROM UNNEST($1::bigint[], $2::bigint[], $3::bigint[], $4::text[],
+                       $5::bigint[], $6::bigint[], $7::bigint[])
+         ON CONFLICT (role_id) DO UPDATE SET
+             guild_id = EXCLUDED.guild_id,
+             permission = EXCLUDED.permission,
+             name = EXCLUDED.name,
+             color = EXCLUDED.color,
+             color_secondary = EXCLUDED.color_secondary,
+             color_tertiary = EXCLUDED.color_tertiary
+          WHERE (roles.guild_id, roles.permission, roles.name, roles.color,
+                 roles.color_secondary, roles.color_tertiary)
+                IS DISTINCT FROM
+                (EXCLUDED.guild_id, EXCLUDED.permission, EXCLUDED.name, EXCLUDED.color,
+                 EXCLUDED.color_secondary, EXCLUDED.color_tertiary)",
+        &guild_ids,
+        &role_ids,
+        &permissions,
+        &names,
+        &colors,
+        &secondary_colors as &[Option<i64>],
+        &tertiary_colors as &[Option<i64>]
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+async fn upsert_channels(
+    connection: &mut PgConnection,
+    channels: &[&GuildChannel],
+) -> DbResult<()> {
+    let channel_ids: Vec<i64> = channels.iter().map(|channel| channel.id.to_i64()).collect();
+    let guild_ids: Vec<i64> = channels
+        .iter()
+        .map(|channel| channel.guild_id.to_i64())
+        .collect();
+    let kinds: Vec<i32> = channels
+        .iter()
+        .map(|channel| i32::from(u8::from(channel.kind)))
+        .collect();
+    let names: Vec<String> = channels
+        .iter()
+        .map(|channel| channel.name().to_string())
+        .collect();
+
+    sqlx::query!(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         SELECT * FROM UNNEST($1::bigint[], $2::bigint[], $3::int[], $4::text[])
+         ON CONFLICT (channel_id) DO UPDATE SET
+             guild_id = EXCLUDED.guild_id,
+             type = EXCLUDED.type,
+             name = EXCLUDED.name
+          WHERE (channels.guild_id, channels.type, channels.name)
+                IS DISTINCT FROM (EXCLUDED.guild_id, EXCLUDED.type, EXCLUDED.name)",
+        &channel_ids,
+        &guild_ids,
+        &kinds,
+        &names
+    )
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
+/// Make `channel_permissions` match the given channels' overwrites, writing
+/// only the difference. `only_channel` limits removals to that channel;
+/// `None` removes stale overwrites from every channel in the guild.
+async fn sync_channel_permissions(
+    connection: &mut PgConnection,
+    guild_id: i64,
+    channels: &[&GuildChannel],
+    only_channel: Option<i64>,
+) -> DbResult<()> {
+    let mut channel_ids = Vec::new();
+    let mut target_ids = Vec::new();
+    let mut kinds = Vec::new();
+    let mut allows = Vec::new();
+    let mut denies = Vec::new();
+    for channel in channels {
+        for overwrite in &channel.permission_overwrites {
+            let (kind, target_id) = match overwrite.kind {
+                PermissionOverwriteType::Member(target_id) => ("user", target_id.to_i64()),
+                PermissionOverwriteType::Role(target_id) => ("role", target_id.to_i64()),
+                _ => {
+                    error!(
+                        channel_id = channel.id.get(),
+                        "unknown permission overwrite type"
+                    );
+                    continue;
+                }
+            };
+            channel_ids.push(channel.id.to_i64());
+            target_ids.push(target_id);
+            kinds.push(kind.to_string());
+            allows.push(overwrite.allow.bits().to_i64());
+            denies.push(overwrite.deny.bits().to_i64());
+        }
+    }
+
+    sqlx::query!(
+        "DELETE FROM channel_permissions cp
+          USING channels c
+         WHERE cp.channel_id = c.channel_id
+           AND c.guild_id = $1
+           AND ($4::bigint IS NULL OR cp.channel_id = $4)
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM UNNEST($2::bigint[], $3::bigint[]) AS wanted(channel_id, target_id)
+                WHERE wanted.channel_id = cp.channel_id
+                  AND wanted.target_id = cp.target_id
+           )",
+        guild_id,
+        &channel_ids,
+        &target_ids,
+        only_channel
+    )
+    .execute(&mut *connection)
+    .await?;
+
+    sqlx::query!(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         SELECT * FROM UNNEST($1::bigint[], $2::bigint[], $3::text[], $4::bigint[], $5::bigint[])
+         ON CONFLICT (channel_id, target_id) DO UPDATE SET
+             kind = EXCLUDED.kind,
+             allow = EXCLUDED.allow,
+             deny = EXCLUDED.deny
+          WHERE (channel_permissions.kind, channel_permissions.allow, channel_permissions.deny)
+                IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.allow, EXCLUDED.deny)",
+        &channel_ids,
+        &target_ids,
+        &kinds,
+        &allows,
+        &denies
+    )
+    .execute(&mut *connection)
+    .await?;
     Ok(())
 }
 
@@ -436,64 +472,14 @@ pub(crate) async fn sync_live_channel(
     channel: &GuildChannel,
 ) -> DbResult<()> {
     let mut transaction = pool.begin().await?;
-    let channel_id = channel.id.to_i64();
-
-    sqlx::query!(
-        "INSERT INTO channels (channel_id, guild_id, type, name)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (channel_id) DO UPDATE SET
-             guild_id = EXCLUDED.guild_id,
-             type = EXCLUDED.type,
-             name = EXCLUDED.name",
-        channel_id,
+    upsert_channels(&mut transaction, &[channel]).await?;
+    sync_channel_permissions(
+        &mut transaction,
         channel.guild_id.to_i64(),
-        u8::from(channel.kind) as i32,
-        channel.name()
+        &[channel],
+        Some(channel.id.to_i64()),
     )
-    .execute(&mut *transaction)
     .await?;
-
-    sqlx::query!(
-        "DELETE FROM channel_permissions WHERE channel_id = $1",
-        channel_id
-    )
-    .execute(&mut *transaction)
-    .await?;
-
-    for overwrite in &channel.permission_overwrites {
-        let (kind, target_id) = match overwrite.kind {
-            serenity::model::prelude::PermissionOverwriteType::Member(target_id) => {
-                ("user", target_id.to_i64())
-            }
-            serenity::model::prelude::PermissionOverwriteType::Role(target_id) => {
-                ("role", target_id.to_i64())
-            }
-            _ => {
-                error!(
-                    channel_id = channel.id.get(),
-                    "unknown permission overwrite type"
-                );
-                continue;
-            }
-        };
-
-        sqlx::query!(
-            "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (channel_id, target_id) DO UPDATE SET
-                 kind = EXCLUDED.kind,
-                 allow = EXCLUDED.allow,
-                 deny = EXCLUDED.deny",
-            channel_id,
-            target_id,
-            kind,
-            overwrite.allow.bits().to_i64(),
-            overwrite.deny.bits().to_i64()
-        )
-        .execute(&mut *transaction)
-        .await?;
-    }
-
     transaction.commit().await?;
     Ok(())
 }
@@ -512,72 +498,37 @@ pub(crate) async fn delete_live_channel(
     Ok(())
 }
 
-async fn prune_stale_roles(pool: &Pool<Postgres>, guild_id: i64, role_ids: &[i64]) -> DbResult<()> {
-    if role_ids.is_empty() {
-        sqlx::query!("DELETE FROM roles WHERE guild_id = $1", guild_id)
-            .execute(pool)
-            .await?;
-    } else {
-        sqlx::query!(
-            "DELETE FROM roles WHERE guild_id = $1 AND NOT (role_id = ANY($2))",
-            guild_id,
-            role_ids
-        )
-        .execute(pool)
-        .await?;
-    }
-    Ok(())
-}
-
-async fn delete_user_roles_for_guild(pool: &Pool<Postgres>, guild_id: i64) -> DbResult<()> {
-    sqlx::query!(
-        "DELETE FROM user_roles ur
-          USING roles r
-         WHERE ur.role_id = r.role_id
-           AND r.guild_id = $1",
-        guild_id
-    )
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-async fn delete_channel_permissions_for_guild(
-    pool: &Pool<Postgres>,
+/// Remove the guild's roles missing from `role_ids`; member assignments
+/// cascade. An empty list removes them all (`= ANY('{}')` is false).
+async fn prune_stale_roles(
+    connection: &mut PgConnection,
     guild_id: i64,
+    role_ids: &[i64],
 ) -> DbResult<()> {
     sqlx::query!(
-        "DELETE FROM channel_permissions cp
-          USING channels c
-         WHERE cp.channel_id = c.channel_id
-           AND c.guild_id = $1",
-        guild_id
+        "DELETE FROM roles WHERE guild_id = $1 AND NOT (role_id = ANY($2))",
+        guild_id,
+        role_ids
     )
-    .execute(pool)
+    .execute(&mut *connection)
     .await?;
-
     Ok(())
 }
 
+/// Remove the guild's channels missing from `channel_ids`; overwrites
+/// cascade. An empty list removes them all.
 async fn prune_stale_channels(
-    pool: &Pool<Postgres>,
+    connection: &mut PgConnection,
     guild_id: i64,
     channel_ids: &[i64],
 ) -> DbResult<()> {
-    if channel_ids.is_empty() {
-        sqlx::query!("DELETE FROM channels WHERE guild_id = $1", guild_id)
-            .execute(pool)
-            .await?;
-    } else {
-        sqlx::query!(
-            "DELETE FROM channels WHERE guild_id = $1 AND NOT (channel_id = ANY($2))",
-            guild_id,
-            channel_ids
-        )
-        .execute(pool)
-        .await?;
-    }
+    sqlx::query!(
+        "DELETE FROM channels WHERE guild_id = $1 AND NOT (channel_id = ANY($2))",
+        guild_id,
+        channel_ids
+    )
+    .execute(&mut *connection)
+    .await?;
     Ok(())
 }
 
@@ -587,7 +538,8 @@ pub(crate) async fn prune_stale_roles_for_test(
     guild_id: i64,
     role_ids: &[i64],
 ) -> DbResult<()> {
-    prune_stale_roles(pool, guild_id, role_ids).await
+    let mut connection = pool.acquire().await?;
+    prune_stale_roles(&mut connection, guild_id, role_ids).await
 }
 
 #[cfg(test)]
@@ -596,7 +548,8 @@ pub(crate) async fn prune_stale_channels_for_test(
     guild_id: i64,
     channel_ids: &[i64],
 ) -> DbResult<()> {
-    prune_stale_channels(pool, guild_id, channel_ids).await
+    let mut connection = pool.acquire().await?;
+    prune_stale_channels(&mut connection, guild_id, channel_ids).await
 }
 
 pub async fn update_guild_present(guilds: Vec<UnavailableGuild>, pool: &Pool<Postgres>) {
@@ -631,18 +584,14 @@ pub(crate) async fn sync_present_guild_ids(
 }
 
 async fn upsert_guilds_present(pool: &Pool<Postgres>, guild_ids: &[i64]) -> DbResult<()> {
-    for chunk in guild_ids.chunks(BIND_LIMIT) {
-        let mut query_builder: sqlx::QueryBuilder<Postgres> =
-            sqlx::QueryBuilder::new("INSERT INTO guilds_present (guild_id) ");
-
-        query_builder
-            .push_values(chunk, |mut b, guild_id| {
-                b.push_bind(*guild_id);
-            })
-            .push(" ON CONFLICT (guild_id) DO NOTHING");
-
-        query_builder.build().execute(pool).await?;
-    }
+    sqlx::query!(
+        "INSERT INTO guilds_present (guild_id)
+         SELECT * FROM UNNEST($1::bigint[])
+         ON CONFLICT (guild_id) DO NOTHING",
+        guild_ids
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
