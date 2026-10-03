@@ -261,6 +261,14 @@ comes from the existing authorized endpoints.
 - **Targeted refresh**: `GET /api/current/{guild}/sessions/{session}` returns
   one session's tree entry, or null when it is missing, deleted or not visible,
   so a `changed` event refreshes one session instead of the whole tree.
+- **Client** (`sakiot-stage/src/realtime/`): one coordinator per tab owns the
+  socket, follows the route's guild and role preview, and turns events into
+  RTK Query updates (a targeted session patch, or tag invalidation). It renews
+  the access token before expiry on a replacement socket. After repeated
+  failures it falls back to polling: manifests every 5 s, live state every
+  10 s, and the tree, live stems, clips and stamps every 30 s. Settings forms
+  keep an admin's draft when a refresh changes the saved value
+  (`shared/useDraftField.ts`).
 
 ## Recording controls
 
