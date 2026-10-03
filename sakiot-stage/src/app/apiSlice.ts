@@ -15,6 +15,7 @@ import {
 	refreshSession,
 } from "./authedFetch";
 import type { MediaJobStatus } from "./mediaJobs";
+import { retryWhileMembershipLoads } from "./membershipRetry";
 
 export { BASE_API_URL };
 
@@ -68,6 +69,13 @@ function withCsrfHeader(args: string | FetchArgs): string | FetchArgs {
  */
 let sessionExpiryHandled = false;
 
+/** Reads may be repeated; writes never are. */
+function isRead(args: string | FetchArgs): boolean {
+	if (typeof args === "string") return true;
+	const method = (args.method || "GET").toUpperCase();
+	return method === "GET" || method === "HEAD";
+}
+
 /** The auth probe: a success means the document now has a live session. */
 function isAuthProbe(args: string | FetchArgs): boolean {
 	const url = typeof args === "string" ? args : args.url;
@@ -79,7 +87,10 @@ const baseQueryWithReauth: BaseQueryFn<
 	unknown,
 	FetchBaseQueryError
 > = async (args, api, extraOptions) => {
-	let result = await baseQuery(withCsrfHeader(args), api, extraOptions);
+	const request = () => baseQuery(withCsrfHeader(args), api, extraOptions);
+	let result = isRead(args)
+		? await retryWhileMembershipLoads(request, api.signal)
+		: await request();
 
 	// A successful auth probe means a session was re-established inside this
 	// document (OAuth popup or dev login without a reload), so the next expiry
