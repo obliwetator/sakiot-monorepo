@@ -15,6 +15,7 @@ const COMPILED_HOOKS = [
 	"usePlaybackTransport.ts",
 	"useSourceBuffers.ts",
 	"useTimelineViewport.ts",
+	"../../shared/useDraftField.ts",
 ];
 
 describe("React Compiler coverage", () => {

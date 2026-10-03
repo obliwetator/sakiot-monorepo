@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { managerActionFailure as failure } from "../../app/apiError";
 import {
@@ -9,7 +9,9 @@ import {
 	useSetGuildVoiceSettingsMutation,
 } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
+import { SavedValueChanged } from "../../shared/SavedValueChanged";
 import { Button, Notice, TextField } from "../../shared/ui";
+import { sameIds, useDraftField } from "../../shared/useDraftField";
 
 const MIN_PENDING_SECONDS = 60;
 
@@ -27,7 +29,12 @@ export function GuildVoiceSettingsPage() {
 	});
 	const [save, saveState] = useSetGuildVoiceSettingsMutation();
 	const [reset, resetState] = useDeleteGuildVoiceSettingsMutation();
-	const [seconds, setSeconds] = useState("21600");
+	// Drafts survive refreshes (another admin saving, realtime updates);
+	// untouched fields follow the saved value.
+	const seconds = useDraftField(
+		data ? String(data.pending_cap_seconds) : undefined,
+		guildId,
+	);
 	const [validation, setValidation] = useState<string | null>(null);
 	const {
 		data: recordingPolicy,
@@ -37,24 +44,24 @@ export function GuildVoiceSettingsPage() {
 	} = useGetGuildRecordingPolicyQuery(guildId, { skip: !guildId });
 	const [saveRecordingPolicy, recordingSaveState] =
 		useSetGuildRecordingPolicyMutation();
-	const [retentionDays, setRetentionDays] = useState("");
-	const [excludedChannels, setExcludedChannels] = useState<string[]>([]);
+	const retentionDays = useDraftField(
+		recordingPolicy
+			? (recordingPolicy.retention_days?.toString() ?? "")
+			: undefined,
+		guildId,
+	);
+	const excludedChannels = useDraftField(
+		recordingPolicy?.excluded_channel_ids,
+		guildId,
+		sameIds,
+	);
 	const [recordingValidation, setRecordingValidation] = useState<string | null>(
 		null,
 	);
 
-	useEffect(() => {
-		if (data) setSeconds(String(data.pending_cap_seconds));
-	}, [data]);
-	useEffect(() => {
-		if (recordingPolicy) {
-			setRetentionDays(recordingPolicy.retention_days?.toString() ?? "");
-			setExcludedChannels(recordingPolicy.excluded_channel_ids);
-		}
-	}, [recordingPolicy]);
-
 	const handleRecordingPolicySave = async () => {
-		const days = retentionDays.trim() === "" ? null : Number(retentionDays);
+		const retention = retentionDays.value ?? "";
+		const days = retention.trim() === "" ? null : Number(retention);
 		if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) {
 			setRecordingValidation(
 				"Retention must be blank or between 1 and 3650 days.",
@@ -62,15 +69,21 @@ export function GuildVoiceSettingsPage() {
 			return;
 		}
 		setRecordingValidation(null);
-		await saveRecordingPolicy({
-			guild_id: guildId,
-			retention_days: days,
-			excluded_channel_ids: excludedChannels,
-		});
+		try {
+			await saveRecordingPolicy({
+				guild_id: guildId,
+				retention_days: days,
+				excluded_channel_ids: excludedChannels.value ?? [],
+			}).unwrap();
+			retentionDays.markSaved();
+			excludedChannels.markSaved();
+		} catch {
+			// recordingSaveState.isError renders the failure; drafts are kept.
+		}
 	};
 
 	const handleSave = async () => {
-		const parsed = Number(seconds);
+		const parsed = Number(seconds.value);
 		if (
 			!Number.isInteger(parsed) ||
 			!Number.isFinite(parsed) ||
@@ -82,14 +95,19 @@ export function GuildVoiceSettingsPage() {
 			return;
 		}
 		setValidation(null);
-		await save({ guild_id: guildId, pending_cap_seconds: parsed });
+		try {
+			await save({ guild_id: guildId, pending_cap_seconds: parsed }).unwrap();
+			seconds.markSaved();
+		} catch {
+			// saveState.isError renders the failure; the draft is kept.
+		}
 	};
 
 	const handleReset = async () => {
 		setValidation(null);
 		try {
-			const restored = await reset(guildId).unwrap();
-			setSeconds(String(restored.pending_cap_seconds));
+			await reset(guildId).unwrap();
+			seconds.takeSaved();
 		} catch {
 			// resetState.isError renders the failure notice below; without this
 			// catch the rejection was silent.
@@ -126,16 +144,24 @@ export function GuildVoiceSettingsPage() {
 						<TextField
 							label="Pending cap (seconds)"
 							type="number"
-							value={seconds}
+							value={seconds.value ?? ""}
 							description={
 								data.is_default
 									? "Using six-hour default."
 									: "Guild override active."
 							}
-							onChange={(value) => setSeconds(value)}
+							onChange={seconds.edit}
 							min={MIN_PENDING_SECONDS}
 							step={60}
 						/>
+						{seconds.savedUpdate && (
+							<SavedValueChanged
+								saved={`${seconds.savedUpdate.value} seconds`}
+								onTakeSaved={seconds.takeSaved}
+								onSaveMine={() => void handleSave()}
+								isSaving={saveState.isLoading}
+							/>
+						)}
 						<div className="flex flex-col min-[600px]:flex-row gap-2">
 							<Button
 								variant="primary"
@@ -205,12 +231,24 @@ export function GuildVoiceSettingsPage() {
 						<TextField
 							label="Hide recordings after (days)"
 							type="number"
-							value={retentionDays}
-							onChange={setRetentionDays}
+							value={retentionDays.value ?? ""}
+							onChange={retentionDays.edit}
 							description="Leave blank to keep recordings indefinitely."
 							min={1}
 							max={3650}
 						/>
+						{retentionDays.savedUpdate && (
+							<SavedValueChanged
+								saved={
+									retentionDays.savedUpdate.value === ""
+										? "no retention"
+										: `${retentionDays.savedUpdate.value} days`
+								}
+								onTakeSaved={retentionDays.takeSaved}
+								onSaveMine={() => void handleRecordingPolicySave()}
+								isSaving={recordingSaveState.isLoading}
+							/>
+						)}
 						<fieldset className="space-y-2">
 							<legend className="font-medium">
 								Channels excluded from recording
@@ -222,10 +260,13 @@ export function GuildVoiceSettingsPage() {
 								<label key={channel.id} className="flex items-center gap-2">
 									<input
 										type="checkbox"
-										checked={excludedChannels.includes(channel.id)}
+										checked={(excludedChannels.value ?? []).includes(
+											channel.id,
+										)}
 										onChange={(event) => {
 											const checked = event.currentTarget.checked;
-											setExcludedChannels((current) =>
+											const current = excludedChannels.value ?? [];
+											excludedChannels.edit(
 												checked
 													? [...current, channel.id]
 													: current.filter((id) => id !== channel.id),
@@ -236,6 +277,14 @@ export function GuildVoiceSettingsPage() {
 								</label>
 							))}
 						</fieldset>
+						{excludedChannels.savedUpdate && (
+							<SavedValueChanged
+								saved={`${excludedChannels.savedUpdate.value.length} excluded channel(s)`}
+								onTakeSaved={excludedChannels.takeSaved}
+								onSaveMine={() => void handleRecordingPolicySave()}
+								isSaving={recordingSaveState.isLoading}
+							/>
+						)}
 						<Button
 							variant="primary"
 							isDisabled={recordingSaveState.isLoading}

@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useParams } from "react-router-dom";
 import { managerActionFailure } from "../../app/apiError";
 import {
@@ -10,6 +10,7 @@ import {
 	useSetUserOverrideMutation,
 } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
+import { SavedValueChanged } from "../../shared/SavedValueChanged";
 import {
 	Button,
 	cn,
@@ -28,6 +29,7 @@ import {
 	Text,
 	TextField,
 } from "../../shared/ui";
+import { useDraftField } from "../../shared/useDraftField";
 
 function parseSeconds(value: string): number | null {
 	const seconds = Number(value);
@@ -48,7 +50,12 @@ export function GuildAdminCooldowns() {
 	const [setUserOverride, setOverrideState] = useSetUserOverrideMutation();
 	const [deleteUserOverride, deleteState] = useDeleteUserOverrideMutation();
 
-	const [guildSeconds, setGuildSeconds] = useState("0");
+	// The draft survives refreshes (another admin saving, realtime updates);
+	// untouched, it follows the saved default.
+	const guildSeconds = useDraftField(
+		guildCooldown ? String(guildCooldown.cooldown_seconds) : undefined,
+		gid,
+	);
 	const [newUserId, setNewUserId] = useState("");
 	const [newSeconds, setNewSeconds] = useState("0");
 	const [guildError, setGuildError] = useState<string | null>(null);
@@ -58,36 +65,13 @@ export function GuildAdminCooldowns() {
 		tone: "success" | "error";
 		message: string;
 	} | null>(null);
-	const [initializedGuildId, setInitializedGuildId] = useState<string | null>(
-		null,
-	);
-	const guildInputDirtyRef = useRef(false);
-
-	useEffect(() => {
-		if (
-			guildCooldown &&
-			initializedGuildId !== gid &&
-			!guildInputDirtyRef.current
-		) {
-			setGuildSeconds(String(guildCooldown.cooldown_seconds));
-			setInitializedGuildId(gid);
-		}
-	}, [gid, guildCooldown, initializedGuildId]);
-
-	const prevGidRef = useRef(gid);
-	// Reset the edit guard when navigation changes guilds; fetched data must not
-	// overwrite a value the user started entering while the request was pending.
-	useEffect(() => {
-		if (prevGidRef.current !== gid) {
-			prevGidRef.current = gid;
-			guildInputDirtyRef.current = false;
-			setInitializedGuildId(null);
-		}
-	}, [gid]);
-
-	const handleSaveGuild = async (event: FormEvent<HTMLFormElement>) => {
+	const handleSaveGuild = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		const seconds = parseSeconds(guildSeconds);
+		void saveGuild();
+	};
+
+	const saveGuild = async () => {
+		const seconds = parseSeconds(guildSeconds.value ?? "");
 		if (seconds === null) {
 			setGuildError("Cooldown must be a non-negative integer.");
 			return;
@@ -100,6 +84,7 @@ export function GuildAdminCooldowns() {
 				guild_id: gid,
 				cooldown_seconds: seconds,
 			}).unwrap();
+			guildSeconds.markSaved();
 		} catch {
 			// RTK Query exposes the server failure through setGuildState below.
 		}
@@ -204,15 +189,9 @@ export function GuildAdminCooldowns() {
 						type="number"
 						min={0}
 						step={1}
-						value={guildSeconds}
-						onFocus={() => {
-							if (initializedGuildId !== gid) {
-								guildInputDirtyRef.current = true;
-							}
-						}}
+						value={guildSeconds.value ?? ""}
 						onChange={(value) => {
-							guildInputDirtyRef.current = true;
-							setGuildSeconds(value);
+							guildSeconds.edit(value);
 							setGuildError(null);
 							setGuildState.reset();
 						}}
@@ -228,6 +207,14 @@ export function GuildAdminCooldowns() {
 					</Button>
 				</form>
 
+				{guildSeconds.savedUpdate && (
+					<SavedValueChanged
+						saved={`${guildSeconds.savedUpdate.value} seconds`}
+						onTakeSaved={guildSeconds.takeSaved}
+						onSaveMine={() => void saveGuild()}
+						isSaving={setGuildState.isLoading}
+					/>
+				)}
 				{guildError && (
 					<Notice tone="warning" announce="alert">
 						{guildError}
