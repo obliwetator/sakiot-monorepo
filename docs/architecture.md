@@ -214,6 +214,54 @@ than shown as hidden. Only Administrator bypasses channel overwrites in
 Discord, so this matters for MANAGE_GUILD-only managers; owners and
 Administrators see unclipped previews.
 
+## Realtime updates
+
+Dashboards learn about changes from a WebSocket instead of polling. The path
+is: committed write → PostgreSQL trigger → `NOTIFY sakiot_realtime` → one
+listener per `web-server` process → authorized fan-out → the client refetches
+over HTTP. Events are refresh signals that carry identifiers only; data always
+comes from the existing authorized endpoints.
+
+- **Triggers** (`sakiot-db/migrations/20261003010000_realtime_notifications.sql`)
+  cover recordings, clips, stamps, opt-outs, guild settings and the permission
+  cache. They fire for whichever binary writes, including a draining bot.
+  Update triggers compare displayed columns only, so heartbeats and no-op
+  writes are silent, and permission tables send one guild-wide payload per
+  transaction.
+- **Listener** (`web-server/src/realtime/listener.rs`) holds a dedicated
+  connection and coalesces notifications for 100 ms. A lost connection or a
+  notification gap re-authorizes every subscription and sends
+  `resync_required`. A self-NOTIFY measures the round trip, and
+  `pg_notification_queue_usage` is exported: a full queue fails every
+  notifying commit.
+- **Authorization** (`web-server/src/realtime/hub.rs`) is cached per
+  subscription (viewer, guild, optional role preview) from one consistent
+  snapshot (`permissions::subscription_access`) and recomputed on every
+  permission event before other events in the batch are routed. Ids go only to
+  viewers the HTTP listing would show the item to. A viewer who may have seen
+  a session before a change hid it gets an identifier-free `changed` instead.
+  Opt-outs reach only their owner, settings only managers, and role previews
+  follow the role-preview rule above.
+- **Socket** (`GET /api/realtime`, `web-server/src/realtime/socket.rs`)
+  accepts only the exact origins in `CORS_ALLOWED_ORIGIN` and
+  `OAUTH_ALLOWED_OPENER_ORIGINS`, with no subdomain wildcard. It sends a
+  `heartbeat` every 20 s and closes after 60 s of silence, closes with 4001
+  when the access token expires and with 4400 for an unsupported protocol
+  version, and replaces a backlog of more than 256 messages with one
+  `resync_required`. The message types are in the OpenAPI document, so the
+  frontend's generated types cover them.
+- **Shutdown**: on SIGTERM the server closes every socket with 1012 at once,
+  then gives in-flight HTTP requests 5 s. actix's default handling waited the
+  full 30 s for open sockets.
+- **Switch**: `REALTIME_ENABLED` (default off) turns on the listener and the
+  endpoint; `GET /api/users/current` reports it as `realtime_enabled`, and
+  clients keep polling while it is off or the socket keeps failing.
+  Enabling it per environment needs nginx to forward WebSocket upgrades and
+  the CSP to allow the socket; see [`ops/README.md`](../ops/README.md).
+- **Targeted refresh**: `GET /api/current/{guild}/sessions/{session}` returns
+  one session's tree entry, or null when it is missing, deleted or not visible,
+  so a `changed` event refreshes one session instead of the whole tree.
+
 ## Recording controls
 
 Recording is on by default. Two controls narrow it, and both are enforced in

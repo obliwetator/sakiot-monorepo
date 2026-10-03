@@ -12,10 +12,11 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1", features = ["io-util", "process", "rt"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 actix-web = "4"
 actix-rt = "2.9.0"
 actix-cors = "0.7"
+actix-ws = "0.4"
 actix-files = "0.6"
 reqwest = { version = "0.12", default-features = false, features = [
 	"charset",
@@ -67,6 +68,9 @@ urlencoding = "2"
 fastrand = "2"
 
 [dev-dependencies]
+actix-codec = "0.5"
+actix-test = "0.1"
+awc = "3"
 tempfile = "3"
 
 [features]

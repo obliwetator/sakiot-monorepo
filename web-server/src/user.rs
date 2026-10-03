@@ -130,6 +130,10 @@ pub struct UserDataForFrontEnd {
     pub username: String,
     pub avatar: String,
     pub is_dev: bool,
+    /// Whether this server serves `/api/realtime`. Clients must not open a
+    /// socket when it is false (or absent, from an older server) and keep
+    /// polling instead.
+    pub realtime_enabled: bool,
 }
 
 #[utoipa::path(
@@ -168,6 +172,7 @@ pub async fn get_current_user(
         username: result.username,
         avatar: result.avatar,
         is_dev,
+        realtime_enabled: cfg.realtime_enabled,
     };
 
     Ok(HttpResponse::Ok().json(user_data))
@@ -291,9 +296,10 @@ mod tests {
             username,
             avatar,
             is_dev: false,
+            realtime_enabled: false,
         };
         let value = serde_json::to_value(current)?;
-        assert_eq!(value.as_object().unwrap().len(), 4);
+        assert_eq!(value.as_object().unwrap().len(), 5);
         assert!(value.get("email").is_none());
         Ok(())
     }

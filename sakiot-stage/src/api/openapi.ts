@@ -791,6 +791,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/realtime": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["realtime_socket"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/refresh": {
 		parameters: {
 			query?: never;
@@ -1089,6 +1105,21 @@ export interface components {
 			channel_id: string;
 			dirs: components["schemas"]["Directories"][];
 		};
+		ClientMessage:
+			| {
+					as_role?: string | null;
+					guild_id: string;
+					/** @enum {string} */
+					type: "set_scope";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					/** @enum {string} */
+					type: "heartbeat";
+					/** Format: int32 */
+					v: number;
+			  };
 		ClipInfo: {
 			/** @example 146638124288704513 */
 			channel_id: string;
@@ -1431,6 +1462,23 @@ export interface components {
 		RenameClipBody: {
 			name: string;
 		};
+		/**
+		 * @description What a `changed` event says needs refreshing.
+		 * @enum {string}
+		 */
+		Resource:
+			| "recordings"
+			| "clips"
+			| "stamps"
+			| "recording_opt_out"
+			| "voice_settings"
+			| "recording_policy"
+			| "cooldowns";
+		/**
+		 * @description Why the client must refetch everything it has subscribed to.
+		 * @enum {string}
+		 */
+		ResyncReason: "listener_reconnected" | "queue_overflow" | "permissions";
 		RoleChannel: {
 			can_join: boolean;
 			can_view: boolean;
@@ -1478,6 +1526,63 @@ export interface components {
 			/** Format: float */
 			volume_db: number;
 		};
+		ServerMessage:
+			| {
+					/**
+					 * Format: int64
+					 * @description Unix milliseconds.
+					 */
+					server_time: number;
+					/**
+					 * Format: int64
+					 * @description Unix milliseconds; the server closes with 4001 at this time.
+					 */
+					token_expires_at: number;
+					/** @enum {string} */
+					type: "ready";
+					/** @example 146638124288704513 */
+					user_id: string;
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					as_role?: string | null;
+					guild_id: string;
+					/** @enum {string} */
+					type: "subscribed";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					guild_id: string;
+					ids?: string[] | null;
+					resource: components["schemas"]["Resource"];
+					/** @enum {string} */
+					type: "changed";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					guild_id: string;
+					/** @enum {string} */
+					type: "access_changed";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					guild_id?: string | null;
+					reason: components["schemas"]["ResyncReason"];
+					/** @enum {string} */
+					type: "resync_required";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					/** @enum {string} */
+					type: "heartbeat";
+					/** Format: int32 */
+					v: number;
+			  };
 		SessionDownloadQuery: {
 			/** Format: double */
 			end?: number | null;
@@ -1597,6 +1702,12 @@ export interface components {
 		UserDataForFrontEnd: {
 			avatar: string;
 			is_dev: boolean;
+			/**
+			 * @description Whether this server serves `/api/realtime`. Clients must not open a
+			 *     socket when it is false (or absent, from an older server) and keep
+			 *     polling instead.
+			 */
+			realtime_enabled: boolean;
 			/** @example 146638124288704513 */
 			user_id: string;
 			username: string;
@@ -5032,6 +5143,51 @@ export interface operations {
 			};
 			/** @description Invalid opener origin */
 			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	realtime_socket: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description WebSocket upgrade; see the realtime protocol schemas */
+			101: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Origin not allowed */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Realtime is disabled on this server */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

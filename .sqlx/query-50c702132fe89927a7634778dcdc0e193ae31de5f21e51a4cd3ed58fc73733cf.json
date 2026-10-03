@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rs.id,\n                  rs.starting_channel_id,\n                  COALESCE(\n                      array_agg(DISTINCT af.channel_id) FILTER (WHERE af.channel_id IS NOT NULL),\n                      '{}'\n                  ) AS \"fragment_channels!\"\n             FROM recording_sessions rs\n             LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n            WHERE rs.id = ANY($1) AND rs.deletion_requested_at IS NULL\n            GROUP BY rs.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "starting_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "starting_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "fragment_channels!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "50c702132fe89927a7634778dcdc0e193ae31de5f21e51a4cd3ed58fc73733cf"
+}

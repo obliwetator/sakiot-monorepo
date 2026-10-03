@@ -19,6 +19,7 @@ pub mod openapi;
 pub mod outbound_metrics;
 pub mod permissions;
 pub mod proto;
+pub mod realtime;
 pub mod recording_deletion;
 pub mod recording_opt_out;
 pub mod runtime_metrics;

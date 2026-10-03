@@ -47,6 +47,7 @@ use web_server::media_jobs::{
     get_media_job, get_media_job_result, spawn_worker as spawn_media_worker,
 };
 use web_server::members::{get_guild_roles, get_role_members, get_role_view};
+use web_server::realtime::{Hub, realtime_socket};
 use web_server::recording_deletion::{
     DeletionPolicy, delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
 };
@@ -87,6 +88,30 @@ fn is_cors_origin_allowed(
     }
 
     subdomain.is_some_and(|(scheme, suffix)| origin.starts_with(scheme) && origin.ends_with(suffix))
+}
+
+/// SIGTERM (systemd stop) or Ctrl-C.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "SIGTERM handler unavailable; only Ctrl-C stops the server");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 #[actix_web::main]
@@ -157,6 +182,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .connect(&cfg.database_url)
         .await?;
     web_server::db_pool_metrics::observe(&pool);
+
+    let realtime_hub = web::Data::new(Hub::new(pool.clone()));
+    let shutdown_hub = realtime_hub.clone();
+    web_server::realtime::observe(&realtime_hub.clone().into_inner());
+    // The listener runs only where realtime is on; with it off nothing
+    // listens and `/api/realtime` refuses connections.
+    let realtime_tasks = if cfg.realtime_enabled {
+        web_server::realtime::spawn_listener(&pool, realtime_hub.clone().into_inner())
+    } else {
+        Vec::new()
+    };
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());
@@ -315,7 +351,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete_recording)
             .service(get_recording_deletion)
             .service(get_recording_opt_out)
-            .service(put_recording_opt_out);
+            .service(put_recording_opt_out)
+            .service(realtime_socket);
 
         let (json_config, path_config, query_config) = web_server::errors::extractor_configs();
         App::new()
@@ -334,6 +371,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(keys.clone())
             .app_data(cfg_data.clone())
             .app_data(health_data.clone())
+            .app_data(realtime_hub.clone())
             .service(livez)
             .service(readyz)
             .service(healthz)
@@ -359,9 +397,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .wrap(SecurityHeaders)
     })
     .bind((host.as_str(), port))?
+    // Signals are handled below so open WebSockets close before the server
+    // drains. actix's own handler would wait up to its 30 s shutdown timeout
+    // for every open socket, stalling each restart.
+    .disable_signals()
+    .shutdown_timeout(5)
     .run();
 
+    let server_handle = server.handle();
+    let shutdown = tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        tracing::info!("shutting down; closing realtime sockets");
+        shutdown_hub.close_all(web_server::realtime::protocol::CLOSE_SERVICE_RESTART);
+        // In-flight HTTP requests get the 5 s shutdown_timeout.
+        server_handle.stop(true).await;
+    });
+
     let result = server.await;
+    shutdown.abort();
+    for task in realtime_tasks {
+        task.abort();
+    }
     compose_worker.abort();
     let _ = compose_worker.await;
     media_worker.abort();

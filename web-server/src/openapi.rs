@@ -88,6 +88,7 @@ use utoipa::{
         crate::user::get_current_user_guilds,
         crate::recording_opt_out::get_recording_opt_out,
         crate::recording_opt_out::put_recording_opt_out,
+        crate::realtime::socket::realtime_socket,
     ),
     components(schemas(
         crate::admin::cooldowns::CooldownBody,
@@ -141,6 +142,10 @@ use utoipa::{
         crate::media_jobs::MediaJobStatus,
         crate::recording_deletion::RecordingDeletionStatus,
         crate::recording_opt_out::RecordingOptOut,
+        crate::realtime::protocol::ClientMessage,
+        crate::realtime::protocol::Resource,
+        crate::realtime::protocol::ResyncReason,
+        crate::realtime::protocol::ServerMessage,
         crate::stamps::StampInfo,
         crate::user::GuildDataForFrontEnd,
         crate::user::UserDataForFrontEnd,

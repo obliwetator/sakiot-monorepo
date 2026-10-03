@@ -442,24 +442,88 @@ pub async fn role_access_for_preview(
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
+    let access = preview_access(&mut snapshot, guild_id, manager_id, role_id).await?;
+    snapshot.commit().await?;
+    Ok(access)
+}
+
+async fn preview_access(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    manager_id: i64,
+    role_id: i64,
+) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
     let belongs_to_guild = sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
         role_id,
         guild_id
     )
-    .fetch_one(&mut *snapshot)
+    .fetch_one(&mut *conn)
     .await?;
     if !belongs_to_guild {
         return Err(AppError::RoleNotFound);
     }
 
-    let manager_channels = visible_channels(&mut snapshot, guild_id, manager_id).await?;
-    let access = channel_access_for_role(&mut snapshot, guild_id, role_id)
+    let manager_channels = visible_channels(conn, guild_id, manager_id).await?;
+    Ok(channel_access_for_role(conn, guild_id, role_id)
         .await?
         .into_iter()
         .filter(|access| manager_channels.contains(&access.channel_id))
         .map(|access| (access.channel_id, access))
-        .collect();
+        .collect())
+}
+
+const MANAGER_PERMISSIONS: Permissions =
+    Permissions::ADMINISTRATOR.union(Permissions::MANAGE_GUILD);
+
+/// What one realtime subscription may receive, read in one snapshot: the
+/// channels whose sessions its recording tree lists, the channels whose clips
+/// and stamps it lists, and whether the viewer manages the guild.
+///
+/// For a normal view both sets are the viewer's own visible channels. For a
+/// manager's role preview they follow the HTTP listings: the tree lists every
+/// channel of the preview map (the manager's own channels, annotated for the
+/// role), while clips and stamps list the channels the role could join.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriptionAccess {
+    pub tree_channels: HashSet<i64>,
+    pub media_channels: HashSet<i64>,
+    pub manager: bool,
+}
+
+pub async fn subscription_access(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    user_id: i64,
+    as_role: Option<i64>,
+) -> Result<SubscriptionAccess, AppError> {
+    let mut snapshot = begin_snapshot(pool).await?;
+    let manager = combined_perm_for_user(&mut snapshot, guild_id, user_id)
+        .await?
+        .intersects(MANAGER_PERMISSIONS);
+    let access = match as_role {
+        None => {
+            let channels = visible_channels(&mut snapshot, guild_id, user_id).await?;
+            SubscriptionAccess {
+                tree_channels: channels.clone(),
+                media_channels: channels,
+                manager,
+            }
+        }
+        Some(_) if !manager => return Err(AppError::Forbidden),
+        Some(role_id) => {
+            let preview = preview_access(&mut snapshot, guild_id, user_id, role_id).await?;
+            SubscriptionAccess {
+                tree_channels: preview.keys().copied().collect(),
+                media_channels: preview
+                    .values()
+                    .filter(|access| access.joinable)
+                    .map(|access| access.channel_id)
+                    .collect(),
+                manager,
+            }
+        }
+    };
     snapshot.commit().await?;
     Ok(access)
 }
@@ -667,8 +731,7 @@ pub async fn require_guild_manager(
     pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
     guild_id: i64,
 ) -> Result<i64, crate::errors::AppError> {
-    let manager_mask = Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD;
-    require_guild_permission(req, pool, guild_id, manager_mask).await
+    require_guild_permission(req, pool, guild_id, MANAGER_PERMISSIONS).await
 }
 
 async fn require_guild_permission(

@@ -488,6 +488,7 @@ mod tests {
             db_max_connections: 20,
             recording_permanent_delete_enabled: false,
             server_timing_header: false,
+            realtime_enabled: false,
         }
     }
 
