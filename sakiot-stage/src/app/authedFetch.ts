@@ -7,9 +7,32 @@ if (!configuredApiUrl) {
 export const BASE_API_URL = configuredApiUrl;
 
 const CSRF_STORAGE_KEY = "sakiot.csrf";
+/** Fallback when storage is unavailable (private or restricted contexts). */
 let csrfOverride: string | null = null;
+/**
+ * Bumped whenever the token changes (login, logout, another tab logging in).
+ * A response to a request that started under an earlier account must not
+ * write its token back.
+ */
+let accountEpoch = 0;
+
+export function currentAccountEpoch(): number {
+	return accountEpoch;
+}
+
+/** The stored token, `null` when none is stored, `undefined` without storage. */
+function readStoredCsrf(): string | null | undefined {
+	try {
+		return localStorage.getItem(CSRF_STORAGE_KEY);
+	} catch {
+		return undefined;
+	}
+}
 
 export function setCsrfToken(value: string | null): void {
+	const stored = readStoredCsrf();
+	const previous = stored === undefined ? csrfOverride : stored;
+	if (value !== previous) accountEpoch += 1;
 	csrfOverride = value;
 	try {
 		if (value) localStorage.setItem(CSRF_STORAGE_KEY, value);
@@ -19,14 +42,17 @@ export function setCsrfToken(value: string | null): void {
 	}
 }
 
+/**
+ * The token is read from shared storage at the moment it is used, so a login
+ * or logout in another tab of this origin applies here at once. The token is
+ * fixed for a whole login (the server keeps it across refreshes), so tabs
+ * never invalidate each other's copy.
+ */
 export function getCsrfToken(): string | null {
-	if (csrfOverride) return csrfOverride;
-	try {
-		const stored = localStorage.getItem(CSRF_STORAGE_KEY);
-		if (stored) return stored;
-	} catch {
-		// Fall back to a same-origin cookie below.
-	}
+	const stored = readStoredCsrf();
+	if (stored) return stored;
+	if (stored === undefined && csrfOverride) return csrfOverride;
+	if (typeof document === "undefined") return null;
 	const matches = [
 		...document.cookie.matchAll(
 			/(?:^|;\s*)(?:__Host-sakiot-xsrf_token|xsrf_token)=([^;]*)/g,
@@ -35,9 +61,27 @@ export function getCsrfToken(): string | null {
 	return matches.at(-1)?.[1] ?? null;
 }
 
+/** Login and refresh responses carry the session's token: always take it. */
 export function captureCsrfToken(response: Response): void {
 	const csrf = response.headers.get("X-CSRF-Token");
 	if (csrf) setCsrfToken(csrf);
+}
+
+/**
+ * Any other authenticated response echoes the token its request was sent
+ * with. Use it only to recover a token this tab lost (cleared storage on a
+ * cross-origin deployment), and never from a request that started before the
+ * account changed: a late response must not restore a stale token.
+ */
+export function healCsrfToken(
+	response: Response,
+	epochAtRequest: number,
+): void {
+	const csrf = response.headers.get("X-CSRF-Token");
+	if (!csrf || epochAtRequest !== accountEpoch || getCsrfToken() !== null) {
+		return;
+	}
+	setCsrfToken(csrf);
 }
 
 export function isLoggedIn(): boolean {
@@ -60,7 +104,84 @@ export function isLoggedIn(): boolean {
 	);
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+/**
+ * - `refreshed`: a new access token is in the cookies (this tab's refresh or
+ *   another tab's, which shares them).
+ * - `session-ended`: the refresh token is gone (401): clear private state.
+ * - `unavailable`: a network error, 5xx, or `csrf_rejected`. Temporary: keep
+ *   drafts, retry later, never log out for it.
+ */
+export type RefreshOutcome = "refreshed" | "session-ended" | "unavailable";
+
+const REFRESHED_AT_KEY = "sakiot.refreshedAt";
+let refreshInFlight: Promise<RefreshOutcome> | null = null;
+
+function readRefreshedAt(): number {
+	try {
+		return Number(localStorage.getItem(REFRESHED_AT_KEY) ?? 0) || 0;
+	} catch {
+		return 0;
+	}
+}
+
+function writeRefreshedAt(at: number): void {
+	try {
+		localStorage.setItem(REFRESHED_AT_KEY, String(at));
+	} catch {
+		// Without storage each tab simply refreshes for itself.
+	}
+}
+
+/**
+ * Serializes refreshes across this origin's tabs. Correctness does not depend
+ * on it: the staging and debug pages share the API's cookies but not locks or
+ * storage, and concurrent refreshes are harmless because the CSRF token is
+ * fixed for the login. It only saves redundant calls.
+ */
+async function withRefreshLock<T>(work: () => Promise<T>): Promise<T> {
+	const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+	if (!locks?.request) return work();
+	return locks.request("sakiot-refresh", work);
+}
+
+async function postRefresh(): Promise<RefreshOutcome> {
+	try {
+		const headers = new Headers();
+		const csrf = getCsrfToken();
+		if (csrf) headers.set("X-CSRF-Token", csrf);
+		const res = await fetch(`${BASE_API_URL}refresh`, {
+			method: "POST",
+			credentials: "include",
+			headers,
+		});
+		if (res.ok) {
+			captureCsrfToken(res);
+			writeRefreshedAt(Date.now());
+			return "refreshed";
+		}
+		return res.status === 401 ? "session-ended" : "unavailable";
+	} catch {
+		return "unavailable";
+	}
+}
+
+/**
+ * Renews the access token, unless another tab already did after
+ * `skipIfRefreshedAfter` (unix ms): the cookies are shared, so its new token
+ * is already ours.
+ */
+export function refreshSession(
+	skipIfRefreshedAfter = Date.now() - 10_000,
+): Promise<RefreshOutcome> {
+	if (refreshInFlight) return refreshInFlight;
+	refreshInFlight = withRefreshLock(async () => {
+		if (readRefreshedAt() > skipIfRefreshedAfter) return "refreshed" as const;
+		return postRefresh();
+	}).finally(() => {
+		refreshInFlight = null;
+	});
+	return refreshInFlight;
+}
 
 export const SESSION_EXPIRED_MESSAGE =
 	"Your session has expired. Please log in again.";
@@ -77,27 +198,8 @@ export async function refreshForMediaRetry(): Promise<boolean> {
 	return ensureRefreshed();
 }
 
-export function ensureRefreshed(): Promise<boolean> {
-	if (refreshInFlight) return refreshInFlight;
-	refreshInFlight = (async () => {
-		try {
-			const headers = new Headers();
-			const csrf = getCsrfToken();
-			if (csrf) headers.set("X-CSRF-Token", csrf);
-			const res = await fetch(`${BASE_API_URL}refresh`, {
-				method: "POST",
-				credentials: "include",
-				headers,
-			});
-			captureCsrfToken(res);
-			return res.ok;
-		} catch {
-			return false;
-		} finally {
-			refreshInFlight = null;
-		}
-	})();
-	return refreshInFlight;
+export async function ensureRefreshed(): Promise<boolean> {
+	return (await refreshSession()) === "refreshed";
 }
 
 function buildHeaders(init: RequestInit): Headers {
@@ -128,8 +230,9 @@ export async function authedFetch(
 	const headers = buildHeaders(init);
 	const opts: RequestInit = { ...init, headers, credentials: "include" };
 
+	const epoch = accountEpoch;
 	let res = await fetch(url, opts);
-	captureCsrfToken(res);
+	healCsrfToken(res, epoch);
 	if (res.status !== 401) return res;
 
 	const ok = await ensureRefreshed();
@@ -140,8 +243,9 @@ export async function authedFetch(
 			headers: retryHeaders,
 			credentials: "include",
 		};
+		const retryEpoch = accountEpoch;
 		res = await fetch(url, retryOpts);
-		captureCsrfToken(res);
+		healCsrfToken(res, retryEpoch);
 	}
 	return res;
 }

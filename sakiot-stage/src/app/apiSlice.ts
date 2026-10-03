@@ -9,9 +9,10 @@ import { API_ROUTES, apiUrl } from "../api/routes";
 import type { Channels, UserGuilds } from "../Constants";
 import {
 	BASE_API_URL,
-	captureCsrfToken,
-	ensureRefreshed,
+	currentAccountEpoch,
 	getCsrfToken,
+	healCsrfToken,
+	refreshSession,
 } from "./authedFetch";
 import type { MediaJobStatus } from "./mediaJobs";
 
@@ -39,8 +40,9 @@ export type PlayClipResponse = ApiSchema["PlayClipResponse"];
 const baseQuery = fetchBaseQuery({
 	baseUrl: BASE_API_URL,
 	fetchFn: async (input, init) => {
+		const epoch = currentAccountEpoch();
 		const response = await fetch(input, { ...init, credentials: "include" });
-		captureCsrfToken(response);
+		healCsrfToken(response, epoch);
 		return response;
 	},
 });
@@ -87,11 +89,13 @@ const baseQueryWithReauth: BaseQueryFn<
 	}
 
 	if (result.error && result.error.status === 401) {
-		const ok = await ensureRefreshed();
-		if (ok) {
+		const outcome = await refreshSession();
+		if (outcome === "refreshed") {
 			sessionExpiryHandled = false;
 			result = await baseQuery(withCsrfHeader(args), api, extraOptions);
-		} else if (!sessionExpiryHandled) {
+		} else if (outcome === "session-ended" && !sessionExpiryHandled) {
+			// A network error or 5xx from /refresh is temporary: the request
+			// fails, but the session (and any drafts) stay.
 			// The refresh token is gone too: the session is over. Drop the
 			// cached auth details so the shell renders the logged-out state
 			// instead of a logged-in UI whose every action 401s.

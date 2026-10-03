@@ -2,14 +2,32 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
 	authedFetch,
 	BASE_API_URL,
+	currentAccountEpoch,
 	getCsrfToken,
+	healCsrfToken,
 	isLoggedIn,
 	refreshForMediaRetry,
+	refreshSession,
 	SESSION_EXPIRED_MESSAGE,
 	setCsrfToken,
 } from "./authedFetch";
 
 const originalDocument = globalThis.document;
+const originalStorage = globalThis.localStorage;
+
+/** A shared-storage stand-in, as another tab of this origin would see it. */
+function installStorage(): Map<string, string> {
+	const items = new Map<string, string>();
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: {
+			getItem: (key: string) => items.get(key) ?? null,
+			setItem: (key: string, value: string) => void items.set(key, value),
+			removeItem: (key: string) => void items.delete(key),
+		},
+	});
+	return items;
+}
 const originalFetch = globalThis.fetch;
 const originalWindow = globalThis.window;
 
@@ -52,6 +70,10 @@ afterEach(() => {
 	});
 	globalThis.fetch = originalFetch;
 	setCsrfToken(null);
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: originalStorage,
+	});
 	mock.restore();
 });
 
@@ -185,5 +207,82 @@ describe("refreshForMediaRetry", () => {
 
 		await expect(refreshForMediaRetry()).resolves.toBe(false);
 		expect(SESSION_EXPIRED_MESSAGE).toContain("session has expired");
+	});
+});
+
+describe("session-stable CSRF", () => {
+	it("reads the token from shared storage when it is used", () => {
+		setCookie("");
+		const storage = installStorage();
+		setCsrfToken("tab-a-login");
+		// Another tab of this origin logs in as someone else.
+		storage.set("sakiot.csrf", "tab-b-login");
+		expect(getCsrfToken()).toBe("tab-b-login");
+	});
+
+	it("never lets a late response restore a previous account's token", () => {
+		setCookie("");
+		installStorage();
+		setCsrfToken("old-account");
+		const before = currentAccountEpoch();
+		setCsrfToken(null); // logged out while a request was in flight
+		const late = new Response("ok", {
+			headers: { "X-CSRF-Token": "old-account" },
+		});
+		healCsrfToken(late, before);
+		expect(getCsrfToken()).toBeNull();
+
+		// A response to a request made under the current account may recover
+		// a token this tab lost.
+		healCsrfToken(late, currentAccountEpoch());
+		expect(getCsrfToken()).toBe("old-account");
+	});
+
+	it("does not overwrite a stored token from ordinary responses", () => {
+		setCookie("");
+		installStorage();
+		setCsrfToken("current");
+		healCsrfToken(
+			new Response("ok", { headers: { "X-CSRF-Token": "other" } }),
+			currentAccountEpoch(),
+		);
+		expect(getCsrfToken()).toBe("current");
+	});
+});
+
+describe("refreshSession", () => {
+	it("tells an ended session apart from a temporary failure", async () => {
+		setCookie("xsrf_token=csrf-123");
+		installStorage();
+		for (const [status, outcome] of [
+			[200, "refreshed"],
+			[401, "session-ended"],
+			[403, "unavailable"],
+			[503, "unavailable"],
+		] as const) {
+			installFetch(fetchStub(async () => new Response("", { status })));
+			await expect(refreshSession(0)).resolves.toBe(outcome);
+			localStorage.removeItem("sakiot.refreshedAt");
+		}
+		installFetch(
+			fetchStub(async () => {
+				throw new TypeError("network down");
+			}),
+		);
+		await expect(refreshSession(0)).resolves.toBe("unavailable");
+	});
+
+	it("skips the call when another tab already refreshed the shared cookies", async () => {
+		setCookie("xsrf_token=csrf-123");
+		const storage = installStorage();
+		const fetchMock = fetchStub(async () => new Response("", { status: 200 }));
+		installFetch(fetchMock);
+
+		storage.set("sakiot.refreshedAt", String(Date.now()));
+		await expect(refreshSession(Date.now() - 1_000)).resolves.toBe("refreshed");
+		expect(fetchMock).toHaveBeenCalledTimes(0);
+
+		await expect(refreshSession(Date.now() + 1_000)).resolves.toBe("refreshed");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });
