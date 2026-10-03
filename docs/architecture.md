@@ -265,8 +265,11 @@ comes from the existing authorized endpoints.
   socket, follows the route's guild and role preview, and turns events into
   RTK Query updates (a targeted session patch, or tag invalidation). It renews
   the access token before expiry on a replacement socket. After repeated
-  failures it falls back to polling: manifests every 5 s, live state every
-  10 s, and the tree, live stems, clips and stamps every 30 s. Settings forms
+  failures it falls back to polling the tree, live stems, clips and stamps
+  every 30 s. Manifests (every 5 s until finalized) and a file's live state
+  (every 10 s) poll even while realtime is live: a growing recording changes
+  only its heartbeat, which notifies nothing, so no event announces new
+  audio. Settings forms
   keep an admin's draft when a refresh changes the saved value
   (`shared/useDraftField.ts`).
 

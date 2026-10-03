@@ -266,6 +266,8 @@ interface MockAudioOptions {
 	mediaSeconds?: number;
 	/** Serve a ready-to-preview channel mix with one decodable source. */
 	channelMixReady?: boolean;
+	/** Report realtime as enabled and the session as still recording. */
+	liveWithRealtime?: boolean;
 }
 
 /** A valid audiowaveform payload with no points, so the preview renders quietly. */
@@ -309,6 +311,7 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 			await fulfillJson({
 				avatar: "",
 				is_dev: false,
+				realtime_enabled: options.liveWithRealtime ?? false,
 				user_id: "current-user",
 				username: "Test Admin",
 			});
@@ -434,7 +437,7 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 				],
 				started_at_ms: 1_786_460_400_000,
 				starting_channel_id: "voice-123",
-				state: "finalized",
+				state: options.liveWithRealtime ? "active" : "finalized",
 				user_id: "user-123",
 			});
 			return;
@@ -1046,4 +1049,60 @@ test("the playhead glides over audio instead of stepping on timeupdate", async (
 	await expect(
 		normalPanel.getByRole("button", { name: "Pause", exact: true }),
 	).toBeVisible();
+});
+
+test("a live session keeps loading new audio while realtime is connected", async ({
+	page,
+}) => {
+	// A growing recording changes only its heartbeat, which sends no realtime
+	// event, so the manifest poll must run even while the socket is live.
+	await mockAudioApi(page, { liveWithRealtime: true });
+	let subscribed = false;
+	await page.routeWebSocket(
+		`${API_ORIGIN}/api/realtime`.replace("http", "ws"),
+		(ws) => {
+			const now = Date.now();
+			ws.send(
+				JSON.stringify({
+					type: "ready",
+					v: 1,
+					user_id: "current-user",
+					server_time: now,
+					token_expires_at: now + 15 * 60_000,
+				}),
+			);
+			ws.onMessage((raw) => {
+				const message = JSON.parse(String(raw)) as {
+					type: string;
+					guild_id?: string;
+				};
+				if (message.type !== "set_scope") return;
+				ws.send(
+					JSON.stringify({
+						type: "subscribed",
+						v: 1,
+						guild_id: message.guild_id,
+					}),
+				);
+				subscribed = true;
+			});
+		},
+	);
+	let manifestLoads = 0;
+	page.on("request", (request) => {
+		if (
+			new URL(request.url()).pathname ===
+			`${API_PREFIX}/audio/sessions/${SESSION_ID}/manifest`
+		)
+			manifestLoads += 1;
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	await expect.poll(() => subscribed).toBe(true);
+	await expect.poll(() => manifestLoads).toBeGreaterThanOrEqual(1);
+	const before = manifestLoads;
+	// The poll runs every 5 s.
+	await expect
+		.poll(() => manifestLoads, { timeout: 8_000 })
+		.toBeGreaterThan(before);
 });

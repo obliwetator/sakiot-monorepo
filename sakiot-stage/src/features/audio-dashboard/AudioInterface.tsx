@@ -11,7 +11,6 @@ import {
 } from "../../app/apiSlice";
 import { useAppSelector } from "../../app/hooks";
 import type { AudioParams, UserGuilds } from "../../Constants";
-import { useFallbackPolling } from "../../realtime/status";
 import { setHasSilence } from "../../reducers/silence";
 import { attachHlsAudio } from "../../shared/attachHls";
 import { deepLinkSeekSeconds } from "./deepLinkSeek";
@@ -79,11 +78,11 @@ export function AudioInterface(props: {
 					file_name: params.file_name ?? "",
 				}
 			: undefined;
-	// Realtime refreshes a file's live state; without it, poll every 10 s.
-	const liveStatePolling = useFallbackPolling(10_000);
+	// Polled even with realtime: a growing recording sends no event (see
+	// useSessionManifest).
 	const { data: recordingState } = useGetLiveStateQuery(
 		recordingStateArgs ?? skipToken,
-		{ pollingInterval: recordingStateArgs ? liveStatePolling : 0 },
+		{ pollingInterval: recordingStateArgs ? 10_000 : 0 },
 	);
 	const isLive = !!recordingState?.live;
 
