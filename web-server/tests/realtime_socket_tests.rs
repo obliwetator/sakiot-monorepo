@@ -412,3 +412,54 @@ async fn refused_connections_and_messages_body(pool: PgPool) -> TestResult {
     assert_eq!(next(&mut socket).await?, Err(Some(4400)));
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_lost_listener_connection_resyncs_every_socket(pool: PgPool) -> TestResult {
+    // awc and actix-test spawn local tasks.
+    tokio::task::LocalSet::new()
+        .run_until(a_lost_listener_connection_resyncs_every_socket_body(pool))
+        .await
+}
+
+async fn a_lost_listener_connection_resyncs_every_socket_body(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let hub = web::Data::new(Hub::new(pool.clone()));
+    let tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
+    let server = server(&pool, hub.clone(), true);
+    let mut socket = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe(&mut socket).await?;
+    wait_for_listener(&pool, &mut socket).await?;
+
+    // Kill the listener's database session: notifications sent while it is
+    // gone are lost, so every socket must refetch once LISTEN is back.
+    let killed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (
+             SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+              WHERE query ILIKE 'LISTEN%' AND datname = current_database()
+         ) AS terminated",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(killed, 1);
+
+    loop {
+        let message = expect(&mut socket).await?;
+        if message["type"] == "resync_required" {
+            assert_eq!(message["reason"], "listener_reconnected");
+            break;
+        }
+    }
+    // And delivery resumes.
+    let session = insert_session(&pool, PUBLIC, &[]).await?;
+    loop {
+        if expect(&mut socket).await? == changed("recordings", Some(&[session])) {
+            break;
+        }
+    }
+    for task in tasks {
+        task.abort();
+    }
+    Ok(())
+}

@@ -263,10 +263,16 @@ test("a socket that keeps failing falls back to polling", async ({
 	consoleAudit.allow(/WebSocket/);
 	await page.clock.install();
 	let stampLoads = 0;
+	let refreshes = 0;
 	await mockApi(page, async (path, _route, json) => {
 		if (path === `/api/stamps/${GUILD_ID}`) {
 			stampLoads += 1;
 			await json([]);
+			return true;
+		}
+		if (path === "/api/refresh") {
+			refreshes += 1;
+			await json({ status: "ok" });
 			return true;
 		}
 		return false;
@@ -290,4 +296,6 @@ test("a socket that keeps failing falls back to polling", async ({
 	}
 	expect(stampLoads).toBeGreaterThanOrEqual(2);
 	expect(attempts).toBeGreaterThanOrEqual(3);
+	// A socket that fails while HTTP works never turns into token refreshes.
+	expect(refreshes).toBe(0);
 });
