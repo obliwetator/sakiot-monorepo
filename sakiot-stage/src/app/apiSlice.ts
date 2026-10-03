@@ -157,8 +157,14 @@ const TAG_TYPES = [
 	"GuildRecordingPolicy",
 	"RecordingOptOut",
 	"Recordings",
+	"LiveStems",
+	"LiveState",
+	"Stamps",
+	"GuildRoles",
+	/** One recording session's manifest and waveform, by session id. */
+	"Session",
 ] as const;
-type ApiTag = (typeof TAG_TYPES)[number];
+export type ApiTag = (typeof TAG_TYPES)[number];
 
 /** Tags for anything scoped to one guild, given the id bare or in an object. */
 const guildScoped =
@@ -241,10 +247,30 @@ export const apiSlice = createApi({
 		>({
 			query: ({ guild_id, as_role }) =>
 				withAsRole(apiUrl(API_ROUTES.liveStems, { guild_id }), as_role),
+			providesTags: guildScoped("LiveStems"),
+		}),
+		/**
+		 * One session's recording-tree entry (null when missing or not visible),
+		 * for patching cached trees after a realtime event.
+		 */
+		getSessionListingEntry: builder.query<
+			Channels | null,
+			{ guild_id: string; recording_session_id: string; as_role?: string }
+		>({
+			query: ({ guild_id, recording_session_id, as_role }) =>
+				withAsRole(
+					apiUrl(API_ROUTES.sessionListingEntry, {
+						guild_id,
+						recording_session_id,
+					}),
+					as_role,
+				),
+			keepUnusedDataFor: 0,
 		}),
 		getSessionManifest: builder.query<SessionManifest, string>({
 			query: (recording_session_id) =>
 				apiUrl(API_ROUTES.sessionManifest, { recording_session_id }),
+			providesTags: (_result, _error, id) => [{ type: "Session", id }],
 		}),
 		getSessionChannelMix: builder.query<
 			ChannelMixResponse,
@@ -270,6 +296,7 @@ export const apiSlice = createApi({
 		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
 			query: (recording_session_id) =>
 				apiUrl(API_ROUTES.sessionWaveform, { recording_session_id }),
+			providesTags: (_result, _error, id) => [{ type: "Session", id }],
 		}),
 		getSilenceFreeSessionWaveform: builder.query<
 			SessionWaveformResponse,
@@ -321,7 +348,7 @@ export const apiSlice = createApi({
 				query: ({ guild_id, as_role }) => ({
 					url: withAsRole(apiUrl(API_ROUTES.clips, { guild_id }), as_role),
 				}),
-				providesTags: ["Clips"],
+				providesTags: guildScoped("Clips"),
 			},
 		),
 		composeClip: builder.mutation<
@@ -358,6 +385,7 @@ export const apiSlice = createApi({
 			query: ({ guild_id, as_role }) => ({
 				url: withAsRole(apiUrl(API_ROUTES.stamps, { guild_id }), as_role),
 			}),
+			providesTags: guildScoped("Stamps"),
 		}),
 		deleteClip: builder.mutation<void, { guild_id: string; file_name: string }>(
 			{
@@ -477,6 +505,7 @@ export const apiSlice = createApi({
 					stem: file_name,
 				}),
 			}),
+			providesTags: guildScoped("LiveState"),
 		}),
 		getWaveform: builder.query<
 			WaveformResponse,
@@ -663,6 +692,7 @@ export const apiSlice = createApi({
 		}),
 		getGuildRoles: builder.query<GuildRole[], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildRoles, { guild_id }),
+			providesTags: guildScoped("GuildRoles"),
 		}),
 		getRoleMembers: builder.query<
 			RoleMember[],

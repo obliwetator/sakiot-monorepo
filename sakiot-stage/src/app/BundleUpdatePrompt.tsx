@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRealtimeStatus } from "../realtime/status";
 import { Button, Notice } from "../shared/ui";
 
 const CURRENT_BUNDLE_VERSION = __BUNDLE_VERSION__;
@@ -72,7 +73,11 @@ function useBundleUpdateAvailable() {
 }
 
 export function BundleUpdatePrompt() {
-	const updateAvailable = useBundleUpdateAvailable();
+	// The realtime server speaking a newer protocol (close 4400) also means
+	// this bundle is out of date.
+	const bundleUpdated = useBundleUpdateAvailable();
+	const realtimeStatus = useRealtimeStatus();
+	const updateAvailable = bundleUpdated || realtimeStatus === "unsupported";
 
 	return (
 		updateAvailable && (

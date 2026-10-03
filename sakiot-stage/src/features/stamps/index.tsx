@@ -2,6 +2,7 @@ import { useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
 import { useGetStampsQuery } from "../../app/apiSlice";
 import { useAsRole } from "../../app/useAsRole";
+import { useFallbackPolling } from "../../realtime/status";
 import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Button,
@@ -30,6 +31,7 @@ export function Stamps() {
 	const guildName = guild?.id === guildId ? guild.name : undefined;
 	const { asRoleArg } = useAsRole();
 
+	const stampsPolling = useFallbackPolling(30_000);
 	const {
 		currentData: data,
 		isLoading,
@@ -41,6 +43,8 @@ export function Stamps() {
 		{ guild_id: guildId, ...asRoleArg },
 		{
 			skip: !guildId,
+			// Realtime pushes new stamps; without it, check every 30 s.
+			pollingInterval: stampsPolling,
 		},
 	);
 

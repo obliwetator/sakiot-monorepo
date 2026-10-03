@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiSlice, useGetCurrentGuildDirsQuery } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
 import { type Dirs, getMonthName } from "../../../Constants";
+import { useRealtimeLive } from "../../../realtime/status";
 import { SearchInput, Tree } from "../../../shared/ui";
 import { transform_to_months } from "../data";
 import { TreeViewYears } from "./TreeViewYears";
@@ -50,6 +51,8 @@ export default function RecordingTree(
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { asRoleArg } = useAsRole();
+	const realtimeLive = useRealtimeLive();
+	const discoveryPolling = realtimeLive ? 0 : 30_000;
 	const {
 		currentData: channelsData,
 		isError,
@@ -58,6 +61,9 @@ export default function RecordingTree(
 		{ guild_id: params.guild_id ?? "", ...asRoleArg },
 		{
 			skip: !params.guild_id,
+			// Realtime patches the tree; without it, discover new sessions
+			// every 30 s even when nothing is live.
+			pollingInterval: discoveryPolling,
 		},
 	);
 	const { data: selectedSession } =
@@ -73,10 +79,14 @@ export default function RecordingTree(
 		});
 	apiSlice.endpoints.getLiveStems.useQuerySubscription(liveArgs, {
 		skip: !params.guild_id,
-		// The route loader takes an initial snapshot. Keep checking only while
-		// there are live badges to update; an idle guild needs no polling.
-		pollingInterval:
-			!selectedSessionFinalized && liveStems?.length ? 10_000 : 0,
+		// The route loader takes an initial snapshot and realtime keeps it
+		// current. Without realtime, live badges update every 10 s and an
+		// idle guild is checked every 30 s.
+		pollingInterval: realtimeLive
+			? 0
+			: !selectedSessionFinalized && liveStems?.length
+				? 10_000
+				: 30_000,
 	});
 	const liveSet = useMemo(() => new Set(liveStems ?? []), [liveStems]);
 

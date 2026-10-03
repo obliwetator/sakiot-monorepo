@@ -17,6 +17,7 @@ import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
 import { useAsRole } from "../../app/useAsRole";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../../Constants";
+import { useFallbackPolling } from "../../realtime/status";
 import { BaseDialog } from "../../shared/BaseDialog";
 import { LoadFailure } from "../../shared/LoadFailure";
 import { canDeleteClip } from "../../shared/permissions";
@@ -204,6 +205,7 @@ export default function Clips() {
 	const guild =
 		authData?.guilds?.find((g) => g.id === guildId) ?? guildSelected;
 	const { asRoleArg } = useAsRole();
+	const clipsPolling = useFallbackPolling(30_000);
 	const {
 		currentData: data,
 		isError,
@@ -216,6 +218,8 @@ export default function Clips() {
 		{ guild_id: guildId, ...asRoleArg },
 		{
 			skip: !guildId,
+			// Realtime pushes clip changes; without it, check every 30 s.
+			pollingInterval: clipsPolling,
 		},
 	);
 

@@ -8,6 +8,11 @@ import {
 import { BundleUpdatePrompt } from "./app/BundleUpdatePrompt";
 import { useAuthBootstrap } from "./app/useAuthBootstrap";
 import { LayoutsWithNavbar } from "./layouts/LayoutsWithNavbar";
+import {
+	dropPreviousAccountData,
+	useCrossTabLogin,
+	useRealtime,
+} from "./realtime/useRealtime";
 import { appRoutesElement } from "./routes/AppRoutes";
 
 // A data router so route-level hooks (useBlocker and friends) work; the route
@@ -24,11 +29,16 @@ function AuthenticatedApp() {
 		const previous = previousUser.current;
 		previousUser.current = userId;
 		// An initial loader joins the auth probe itself. A later login/account
-		// change must rerun loaders which previously had no authorized session.
+		// change must rerun loaders which previously had no authorized session,
+		// and must not keep showing the previous account's data.
 		if (previous !== undefined && userId && previous !== userId) {
+			if (previous) dropPreviousAccountData();
 			void mainRouter.revalidate();
 		}
 	}, [isLoading, userId]);
+	useCrossTabLogin();
+	// A missing `realtime_enabled` (an older server) means off.
+	useRealtime(mainRouter, userId, authData?.user?.realtime_enabled === true);
 
 	let content: ReactNode;
 	if (isLoading || !isLoggedIn) {

@@ -18,6 +18,9 @@ export const API_ROUTES = {
 	logout: "/api/logout",
 	currentGuildDirs: "/api/current/{guild_id}",
 	liveStems: "/api/current/{guild_id}/live-stems",
+	sessionListingEntry:
+		"/api/current/{guild_id}/sessions/{recording_session_id}",
+	realtime: "/api/realtime",
 	sessionManifest: "/api/audio/sessions/{recording_session_id}/manifest",
 	sessionChannelMix: "/api/audio/sessions/{recording_session_id}/channel-mix",
 	sessionWaveform: "/api/audio/sessions/{recording_session_id}/waveform",
