@@ -673,6 +673,28 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/current/{guild_id}/sessions/{recording_session_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * One session's entry in the recording tree, for targeted refreshes after a
+		 *     realtime `changed` event. The body is the tree narrowed to that session
+		 *     (one channel, year, month and file), or `null` when the session is
+		 *     missing, deleted or not visible; those cases are indistinguishable.
+		 */
+		get: operations["get_session_listing_entry"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/discord_login": {
 		parameters: {
 			query?: never;
@@ -4673,6 +4695,79 @@ export interface operations {
 				};
 			};
 			/** @description Missing guild or channel permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_session_listing_entry: {
+		parameters: {
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description Logical recording session id */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The session's tree entry, or null */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": null | components["schemas"]["Channels"];
+				};
+			};
+			/** @description Invalid id */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing guild permission */
 			403: {
 				headers: {
 					[name: string]: unknown;

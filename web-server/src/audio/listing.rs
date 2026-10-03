@@ -240,13 +240,27 @@ fn session_access_level(
     }
 }
 
+/// One row of the recording tree query: a logical session joined to one of its
+/// fragments (or to none yet), or a legacy file without a session.
+struct ListingRow {
+    listing_id: i64,
+    logical: bool,
+    user_id: i64,
+    starting_channel_id: i64,
+    state: String,
+    started_at_ms: i64,
+    fragment_channel_id: Option<i64>,
+    file_name: Option<String>,
+}
+
 async fn get_session_tree(
     pool: &Pool<Postgres>,
     guild_id: i64,
     permitted: &HashSet<i64>,
     channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
 ) -> Result<Vec<Channels>, AppError> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query_as!(
+        ListingRow,
         r#"WITH listed AS (
             SELECT rs.id AS listing_id,
                    TRUE AS logical,
@@ -281,10 +295,8 @@ async fn get_session_tree(
                starting_channel_id AS "starting_channel_id!",
                state AS "state!",
                started_at_ms AS "started_at_ms!",
-               fragment_channel_id,
-               file_name,
-               segment_index,
-               audio_file_id
+               fragment_channel_id AS "fragment_channel_id?",
+               file_name AS "file_name?"
           FROM listed
          ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id"#,
         guild_id
@@ -292,6 +304,52 @@ async fn get_session_tree(
     .fetch_all(pool)
     .await?;
 
+    Ok(assemble_tree(rows, permitted, channel_access))
+}
+
+/// The tree entry for one logical session, exactly as the full listing would
+/// show it, or `None` when it is missing, deleted, in another guild or not
+/// visible to this viewer; the caller cannot tell those apart.
+async fn get_session_entry(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    recording_session_id: i64,
+    permitted: &HashSet<i64>,
+    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
+) -> Result<Option<Channels>, AppError> {
+    let rows = sqlx::query_as!(
+        ListingRow,
+        r#"SELECT rs.id AS "listing_id!",
+                  TRUE AS "logical!",
+                  rs.user_id AS "user_id!",
+                  rs.starting_channel_id AS "starting_channel_id!",
+                  rs.state AS "state!",
+                  (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS "started_at_ms!",
+                  af.channel_id AS "fragment_channel_id?",
+                  af.file_name AS "file_name?"
+             FROM recording_sessions rs
+             LEFT JOIN audio_files af ON af.recording_session_id = rs.id
+            WHERE rs.id = $2 AND rs.guild_id = $1 AND rs.deletion_requested_at IS NULL
+            ORDER BY af.segment_index NULLS LAST, af.id"#,
+        guild_id,
+        recording_session_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(assemble_tree(rows, permitted, channel_access)
+        .into_iter()
+        .next())
+}
+
+/// Group listing rows into the channel → year → month tree, keeping only
+/// what the viewer may see. Shared by the full listing and the one-session
+/// lookup so both apply the same journey authorization and annotations.
+fn assemble_tree(
+    rows: Vec<ListingRow>,
+    permitted: &HashSet<i64>,
+    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
+) -> Vec<Channels> {
     let mut listings: HashMap<i64, SessionListing> = HashMap::new();
     for row in rows {
         let listing_id = row.listing_id;
@@ -404,7 +462,7 @@ async fn get_session_tree(
         });
     }
     channels.sort_by_key(|channel| channel.channel_id.parse::<i64>().unwrap_or_default());
-    Ok(channels)
+    channels
 }
 
 /// Live recordings for a guild, filtered to the channels the caller has read
@@ -520,29 +578,8 @@ pub async fn get_current_month_permission(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    require_role_preview(&req, &pool, guild_id_as_int, query.as_role).await?;
-    let (permission_hashset, channel_access) = match query.as_role {
-        Some(role_id) => {
-            let access = crate::permissions::role_access_for_preview(
-                &pool,
-                guild_id_as_int,
-                token.user_id,
-                role_id,
-            )
-            .await?;
-            let joinable = access
-                .iter()
-                .filter(|(_, a)| a.joinable)
-                .map(|(channel_id, _)| *channel_id)
-                .collect();
-            (joinable, Some(access))
-        }
-        None => (
-            crate::permissions::visible_channels_for_user(&pool, guild_id_as_int, token.user_id)
-                .await?,
-            None,
-        ),
-    };
+    let (permission_hashset, channel_access) =
+        tree_scope(&req, &pool, guild_id_as_int, token.user_id, query.as_role).await?;
 
     let mut dirs_vec = crate::server_timing::measure(
         "tree",
@@ -565,4 +602,104 @@ pub async fn get_current_month_permission(
     }
 
     Ok(HttpResponse::Ok().json(dirs_vec))
+}
+
+type RoleAccessMap = HashMap<i64, crate::permissions::RoleChannelAccess>;
+
+/// What a recording tree request may show: the viewer's own channels, or for
+/// a manager's role preview the role's joinable channels plus the per-channel
+/// access map used for annotations (clipped to the manager's own view).
+async fn tree_scope(
+    req: &actix_web::HttpRequest,
+    pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    user_id: i64,
+    as_role: Option<i64>,
+) -> Result<(HashSet<i64>, Option<RoleAccessMap>), AppError> {
+    require_role_preview(req, pool, guild_id, as_role).await?;
+    Ok(match as_role {
+        Some(role_id) => {
+            let access =
+                crate::permissions::role_access_for_preview(pool, guild_id, user_id, role_id)
+                    .await?;
+            let joinable = access
+                .iter()
+                .filter(|(_, a)| a.joinable)
+                .map(|(channel_id, _)| *channel_id)
+                .collect();
+            (joinable, Some(access))
+        }
+        None => (
+            crate::permissions::visible_channels_for_user(pool, guild_id, user_id).await?,
+            None,
+        ),
+    })
+}
+
+/// One session's entry in the recording tree, for targeted refreshes after a
+/// realtime `changed` event. The body is the tree narrowed to that session
+/// (one channel, year, month and file), or `null` when the session is
+/// missing, deleted or not visible; those cases are indistinguishable.
+#[utoipa::path(
+    get,
+    path = "/api/current/{guild_id}/sessions/{recording_session_id}",
+    tag = "audio",
+    params(
+        ("guild_id" = i64, Path, description = "Discord guild id"),
+        ("recording_session_id" = i64, Path, description = "Logical recording session id"),
+        ("as_role" = i64, Query, description = "Impersonate a guild role (managers only)"),
+    ),
+    responses(
+        (status = 200, description = "The session's tree entry, or null", body = Option<Channels>),
+        (status = 400, description = "Invalid id", body = crate::errors::ApiError),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing guild permission", body = crate::errors::ApiError),
+        (status = 404, description = "Role does not exist in this guild", body = crate::errors::ApiError),
+        (status = 500, description = "Server error", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
+#[get("/current/{guild_id}/sessions/{recording_session_id}")]
+pub async fn get_session_listing_entry(
+    req: actix_web::HttpRequest,
+    query: web::Query<AsRoleQuery>,
+    path: web::Path<(String, String)>,
+    token: Option<web::ReqData<Token<Access>>>,
+    pool: web::Data<sqlx::Pool<sqlx::Postgres>>,
+) -> Result<HttpResponse, AppError> {
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let (guild_id, session_id) = path.into_inner();
+    let guild_id = guild_id
+        .parse::<i64>()
+        .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
+    let session_id = session_id
+        .parse::<i64>()
+        .map_err(|_| AppError::InvalidParam("recording_session_id".into()))?;
+
+    let (permitted, channel_access) =
+        tree_scope(&req, &pool, guild_id, token.user_id, query.as_role).await?;
+    let entry = crate::server_timing::measure(
+        "tree",
+        get_session_entry(
+            &pool,
+            guild_id,
+            session_id,
+            &permitted,
+            channel_access.as_ref(),
+        ),
+    )
+    .await?;
+    let Some(entry) = entry else {
+        return Ok(HttpResponse::Ok().json(Option::<Channels>::None));
+    };
+
+    let mut entries = [entry];
+    if let Err(e) =
+        crate::server_timing::measure("names", enrich_display_names(&pool, guild_id, &mut entries))
+            .await
+    {
+        tracing::error!("enrich_display_names failed: {}", e);
+    }
+    let [entry] = entries;
+    Ok(HttpResponse::Ok().json(Some(entry)))
 }

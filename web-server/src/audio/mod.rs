@@ -11,7 +11,7 @@ pub mod types;
 pub mod util;
 
 pub use events::get_recording_events;
-pub use listing::{get_current_month_permission, get_live_stems};
+pub use listing::{get_current_month_permission, get_live_stems, get_session_listing_entry};
 pub use live::{LiveContainer, live_playlist, live_segment, live_state};
 pub use paths::{
     NO_SILENCE_PREFIX, clips_path, no_silence_recording_path, recording_path, waveform_path,

@@ -25,7 +25,7 @@ use web_server::audio::{
     create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
     get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
     get_session_channel_mix, get_session_channel_mix_media, get_session_events,
-    get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_listing_entry, get_session_manifest, get_session_segment, get_session_silence_free,
     get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
     get_waveform_data, live_playlist, live_segment, live_state,
     rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
@@ -2726,5 +2726,106 @@ async fn authorization_never_mixes_two_committed_states(
     stop.store(true, std::sync::atomic::Ordering::SeqCst);
     writer.await??;
     assert_eq!(denied, 0, "mixed reads denied access {denied} times");
+    Ok(())
+}
+
+// ---- the targeted session entry matches the full listing ----
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn session_entry_equals_the_listing_entry_for_every_view(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_role_preview_data(&pool).await?;
+    let session_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM recording_sessions")
+        .fetch_all(&pool)
+        .await?;
+    // A deleted session is never listed or returned.
+    let deleted: i64 = sqlx::query_scalar(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, deletion_requested_at)
+         VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(50), now())
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .fetch_one(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_session_listing_entry)
+                    .service(get_current_month_permission),
+            ),
+    )
+    .await;
+    let get =
+        async |viewer: i64, uri: String| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+            let request = test::TestRequest::get()
+                .uri(&uri)
+                .insert_header(("Cookie", access_cookie_for(viewer)?))
+                .to_request();
+            let response = test::call_service(&app, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            Ok(test::read_body_json(response).await)
+        };
+
+    let views = [
+        (USER_ID, None),
+        (MANAGER_ID, None),
+        (MANAGER_ID, Some(INSIDER_ROLE_ID)),
+        (MANAGER_ID, Some(ALLOWED_GUILD_ID)),
+        (ADMIN_ID, None),
+        (ADMIN_ID, Some(INSIDER_ROLE_ID)),
+    ];
+    let mut checked = 0;
+    for (viewer, as_role) in views {
+        let query = as_role.map_or_else(String::new, |role| format!("?as_role={role}"));
+        let tree = get(viewer, format!("/api/current/{ALLOWED_GUILD_ID}{query}")).await?;
+
+        // Every listed session, narrowed to itself, is what the endpoint returns.
+        let mut expected: HashMap<String, serde_json::Value> = HashMap::new();
+        for channel in tree.as_array().into_iter().flatten() {
+            for dir in channel["dirs"].as_array().into_iter().flatten() {
+                for (month, files) in dir["months"].as_object().into_iter().flatten() {
+                    for file in files.as_array().into_iter().flatten() {
+                        let Some(id) = file["recording_session_id"].as_str() else {
+                            continue;
+                        };
+                        expected.insert(
+                            id.to_string(),
+                            json!({
+                                "channel_id": channel["channel_id"],
+                                "dirs": [{ "year": dir["year"], "months": { month: [file] } }],
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+        for id in session_ids.iter().chain([&deleted]) {
+            let entry = get(
+                viewer,
+                format!("/api/current/{ALLOWED_GUILD_ID}/sessions/{id}{query}"),
+            )
+            .await?;
+            let want = expected
+                .get(&id.to_string())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            assert_eq!(
+                entry, want,
+                "viewer {viewer}, as_role {as_role:?}, session {id}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, views.len() * (session_ids.len() + 1));
     Ok(())
 }

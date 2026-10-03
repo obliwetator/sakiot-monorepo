@@ -38,6 +38,7 @@ use utoipa::{
         crate::audio::events::get_recording_events,
         crate::audio::listing::get_current_month_permission,
         crate::audio::listing::get_live_stems,
+        crate::audio::listing::get_session_listing_entry,
         crate::audio::live::live_playlist,
         crate::audio::live::live_segment,
         crate::audio::live::live_state,

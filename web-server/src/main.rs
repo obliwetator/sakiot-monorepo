@@ -21,7 +21,7 @@ use web_server::audio::{
     create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
     get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
     get_session_channel_mix, get_session_channel_mix_media, get_session_events,
-    get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_listing_entry, get_session_manifest, get_session_segment, get_session_silence_free,
     get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
     get_waveform_data, live_playlist, live_segment, live_state,
     rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
@@ -259,6 +259,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_media_job)
             .service(get_media_job_result)
             .service(get_live_stems)
+            .service(get_session_listing_entry)
             .service(get_current_month_permission)
             .service(remove_silence)
             .service(delete)
