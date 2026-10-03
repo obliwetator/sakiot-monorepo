@@ -13,6 +13,7 @@ export const MEMBERSHIP_RETRIES = 6;
 const MAX_DELAY_SECONDS = 10;
 
 interface QueryOutcome {
+	data?: unknown;
 	error?: { status: unknown; data?: unknown };
 }
 
