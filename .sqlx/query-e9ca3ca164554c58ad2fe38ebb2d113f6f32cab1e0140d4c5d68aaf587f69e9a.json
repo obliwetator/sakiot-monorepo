@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_members (guild_id, user_id, username, global_name, nickname, is_bot)\n         SELECT $1, * FROM UNNEST($2::bigint[], $3::text[], $4::text[], $5::text[], $6::bool[])\n         ON CONFLICT (guild_id, user_id) DO UPDATE SET\n             username = EXCLUDED.username,\n             global_name = EXCLUDED.global_name,\n             nickname = EXCLUDED.nickname,\n             is_bot = EXCLUDED.is_bot\n          WHERE (guild_members.username, guild_members.global_name,\n                 guild_members.nickname, guild_members.is_bot)\n                IS DISTINCT FROM\n                (EXCLUDED.username, EXCLUDED.global_name, EXCLUDED.nickname, EXCLUDED.is_bot)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e9ca3ca164554c58ad2fe38ebb2d113f6f32cab1e0140d4c5d68aaf587f69e9a"
+}

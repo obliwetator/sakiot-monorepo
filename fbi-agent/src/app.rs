@@ -101,9 +101,16 @@ async fn run_registered_instance(
     media_archive: crate::media_archive::MediaArchive,
 ) -> Result<(), RuntimeTaskError> {
     let jam_cooldown = crate::cooldown::JamCooldown::new();
-    let mut client = build_discord_client(pool, runtime.clone(), jam_cooldown.clone())
-        .await
-        .map_err(RuntimeTaskError::Startup)?;
+    let (projections, chunk_requests) =
+        crate::projections::Projections::new(pool.to_owned(), runtime.clone());
+    let mut client = build_discord_client(
+        pool,
+        runtime.clone(),
+        jam_cooldown.clone(),
+        projections.clone(),
+    )
+    .await
+    .map_err(RuntimeTaskError::Startup)?;
     insert_typemap_state(&mut client, runtime.clone(), media_archive.clone()).await;
 
     let custom = Custom::new(
@@ -113,6 +120,7 @@ async fn run_registered_instance(
         jam_cooldown,
         runtime.clone(),
         media_archive,
+        projections.clone(),
     );
     let process_metrics = process_metrics(&client)
         .await
@@ -132,6 +140,14 @@ async fn run_registered_instance(
     let reconciliation =
         crate::events::voice::spawn_reconciliation(custom.clone(), shutdown_rx.clone());
     let pending_expiry = start_pending_expiry(pool.to_owned(), shutdown_rx.clone());
+    // Exits on shutdown; a failed chunk request is retried by the periodic
+    // refresh, so it needs no supervision.
+    let _chunk_worker = crate::projections::spawn_chunk_worker(
+        projections,
+        custom.cache.clone(),
+        chunk_requests,
+        shutdown_rx.clone(),
+    );
     let cache_resync =
         crate::database::guild_cache::spawn_cache_resync(custom, shutdown_rx.clone());
     let shutdown_monitor = crate::shutdown::spawn_shutdown_monitor(
@@ -429,6 +445,7 @@ async fn build_discord_client(
     pool: &Pool<Postgres>,
     runtime: Arc<crate::runtime::RuntimeState>,
     jam_cooldown: crate::cooldown::JamCooldown,
+    projections: Arc<crate::projections::Projections>,
 ) -> AppResult<Client> {
     let discord_config = crate::config::discord_config()?;
     let songbird_config = Config::default()
@@ -440,6 +457,7 @@ async fn build_discord_client(
             database: pool.clone(),
             jam_cooldown,
             runtime,
+            projections,
         })
         .intents(intents)
         .register_songbird_from_config(songbird_config)

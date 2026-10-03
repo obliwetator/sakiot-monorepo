@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1\n                 FROM guild_projection_state s\n                 JOIN bot_instances b ON b.instance_id = s.owner_instance_id\n                WHERE s.guild_id = $1\n                  AND s.presence_synced_at IS NOT NULL\n                  AND b.state <> 'stopped'\n                  AND b.heartbeat_at > now() - interval '120 seconds'\n           ) AS \"available!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "available!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8dd84e0e307fdf504b2cc13bf45ad09107cc11499770e9bad9472cf7068c4142"
+}

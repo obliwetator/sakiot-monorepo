@@ -46,6 +46,17 @@ pub enum Event {
     Permissions {
         guild_id: Option<i64>,
     },
+    /// The guild's member roster changed (managers' member lists and role
+    /// counts).
+    Members {
+        guild_id: i64,
+    },
+    /// Someone joined, left or changed state in a voice or stage channel. No
+    /// channel or user travels with it: every viewer refetches its own
+    /// filtered view.
+    Presence {
+        guild_id: i64,
+    },
     /// This server's own round-trip probe.
     Probe {
         nonce: String,
@@ -113,6 +124,12 @@ pub fn parse(payload: &str) -> Option<Event> {
             },
         },
         "perm" => Event::Permissions { guild_id },
+        "members" => Event::Members {
+            guild_id: guild_id?,
+        },
+        "presence" => Event::Presence {
+            guild_id: guild_id?,
+        },
         "probe" => Event::Probe {
             nonce: payload.n?,
             sent_at_ms: payload.t?,
@@ -178,6 +195,14 @@ mod tests {
             parse(r#"{"v":1,"k":"perm"}"#),
             Some(Event::Permissions { guild_id: None })
         );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"members","g":"1"}"#),
+            Some(Event::Members { guild_id: 1 })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"presence","g":"1"}"#),
+            Some(Event::Presence { guild_id: 1 })
+        );
     }
 
     #[test]
@@ -186,5 +211,6 @@ mod tests {
         assert_eq!(parse(r#"{"v":1,"k":"future","g":"1"}"#), None);
         assert_eq!(parse(r#"{"v":1,"k":"session","g":"x","s":"2"}"#), None);
         assert_eq!(parse("not json"), None);
+        assert_eq!(parse(r#"{"v":1,"k":"presence"}"#), None);
     }
 }

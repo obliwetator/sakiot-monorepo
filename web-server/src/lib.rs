@@ -18,6 +18,7 @@ pub mod members;
 pub mod openapi;
 pub mod outbound_metrics;
 pub mod permissions;
+pub mod presence;
 pub mod proto;
 pub mod realtime;
 pub mod recording_deletion;

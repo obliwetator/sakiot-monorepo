@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_id,\n                      COALESCE(nickname, global_name, username) AS \"name!\"\n                 FROM guild_members\n                WHERE guild_id = $1\n                ORDER BY lower(COALESCE(nickname, global_name, username)), user_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "guild_members",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "1355612c69df04978043b3d81f6fbfb1997e1b3950e3aef44a3e0af62960867c"
+}

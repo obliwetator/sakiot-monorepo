@@ -312,6 +312,99 @@ async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool)
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let presence = json!({ "v": 1, "k": "presence", "g": GUILD.to_string() });
+    let members = json!({ "v": 1, "k": "members", "g": GUILD.to_string() });
+
+    // A claim makes both known.
+    sqlx::query(
+        "INSERT INTO guild_projection_state
+            (guild_id, owner_instance_id, generation, roster_complete_at, presence_synced_at)
+         VALUES ($1, 'bot', 1, now(), now())",
+    )
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        [members.clone(), presence.clone()]
+    );
+
+    // Joining, muting and leaving voice: one guild-only payload per
+    // transaction, never a channel or a user.
+    let mut transaction = pool.begin().await?;
+    sqlx::query("INSERT INTO guild_members (guild_id, user_id, username) VALUES ($1, $2, 'user')")
+        .bind(GUILD)
+        .bind(USER)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("INSERT INTO voice_presence (guild_id, user_id, channel_id) VALUES ($1, $2, $3)")
+        .bind(GUILD)
+        .bind(USER)
+        .bind(CHANNEL)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    assert_eq!(
+        notifications.drain().await?,
+        [members.clone(), presence.clone()]
+    );
+    sqlx::query("UPDATE voice_presence SET self_mute = true WHERE user_id = $1")
+        .bind(USER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        std::slice::from_ref(&presence)
+    );
+
+    // A rename of someone in voice changes what presence shows; a no-op
+    // write changes nothing.
+    sqlx::query("UPDATE guild_members SET nickname = 'nick' WHERE user_id = $1")
+        .bind(USER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        [members.clone(), presence.clone()]
+    );
+    sqlx::query("UPDATE guild_members SET nickname = 'nick' WHERE user_id = $1")
+        .bind(USER)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE voice_presence SET self_mute = true WHERE user_id = $1")
+        .bind(USER)
+        .execute(&pool)
+        .await?;
+    // A refreshed sync time or a re-claim by the same owner shows nothing new.
+    sqlx::query(
+        "UPDATE guild_projection_state
+            SET generation = generation + 1, presence_synced_at = now(), roster_complete_at = now()",
+    )
+    .execute(&pool)
+    .await?;
+    assert_eq!(notifications.drain().await?, Vec::<Value>::new());
+
+    sqlx::query("DELETE FROM voice_presence WHERE user_id = $1")
+        .bind(USER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        std::slice::from_ref(&presence)
+    );
+
+    // The owner stopping makes both unknown.
+    sqlx::query("UPDATE guild_projection_state SET owner_instance_id = NULL")
+        .execute(&pool)
+        .await?;
+    assert_eq!(notifications.drain().await?, [members, presence]);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn concurrent_recording_writes_all_commit_and_notify(pool: PgPool) -> TestResult {
     // NOTIFY serializes notifying commits on a global lock; many recorders
     // writing at once must still all commit, and every write must arrive.

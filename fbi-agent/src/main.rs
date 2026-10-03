@@ -16,6 +16,7 @@ pub mod events;
 pub mod grpc;
 pub mod heartbeat;
 pub mod media_archive;
+mod projections;
 pub mod runtime;
 mod shutdown;
 pub mod telemetry;

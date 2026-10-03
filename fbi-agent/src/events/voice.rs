@@ -148,6 +148,14 @@ pub async fn voice_state_update(
             .unwrap_or(false);
 
     track_active_voice_state_metrics(handler, &ctx, &new_state, is_bot).await;
+    // Presence covers everyone, bots included, and does not wait on the
+    // recording lease: like the metrics above, it is written first.
+    if let Some(guild_id) = new_state.guild_id {
+        handler
+            .projections
+            .user_changed(&ctx.cache, guild_id, new_state.user_id)
+            .await;
+    }
 
     if !should_process_voice_transition(is_own_bot, is_bot) {
         return;

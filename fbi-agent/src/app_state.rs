@@ -10,6 +10,7 @@ pub struct Custom {
     pub(crate) jam_cooldown: crate::cooldown::JamCooldown,
     pub(crate) runtime: Arc<crate::runtime::RuntimeState>,
     pub(crate) media_archive: crate::media_archive::MediaArchive,
+    pub(crate) projections: Arc<crate::projections::Projections>,
 }
 
 impl Custom {
@@ -20,6 +21,7 @@ impl Custom {
         jam_cooldown: crate::cooldown::JamCooldown,
         runtime: Arc<crate::runtime::RuntimeState>,
         media_archive: crate::media_archive::MediaArchive,
+        projections: Arc<crate::projections::Projections>,
     ) -> Self {
         Self {
             cache,
@@ -28,6 +30,7 @@ impl Custom {
             jam_cooldown,
             runtime,
             media_archive,
+            projections,
         }
     }
 }

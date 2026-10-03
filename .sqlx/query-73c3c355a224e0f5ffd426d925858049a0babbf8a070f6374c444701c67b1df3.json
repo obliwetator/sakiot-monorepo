@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE guild_projection_state\n            SET owner_instance_id = NULL, updated_at = now()\n          WHERE owner_instance_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "73c3c355a224e0f5ffd426d925858049a0babbf8a070f6374c444701c67b1df3"
+}

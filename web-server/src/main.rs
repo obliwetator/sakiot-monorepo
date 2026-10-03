@@ -46,7 +46,8 @@ use web_server::media_archive::{
 use web_server::media_jobs::{
     get_media_job, get_media_job_result, spawn_worker as spawn_media_worker,
 };
-use web_server::members::{get_guild_roles, get_role_members, get_role_view};
+use web_server::members::{get_guild_roles, get_role_members, get_role_view, search_guild_members};
+use web_server::presence::get_voice_presence;
 use web_server::realtime::{Hub, realtime_socket};
 use web_server::recording_deletion::{
     DeletionPolicy, delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
@@ -340,7 +341,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete_user_override)
             .service(get_guild_roles)
             .service(get_role_members)
-            .service(get_role_view);
+            .service(get_role_view)
+            .service(search_guild_members)
+            .service(get_voice_presence);
         let api_scope = api_scope
             .service(get_voice_settings)
             .service(put_voice_settings)

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_projection_state\n            (guild_id, owner_instance_id, generation, roster_complete_at, presence_synced_at)\n         VALUES ($1, $2, 1, now(), now())\n         ON CONFLICT (guild_id) DO UPDATE SET\n             owner_instance_id = EXCLUDED.owner_instance_id,\n             generation = guild_projection_state.generation + 1,\n             roster_complete_at = now(),\n             presence_synced_at = now(),\n             updated_at = now()\n         RETURNING generation",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "guild_projection_state",
+            "name": "generation"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cb9f1aea40e5b93e3f29000368430bffe3ff8c7472110845e2d988e8dfac6b36"
+}

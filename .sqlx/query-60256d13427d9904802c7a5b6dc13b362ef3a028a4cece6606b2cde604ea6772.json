@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO voice_presence\n            (guild_id, user_id, channel_id, self_mute, self_deaf,\n             server_mute, server_deaf, streaming, video)\n         SELECT $1, * FROM UNNEST($2::bigint[], $3::bigint[], $4::bool[], $5::bool[],\n                                  $6::bool[], $7::bool[], $8::bool[], $9::bool[])\n         ON CONFLICT (guild_id, user_id) DO UPDATE SET\n             channel_id = EXCLUDED.channel_id,\n             self_mute = EXCLUDED.self_mute,\n             self_deaf = EXCLUDED.self_deaf,\n             server_mute = EXCLUDED.server_mute,\n             server_deaf = EXCLUDED.server_deaf,\n             streaming = EXCLUDED.streaming,\n             video = EXCLUDED.video\n          WHERE (voice_presence.channel_id, voice_presence.self_mute, voice_presence.self_deaf,\n                 voice_presence.server_mute, voice_presence.server_deaf,\n                 voice_presence.streaming, voice_presence.video)\n                IS DISTINCT FROM\n                (EXCLUDED.channel_id, EXCLUDED.self_mute, EXCLUDED.self_deaf,\n                 EXCLUDED.server_mute, EXCLUDED.server_deaf,\n                 EXCLUDED.streaming, EXCLUDED.video)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array",
+        "Int8Array",
+        "BoolArray",
+        "BoolArray",
+        "BoolArray",
+        "BoolArray",
+        "BoolArray",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "60256d13427d9904802c7a5b6dc13b362ef3a028a4cece6606b2cde604ea6772"
+}

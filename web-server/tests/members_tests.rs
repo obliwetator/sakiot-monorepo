@@ -147,7 +147,8 @@ async fn roles_listed_with_member_counts_for_manager(
     assert_eq!(by_id(VIP_ROLE_ID)["color"], 255);
     assert_eq!(by_id(VIP_ROLE_ID)["color_secondary"], Value::Null);
     assert_eq!(by_id(GUILD_ID)["name"], "@everyone");
-    assert_eq!(by_id(GUILD_ID)["member_count"], 0);
+    // No complete roster yet: unknown, never a misleading 0.
+    assert_eq!(by_id(GUILD_ID)["member_count"], Value::Null);
     assert_eq!(by_id(GUILD_ID)["color"], 0);
     assert_eq!(
         roles.last().expect("ordered")["role_id"],

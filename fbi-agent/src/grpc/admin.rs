@@ -53,6 +53,8 @@ impl Admin for FbiAgentGrpc {
             if let Err(err) = crate::database::guild_cache::resync_guild_cache(&custom).await {
                 tracing::error!(error = %err, "guild cache resync after cancelled drain failed");
             }
+            // The replacement that claimed the projections is going away.
+            custom.projections.refresh_all(&custom.cache).await;
         });
         Ok(Response::new(self.status("drain cancelled").await))
     }

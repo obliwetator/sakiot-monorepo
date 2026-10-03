@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE guild_projection_state\n                SET roster_complete_at = now(), updated_at = now()\n              WHERE guild_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "00b7342b3122a3e42ff49baafb321baa67a7cc1a45f56d887bab1901f2cad9f9"
+}

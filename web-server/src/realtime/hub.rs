@@ -497,6 +497,14 @@ fn route(
             {
                 add_all(&mut routed, *resource);
             }
+            Event::Presence { guild_id } if *guild_id == subscription.guild_id => {
+                add_all(&mut routed, Resource::Presence);
+            }
+            Event::Members { guild_id }
+                if *guild_id == subscription.guild_id && subscription.access.manager =>
+            {
+                add_all(&mut routed, Resource::Members);
+            }
             _ => {}
         }
     }
@@ -647,6 +655,27 @@ mod tests {
         assert_eq!(
             route(&changes, &manager, 10, Some(&HashMap::new())),
             Routed::from([(Resource::Cooldowns, None)])
+        );
+    }
+
+    #[test]
+    fn presence_reaches_every_viewer_without_ids_and_members_only_managers() {
+        let changes = [
+            Event::Presence { guild_id: GUILD },
+            Event::Members { guild_id: GUILD },
+            Event::Presence { guild_id: 2 },
+        ];
+        // Even a viewer who sees no channel at all refetches its own,
+        // filtered view: the event says nothing about where anyone is.
+        let nobody = subscription(&[], &[], false);
+        assert_eq!(
+            route(&changes, &nobody, 9, Some(&HashMap::new())),
+            Routed::from([(Resource::Presence, None)])
+        );
+        let manager = subscription(&[PUBLIC], &[PUBLIC], true);
+        assert_eq!(
+            route(&changes, &manager, 9, Some(&HashMap::new())),
+            Routed::from([(Resource::Presence, None), (Resource::Members, None)])
         );
     }
 

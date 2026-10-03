@@ -13,6 +13,7 @@ pub struct Handler {
     pub(crate) database: Pool<Postgres>,
     pub(crate) jam_cooldown: crate::cooldown::JamCooldown,
     pub(crate) runtime: std::sync::Arc<crate::runtime::RuntimeState>,
+    pub(crate) projections: std::sync::Arc<crate::projections::Projections>,
 }
 
 impl Handler {

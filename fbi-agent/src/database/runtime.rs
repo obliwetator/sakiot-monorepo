@@ -280,6 +280,10 @@ pub async fn mark_instance_stopped(
     .execute(pool)
     .await?;
 
+    // Guilds no replacement claimed: their projections become unknown
+    // rather than frozen.
+    crate::database::projections::release_all(pool, &runtime.config().instance_id).await?;
+
     let instances_updated = sqlx::query!(
         "UPDATE bot_instances
             SET state = 'stopped', heartbeat_at = now()

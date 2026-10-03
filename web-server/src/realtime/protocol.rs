@@ -39,6 +39,11 @@ pub enum Resource {
     RecordingPolicy,
     /// Guild and per-user Jam cooldowns (managers only).
     Cooldowns,
+    /// Who is in which voice or stage channel. Never carries `ids`.
+    Presence,
+    /// The guild's member roster: member search and role member counts
+    /// (managers only).
+    Members,
 }
 
 /// Why the client must refetch everything it has subscribed to.

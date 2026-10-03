@@ -98,4 +98,11 @@ but skips those writes, including the periodic resync. A drain is cancelled
 only when a deploy rolls back; the instance then resumes writing and runs a
 full resync straight away to catch up on what it skipped.
 
+The member and voice presence projections (`guild_members`, `voice_presence`)
+follow ownership instead of the drain state: an instance writes the guilds it
+claimed in `guild_projection_state`, and keeps writing them while draining
+until the new release claims them from a complete snapshot. A draining
+instance never claims; a cancelled drain refreshes every guild and reclaims
+them. See `src/projections.rs`.
+
 Only the newest active release should be enabled on boot.

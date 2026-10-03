@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM guild_members WHERE guild_id = $1 AND NOT (user_id = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "41a25081b809403337c042934e55fcbf6a0e8d2b5b927ae5e0a1cece97f1f92c"
+}

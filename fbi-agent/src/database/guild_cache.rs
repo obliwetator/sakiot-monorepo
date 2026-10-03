@@ -229,6 +229,40 @@ pub(crate) async fn sync_live_member_roles(
     Ok(())
 }
 
+/// Role assignments of the members in one member chunk: each member's set is
+/// made exact; members outside the chunk are left alone.
+pub(crate) async fn sync_chunk_member_roles<'a>(
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    members: impl Iterator<Item = &'a serenity::model::guild::Member>,
+) -> DbResult<()> {
+    let mut chunk_users = Vec::new();
+    let mut user_ids = Vec::new();
+    let mut role_ids = Vec::new();
+    for member in members {
+        let user_id = member.user.id.to_i64();
+        chunk_users.push(user_id);
+        for role_id in &member.roles {
+            user_ids.push(user_id);
+            role_ids.push(role_id.to_i64());
+        }
+    }
+    if chunk_users.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await?;
+    write_user_roles(
+        &mut transaction,
+        guild_id.to_i64(),
+        &user_ids,
+        &role_ids,
+        Some(&chunk_users),
+    )
+    .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
 pub(crate) async fn delete_live_member(
     pool: &Pool<Postgres>,
     guild_id: GuildId,
@@ -619,6 +653,9 @@ pub(crate) fn spawn_cache_resync(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    // Ownership, not the drain state, decides projection
+                    // writes: a draining owner keeps its guilds current.
+                    custom.projections.refresh_all(&custom.cache).await;
                     if !custom.runtime.maintains_caches() {
                         continue;
                     }

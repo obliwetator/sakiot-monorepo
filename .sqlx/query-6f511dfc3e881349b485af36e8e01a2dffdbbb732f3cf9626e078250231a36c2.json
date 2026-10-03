@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT ur.user_id,\n                COALESCE(nn.nickname, un.global_name, un.username) AS name\n         FROM user_roles ur\n         LEFT JOIN user_names     un ON un.user_id = ur.user_id\n         LEFT JOIN user_nicknames nn ON nn.user_id = ur.user_id AND nn.guild_id = $1\n         WHERE ur.role_id = $2\n         ORDER BY name NULLS LAST, ur.user_id",
+  "query": "SELECT ur.user_id,\n                    COALESCE(nn.nickname, un.global_name, un.username) AS name\n             FROM user_roles ur\n             LEFT JOIN user_names     un ON un.user_id = ur.user_id\n             LEFT JOIN user_nicknames nn ON nn.user_id = ur.user_id AND nn.guild_id = $1\n             WHERE ur.role_id = $2\n             ORDER BY name NULLS LAST, ur.user_id",
   "describe": {
     "columns": [
       {
@@ -32,5 +32,5 @@
       null
     ]
   },
-  "hash": "c244e30893d18106694372835fffbce550b35934189966fe87ebfbab92a733b2"
+  "hash": "6f511dfc3e881349b485af36e8e01a2dffdbbb732f3cf9626e078250231a36c2"
 }

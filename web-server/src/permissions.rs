@@ -453,16 +453,7 @@ async fn preview_access(
     manager_id: i64,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
-    let belongs_to_guild = sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
-        role_id,
-        guild_id
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if !belongs_to_guild {
-        return Err(AppError::RoleNotFound);
-    }
+    require_role_in_guild(conn, guild_id, role_id).await?;
 
     let manager_channels = visible_channels(conn, guild_id, manager_id).await?;
     Ok(channel_access_for_role(conn, guild_id, role_id)
@@ -593,11 +584,33 @@ async fn available_channels_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, AppError> {
+    Ok(channel_access_for_user(conn, guild_id, user_id)
+        .await?
+        .into_iter()
+        .filter(|access| access.joinable)
+        .map(|access| access.channel_id)
+        .collect())
+}
+
+/// Per-channel access for one member, over every voice and stage channel:
+/// `viewable` is VIEW_CHANNEL, `joinable` adds CONNECT.
+async fn channel_access_for_user(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<Vec<RoleChannelAccess>, AppError> {
     let base_permissions = combined_perm_for_user(conn, guild_id, user_id).await?;
 
     let mut channels = voice_channel_permission_states(conn, guild_id).await?;
     if base_permissions.contains(Permissions::ADMINISTRATOR) {
-        return Ok(channels.keys().copied().collect());
+        return Ok(channels
+            .into_keys()
+            .map(|channel_id| RoleChannelAccess {
+                channel_id,
+                viewable: true,
+                joinable: true,
+            })
+            .collect());
     }
 
     apply_role_overwrites(conn, user_id, guild_id, &mut channels).await?;
@@ -605,9 +618,82 @@ async fn available_channels_for_user(
 
     Ok(channels
         .into_values()
-        .filter(|channel| channel.can_view_and_connect(base_permissions))
-        .map(|channel| channel.channel_id)
+        .map(|channel| RoleChannelAccess {
+            channel_id: channel.channel_id,
+            viewable: channel.can_view(base_permissions),
+            joinable: channel.can_view_and_connect(base_permissions),
+        })
         .collect())
+}
+
+/// The voice and stage channels whose occupants a viewer may see, read on
+/// `conn` (use `begin_snapshot`). As in Discord's channel list, VIEW_CHANNEL
+/// is enough: seeing who is in a channel does not need CONNECT. A
+/// non-member is forbidden.
+///
+/// With `as_role` (the caller must already have passed
+/// `require_role_preview`), the channels that role alone could view,
+/// clipped to the manager's own presence view: a preview never shows more
+/// than the manager's normal view (phase 0.1).
+pub async fn presence_channels(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    user_id: i64,
+    as_role: Option<i64>,
+) -> Result<HashSet<i64>, AppError> {
+    require_member(conn, guild_id, user_id).await?;
+    let own: HashSet<i64> = channel_access_for_user(conn, guild_id, user_id)
+        .await?
+        .into_iter()
+        .filter(|access| access.viewable)
+        .map(|access| access.channel_id)
+        .collect();
+    let Some(role_id) = as_role else {
+        return Ok(own);
+    };
+    require_role_in_guild(conn, guild_id, role_id).await?;
+    Ok(channel_access_for_role(conn, guild_id, role_id)
+        .await?
+        .into_iter()
+        .filter(|access| access.viewable && own.contains(&access.channel_id))
+        .map(|access| access.channel_id)
+        .collect())
+}
+
+async fn require_member(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<(), AppError> {
+    let membership = sqlx::query!(
+        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
+        guild_id,
+        user_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if membership.is_none() {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+async fn require_role_in_guild(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<(), AppError> {
+    let belongs_to_guild = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
+        role_id,
+        guild_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if !belongs_to_guild {
+        return Err(AppError::RoleNotFound);
+    }
+    Ok(())
 }
 
 pub async fn visible_channels_for_user(
@@ -632,17 +718,7 @@ pub async fn visible_channels(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, AppError> {
-    let membership = sqlx::query!(
-        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
-        guild_id,
-        user_id
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    if membership.is_none() {
-        return Err(AppError::Forbidden);
-    }
-
+    require_member(conn, guild_id, user_id).await?;
     available_channels_for_user(conn, guild_id, user_id).await
 }
 

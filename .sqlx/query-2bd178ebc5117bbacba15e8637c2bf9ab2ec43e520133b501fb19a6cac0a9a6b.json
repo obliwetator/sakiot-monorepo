@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM voice_presence WHERE guild_id = $1 AND NOT (user_id = ANY($2))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2bd178ebc5117bbacba15e8637c2bf9ab2ec43e520133b501fb19a6cac0a9a6b"
+}

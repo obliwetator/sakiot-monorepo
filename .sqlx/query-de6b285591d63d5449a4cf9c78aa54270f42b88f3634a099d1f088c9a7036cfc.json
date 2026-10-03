@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE guild_projection_state\n            SET presence_synced_at = now(), updated_at = now()\n          WHERE guild_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "de6b285591d63d5449a4cf9c78aa54270f42b88f3634a099d1f088c9a7036cfc"
+}
