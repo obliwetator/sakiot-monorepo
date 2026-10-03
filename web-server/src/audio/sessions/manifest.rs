@@ -22,7 +22,8 @@ pub async fn get_session_manifest(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let manifest = crate::server_timing::measure("manifest", build_manifest(&pool, access)).await?;
     Ok(HttpResponse::Ok().json(manifest))
 }
@@ -49,7 +50,8 @@ pub async fn get_session_events(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let timeline_end_ms = timeline_end_ms(&access);
     Ok(HttpResponse::Ok().json(load_events(&pool, &access, timeline_end_ms).await?))
 }
@@ -84,7 +86,7 @@ pub async fn get_session_segment(
 ) -> Result<impl Responder, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let (session_id, audio_file_id) = path.into_inner();
-    require_session_access(&pool, session_id, token.user_id).await?;
+    require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let path = fragment_path(&fragment);
     if let Ok(file) = NamedFile::open_async(path).await {
@@ -125,7 +127,7 @@ pub async fn session_live_playlist(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let (session_id, audio_file_id) = path.into_inner();
-    require_session_access(&pool, session_id, token.user_id).await?;
+    require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let key = fragment_key(&fragment);
     let _ = super::super::live::ensure_job(container, pool, key.clone()).await?;
@@ -177,7 +179,7 @@ pub async fn session_live_segment(
     let token = token.ok_or(AppError::Unauthorized)?;
     let (session_id, audio_file_id, segment) = path.into_inner();
     validate_segment_name(&segment)?;
-    require_session_access(&pool, session_id, token.user_id).await?;
+    require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let key = fragment_key(&fragment);
     super::super::live::mark_cache_access(&key.live_dir(&recording_path())).await;

@@ -3,11 +3,11 @@ use super::*;
 pub(crate) async fn require_session_access(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
-    viewer_user_id: i64,
+    viewer: crate::permissions::Viewer,
 ) -> Result<SessionAccess, AppError> {
     crate::server_timing::measure(
         "session",
-        load_session_access(pool, recording_session_id, viewer_user_id),
+        load_session_access(pool, recording_session_id, viewer),
     )
     .await
 }
@@ -18,7 +18,7 @@ pub(crate) async fn require_session_access(
 async fn load_session_access(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
-    viewer_user_id: i64,
+    viewer: crate::permissions::Viewer,
 ) -> Result<SessionAccess, AppError> {
     let mut snapshot = crate::permissions::begin_snapshot(pool).await?;
     let row = sqlx::query!(
@@ -50,8 +50,7 @@ async fn load_session_access(
     };
 
     let permitted =
-        crate::permissions::visible_channels(&mut snapshot, access.guild_id, viewer_user_id)
-            .await?;
+        crate::permissions::visible_channels(&mut snapshot, access.guild_id, viewer).await?;
     let rows = sqlx::query!(
         "SELECT DISTINCT channel_id
            FROM audio_files
@@ -87,7 +86,7 @@ pub(crate) async fn require_recording_access(
     year: i32,
     month: i32,
     file_name: &str,
-    viewer_user_id: i64,
+    viewer: crate::permissions::Viewer,
 ) -> Result<(), AppError> {
     let stem = file_name.strip_suffix(".ogg").unwrap_or(file_name);
     let session_id = sqlx::query_scalar!(
@@ -109,10 +108,9 @@ pub(crate) async fn require_recording_access(
     .await?
     .flatten();
     if let Some(session_id) = session_id {
-        require_session_access(pool, session_id, viewer_user_id).await?;
+        require_session_access(pool, session_id, viewer).await?;
     } else {
-        crate::permissions::require_channel_access(pool, guild_id, channel_id, viewer_user_id)
-            .await?;
+        crate::permissions::require_channel_access(pool, guild_id, channel_id, viewer).await?;
     }
     Ok(())
 }

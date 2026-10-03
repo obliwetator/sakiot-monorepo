@@ -21,28 +21,6 @@ pub struct RecordingOptOut {
     pub opted_out: bool,
 }
 
-/// Only members may change their own recording preference for a server.
-async fn require_membership(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    user_id: i64,
-) -> Result<(), AppError> {
-    let member = sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-             SELECT 1 FROM user_guilds WHERE id = $1 AND user_id = $2
-           ) AS "member!""#,
-        guild_id,
-        user_id
-    )
-    .fetch_one(pool)
-    .await?;
-    if member {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/users/current/guilds/{guild_id}/recording-opt-out",
@@ -60,9 +38,12 @@ pub async fn get_recording_opt_out(
     path: web::Path<i64>,
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
-    let user_id = token.ok_or(AppError::Unauthorized)?.user_id;
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let viewer = crate::permissions::Viewer::of(&token);
+    let user_id = viewer.user_id;
     let guild_id = path.into_inner();
-    require_membership(&pool, guild_id, user_id).await?;
+    // Only members may see or change their own recording preference.
+    crate::permissions::require_guild_member(&pool, guild_id, viewer).await?;
     let opted_out = sqlx::query_scalar!(
         r#"SELECT EXISTS (
              SELECT 1 FROM recording_opt_outs WHERE guild_id = $1 AND user_id = $2
@@ -94,9 +75,12 @@ pub async fn put_recording_opt_out(
     token: Option<ReqData<Token<Access>>>,
     body: web::Json<RecordingOptOut>,
 ) -> Result<HttpResponse, AppError> {
-    let user_id = token.ok_or(AppError::Unauthorized)?.user_id;
+    let token = token.ok_or(AppError::Unauthorized)?;
+    let viewer = crate::permissions::Viewer::of(&token);
+    let user_id = viewer.user_id;
     let guild_id = path.into_inner();
-    require_membership(&pool, guild_id, user_id).await?;
+    // Only members may see or change their own recording preference.
+    crate::permissions::require_guild_member(&pool, guild_id, viewer).await?;
     let mut tx = pool.begin().await?;
     // The bot takes the same lock while it checks the opt-out and opens a
     // recording fragment, so none can open after this commits.

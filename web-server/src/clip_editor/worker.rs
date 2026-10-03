@@ -278,7 +278,7 @@ async fn execute(
         &data,
         Some(media),
         job.guild_id,
-        job.user_id,
+        job.requester,
         validate_composition(job.snapshot.body.clone())?,
     )
     .await?;

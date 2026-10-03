@@ -94,7 +94,7 @@ pub async fn get_audio(
         year,
         month,
         &file_name,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
     )
     .await?;
 
@@ -185,7 +185,7 @@ pub async fn download_audio(
         year,
         month,
         &file_name_from_url,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
     )
     .await?;
 

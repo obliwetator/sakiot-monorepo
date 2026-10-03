@@ -198,17 +198,13 @@ pub async fn guild_update(
     new_guild: serenity::model::guild::PartialGuild,
 ) {
     if handler.runtime.maintains_caches()
-        && let Err(err) = crate::database::guild_cache::sync_guild_owner(
-            &handler.database,
-            new_guild.id,
-            new_guild.owner_id,
-        )
-        .await
+        && let Err(err) =
+            crate::database::guild_cache::sync_guild_info(&handler.database, &new_guild).await
     {
         error!(
             guild_id = new_guild.id.get(),
             owner_id = new_guild.owner_id.get(),
-            "failed to update guild owner: {}",
+            "failed to update guild owner, name or icon: {}",
             err
         );
     }

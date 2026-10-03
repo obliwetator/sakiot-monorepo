@@ -78,7 +78,7 @@ pub async fn get_recording_events(
         year,
         month,
         &stem,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
     )
     .await?;
 

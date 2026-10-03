@@ -16,7 +16,7 @@ async fn submit(pool: &PgPool, key: &str, snapshot: &Snapshot) -> Result<String,
     enqueue(
         pool,
         1,
-        100,
+        crate::permissions::Viewer::discord(100),
         key,
         &serde_json::to_value(&snapshot.body).unwrap(),
         snapshot,

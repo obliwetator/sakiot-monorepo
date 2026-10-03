@@ -93,6 +93,9 @@ error_kinds! {
     DiscordTimeout = "discord_timeout" => "Discord did not respond in time. Try again.",
     DiscordUnavailable = "discord_unavailable" => "Discord is temporarily unavailable. Try again later.",
     BotUnavailable = "bot_unavailable" => "The recording bot could not be reached.",
+    /// The bot has not yet seen this server's complete member list, so
+    /// membership cannot be decided; retry shortly.
+    MembershipUnavailable = "membership_unavailable" => "This server's member list is still loading. Try again in a moment.",
     /// The bot holds no voice connection in the guild, so it cannot play a clip.
     BotNotInVoice = "bot_not_in_voice" => "The bot is not in a voice channel in this server.",
     /// The caller played a clip too recently; `retry_after_seconds` says when
@@ -113,6 +116,10 @@ error_kinds! {
     InternalError = "internal_error" => "Something went wrong on the server.",
 }
 
+/// How soon to retry a request refused while a guild's roster loads: member
+/// chunks for one guild take seconds.
+const MEMBERSHIP_RETRY_SECONDS: u64 = 5;
+
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Clip not found")]
@@ -127,6 +134,9 @@ pub enum AppError {
     NotFound,
     #[error("Forbidden")]
     Forbidden,
+    /// The guild's roster has never been complete: membership is unknown.
+    #[error("Guild membership is not known yet")]
+    MembershipUnavailable,
     #[error("Unauthorized")]
     Unauthorized,
     #[error("CSRF token mismatch")]
@@ -223,6 +233,7 @@ impl AppError {
             Self::FileNotFound => ErrorKind::MediaNotFound,
             Self::NotFound => ErrorKind::NotFound,
             Self::Forbidden => ErrorKind::Forbidden,
+            Self::MembershipUnavailable => ErrorKind::MembershipUnavailable,
             Self::Unauthorized | Self::InvalidToken => ErrorKind::Unauthorized,
             Self::CsrfRejected => ErrorKind::CsrfRejected,
             Self::BadRequest(_) | Self::InvalidParam(_) | Self::ParseError(_) => {
@@ -302,7 +313,8 @@ impl ResponseError for AppError {
             | AppError::MediaToolUnavailable(_)
             | AppError::MediaArchiveUnavailable(_)
             | AppError::ArchiveIntegrityFailure(_)
-            | AppError::BotUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            | AppError::BotUnavailable(_)
+            | AppError::MembershipUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             AppError::DiscordRateLimited { .. } | AppError::JamCooldown { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
@@ -328,6 +340,7 @@ impl ResponseError for AppError {
             AppError::JamCooldown {
                 retry_after_seconds,
             } => Some(u64::from(*retry_after_seconds)),
+            AppError::MembershipUnavailable => Some(MEMBERSHIP_RETRY_SECONDS),
             _ => None,
         };
         let error_response = ApiError {

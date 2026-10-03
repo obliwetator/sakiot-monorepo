@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                      SELECT 1 FROM guilds WHERE id = $1 AND owner_id = $2\n                  ) AS \"owner_id!\",\n                  (SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2) AS seeded_owner",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner_id!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "seeded_owner",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "7ee387d5c6dda81302fddf9b478476ad7a68a7b4835075f47e4def3210bc8efb"
+}

@@ -1,13 +1,17 @@
 //! Voice presence and the member roster, served from the projections the bot
 //! writes (`voice_presence`, `guild_members`, `guild_projection_state`).
 
+mod support;
+
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
+use web_server::errors::AppError;
 use web_server::members::{get_guild_roles, get_role_members, search_guild_members};
+use web_server::permissions::Viewer;
 use web_server::presence::{get_voice_presence, voice_presence};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -150,6 +154,8 @@ async fn seed(pool: &PgPool) -> Result<(), sqlx::Error> {
     .bind(HIDDEN_STAGE)
     .execute(pool)
     .await?;
+    // The viewers are members too (as `member-10` … `member-12`).
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(())
 }
 
@@ -159,7 +165,7 @@ async fn seen_by(
     viewer: i64,
     as_role: Option<i64>,
 ) -> Result<(bool, Vec<(String, Vec<String>)>), Box<dyn std::error::Error>> {
-    let presence = voice_presence(pool, GUILD_ID, viewer, as_role).await?;
+    let presence = voice_presence(pool, GUILD_ID, Viewer::discord(viewer), as_role).await?;
     Ok((
         presence.available,
         presence
@@ -313,11 +319,22 @@ async fn presence_is_unknown_without_a_live_owner(pool: PgPool) -> TestResult {
         .await?;
     assert_eq!(seen_by(&pool, MEMBER_ID, None).await?, unknown);
 
-    // First rollout: no bot has claimed the guild yet.
+    // First rollout: the bot is in the guild but has no complete roster
+    // yet. Membership itself is unknown, so a member gets a retryable error
+    // rather than a guess; the owner (from `guilds.owner_id`) sees presence
+    // as unknown.
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
+        .bind(GUILD_ID)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM guild_projection_state")
         .execute(&pool)
         .await?;
-    assert_eq!(seen_by(&pool, MEMBER_ID, None).await?, unknown);
+    assert!(matches!(
+        voice_presence(&pool, GUILD_ID, Viewer::discord(MEMBER_ID), None).await,
+        Err(AppError::MembershipUnavailable)
+    ));
+    assert_eq!(seen_by(&pool, OWNER_ID, None).await?, unknown);
     Ok(())
 }
 
@@ -375,7 +392,7 @@ async fn managers_search_the_roster_and_everyone_counts_it(pool: PgPool) -> Test
     assert_eq!(names(&body), ["Kitty"]);
     // By the start of an id.
     let (_, body) = get(MANAGER_ID, format!("{search}?q=3")).await?;
-    assert_eq!(names(&body).len(), 5);
+    assert_eq!(names(&body).len(), 5, "ids 31 to 35");
     let (_, body) = get(MANAGER_ID, format!("{search}?q=34")).await?;
     assert_eq!(names(&body), ["sakiot"]);
     assert_eq!(body["members"][0]["is_bot"], true);
@@ -388,7 +405,10 @@ async fn managers_search_the_roster_and_everyone_counts_it(pool: PgPool) -> Test
     assert_eq!(names(&body), ["ann", "Benjamin"]);
     assert_eq!(body["next_offset"], 2);
     let (_, body) = get(MANAGER_ID, format!("{search}?limit=2&offset=4")).await?;
-    assert_eq!(names(&body), ["under_score"]);
+    assert_eq!(names(&body), ["member-11", "member-12"]);
+    assert_eq!(body["next_offset"], 6);
+    let (_, body) = get(MANAGER_ID, format!("{search}?limit=2&offset=6")).await?;
+    assert_eq!(names(&body), ["sakiot", "under_score"]);
     assert_eq!(body["next_offset"], Value::Null);
     for bad in ["limit=0", "limit=51", "offset=-1", "offset=1001"] {
         let (status, _) = get(MANAGER_ID, format!("{search}?{bad}")).await?;
@@ -408,21 +428,30 @@ async fn managers_search_the_roster_and_everyone_counts_it(pool: PgPool) -> Test
         })
         .cloned()
         .unwrap_or_default();
-    assert_eq!(everyone["member_count"], 5);
+    assert_eq!(everyone["member_count"], 8);
     let (_, listed) = get(
         MANAGER_ID,
         format!("/api/admin/guilds/{GUILD_ID}/roles/{GUILD_ID}/members"),
     )
     .await?;
-    assert_eq!(listed.as_array().map(Vec::len), Some(5));
+    assert_eq!(listed.as_array().map(Vec::len), Some(8));
 
-    // A roster that was never complete reports so.
+    // A roster that was never complete: members, managers included, cannot
+    // be told apart from strangers, so they get 503 and retry; the owner
+    // still manages the guild and sees that the roster is incomplete.
     sqlx::query("UPDATE guild_projection_state SET roster_complete_at = NULL")
         .execute(&pool)
         .await?;
-    let (_, body) = get(MANAGER_ID, search).await?;
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
+        .bind(GUILD_ID)
+        .execute(&pool)
+        .await?;
+    let (status, body) = get(MANAGER_ID, search.clone()).await?;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["kind"], "membership_unavailable");
+    let (_, body) = get(OWNER_ID, search).await?;
     assert_eq!(body["complete"], false);
-    let (_, roles) = get(MANAGER_ID, format!("/api/admin/guilds/{GUILD_ID}/roles")).await?;
+    let (_, roles) = get(OWNER_ID, format!("/api/admin/guilds/{GUILD_ID}/roles")).await?;
     let everyone = roles
         .as_array()
         .and_then(|roles| {

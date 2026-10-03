@@ -232,25 +232,57 @@ pub async fn get_current_user_guilds(
         .fetch_all(pool.get_ref())
         .await?
     } else {
-        sqlx::query_as!(
-            GuildDataForFrontEnd,
-            "
-            SELECT id,
-            name,
-            icon,
-            owner,
-            permissions 
-            FROM guilds_present 
-            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id
-            AND user_guilds.user_id = $1;
-            ",
-            token_data.user_id
-        )
-        .fetch_all(pool.get_ref())
-        .await?
+        member_guilds(pool.get_ref(), crate::permissions::Viewer::of(&token_data)).await?
     };
 
     Ok(HttpResponse::Ok().json(result))
+}
+
+/// The guilds a Discord login belongs to, as the bot sees them: guilds it is
+/// in where the viewer owns the guild or is on a complete roster, with live
+/// names and icons and the viewer's calculated permissions. The guild list
+/// Discord returned at login plays no part; a guild whose roster is not
+/// complete yet is left out until it is.
+async fn member_guilds(
+    pool: &Pool<Postgres>,
+    viewer: crate::permissions::Viewer,
+) -> Result<Vec<GuildDataForFrontEnd>, AppError> {
+    let mut snapshot = crate::permissions::begin_snapshot(pool).await?;
+    let rows = sqlx::query!(
+        r#"SELECT g.id,
+                  COALESCE(g.name, g.id::text) AS "name!",
+                  g.icon,
+                  g.owner_id = $1 AS "owner!"
+             FROM guilds_present gp
+             JOIN guilds g ON g.id = gp.guild_id
+            WHERE g.owner_id = $1
+               OR EXISTS (
+                      SELECT 1
+                        FROM guild_projection_state s
+                        JOIN guild_members m ON m.guild_id = s.guild_id
+                       WHERE s.guild_id = g.id
+                         AND s.roster_complete_at IS NOT NULL
+                         AND m.user_id = $1
+                  )
+            ORDER BY lower(COALESCE(g.name, '')), g.id"#,
+        viewer.user_id
+    )
+    .fetch_all(&mut *snapshot)
+    .await?;
+    let mut guilds = Vec::with_capacity(rows.len());
+    for row in rows {
+        let permissions =
+            crate::permissions::combined_perm_for_user(&mut snapshot, row.id, viewer).await?;
+        guilds.push(GuildDataForFrontEnd {
+            id: row.id,
+            name: row.name,
+            icon: row.icon,
+            owner: row.owner,
+            permissions: permissions.bits(),
+        });
+    }
+    snapshot.commit().await?;
+    Ok(guilds)
 }
 
 #[cfg(test)]

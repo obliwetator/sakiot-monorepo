@@ -70,7 +70,7 @@ pub(super) async fn publish(
             size,
             job.snapshot.channel_id,
             job.guild_id,
-            job.user_id,
+            job.requester.user_id,
             saved_file_name,
             job.snapshot.name,
             composition

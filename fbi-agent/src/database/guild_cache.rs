@@ -43,7 +43,16 @@ async fn sync_guild(pool: &Pool<Postgres>, guild: &Guild) -> DbResult<()> {
     let guild_id = guild.id.to_i64();
     let mut transaction = pool.begin().await?;
 
-    upsert_guild_owner(&mut transaction, guild_id, guild.owner_id.to_i64()).await?;
+    upsert_guild(
+        &mut transaction,
+        GuildInfo {
+            id: guild_id,
+            owner_id: guild.owner_id.to_i64(),
+            name: &guild.name,
+            icon: guild.icon.map(|icon| icon.to_string()),
+        },
+    )
+    .await?;
 
     let roles: Vec<&Role> = guild.roles.values().collect();
     upsert_roles(&mut transaction, &roles).await?;
@@ -295,35 +304,58 @@ pub(crate) async fn delete_live_member(
     Ok(())
 }
 
-pub(crate) async fn sync_guild_owner(
+/// A guild's owner, name or icon changed (`guild_update`).
+pub(crate) async fn sync_guild_info(
     pool: &Pool<Postgres>,
-    guild_id: GuildId,
-    owner_id: UserId,
+    guild: &serenity::model::guild::PartialGuild,
 ) -> DbResult<()> {
     let mut transaction = pool.begin().await?;
-    upsert_guild_owner(&mut transaction, guild_id.to_i64(), owner_id.to_i64()).await?;
+    upsert_guild(
+        &mut transaction,
+        GuildInfo {
+            id: guild.id.to_i64(),
+            owner_id: guild.owner_id.to_i64(),
+            name: &guild.name,
+            icon: guild.icon.map(|icon| icon.to_string()),
+        },
+    )
+    .await?;
     transaction.commit().await?;
     Ok(())
 }
 
-/// Record a guild's owner. `web-server` grants owner rights from either
-/// `guilds.owner_id` or the OAuth-snapshot `user_guilds.owner` flag, so both
-/// move together; otherwise an ownership change the gateway never delivered
-/// (one made while the bot was offline) would leave the previous owner with
-/// full permissions until their next login. Only rows that disagree are
-/// written.
-async fn upsert_guild_owner(
-    connection: &mut PgConnection,
-    guild_id: i64,
+struct GuildInfo<'a> {
+    id: i64,
     owner_id: i64,
-) -> DbResult<()> {
+    name: &'a str,
+    icon: Option<String>,
+}
+
+/// Record a guild's owner, name and icon; `web-server` takes owner rights
+/// for Discord logins from `guilds.owner_id` and shows the name and icon in
+/// the guild picker. The OAuth-snapshot `user_guilds.owner` flag is kept in
+/// step too, for anything still reading it. Only rows that disagree are
+/// written.
+async fn upsert_guild(connection: &mut PgConnection, guild: GuildInfo<'_>) -> DbResult<()> {
+    let GuildInfo {
+        id: guild_id,
+        owner_id,
+        name,
+        icon,
+    } = guild;
     sqlx::query!(
-        "INSERT INTO guilds (id, owner_id)
-         VALUES ($1, $2)
-         ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id
-          WHERE guilds.owner_id IS DISTINCT FROM EXCLUDED.owner_id",
+        "INSERT INTO guilds (id, owner_id, name, icon)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO UPDATE SET
+             owner_id = EXCLUDED.owner_id,
+             name = EXCLUDED.name,
+             icon = EXCLUDED.icon
+          WHERE (guilds.owner_id, guilds.name, guilds.icon)
+                IS DISTINCT FROM (EXCLUDED.owner_id, EXCLUDED.name, EXCLUDED.icon)",
         guild_id,
-        owner_id
+        owner_id,
+        name,
+        icon
     )
     .execute(&mut *connection)
     .await?;

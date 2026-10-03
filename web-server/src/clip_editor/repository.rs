@@ -4,7 +4,7 @@ pub(super) async fn resolve_sources(
     pool: &web::Data<Pool<Postgres>>,
     media: Option<&MediaArchive>,
     guild_id: i64,
-    user_id: i64,
+    viewer: crate::permissions::Viewer,
     segments: &[ComposeSegment],
 ) -> Result<Vec<ResolvedSource>, AppError> {
     let mut resolved = Vec::with_capacity(segments.len());
@@ -26,14 +26,14 @@ pub(super) async fn resolve_sources(
             )));
         }
         if let Some(recording_session_id) = row.recording_session_id {
-            crate::audio::sessions::require_session_access(pool, recording_session_id, user_id)
+            crate::audio::sessions::require_session_access(pool, recording_session_id, viewer)
                 .await?;
         } else {
             crate::permissions::require_channel_access(
                 pool,
                 guild_id,
                 row.channel_id.ok_or(AppError::ClipNotFound)?,
-                user_id,
+                viewer,
             )
             .await?;
         }
@@ -66,10 +66,10 @@ pub(super) async fn resolve_composition(
     pool: &web::Data<Pool<Postgres>>,
     media: Option<&MediaArchive>,
     guild_id: i64,
-    user_id: i64,
+    viewer: crate::permissions::Viewer,
     validated: ValidatedComposition,
 ) -> Result<ResolvedComposition, AppError> {
-    let sources = resolve_sources(pool, media, guild_id, user_id, &validated.0.segments).await?;
+    let sources = resolve_sources(pool, media, guild_id, viewer, &validated.0.segments).await?;
     for (segment, source) in validated.0.segments.iter().zip(&sources) {
         if segment.source_out > source.length + 0.1 {
             return Err(AppError::BadRequest(format!(

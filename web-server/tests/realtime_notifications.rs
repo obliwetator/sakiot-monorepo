@@ -317,8 +317,11 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
     let mut notifications = Notifications::listen(&pool).await?;
     let presence = json!({ "v": 1, "k": "presence", "g": GUILD.to_string() });
     let members = json!({ "v": 1, "k": "members", "g": GUILD.to_string() });
+    // Membership decides access, so joins, leaves and a roster becoming
+    // complete also re-authorize the guild's sockets.
+    let perm = json!({ "v": 1, "k": "perm", "g": GUILD.to_string() });
 
-    // A claim makes both known.
+    // A claim makes both known, and the roster complete.
     sqlx::query(
         "INSERT INTO guild_projection_state
             (guild_id, owner_instance_id, generation, roster_complete_at, presence_synced_at)
@@ -329,7 +332,7 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
     .await?;
     assert_eq!(
         notifications.drain().await?,
-        [members.clone(), presence.clone()]
+        [members.clone(), presence.clone(), perm.clone()]
     );
 
     // Joining, muting and leaving voice: one guild-only payload per
@@ -349,7 +352,7 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
     transaction.commit().await?;
     assert_eq!(
         notifications.drain().await?,
-        [members.clone(), presence.clone()]
+        [members.clone(), perm.clone(), presence.clone()]
     );
     sqlx::query("UPDATE voice_presence SET self_mute = true WHERE user_id = $1")
         .bind(USER)
@@ -396,7 +399,8 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
         std::slice::from_ref(&presence)
     );
 
-    // The owner stopping makes both unknown.
+    // The owner stopping makes both unknown; the complete roster stays
+    // authoritative, so access does not change.
     sqlx::query("UPDATE guild_projection_state SET owner_instance_id = NULL")
         .execute(&pool)
         .await?;

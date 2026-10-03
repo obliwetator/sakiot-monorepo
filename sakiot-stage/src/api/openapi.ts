@@ -1341,6 +1341,7 @@ export interface components {
 			| "discord_timeout"
 			| "discord_unavailable"
 			| "bot_unavailable"
+			| "membership_unavailable"
 			| "bot_not_in_voice"
 			| "jam_cooldown"
 			| "clip_playback_failed"

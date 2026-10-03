@@ -345,10 +345,16 @@ pub async fn get_session_channel_mix(
 ) -> Result<web::Json<ChannelMixResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let plan = measure(
         "plan",
-        build_mix_plan(&pool, &access, token.user_id, query.scope()),
+        build_mix_plan(
+            &pool,
+            &access,
+            crate::permissions::Viewer::of(&token),
+            query.scope(),
+        ),
     )
     .await?;
     let mut response = measure("status", mix_response(&plan, &access, &container, true)).await?;
@@ -396,8 +402,15 @@ pub async fn generate_session_channel_mix(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
-    let base_plan = build_mix_plan(&pool, &access, token.user_id, query.scope()).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let base_plan = build_mix_plan(
+        &pool,
+        &access,
+        crate::permissions::Viewer::of(&token),
+        query.scope(),
+    )
+    .await?;
     let settings = canonical_generation_settings(
         &base_plan,
         body.map(|body| body.into_inner().participants)
@@ -441,7 +454,7 @@ pub async fn generate_session_channel_mix(
     let job = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         &key,
         &resource,
         &job_request,
@@ -456,7 +469,7 @@ pub async fn generate_session_channel_mix(
 pub(crate) async fn run_session_mix_job(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     session_id: i64,
     scope: &str,
     participants: serde_json::Value,
@@ -469,8 +482,8 @@ pub(crate) async fn run_session_mix_job(
         _ => return Err(AppError::BadRequest("Unknown channel mix scope".into())),
     };
     let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, user_id).await?;
-    let base = build_mix_plan(&pool_data, &access, user_id, scope).await?;
+    let access = require_session_access(&pool_data, session_id, requester).await?;
+    let base = build_mix_plan(&pool_data, &access, requester, scope).await?;
     let requested: Vec<ChannelMixParticipantSettings> = serde_json::from_value(participants)
         .map_err(|_| AppError::BadRequest("Invalid channel mix settings".into()))?;
     let settings = canonical_generation_settings(&base, requested)?;
@@ -549,11 +562,12 @@ pub async fn get_session_channel_mix_media(
 ) -> Result<impl Responder, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let plan = build_mix_plan(
         &pool,
         &access,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         query.scope.unwrap_or_default(),
     )
     .await?;
@@ -591,7 +605,7 @@ pub struct ChannelMixMediaQuery {
 async fn build_mix_plan(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
-    viewer_user_id: i64,
+    viewer: crate::permissions::Viewer,
     scope: ChannelMixScope,
 ) -> Result<MixPlan, AppError> {
     let selected_timeline_end_ms = super::timeline_end_ms(access);
@@ -685,13 +699,13 @@ async fn build_mix_plan(
             if session_id == access.session_id || !authorized_sessions.insert(session_id) {
                 continue;
             }
-            require_session_access(pool, session_id, viewer_user_id).await?;
+            require_session_access(pool, session_id, viewer).await?;
         } else {
             require_channel_access(
                 pool,
                 candidate.fragment.guild_id,
                 candidate.fragment.channel_id,
-                viewer_user_id,
+                viewer,
             )
             .await?;
         }

@@ -1,3 +1,5 @@
+mod support;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -39,7 +41,7 @@ use web_server::clips::{
 use web_server::fbi_agent_registry::AgentGrpcRegistry;
 use web_server::members::get_role_view;
 use web_server::permissions::{
-    Permissions, begin_snapshot, get_combined_perm_for_user, visible_channels,
+    Permissions, Viewer, begin_snapshot, get_combined_perm_for_user, visible_channels,
     visible_channels_for_user,
 };
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
@@ -59,6 +61,16 @@ const CSRF: &str = "csrf-test-token";
 
 fn access_cookie_value() -> Result<String, Box<dyn std::error::Error>> {
     access_cookie_for(USER_ID)
+}
+
+fn dev_access_cookie_for(user_id: i64) -> Result<String, Box<dyn std::error::Error>> {
+    let token = Token::<Access>::encode(
+        user_id,
+        AuthKind::Dev,
+        CSRF.to_string(),
+        &EncodingKey::from_secret(b"test_secret"),
+    )?;
+    Ok(format!("{ACCESS_TOKEN_COOKIE}={token}"))
 }
 
 fn access_cookie_for(user_id: i64) -> Result<String, Box<dyn std::error::Error>> {
@@ -942,6 +954,7 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(())
 }
 
@@ -970,7 +983,8 @@ async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
     .await?;
 
     let pool = web::Data::new(pool);
-    let visible = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    let visible =
+        visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
     assert!(visible.contains(&ALLOWED_CHANNEL_ID));
     assert!(!visible.contains(&hidden_channel_id));
 
@@ -978,34 +992,48 @@ async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn oauth_owner_snapshot_grants_full_permissions(
+async fn the_login_owner_flag_grants_owner_rights_only_to_dev_logins(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
-    // The local tooling grants the dev account `owner = true` in user_guilds;
-    // the agent keeps that flag fresh (sync_guild_owner) and drops the row on
-    // member removal, so the snapshot is trusted for owner access even when
-    // `guilds.owner_id` names someone else (e.g. an imported guild).
+    // The seeding tools grant the dev account `owner = true` in user_guilds
+    // for guilds imported from production, whose real owner is someone else.
     sqlx::query("UPDATE user_guilds SET owner = true WHERE id = $1 AND user_id = $2")
         .bind(ALLOWED_GUILD_ID)
         .bind(USER_ID)
         .execute(&pool)
         .await?;
+    sqlx::query("UPDATE roles SET permission = 0 WHERE guild_id = $1 AND role_id = $1")
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
 
     let pool = web::Data::new(pool);
-    let granted = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
-    assert_eq!(granted, Permissions::all());
+    let dev = Viewer {
+        user_id: USER_ID,
+        dev: true,
+    };
+    assert_eq!(
+        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, dev).await?,
+        Permissions::all()
+    );
+    // A Discord login's owner rights come from the bot (`guilds.owner_id`)
+    // only; the login snapshot's flag counts for nothing.
+    assert_eq!(
+        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?,
+        Permissions::empty()
+    );
 
-    // A plain membership snapshot (owner = false) without roles stays at
-    // @everyone's level: only the flag, not the row, grants owner powers.
+    // Without the flag, the dev login is a plain member too.
     sqlx::query("UPDATE user_guilds SET owner = false WHERE id = $1 AND user_id = $2")
         .bind(ALLOWED_GUILD_ID)
         .bind(USER_ID)
         .execute(pool.get_ref())
         .await?;
-    let demoted = get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
-    assert!(!demoted.contains(Permissions::ADMINISTRATOR));
-
+    assert_eq!(
+        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, dev).await?,
+        Permissions::empty()
+    );
     Ok(())
 }
 
@@ -1693,7 +1721,7 @@ async fn create_clip_stores_a_real_clip_for_a_valid_range(
     Ok(())
 }
 
-/// `@everyone` may only apply to members. A stranger with no `user_guilds` row
+/// `@everyone` may only apply to members. A stranger outside the roster
 /// must not inherit the guild's `@everyone` permissions — not even when those
 /// include ADMINISTRATOR — while both owner paths keep full access.
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
@@ -1722,7 +1750,7 @@ async fn admin_endpoints_deny_everyone_permissions_to_non_members(
     .await;
     let uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/cooldown");
 
-    // No user_guilds row: denied on both read and write.
+    // Not in the roster: denied on both read and write.
     let stranger = access_cookie_for(USER_ID + 1000)?;
     let request = test::TestRequest::get()
         .uri(&uri)
@@ -1802,8 +1830,18 @@ async fn admin_endpoints_deny_everyone_permissions_to_non_members(
     let response = test::call_service(&app, request).await;
     assert_eq!(
         response.status(),
+        StatusCode::FORBIDDEN,
+        "a Discord login's snapshot owner flag grants nothing"
+    );
+    let request = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Cookie", dev_access_cookie_for(USER_ID)?))
+        .to_request();
+    let response = test::call_service(&app, request).await;
+    assert_eq!(
+        response.status(),
         StatusCode::OK,
-        "the seeded owner grant keeps access"
+        "a dev login keeps the seeded owner grant"
     );
     Ok(())
 }
@@ -1817,7 +1855,7 @@ async fn cooldown_overrides_keep_int64_user_ids_exact(
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
     const SNOWFLAKE: i64 = 9_007_199_254_740_993; // 2^53 + 1
-    sqlx::query("UPDATE user_guilds SET owner = true WHERE id = $1 AND user_id = $2")
+    sqlx::query("UPDATE guilds SET owner_id = $2 WHERE id = $1")
         .bind(ALLOWED_GUILD_ID)
         .bind(USER_ID)
         .execute(&pool)
@@ -2180,6 +2218,7 @@ async fn seed_role_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .bind(OTHER_USER_ID)
     .execute(pool)
     .await?;
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(())
 }
 
@@ -2447,6 +2486,7 @@ async fn seed_stage_channel_data(pool: &PgPool) -> Result<i64, sqlx::Error> {
     .bind(OTHER_USER_ID)
     .execute(pool)
     .await?;
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(session_id)
 }
 
@@ -2614,7 +2654,7 @@ async fn authorization_snapshot_ignores_commits_after_its_first_read(
     let pool = web::Data::new(pool);
 
     let mut snapshot = begin_snapshot(&pool).await?;
-    let first = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, USER_ID).await?;
+    let first = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
     assert!(first.contains(&ALLOWED_CHANNEL_ID));
 
     // A cache write commits mid-check: the member loses CONNECT.
@@ -2628,7 +2668,8 @@ async fn authorization_snapshot_ignores_commits_after_its_first_read(
     .execute(pool.get_ref())
     .await?;
 
-    let second = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, USER_ID).await?;
+    let second =
+        visible_channels(&mut snapshot, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
     assert_eq!(
         second, first,
         "the snapshot keeps the state it started with"
@@ -2639,7 +2680,8 @@ async fn authorization_snapshot_ignores_commits_after_its_first_read(
     assert!(write.is_err(), "the snapshot is read-only");
     drop(snapshot);
 
-    let fresh = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    let fresh =
+        visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
     assert!(!fresh.contains(&ALLOWED_CHANNEL_ID));
     Ok(())
 }
@@ -2718,7 +2760,8 @@ async fn authorization_never_mixes_two_committed_states(
     let pool = web::Data::new(pool);
     let mut denied = 0;
     for _ in 0..400 {
-        let visible = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+        let visible =
+            visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
         if !visible.contains(&ALLOWED_CHANNEL_ID) {
             denied += 1;
         }

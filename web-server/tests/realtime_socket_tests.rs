@@ -2,6 +2,8 @@
 //! Each viewer receives refresh signals only for what they may list, a
 //! permission change re-authorizes them, and shutdown closes sockets at once.
 
+mod support;
+
 use std::time::Duration;
 
 use actix_web::{App, web};
@@ -112,6 +114,7 @@ async fn seed(pool: &PgPool) -> sqlx::Result<()> {
         .bind(INSIDER_ROLE)
         .execute(pool)
         .await?;
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(())
 }
 
@@ -461,5 +464,66 @@ async fn a_lost_listener_connection_resyncs_every_socket_body(pool: PgPool) -> T
     for task in tasks {
         task.abort();
     }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn leaving_and_joining_the_guild_follow_the_roster(pool: PgPool) -> TestResult {
+    tokio::task::LocalSet::new()
+        .run_until(leaving_and_joining_the_guild_follow_the_roster_body(pool))
+        .await
+}
+
+async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let hub = web::Data::new(Hub::new(pool.clone()));
+    let _tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
+    let server = server(&pool, hub.clone(), true);
+    let mut viewer = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe(&mut viewer).await?;
+    wait_for_listener(&pool, &mut viewer).await?;
+
+    // Leaving the guild (a member-remove event) revokes access at once, even
+    // though the login snapshot still lists the guild.
+    support::leave_guild(&pool, GUILD, VIEWER).await?;
+    let mut message = expect(&mut viewer).await?;
+    while message["type"] == "changed" {
+        message = expect(&mut viewer).await?;
+    }
+    assert_eq!(
+        message,
+        json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
+    );
+    // Nothing reaches a viewer who is out of the guild.
+    insert_session(&pool, PUBLIC, &[]).await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), next(&mut viewer))
+            .await
+            .is_err()
+    );
+
+    // Joining again subscribes the scope the client asked for, with no new
+    // `set_scope`; events flow again after it.
+    sqlx::query("INSERT INTO guild_members (guild_id, user_id, username) VALUES ($1, $2, 'back')")
+        .bind(GUILD)
+        .bind(VIEWER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        expect(&mut viewer).await?,
+        json!({ "type": "subscribed", "v": 1, "guild_id": GUILD.to_string() })
+    );
+    // The guild list changed too.
+    assert_eq!(
+        expect(&mut viewer).await?,
+        json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
+    );
+    let visible = insert_session(&pool, PUBLIC, &[]).await?;
+    assert_eq!(
+        expect(&mut viewer).await?,
+        changed("recordings", Some(&[visible]))
+    );
     Ok(())
 }

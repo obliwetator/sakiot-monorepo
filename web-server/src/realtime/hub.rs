@@ -16,7 +16,7 @@ use tokio::sync::Notify;
 use super::events::Event;
 use super::metrics::{self, metrics};
 use super::protocol::{PROTOCOL_VERSION, Resource, ResyncReason, ServerMessage};
-use crate::permissions::{SubscriptionAccess, subscription_access};
+use crate::permissions::{SubscriptionAccess, Viewer, subscription_access};
 
 /// Messages a connection may have queued before it is considered too slow:
 /// the queue is then replaced by one `resync_required`.
@@ -30,11 +30,26 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// What re-authorizing one subscription changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reauthorized {
+    /// A refused scope is now allowed.
+    Granted,
+    /// An allowed scope was recomputed; it may have lost access.
+    Recomputed,
+    /// A refused scope is still refused.
+    StillRefused,
+}
+
 #[derive(Debug, Clone)]
 struct Subscription {
     guild_id: i64,
     as_role: Option<i64>,
-    access: SubscriptionAccess,
+    /// `None` while the scope is refused (not a member, membership still
+    /// loading, a preview the viewer may not make). A refused scope is kept
+    /// and re-checked on the guild's permission events, so the viewer is
+    /// subscribed as soon as access appears.
+    access: Option<SubscriptionAccess>,
     /// The `set_scope` call this subscription came from. A recomputed
     /// authorization is stored only if no newer `set_scope` replaced it.
     generation: u64,
@@ -50,7 +65,7 @@ struct Outbox {
 /// messages waiting to be written to it.
 pub struct Connection {
     pub id: u64,
-    pub user_id: i64,
+    pub viewer: Viewer,
     outbox: Mutex<Outbox>,
     notify: Notify,
     subscription: Mutex<Option<Subscription>>,
@@ -58,10 +73,10 @@ pub struct Connection {
 }
 
 impl Connection {
-    fn new(id: u64, user_id: i64) -> Self {
+    fn new(id: u64, viewer: Viewer) -> Self {
         Self {
             id,
-            user_id,
+            viewer,
             outbox: Mutex::new(Outbox::default()),
             notify: Notify::new(),
             subscription: Mutex::new(None),
@@ -137,9 +152,9 @@ impl Hub {
         }
     }
 
-    pub fn register(&self, user_id: i64) -> Arc<Connection> {
+    pub fn register(&self, viewer: Viewer) -> Arc<Connection> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let connection = Arc::new(Connection::new(id, user_id));
+        let connection = Arc::new(Connection::new(id, viewer));
         lock(&self.connections).insert(id, Arc::clone(&connection));
         connection
     }
@@ -170,7 +185,7 @@ impl Hub {
     pub async fn set_scope(&self, connection: &Connection, guild_id: i64, as_role: Option<i64>) {
         let generation = connection.generation.fetch_add(1, Ordering::SeqCst) + 1;
         metrics().authorization_recomputes.add(1, &[]);
-        let result = subscription_access(&self.pool, guild_id, connection.user_id, as_role).await;
+        let result = subscription_access(&self.pool, guild_id, connection.viewer, as_role).await;
         if connection.generation.load(Ordering::SeqCst) != generation {
             return; // A newer set_scope superseded this one.
         }
@@ -179,7 +194,7 @@ impl Hub {
                 *lock(&connection.subscription) = Some(Subscription {
                     guild_id,
                     as_role,
-                    access,
+                    access: Some(access),
                     generation,
                 });
                 connection.push(ServerMessage::Subscribed {
@@ -189,8 +204,13 @@ impl Hub {
                 });
             }
             Err(error) => {
-                tracing::debug!(%error, guild_id, user_id = connection.user_id, "realtime scope refused");
-                *lock(&connection.subscription) = None;
+                tracing::debug!(%error, guild_id, user_id = connection.viewer.user_id, "realtime scope refused");
+                *lock(&connection.subscription) = Some(Subscription {
+                    guild_id,
+                    as_role,
+                    access: None,
+                    generation,
+                });
                 connection.push(ServerMessage::AccessChanged {
                     v: PROTOCOL_VERSION,
                     guild_id: guild_id.to_string(),
@@ -200,13 +220,14 @@ impl Hub {
     }
 
     /// Recomputes authorization for the subscriptions in `guilds` (all when
-    /// `None`). A subscription whose viewer lost access is dropped. Returns
-    /// the connections that were re-checked, with their guild.
+    /// `None`). A subscription whose viewer lost access stops receiving
+    /// events; a refused one whose viewer gained access starts. Returns each
+    /// re-checked connection with its guild and what changed.
     async fn reauthorize(
         &self,
         connections: &[Arc<Connection>],
         guilds: Option<&HashSet<i64>>,
-    ) -> Vec<(Arc<Connection>, i64)> {
+    ) -> Vec<(Arc<Connection>, i64, Reauthorized)> {
         let mut checked = Vec::new();
         for connection in connections {
             let Some(subscription) = connection.subscription() else {
@@ -219,21 +240,24 @@ impl Hub {
             let result = subscription_access(
                 &self.pool,
                 subscription.guild_id,
-                connection.user_id,
+                connection.viewer,
                 subscription.as_role,
             )
             .await;
             if connection.generation.load(Ordering::SeqCst) != subscription.generation {
                 continue; // The client changed scope meanwhile.
             }
-            *lock(&connection.subscription) = match result {
-                Ok(access) => Some(Subscription {
-                    access,
-                    ..subscription.clone()
-                }),
-                Err(_) => None,
+            let access = result.ok();
+            let outcome = match (subscription.access.is_some(), access.is_some()) {
+                (false, true) => Reauthorized::Granted,
+                (true, _) => Reauthorized::Recomputed,
+                (false, false) => Reauthorized::StillRefused,
             };
-            checked.push((Arc::clone(connection), subscription.guild_id));
+            *lock(&connection.subscription) = Some(Subscription {
+                access,
+                ..subscription.clone()
+            });
+            checked.push((Arc::clone(connection), subscription.guild_id, outcome));
         }
         checked
     }
@@ -277,14 +301,34 @@ impl Hub {
         if resync_everyone {
             self.resync_all(ResyncReason::Permissions).await;
         } else if !permission_guilds.is_empty() {
-            for (connection, guild_id) in self
+            for (connection, guild_id, outcome) in self
                 .reauthorize(&connections, Some(&permission_guilds))
                 .await
             {
-                connection.push(ServerMessage::AccessChanged {
-                    v: PROTOCOL_VERSION,
-                    guild_id: guild_id.to_string(),
-                });
+                match outcome {
+                    // As after `set_scope`: the client reconciles on it.
+                    // `access_changed` follows because the viewer's guild
+                    // list changed too (a guild they just joined).
+                    Reauthorized::Granted => {
+                        connection.push(ServerMessage::Subscribed {
+                            v: PROTOCOL_VERSION,
+                            guild_id: guild_id.to_string(),
+                            as_role: connection
+                                .subscription()
+                                .and_then(|subscription| subscription.as_role)
+                                .map(|role| role.to_string()),
+                        });
+                        connection.push(ServerMessage::AccessChanged {
+                            v: PROTOCOL_VERSION,
+                            guild_id: guild_id.to_string(),
+                        });
+                    }
+                    Reauthorized::Recomputed => connection.push(ServerMessage::AccessChanged {
+                        v: PROTOCOL_VERSION,
+                        guild_id: guild_id.to_string(),
+                    }),
+                    Reauthorized::StillRefused => {}
+                }
             }
         }
         if changes.is_empty() {
@@ -318,7 +362,7 @@ impl Hub {
             let routed = route(
                 &changes,
                 &subscription,
-                connection.user_id,
+                connection.viewer.user_id,
                 journeys.as_ref(),
             );
             for (resource, ids) in routed {
@@ -410,12 +454,12 @@ fn add_all(routed: &mut Routed, resource: Resource) {
 /// Whether a clip or stamp is listed for the subscription, or `None` when its
 /// session is gone and that can no longer be decided.
 fn media_visible(
-    subscription: &Subscription,
+    access: &SubscriptionAccess,
     channel_id: Option<i64>,
     session_id: Option<i64>,
     journeys: &HashMap<i64, Journey>,
 ) -> Option<bool> {
-    let channels = &subscription.access.media_channels;
+    let channels = &access.media_channels;
     match session_id {
         Some(session_id) => journeys
             .get(&session_id)
@@ -435,13 +479,16 @@ fn route(
     journeys: Option<&HashMap<i64, Journey>>,
 ) -> Routed {
     let mut routed = Routed::new();
+    let Some(access) = subscription.access.as_ref() else {
+        return routed;
+    };
     for change in changes {
         match change {
             Event::Session {
                 guild_id,
                 session_id,
             } if *guild_id == subscription.guild_id => {
-                let channels = &subscription.access.tree_channels;
+                let channels = &access.tree_channels;
                 match journeys.and_then(|journeys| journeys.get(session_id)) {
                     Some(journey) if journey.tree.is_subset(channels) => {
                         add_id(&mut routed, Resource::Recordings, session_id.to_string());
@@ -463,7 +510,7 @@ fn route(
                 session_id,
             } if *guild_id == subscription.guild_id => {
                 match journeys
-                    .map(|journeys| media_visible(subscription, *channel_id, *session_id, journeys))
+                    .map(|journeys| media_visible(access, *channel_id, *session_id, journeys))
                 {
                     Some(Some(true)) => add_id(&mut routed, Resource::Clips, clip_id.clone()),
                     Some(Some(false)) => {}
@@ -477,7 +524,7 @@ fn route(
                 session_id,
             } if *guild_id == subscription.guild_id => {
                 match journeys
-                    .map(|journeys| media_visible(subscription, *channel_id, *session_id, journeys))
+                    .map(|journeys| media_visible(access, *channel_id, *session_id, journeys))
                 {
                     Some(Some(true)) => {
                         add_id(&mut routed, Resource::Stamps, stamp_id.to_string());
@@ -493,16 +540,14 @@ fn route(
                 add_all(&mut routed, Resource::RecordingOptOut);
             }
             Event::Settings { guild_id, resource }
-                if *guild_id == subscription.guild_id && subscription.access.manager =>
+                if *guild_id == subscription.guild_id && access.manager =>
             {
                 add_all(&mut routed, *resource);
             }
             Event::Presence { guild_id } if *guild_id == subscription.guild_id => {
                 add_all(&mut routed, Resource::Presence);
             }
-            Event::Members { guild_id }
-                if *guild_id == subscription.guild_id && subscription.access.manager =>
-            {
+            Event::Members { guild_id } if *guild_id == subscription.guild_id && access.manager => {
                 add_all(&mut routed, Resource::Members);
             }
             _ => {}
@@ -523,11 +568,11 @@ mod tests {
         Subscription {
             guild_id: GUILD,
             as_role: None,
-            access: SubscriptionAccess {
+            access: Some(SubscriptionAccess {
                 tree_channels: tree.iter().copied().collect(),
                 media_channels: media.iter().copied().collect(),
                 manager,
-            },
+            }),
             generation: 1,
         }
     }
@@ -681,7 +726,7 @@ mod tests {
 
     #[test]
     fn a_slow_connection_gets_one_resync_instead_of_its_backlog() {
-        let connection = Connection::new(1, 9);
+        let connection = Connection::new(1, Viewer::discord(9));
         for _ in 0..OUTBOX_CAPACITY + 3 {
             connection.push(ServerMessage::Heartbeat {
                 v: PROTOCOL_VERSION,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, guild_id, user_id, result_clip_id, snapshot FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() AND renderer_version = $3",
+  "query": "SELECT id, guild_id, user_id, requester_dev, result_clip_id, snapshot FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() AND renderer_version = $3",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "requester_dev",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "composition_jobs",
+            "name": "requester_dev"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "result_clip_id",
         "type_info": "Text",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "snapshot",
         "type_info": "Jsonb",
         "origin": {
@@ -71,8 +82,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "f84449f9f68b37302d03c1f880eb140789573c0d21ab6bb6d153f9d01ae02e81"
+  "hash": "09dca399656ba55e3ad7443d046abc1ec452152ca4203912f873bd7d8a9054fc"
 }

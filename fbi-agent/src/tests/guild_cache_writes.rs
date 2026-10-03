@@ -214,7 +214,7 @@ async fn unchanged_cache_writes_touch_no_rows(pool: PgPool) -> TestResult {
     for member in guild.members.values() {
         guild_cache::sync_live_member_roles(&pool, guild.id, member.user.id, &member.roles).await?;
     }
-    guild_cache::sync_guild_owner(&pool, guild.id, guild.owner_id).await?;
+    guild_cache::sync_guild_info(&pool, &guild.clone().into()).await?;
 
     assert_eq!(row_versions(&pool, &fixture).await?, before);
     Ok(())

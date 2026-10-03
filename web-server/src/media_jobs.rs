@@ -98,7 +98,8 @@ pub struct MediaJobStatus {
 #[derive(Clone, Debug)]
 pub struct ClaimedMediaJob {
     pub id: String,
-    pub user_id: i64,
+    /// Who requested the job; access is re-checked as them when it runs.
+    pub requester: crate::permissions::Viewer,
     pub request: MediaJobRequest,
     pub token: String,
 }
@@ -106,11 +107,12 @@ pub struct ClaimedMediaJob {
 pub async fn enqueue(
     pool: &Pool<Postgres>,
     guild_id: Option<i64>,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     idempotency_key: &str,
     resource_key: &str,
     request: &MediaJobRequest,
 ) -> Result<MediaJobStatus, AppError> {
+    let user_id = requester.user_id;
     if idempotency_key.is_empty() || idempotency_key.len() > 128 {
         return Err(AppError::BadRequest("Invalid media job request key".into()));
     }
@@ -181,14 +183,15 @@ pub async fn enqueue(
 
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query!(
-        "INSERT INTO media_jobs (id, kind, guild_id, user_id, idempotency_key, resource_key, request) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        "INSERT INTO media_jobs (id, kind, guild_id, user_id, idempotency_key, resource_key, request, requester_dev) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         id,
         request.kind(),
         guild_id,
         user_id,
         idempotency_key,
         resource_key,
-        request_json
+        request_json,
+        requester.dev
     )
     .execute(&mut *tx)
     .await?;
@@ -294,7 +297,7 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
     }
     let token = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query!(
-        "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,error_kind=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.request",
+        "WITH candidate AS (SELECT id FROM media_jobs WHERE attempts < $2 AND ((state='queued' AND retry_at <= now()) OR (state='running' AND lease_expires_at < now())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE media_jobs j SET state='running',stage='preparing',progress=0,attempts=attempts+1,attempt_token=$1,lease_expires_at=now()+interval '60 seconds',error=NULL,error_kind=NULL,updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.user_id,j.requester_dev,j.request",
         token,
         MAX_ATTEMPTS
     )
@@ -304,7 +307,10 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
     row.map(|row| {
         Ok(ClaimedMediaJob {
             id: row.id,
-            user_id: row.user_id,
+            requester: crate::permissions::Viewer {
+                user_id: row.user_id,
+                dev: row.requester_dev,
+            },
             request: serde_json::from_value(row.request).map_err(|_| AppError::InternalError)?,
             token,
         })
@@ -543,7 +549,7 @@ async fn run_attempt(
             crate::audio::sessions::run_session_waveform_job(
                 pool,
                 media,
-                job.user_id,
+                job.requester,
                 *session_id,
                 *silence_free,
                 &job.id,
@@ -555,7 +561,7 @@ async fn run_attempt(
             crate::audio::sessions::run_session_silence_job(
                 pool,
                 media,
-                job.user_id,
+                job.requester,
                 *session_id,
                 &job.id,
                 &job.token,
@@ -570,7 +576,7 @@ async fn run_attempt(
             crate::audio::sessions::run_session_mix_job(
                 pool,
                 media,
-                job.user_id,
+                job.requester,
                 *session_id,
                 scope,
                 participants.clone(),
@@ -588,7 +594,7 @@ async fn run_attempt(
             crate::audio::sessions::run_download_job(
                 pool,
                 media,
-                job.user_id,
+                job.requester,
                 *session_id,
                 *start,
                 *end,
@@ -743,7 +749,12 @@ pub async fn get_media_job_result(
     let job_request: MediaJobRequest =
         serde_json::from_value(row.request).map_err(|_| AppError::InternalError)?;
     if let MediaJobRequest::SessionDownload { session_id, .. } = job_request {
-        crate::audio::sessions::require_session_access(&pool, session_id, token.user_id).await?;
+        crate::audio::sessions::require_session_access(
+            &pool,
+            session_id,
+            crate::permissions::Viewer::of(&token),
+        )
+        .await?;
     } else {
         return Err(AppError::FileNotFound);
     }
@@ -777,22 +788,61 @@ mod tests {
     async fn admission_is_idempotent_payload_bound_and_shared_by_resource(
         pool: PgPool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let first = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        let first = enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(10),
+            "key",
+            "resource",
+            &request(1),
+        )
+        .await?;
         assert_eq!(
-            enqueue(&pool, None, 10, "key", "resource", &request(1))
-                .await?
-                .id,
+            enqueue(
+                &pool,
+                None,
+                crate::permissions::Viewer::discord(10),
+                "key",
+                "resource",
+                &request(1)
+            )
+            .await?
+            .id,
             first.id
         );
         assert!(matches!(
-            enqueue(&pool, None, 10, "key", "other", &request(2)).await,
+            enqueue(
+                &pool,
+                None,
+                crate::permissions::Viewer::discord(10),
+                "key",
+                "other",
+                &request(2)
+            )
+            .await,
             Err(AppError::Conflict(_))
         ));
-        let shared = enqueue(&pool, None, 11, "another", "resource", &request(1)).await?;
+        let shared = enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(11),
+            "another",
+            "resource",
+            &request(1),
+        )
+        .await?;
         assert_eq!(shared.id, first.id);
         assert_eq!(load_status(&pool, 11, &first.id).await?.id, first.id);
         assert!(matches!(
-            enqueue(&pool, None, 12, "different", "resource", &request(2)).await,
+            enqueue(
+                &pool,
+                None,
+                crate::permissions::Viewer::discord(12),
+                "different",
+                "resource",
+                &request(2)
+            )
+            .await,
             Err(AppError::Conflict(_))
         ));
         Ok(())
@@ -804,7 +854,7 @@ mod tests {
             enqueue(
                 &pool,
                 None,
-                10,
+                crate::permissions::Viewer::discord(10),
                 &format!("key-{id}"),
                 &format!("resource-{id}"),
                 &request(id),
@@ -812,7 +862,15 @@ mod tests {
             .await?;
         }
         assert!(matches!(
-            enqueue(&pool, None, 10, "key-4", "resource-4", &request(4)).await,
+            enqueue(
+                &pool,
+                None,
+                crate::permissions::Viewer::discord(10),
+                "key-4",
+                "resource-4",
+                &request(4)
+            )
+            .await,
             Err(AppError::UserJobLimitReached)
         ));
         Ok(())
@@ -826,7 +884,7 @@ mod tests {
             enqueue(
                 &pool,
                 None,
-                id,
+                crate::permissions::Viewer::discord(id),
                 &format!("key-{id}"),
                 &format!("resource-{id}"),
                 &request(id),
@@ -855,7 +913,9 @@ mod tests {
         complete_publication(tx, &recovered.id, &recovered.token, "/result", None).await?;
         finish(&pool, old, Err(AppError::InternalError)).await?;
         assert_eq!(
-            load_status(&pool, old.user_id, &old.id).await?.status,
+            load_status(&pool, old.requester.user_id, &old.id)
+                .await?
+                .status,
             "ready"
         );
         Ok(())
@@ -875,7 +935,15 @@ mod tests {
     async fn failures_report_a_safe_kind_and_terminal_failures_do_not_promise_retry(
         pool: PgPool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        let queued = enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(10),
+            "key",
+            "resource",
+            &request(1),
+        )
+        .await?;
         for attempt in 1..=MAX_ATTEMPTS {
             let job = claim(&pool).await?.ok_or("job was not claimed")?;
             finish(&pool, &job, Err(AppError::FfmpegError(INTERNAL.into()))).await?;
@@ -919,7 +987,15 @@ mod tests {
     async fn legacy_error_text_is_never_returned(
         pool: PgPool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        let queued = enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(10),
+            "key",
+            "resource",
+            &request(1),
+        )
+        .await?;
         sqlx::query("UPDATE media_jobs SET state='failed', stage='failed', error=$2, error_kind=NULL WHERE id=$1")
             .bind(&queued.id)
             .bind(INTERNAL)
@@ -937,7 +1013,15 @@ mod tests {
 
     #[sqlx::test(migrations = "../sakiot-db/migrations")]
     async fn a_lost_lease_writes_nothing(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
-        let queued = enqueue(&pool, None, 10, "key", "resource", &request(1)).await?;
+        let queued = enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(10),
+            "key",
+            "resource",
+            &request(1),
+        )
+        .await?;
         let job = claim(&pool).await?.ok_or("job was not claimed")?;
         finish(&pool, &job, Err(AppError::JobLeaseLost)).await?;
         let status = load_status(&pool, 10, &queued.id).await?;

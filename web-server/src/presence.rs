@@ -8,7 +8,9 @@ use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::{AsRoleQuery, begin_snapshot, presence_channels, require_role_preview};
+use crate::permissions::{
+    AsRoleQuery, Viewer, begin_snapshot, presence_channels, require_role_preview,
+};
 
 type DisplayFromstr = As<DisplayFromStr>;
 
@@ -52,11 +54,11 @@ pub struct VoicePresence {
 pub async fn voice_presence(
     pool: &Pool<Postgres>,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
     as_role: Option<i64>,
 ) -> Result<VoicePresence, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
-    let channels: Vec<i64> = presence_channels(&mut snapshot, guild_id, user_id, as_role)
+    let channels: Vec<i64> = presence_channels(&mut snapshot, guild_id, viewer, as_role)
         .await?
         .into_iter()
         .collect();
@@ -168,6 +170,6 @@ pub async fn get_voice_presence(
     let token = token.ok_or(AppError::Unauthorized)?;
     let guild_id = path.into_inner();
     require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let presence = voice_presence(&pool, guild_id, token.user_id, query.as_role).await?;
+    let presence = voice_presence(&pool, guild_id, Viewer::of(&token), query.as_role).await?;
     Ok(HttpResponse::Ok().json(presence))
 }

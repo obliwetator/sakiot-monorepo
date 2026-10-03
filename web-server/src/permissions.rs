@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use actix_web::web;
 use sqlx::{PgConnection, Pool, Postgres};
 
+use crate::auth::{Access, AuthKind, Token};
 use crate::errors::AppError;
 
 // Discord's permission bit layout, vendored from serenity's `Permissions`.
@@ -204,67 +205,147 @@ pub async fn begin_snapshot(
         .await?)
 }
 
-pub async fn get_combined_perm_for_user(
-    pool: &web::Data<Pool<Postgres>>,
+/// Who is asking. A dev login exists only in local, staging and preview
+/// builds (`dev-login` feature), where guilds are seeded rather than seen by
+/// the bot; membership follows different rules there (`membership`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Viewer {
+    pub user_id: i64,
+    pub dev: bool,
+}
+
+impl Viewer {
+    pub fn of(token: &Token<Access>) -> Self {
+        Self {
+            user_id: token.user_id,
+            dev: token.auth_kind == AuthKind::Dev,
+        }
+    }
+
+    /// A Discord login.
+    pub fn discord(user_id: i64) -> Self {
+        Self {
+            user_id,
+            dev: false,
+        }
+    }
+
+    /// The viewer of a request the auth middleware let through.
+    pub fn of_request(req: &actix_web::HttpRequest) -> Result<Self, AppError> {
+        use actix_web::HttpMessage;
+        req.extensions()
+            .get::<Token<Access>>()
+            .map(Self::of)
+            .ok_or(AppError::Unauthorized)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Membership {
+    Owner,
+    Member,
+    Outsider,
+}
+
+/// Whether the viewer belongs to the guild: the one membership rule behind
+/// every authorization check, the realtime fan-out and the guild picker.
+///
+/// For a Discord login the bot's roster (`guild_members`) decides, not the
+/// guild list Discord returned at login:
+/// - Ownership comes from `guilds.owner_id`, which the bot keeps current.
+/// - A roster that was complete once stays authoritative, even while the bot
+///   is down or between deploys, as the role cache does.
+/// - A guild the bot is in but whose roster was never complete is
+///   `MembershipUnavailable`: retryable, never guessed from the login list,
+///   and never read as everyone having left.
+/// - A guild the bot is not in and never had a roster for has no members.
+///
+/// A dev login keeps the seeded `user_guilds` rows (membership, and the
+/// owner flag the seeding tools set): its guilds are imported from
+/// production and the bot never sees them.
+async fn membership(
+    conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
+) -> Result<Membership, AppError> {
+    if viewer.dev {
+        let row = sqlx::query!(
+            r#"SELECT EXISTS (
+                      SELECT 1 FROM guilds WHERE id = $1 AND owner_id = $2
+                  ) AS "owner_id!",
+                  (SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2) AS seeded_owner"#,
+            guild_id,
+            viewer.user_id
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        return Ok(match (row.owner_id, row.seeded_owner) {
+            (true, _) | (_, Some(true)) => Membership::Owner,
+            (false, Some(false)) => Membership::Member,
+            (false, None) => Membership::Outsider,
+        });
+    }
+
+    let row = sqlx::query!(
+        r#"SELECT EXISTS (
+                  SELECT 1 FROM guilds WHERE id = $1 AND owner_id = $2
+              ) AS "owner!",
+              (SELECT roster_complete_at IS NOT NULL
+                 FROM guild_projection_state
+                WHERE guild_id = $1) AS roster_complete,
+              EXISTS (
+                  SELECT 1 FROM guilds_present WHERE guild_id = $1
+              ) AS "bot_present!",
+              EXISTS (
+                  SELECT 1 FROM guild_members WHERE guild_id = $1 AND user_id = $2
+              ) AS "listed!""#,
+        guild_id,
+        viewer.user_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(
+        match (
+            row.owner,
+            row.roster_complete.unwrap_or(false),
+            row.bot_present,
+        ) {
+            (true, _, _) => Membership::Owner,
+            (false, true, _) if row.listed => Membership::Member,
+            (false, true, _) | (false, false, false) => Membership::Outsider,
+            (false, false, true) => return Err(AppError::MembershipUnavailable),
+        },
+    )
+}
+
+pub async fn get_combined_perm_for_user(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    viewer: Viewer,
 ) -> Result<Permissions, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
-    let permissions = combined_perm_for_user(&mut snapshot, guild_id, user_id).await?;
+    let permissions = combined_perm_for_user(&mut snapshot, guild_id, viewer).await?;
     snapshot.commit().await?;
     Ok(permissions)
 }
 
-async fn combined_perm_for_user(
+/// The viewer's guild-level permissions, read on `conn` (use
+/// `begin_snapshot`): everything for the owner, nothing for outsiders.
+pub async fn combined_perm_for_user(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<Permissions, AppError> {
-    // Owner access comes from the live `guilds.owner_id`, or from the
-    // `user_guilds.owner` flag. The flag is trusted because the agent keeps it
-    // fresh — `sync_guild_owner` rewrites it on guild owner changes, every
-    // full guild sync (startup, `GuildCreate`, the periodic resync) corrects
-    // it for the guilds the bot is in, and `delete_live_member` drops the row
-    // when a member leaves — and the local seed / fixture tooling writes it to
-    // grant the dev account full access to imported guilds whose real owner is
-    // somebody else. The bot is not in those guilds, so syncs leave them alone.
-    let owner = sqlx::query_scalar!(
-        r#"SELECT (EXISTS (
-             SELECT 1
-               FROM guilds
-              WHERE id = $1 AND owner_id = $2
-         ) OR EXISTS (
-             SELECT 1
-               FROM user_guilds
-              WHERE id = $1 AND user_id = $2 AND owner
-         )) AS "owner!""#,
-        guild_id,
-        user_id
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if owner {
-        return Ok(Permissions::all());
-    }
-
     // Membership is a precondition for every other grant. The aggregation below
     // always includes `@everyone` (`role_id = guild_id`), so without this check
     // a stranger who was never in the guild would inherit `@everyone`'s bits —
     // including ADMINISTRATOR when a guild grants it there.
-    let member = sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-             SELECT 1
-               FROM user_guilds
-              WHERE id = $1 AND user_id = $2
-         ) AS "member!""#,
-        guild_id,
-        user_id
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    if !member {
-        return Ok(Permissions::empty());
+    match membership(conn, guild_id, viewer).await? {
+        Membership::Owner => return Ok(Permissions::all()),
+        Membership::Outsider => return Ok(Permissions::empty()),
+        Membership::Member => {}
     }
+    let user_id = viewer.user_id;
 
     // The OAuth guild list stores a combined permission snapshot from login.
     // Build the value from the agent-maintained role cache instead so role and
@@ -408,12 +489,12 @@ async fn channel_access_for_role(
 pub async fn listing_channels_for(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
     as_role: Option<i64>,
 ) -> Result<HashSet<i64>, AppError> {
     match as_role {
-        None => visible_channels_for_user(pool, guild_id, user_id).await,
-        Some(role_id) => Ok(role_access_for_preview(pool, guild_id, user_id, role_id)
+        None => visible_channels_for_user(pool, guild_id, viewer).await,
+        Some(role_id) => Ok(role_access_for_preview(pool, guild_id, viewer, role_id)
             .await?
             .into_values()
             .filter(|access| access.joinable)
@@ -438,11 +519,11 @@ pub async fn listing_channels_for(
 pub async fn role_access_for_preview(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
-    manager_id: i64,
+    manager: Viewer,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
-    let access = preview_access(&mut snapshot, guild_id, manager_id, role_id).await?;
+    let access = preview_access(&mut snapshot, guild_id, manager, role_id).await?;
     snapshot.commit().await?;
     Ok(access)
 }
@@ -450,12 +531,12 @@ pub async fn role_access_for_preview(
 async fn preview_access(
     conn: &mut PgConnection,
     guild_id: i64,
-    manager_id: i64,
+    manager: Viewer,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
     require_role_in_guild(conn, guild_id, role_id).await?;
 
-    let manager_channels = visible_channels(conn, guild_id, manager_id).await?;
+    let manager_channels = visible_channels(conn, guild_id, manager).await?;
     Ok(channel_access_for_role(conn, guild_id, role_id)
         .await?
         .into_iter()
@@ -485,16 +566,16 @@ pub struct SubscriptionAccess {
 pub async fn subscription_access(
     pool: &Pool<Postgres>,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
     as_role: Option<i64>,
 ) -> Result<SubscriptionAccess, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
-    let manager = combined_perm_for_user(&mut snapshot, guild_id, user_id)
+    let manager = combined_perm_for_user(&mut snapshot, guild_id, viewer)
         .await?
         .intersects(MANAGER_PERMISSIONS);
     let access = match as_role {
         None => {
-            let channels = visible_channels(&mut snapshot, guild_id, user_id).await?;
+            let channels = visible_channels(&mut snapshot, guild_id, viewer).await?;
             SubscriptionAccess {
                 tree_channels: channels.clone(),
                 media_channels: channels,
@@ -503,7 +584,7 @@ pub async fn subscription_access(
         }
         Some(_) if !manager => return Err(AppError::Forbidden),
         Some(role_id) => {
-            let preview = preview_access(&mut snapshot, guild_id, user_id, role_id).await?;
+            let preview = preview_access(&mut snapshot, guild_id, viewer, role_id).await?;
             SubscriptionAccess {
                 tree_channels: preview.keys().copied().collect(),
                 media_channels: preview
@@ -571,10 +652,10 @@ async fn apply_role_overwrites(
 pub async fn get_available_channels_for_user(
     pool: &actix_web::web::Data<Pool<Postgres>>,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<HashSet<i64>, AppError> {
     let mut snapshot = begin_snapshot(pool).await?;
-    let channels = available_channels_for_user(&mut snapshot, guild_id, user_id).await?;
+    let channels = available_channels_for_user(&mut snapshot, guild_id, viewer).await?;
     snapshot.commit().await?;
     Ok(channels)
 }
@@ -582,9 +663,9 @@ pub async fn get_available_channels_for_user(
 async fn available_channels_for_user(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<HashSet<i64>, AppError> {
-    Ok(channel_access_for_user(conn, guild_id, user_id)
+    Ok(channel_access_for_user(conn, guild_id, viewer)
         .await?
         .into_iter()
         .filter(|access| access.joinable)
@@ -597,9 +678,9 @@ async fn available_channels_for_user(
 async fn channel_access_for_user(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<Vec<RoleChannelAccess>, AppError> {
-    let base_permissions = combined_perm_for_user(conn, guild_id, user_id).await?;
+    let base_permissions = combined_perm_for_user(conn, guild_id, viewer).await?;
 
     let mut channels = voice_channel_permission_states(conn, guild_id).await?;
     if base_permissions.contains(Permissions::ADMINISTRATOR) {
@@ -613,8 +694,8 @@ async fn channel_access_for_user(
             .collect());
     }
 
-    apply_role_overwrites(conn, user_id, guild_id, &mut channels).await?;
-    apply_member_overwrites(conn, user_id, guild_id, &mut channels).await?;
+    apply_role_overwrites(conn, viewer.user_id, guild_id, &mut channels).await?;
+    apply_member_overwrites(conn, viewer.user_id, guild_id, &mut channels).await?;
 
     Ok(channels
         .into_values()
@@ -638,11 +719,11 @@ async fn channel_access_for_user(
 pub async fn presence_channels(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
     as_role: Option<i64>,
 ) -> Result<HashSet<i64>, AppError> {
-    require_member(conn, guild_id, user_id).await?;
-    let own: HashSet<i64> = channel_access_for_user(conn, guild_id, user_id)
+    require_member(conn, guild_id, viewer).await?;
+    let own: HashSet<i64> = channel_access_for_user(conn, guild_id, viewer)
         .await?
         .into_iter()
         .filter(|access| access.viewable)
@@ -660,22 +741,27 @@ pub async fn presence_channels(
         .collect())
 }
 
+/// Fails unless the viewer belongs to the guild (`membership`).
+pub async fn require_guild_member(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    viewer: Viewer,
+) -> Result<(), AppError> {
+    let mut snapshot = begin_snapshot(pool).await?;
+    require_member(&mut snapshot, guild_id, viewer).await?;
+    snapshot.commit().await?;
+    Ok(())
+}
+
 async fn require_member(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<(), AppError> {
-    let membership = sqlx::query!(
-        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
-        guild_id,
-        user_id
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    if membership.is_none() {
-        return Err(AppError::Forbidden);
+    match membership(conn, guild_id, viewer).await? {
+        Membership::Owner | Membership::Member => Ok(()),
+        Membership::Outsider => Err(AppError::Forbidden),
     }
-    Ok(())
 }
 
 async fn require_role_in_guild(
@@ -699,11 +785,11 @@ async fn require_role_in_guild(
 pub async fn visible_channels_for_user(
     pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<HashSet<i64>, crate::errors::AppError> {
     crate::server_timing::measure("perm", async {
         let mut snapshot = begin_snapshot(pool).await?;
-        let channels = visible_channels(&mut snapshot, guild_id, user_id).await?;
+        let channels = visible_channels(&mut snapshot, guild_id, viewer).await?;
         snapshot.commit().await?;
         Ok(channels)
     })
@@ -716,19 +802,19 @@ pub async fn visible_channels_for_user(
 pub async fn visible_channels(
     conn: &mut PgConnection,
     guild_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<HashSet<i64>, AppError> {
-    require_member(conn, guild_id, user_id).await?;
-    available_channels_for_user(conn, guild_id, user_id).await
+    require_member(conn, guild_id, viewer).await?;
+    available_channels_for_user(conn, guild_id, viewer).await
 }
 
 pub async fn require_channel_access(
     pool: &actix_web::web::Data<sqlx::Pool<sqlx::Postgres>>,
     guild_id: i64,
     channel_id: i64,
-    user_id: i64,
+    viewer: Viewer,
 ) -> Result<(), crate::errors::AppError> {
-    let permitted = visible_channels_for_user(pool, guild_id, user_id).await?;
+    let permitted = visible_channels_for_user(pool, guild_id, viewer).await?;
     if permitted.contains(&channel_id) {
         Ok(())
     } else {
@@ -816,65 +902,14 @@ async fn require_guild_permission(
     guild_id: i64,
     required_mask: Permissions,
 ) -> Result<i64, crate::errors::AppError> {
-    use crate::auth::{Access, AuthKind, Token};
-    use actix_web::HttpMessage;
-    let (user_id, is_dev) = req
-        .extensions()
-        .get::<Token<Access>>()
-        .map(|t| (t.user_id, t.auth_kind == AuthKind::Dev))
-        .ok_or(crate::errors::AppError::Unauthorized)?;
-
-    // Dev logins act as managers of the guilds the local tooling granted them:
-    // the seed and fixture imports write `user_guilds.owner = true`, but
-    // `guilds.owner_id` and the agent-maintained role cache hold the production
-    // owner and roles, so the checks below would otherwise 403 the dev account
-    // on every fixture guild. Mirror the frontend's `isGuildAdmin` trust in the
-    // snapshot row; real Discord logins (AuthKind::Discord) never take this path.
-    //
-    // SECURITY: this bypass is `#[cfg(feature = "dev-login")]`-gated by
-    // `is_public_api_path` / `AuthKind::Dev` — it is only reachable when the
-    // `dev-login` feature is compiled in (local dev). In production builds
-    // `AuthKind::Dev` can never be issued, so this branch is dead code.
-    // The snapshot row is only trusted for `owner = true` guilds seeded
-    // locally; a stale `permissions & 40` bit would otherwise grant permanent
-    // manager after a role revoke, so we check live permissions first and
-    // only fall back to the snapshot when the guild has no live role data
-    // (fixture import without a cached @everyone).
-    if is_dev {
-        // Fast path: live permissions already grant manager — no need to trust snapshot.
-        // This avoids stale `user_guilds.permissions` granting permanent access.
-        if let Ok(live) = get_combined_perm_for_user(pool, guild_id, user_id).await
-            && live.intersects(required_mask)
-        {
-            return Ok(user_id);
-        }
-        let trusted_owner = sqlx::query_scalar!(
-            "SELECT owner FROM user_guilds WHERE id = $1 AND user_id = $2",
-            guild_id,
-            user_id
-        )
-        .fetch_optional(pool.get_ref())
+    // Dev logins (local, staging and preview builds) manage the guilds their
+    // seeding granted them through `membership`'s owner rule.
+    let viewer = Viewer::of_request(req)?;
+    if get_combined_perm_for_user(pool, guild_id, viewer)
         .await?
-        .unwrap_or(false);
-        if trusted_owner {
-            tracing::debug!(
-                guild_id,
-                user_id,
-                "dev-login manager bypass via user_guilds.owner"
-            );
-            return Ok(user_id);
-        }
-    }
-
-    let permissions = match get_combined_perm_for_user(pool, guild_id, user_id).await {
-        Ok(permissions) => permissions,
-        Err(crate::errors::AppError::DbError(sqlx::Error::RowNotFound)) => {
-            return Err(crate::errors::AppError::Forbidden);
-        }
-        Err(err) => return Err(err),
-    };
-    if permissions.intersects(required_mask) {
-        Ok(user_id)
+        .intersects(required_mask)
+    {
+        Ok(viewer.user_id)
     } else {
         Err(crate::errors::AppError::Forbidden)
     }

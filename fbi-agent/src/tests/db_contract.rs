@@ -1228,7 +1228,10 @@ async fn guild_owner_update_refreshes_live_and_oauth_caches(
     .execute(&pool)
     .await?;
 
-    crate::database::guild_cache::sync_guild_owner(&pool, guild_id, new_owner_id).await?;
+    let mut guild = serenity::model::guild::Guild::default();
+    guild.id = guild_id;
+    guild.owner_id = new_owner_id;
+    crate::database::guild_cache::sync_guild_info(&pool, &guild.into()).await?;
 
     let owner_id = sqlx::query_scalar::<_, i64>("SELECT owner_id FROM guilds WHERE id = $1")
         .bind(guild_id.get() as i64)

@@ -77,7 +77,7 @@ pub async fn get_waveform_data(
         path.2,
         path.3,
         &path.4,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
     )
     .await?;
 
@@ -95,7 +95,14 @@ pub async fn get_waveform_data(
             return Err(AppError::FileNotFound);
         }
         let version = format!("final-{}", query.t.unwrap_or_default());
-        return enqueue_recording_waveform(&pool, token.user_id, &path, true, &version).await;
+        return enqueue_recording_waveform(
+            &pool,
+            crate::permissions::Viewer::of(&token),
+            &path,
+            true,
+            &version,
+        )
+        .await;
     }
 
     let output = format!("{}{}.dat", waveform_path(), path.4);
@@ -138,12 +145,19 @@ pub async fn get_waveform_data(
         |value| value.to_string(),
     );
     let version = format!("{version}-{}", query.t.unwrap_or_default());
-    enqueue_recording_waveform(&pool, token.user_id, &path, false, &version).await
+    enqueue_recording_waveform(
+        &pool,
+        crate::permissions::Viewer::of(&token),
+        &path,
+        false,
+        &version,
+    )
+    .await
 }
 
 async fn enqueue_recording_waveform(
     pool: &web::Data<Pool<Postgres>>,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     path: &(i64, i64, i32, i32, String),
     silence_free: bool,
     version: &str,
@@ -163,7 +177,8 @@ async fn enqueue_recording_waveform(
     );
     let key = format!("waveform-{variant}-{}-{version}", path.4);
     let status =
-        crate::media_jobs::enqueue(pool, Some(path.0), user_id, &key, &resource, &request).await?;
+        crate::media_jobs::enqueue(pool, Some(path.0), requester, &key, &resource, &request)
+            .await?;
     Ok(HttpResponse::Accepted()
         .insert_header((
             actix_web::http::header::LOCATION,
@@ -323,10 +338,21 @@ pub async fn get_clip_waveform_data(
     .await?
     .ok_or(AppError::ClipNotFound)?;
     if let Some(session_id) = row.recording_session_id {
-        super::sessions::require_session_access(&pool, session_id, token.user_id).await?;
+        super::sessions::require_session_access(
+            &pool,
+            session_id,
+            crate::permissions::Viewer::of(&token),
+        )
+        .await?;
     } else {
         let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
-        require_channel_access(&pool, guild_id, channel_id, token.user_id).await?;
+        require_channel_access(
+            &pool,
+            guild_id,
+            channel_id,
+            crate::permissions::Viewer::of(&token),
+        )
+        .await?;
     }
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
@@ -348,7 +374,7 @@ pub async fn get_clip_waveform_data(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(guild_id),
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         &key,
         &cache_key,
         &request,

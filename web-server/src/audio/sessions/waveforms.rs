@@ -23,7 +23,7 @@ pub async fn get_session_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    require_session_access(&pool, session_id, token.user_id).await?;
+    require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let (cache_key, output) = session_waveform_cache(session_id, false);
     if let Some(job) =
         crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &cache_key)
@@ -61,11 +61,12 @@ pub async fn rebuild_session_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     enqueue_session_waveform(
         &request,
         &pool,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         access.guild_id,
         session_id,
         false,
@@ -97,7 +98,8 @@ pub async fn get_session_silence_free_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let source = session_silence_free_path(&access)?;
     if !tokio::fs::try_exists(&source).await? {
         return Err(AppError::FileNotFound);
@@ -143,7 +145,8 @@ pub async fn rebuild_session_silence_free_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let source = session_silence_free_path(&access)?;
     if !tokio::fs::try_exists(&source).await? {
         return Err(AppError::FileNotFound);
@@ -151,7 +154,7 @@ pub async fn rebuild_session_silence_free_waveform(
     enqueue_session_waveform(
         &request,
         &pool,
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         access.guild_id,
         session_id,
         true,
@@ -162,7 +165,7 @@ pub async fn rebuild_session_silence_free_waveform(
 async fn enqueue_session_waveform(
     http_request: &HttpRequest,
     pool: &web::Data<Pool<Postgres>>,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     guild_id: i64,
     session_id: i64,
     silence_free: bool,
@@ -179,7 +182,7 @@ async fn enqueue_session_waveform(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let status =
-        crate::media_jobs::enqueue(pool, Some(guild_id), user_id, &key, &resource, &request)
+        crate::media_jobs::enqueue(pool, Some(guild_id), requester, &key, &resource, &request)
             .await?;
     Ok(HttpResponse::Accepted()
         .insert_header((
@@ -192,14 +195,14 @@ async fn enqueue_session_waveform(
 pub(crate) async fn run_session_waveform_job(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     session_id: i64,
     silence_free: bool,
     job_id: &str,
     attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
     let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, user_id).await?;
+    let access = require_session_access(&pool_data, session_id, requester).await?;
     let (cache_key, output) = session_waveform_cache(session_id, silence_free);
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;

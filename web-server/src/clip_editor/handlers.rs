@@ -64,7 +64,14 @@ pub async fn compose_clip(
     let ResolvedComposition {
         validated: ValidatedComposition(body),
         sources: resolved,
-    } = resolve_composition(&pool, None, guild_id, user_id, validated).await?;
+    } = resolve_composition(
+        &pool,
+        None,
+        guild_id,
+        crate::permissions::Viewer::of(&token),
+        validated,
+    )
+    .await?;
     let overwrite = match body.overwrite_clip_id.as_deref() {
         Some(target_id) => {
             let row = sqlx::query!(
@@ -119,7 +126,15 @@ pub async fn compose_clip(
         channel_id,
         name,
     };
-    let id = queue::enqueue(&pool, guild_id, user_id, &key, &request, &snapshot).await?;
+    let id = queue::enqueue(
+        &pool,
+        guild_id,
+        crate::permissions::Viewer::of(&token),
+        &key,
+        &request,
+        &snapshot,
+    )
+    .await?;
     Ok(HttpResponse::Accepted().json(ComposeClipAccepted {
         status: "processing",
         progress: 0,

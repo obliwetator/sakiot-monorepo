@@ -21,7 +21,8 @@ pub(super) struct Snapshot {
 pub(super) struct Job {
     pub id: String,
     pub guild_id: i64,
-    pub user_id: i64,
+    /// Who requested the export; access is re-checked as them when it runs.
+    pub requester: crate::permissions::Viewer,
     pub result_clip_id: String,
     pub snapshot: Snapshot,
     pub token: String,
@@ -56,11 +57,12 @@ pub(super) async fn existing(
 pub(super) async fn enqueue(
     pool: &Pool<Postgres>,
     guild_id: i64,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     key: &str,
     request: &serde_json::Value,
     snapshot: &Snapshot,
 ) -> Result<String, AppError> {
+    let user_id = requester.user_id;
     let mut tx = pool.begin().await?;
     sqlx::query!("SELECT pg_advisory_xact_lock($1)", QUEUE_LOCK)
         .execute(&mut *tx)
@@ -106,7 +108,7 @@ pub(super) async fn enqueue(
         .map(|target| target.clip_id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     sqlx::query!(
-        "INSERT INTO composition_jobs (id, guild_id, user_id, idempotency_key, request, snapshot, result_clip_id, renderer_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        "INSERT INTO composition_jobs (id, guild_id, user_id, idempotency_key, request, snapshot, result_clip_id, renderer_version, requester_dev) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         id,
         guild_id,
         user_id,
@@ -114,7 +116,8 @@ pub(super) async fn enqueue(
         request,
         serde_json::to_value(snapshot).map_err(|_| AppError::InternalError)?,
         result_id,
-        RENDERER_VERSION
+        RENDERER_VERSION,
+        requester.dev
     )
     .execute(&mut *tx)
     .await?;
@@ -179,7 +182,7 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<(String, Strin
 
 pub(super) async fn load(pool: &Pool<Postgres>, id: &str, token: &str) -> Result<Job, AppError> {
     let row = sqlx::query!(
-        "SELECT id, guild_id, user_id, result_clip_id, snapshot FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() AND renderer_version = $3",
+        "SELECT id, guild_id, user_id, requester_dev, result_clip_id, snapshot FROM composition_jobs WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now() AND renderer_version = $3",
         id,
         token,
         RENDERER_VERSION
@@ -190,7 +193,10 @@ pub(super) async fn load(pool: &Pool<Postgres>, id: &str, token: &str) -> Result
     Ok(Job {
         id: row.id,
         guild_id: row.guild_id,
-        user_id: row.user_id,
+        requester: crate::permissions::Viewer {
+            user_id: row.user_id,
+            dev: row.requester_dev,
+        },
         result_clip_id: row.result_clip_id,
         token: token.to_owned(),
         snapshot: serde_json::from_value(row.snapshot).map_err(|_| AppError::InternalError)?,

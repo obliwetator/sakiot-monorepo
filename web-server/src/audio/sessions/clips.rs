@@ -25,7 +25,8 @@ pub async fn create_session_clip(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let start = f64::from(range.start.unwrap_or(0.0));
     let end = f64::from(range.end.unwrap_or(0.0));
     let silence_free = range.silence_free.unwrap_or(false);

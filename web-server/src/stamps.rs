@@ -73,7 +73,13 @@ pub async fn get_stamps(
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
     require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(&pool, guild_id, token.user_id, query.as_role).await?;
+    let permitted = listing_channels_for(
+        &pool,
+        guild_id,
+        crate::permissions::Viewer::of(&token),
+        query.as_role,
+    )
+    .await?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<StampInfo>::new()));
     }

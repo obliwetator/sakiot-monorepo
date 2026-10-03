@@ -73,6 +73,7 @@ const ERROR_KINDS = {
 	discord_timeout: true,
 	discord_unavailable: true,
 	bot_unavailable: true,
+	membership_unavailable: true,
 	bot_not_in_voice: true,
 	jam_cooldown: true,
 	clip_playback_failed: true,

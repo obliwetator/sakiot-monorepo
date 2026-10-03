@@ -31,7 +31,8 @@ pub async fn download_session(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let job_request = MediaJobRequest::SessionDownload {
         session_id,
         start: query.start,
@@ -59,7 +60,7 @@ pub async fn download_session(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         &idempotency_key,
         &resource_key,
         &job_request,
@@ -75,7 +76,7 @@ pub async fn download_session(
 pub(crate) async fn run_download_job(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     session_id: i64,
     start: Option<f64>,
     end: Option<f64>,
@@ -84,7 +85,7 @@ pub(crate) async fn run_download_job(
     attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
     let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, user_id).await?;
+    let access = require_session_access(&pool_data, session_id, requester).await?;
     let output_dir = PathBuf::from(recording_path()).join(".media-jobs");
     tokio::fs::create_dir_all(&output_dir).await?;
     let output = output_dir.join(format!("{job_id}-{attempt_token}.ogg"));
@@ -154,7 +155,8 @@ pub async fn get_session_silence_free(
 ) -> Result<NamedFile, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let output = session_silence_free_path(&access)?;
     let disposition = if query.download.unwrap_or(false) {
         actix_web::http::header::DispositionType::Attachment
@@ -198,7 +200,8 @@ pub async fn get_session_silence_removal_status(
 ) -> Result<web::Json<SilenceFreeSessionResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let output = session_silence_free_path(&access)?;
     let cache_key = silence_removal_progress_key(session_id);
 
@@ -265,7 +268,8 @@ pub async fn remove_session_silence(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.user_id).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let output = session_silence_free_path(&access)?;
     let cache_key = silence_removal_progress_key(session_id);
     let force = query.force.unwrap_or(false);
@@ -282,7 +286,7 @@ pub async fn remove_session_silence(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        token.user_id,
+        crate::permissions::Viewer::of(&token),
         &key,
         &cache_key,
         &job_request,
@@ -299,13 +303,13 @@ pub async fn remove_session_silence(
 pub(crate) async fn run_session_silence_job(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
-    user_id: i64,
+    requester: crate::permissions::Viewer,
     session_id: i64,
     job_id: &str,
     attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
     let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, user_id).await?;
+    let access = require_session_access(&pool_data, session_id, requester).await?;
     let output = session_silence_free_path(&access)?;
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;

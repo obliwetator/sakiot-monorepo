@@ -224,12 +224,13 @@ pub async fn get_role_view(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, role_id) = path.into_inner();
-    let manager_id = require_guild_manager(&req, &pool, guild_id).await?;
+    require_guild_manager(&req, &pool, guild_id).await?;
+    let manager = crate::permissions::Viewer::of_request(&req)?;
 
     // Lists the role's access for every voice channel the manager can view
     // and join themselves, including ones the role cannot see at all; a
     // preview never shows more than the manager's own view.
-    let access = role_access_for_preview(&pool, guild_id, manager_id, role_id).await?;
+    let access = role_access_for_preview(&pool, guild_id, manager, role_id).await?;
     let permission = get_combined_perm_for_role(&pool, guild_id, role_id).await?;
     let all_ids: Vec<i64> = access.keys().copied().collect();
     let rows = sqlx::query!(
