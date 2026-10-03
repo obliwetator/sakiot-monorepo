@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n            channels.channel_id as \"channel_id!\",\n            COALESCE(channel_permissions.allow, 0) as \"allow!\",\n            COALESCE(channel_permissions.deny, 0) as \"deny!\"\n        FROM channels\n        LEFT JOIN channel_permissions\n            ON channels.channel_id = channel_permissions.channel_id\n            AND channel_permissions.target_id = $1\n        WHERE channels.type = 2\n        AND channels.guild_id = $1",
+  "query": "SELECT\n            channels.channel_id as \"channel_id!\",\n            COALESCE(channel_permissions.allow, 0) as \"allow!\",\n            COALESCE(channel_permissions.deny, 0) as \"deny!\"\n        FROM channels\n        LEFT JOIN channel_permissions\n            ON channels.channel_id = channel_permissions.channel_id\n            AND channel_permissions.target_id = $1\n        WHERE channels.type IN (2, 13)\n        AND channels.guild_id = $1",
   "describe": {
     "columns": [
       {
@@ -38,5 +38,5 @@
       null
     ]
   },
-  "hash": "93a2f2a498faf3e961b41d1082b0e8f3e5f2012489b4843ccdf6b4414bf0333f"
+  "hash": "1f4e5b7f9d8f825882e8710ba90815ddfb7f15673b67dfdcd1c27074cfffecfa"
 }

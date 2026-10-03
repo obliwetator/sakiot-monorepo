@@ -557,6 +557,10 @@ async fn apply_member_overwrites(
     Ok(())
 }
 
+/// `@everyone` overwrite state for every channel the agent can record: voice
+/// (type 2) and stage (type 13). The SQL overwrite helpers used by
+/// `apply_role_overwrites` and `apply_member_overwrites` filter on the same
+/// types; keep them in step.
 async fn get_voice_channel_permission_states(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
@@ -570,7 +574,7 @@ async fn get_voice_channel_permission_states(
         LEFT JOIN channel_permissions
             ON channels.channel_id = channel_permissions.channel_id
             AND channel_permissions.target_id = $1
-        WHERE channels.type = 2
+        WHERE channels.type IN (2, 13)
         AND channels.guild_id = $1",
         guild_id
     )

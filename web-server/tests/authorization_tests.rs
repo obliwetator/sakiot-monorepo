@@ -2344,3 +2344,259 @@ async fn role_preview_never_shows_channels_the_manager_cannot_view(
     );
     Ok(())
 }
+
+// ---- stage channels follow the same visibility as voice channels ----
+
+const STAGE_CHANNEL_ID: i64 = 300;
+const STAGE_MUTED_ROLE_ID: i64 = 1201;
+const ROLE_DENIED_ID: i64 = 31;
+const MEMBER_DENIED_ID: i64 = 32;
+
+/// Guild 1 gains a stage channel (type 13) holding a finalized session with
+/// one fragment and a live stem. `@everyone` can view and join it; one member
+/// loses CONNECT through a role overwrite and another loses VIEW_CHANNEL
+/// through a member overwrite. The guild owner gets a membership row.
+async fn seed_stage_channel_data(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    seed_authorization_data(pool).await?;
+    // No `channel_type` row: that foreign key was dropped so unknown channel
+    // types can be cached.
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 13, 'stage')",
+    )
+    .bind(STAGE_CHANNEL_ID)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO roles (guild_id, role_id, permission, name)
+         VALUES ($1, $2, 0, 'Stage muted')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(STAGE_MUTED_ROLE_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'role', 0, $3), ($1, $4, 'user', 0, $5)",
+    )
+    .bind(STAGE_CHANNEL_ID)
+    .bind(STAGE_MUTED_ROLE_ID)
+    .bind(CONNECT_PERMISSION)
+    .bind(MEMBER_DENIED_ID)
+    .bind(VIEW_CHANNEL_PERMISSION)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)
+         SELECT $1, user_id, 'allowed guild', NULL, false, 0, ARRAY[]::text[]
+           FROM unnest($2::bigint[]) AS user_id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(vec![OTHER_USER_ID, ROLE_DENIED_ID, MEMBER_DENIED_ID])
+    .execute(pool)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)")
+        .bind(ROLE_DENIED_ID)
+        .bind(STAGE_MUTED_ROLE_ID)
+        .execute(pool)
+        .await?;
+
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $3, 'finalized',
+                 to_timestamp(1), to_timestamp(3), 'test', 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(STAGE_CHANNEL_ID)
+    .fetch_one(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('stage-fragment', $1, $2, $3, 1970, 1, 1000, 3000, $4, 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(STAGE_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO bot_instances (instance_id, role, state)
+         VALUES ('stage-bot', 'active', 'active')",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts,
+             recording_owner_instance_id, recording_heartbeat_at)
+         VALUES ('stage-live', $1, $2, $3, 2026, 5, 5000, 'stage-bot', now())",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(STAGE_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .execute(pool)
+    .await?;
+    Ok(session_id)
+}
+
+/// What one viewer can reach of the stage channel's recordings.
+#[derive(Debug, PartialEq)]
+struct StageExposure {
+    /// (file, access annotation) per recording in the stage channel's tree.
+    listed: Vec<(String, Option<String>)>,
+    live_stems: Vec<String>,
+    manifest: StatusCode,
+    events: StatusCode,
+}
+
+async fn stage_exposure(
+    pool: &PgPool,
+    session_id: i64,
+    viewer: i64,
+    as_role: Option<i64>,
+) -> Result<StageExposure, Box<dyn std::error::Error>> {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_current_month_permission)
+                    .service(get_live_stems)
+                    .service(get_session_manifest)
+                    .service(get_session_events),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_for(viewer)?;
+    let call = async |uri: String| {
+        let request = test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request();
+        test::call_service(&app, request).await
+    };
+    let query = as_role.map_or_else(String::new, |role| format!("?as_role={role}"));
+
+    let response = call(format!("/api/current/{ALLOWED_GUILD_ID}{query}")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let tree: serde_json::Value = test::read_body_json(response).await;
+    let mut listed = Vec::new();
+    for channel in tree.as_array().into_iter().flatten() {
+        if channel["channel_id"] != json!(STAGE_CHANNEL_ID.to_string()) {
+            continue;
+        }
+        for dir in channel["dirs"].as_array().into_iter().flatten() {
+            for files in dir["months"]
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.values())
+            {
+                for file in files.as_array().into_iter().flatten() {
+                    listed.push((
+                        file["file"].as_str().unwrap_or_default().to_string(),
+                        file["access"].as_str().map(str::to_string),
+                    ));
+                }
+            }
+        }
+    }
+    listed.sort();
+
+    let response = call(format!("/api/current/{ALLOWED_GUILD_ID}/live-stems{query}")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let live_stems: Vec<String> = test::read_body_json(response).await;
+
+    Ok(StageExposure {
+        listed,
+        live_stems,
+        manifest: call(format!("/api/audio/sessions/{session_id}/manifest"))
+            .await
+            .status(),
+        events: call(format!("/api/audio/sessions/{session_id}/events"))
+            .await
+            .status(),
+    })
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn stage_channel_recordings_follow_view_and_connect(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let session_id = seed_stage_channel_data(&pool).await?;
+    let entry = |file: &str, access: Option<&str>| (file.to_string(), access.map(str::to_string));
+    let visible = StageExposure {
+        listed: vec![
+            entry("stage-fragment.ogg", None),
+            entry("stage-live.ogg", None),
+        ],
+        live_stems: vec!["stage-live".to_string()],
+        manifest: StatusCode::OK,
+        events: StatusCode::OK,
+    };
+    let can_listen = StageExposure {
+        listed: vec![
+            entry("stage-fragment.ogg", Some("can-listen")),
+            entry("stage-live.ogg", Some("can-listen")),
+        ],
+        live_stems: vec!["stage-live".to_string()],
+        manifest: StatusCode::OK,
+        events: StatusCode::OK,
+    };
+    let hidden = StageExposure {
+        listed: Vec::new(),
+        live_stems: Vec::new(),
+        manifest: StatusCode::FORBIDDEN,
+        events: StatusCode::FORBIDDEN,
+    };
+
+    // A member with VIEW_CHANNEL and CONNECT, and the owner, see the stage
+    // channel's recordings like any voice channel's.
+    assert_eq!(
+        stage_exposure(&pool, session_id, USER_ID, None).await?,
+        visible
+    );
+    assert_eq!(
+        stage_exposure(&pool, session_id, OTHER_USER_ID, None).await?,
+        visible
+    );
+    // Role and member denies on the stage channel are honored.
+    assert_eq!(
+        stage_exposure(&pool, session_id, ROLE_DENIED_ID, None).await?,
+        hidden
+    );
+    assert_eq!(
+        stage_exposure(&pool, session_id, MEMBER_DENIED_ID, None).await?,
+        hidden
+    );
+
+    // Role preview annotates stage recordings: @everyone can listen, and the
+    // role denied CONNECT can only see them. Media checks stay on the
+    // owner's own access.
+    assert_eq!(
+        stage_exposure(&pool, session_id, OTHER_USER_ID, Some(ALLOWED_GUILD_ID)).await?,
+        can_listen
+    );
+    assert_eq!(
+        stage_exposure(&pool, session_id, OTHER_USER_ID, Some(STAGE_MUTED_ROLE_ID)).await?,
+        StageExposure {
+            listed: vec![
+                entry("stage-fragment.ogg", Some("visible-only")),
+                entry("stage-live.ogg", Some("visible-only")),
+            ],
+            live_stems: Vec::new(),
+            manifest: StatusCode::OK,
+            events: StatusCode::OK,
+        }
+    );
+    Ok(())
+}

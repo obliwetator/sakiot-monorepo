@@ -191,9 +191,9 @@ role and membership revocations take effect without a new login
 (`web-server/src/permissions.rs`). Guild owners are resolved from `guilds.owner_id` or the
 agent-maintained `user_guilds.owner` flag. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
-VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers voice
-channels (type 2) only: the agent also records stage channels (type 13), but
-their recordings are hidden from everyone until visibility includes them.
+VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the
+channels the agent records: voice (type 2) and stage (type 13). Stage channels
+need a Community server, so they are verified by fixture tests only.
 
 Managers (Administrator or MANAGE_GUILD) can preview a guild as one of its
 roles (`as_role` on the session tree, live stems, clips and stamps, and the
