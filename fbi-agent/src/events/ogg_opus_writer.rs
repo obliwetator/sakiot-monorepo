@@ -2,7 +2,9 @@
 //!
 //! Batches Opus packets into Ogg pages of ~500 ms (25 packets) per RFC 7845 §4,
 //! avoiding the container overhead of single-packet paging while preserving
-//! crash resilience and live HLS streamability.
+//! crash resilience and live HLS streamability. Every completed page is
+//! flushed through to the file: the live stream reads the growing file, and a
+//! page of silence is too small to push a buffered writer on its own.
 //! Discord delivers 20 ms / 960-sample stereo Opus frames at 48 kHz.
 
 use std::io::Write;
@@ -124,7 +126,11 @@ impl<W: Write> OggOpusWriter<W> {
         };
 
         self.inner
-            .write_packet(packet.to_vec(), self.serial, end_info, self.granule)
+            .write_packet(packet.to_vec(), self.serial, end_info, self.granule)?;
+        if should_end_page {
+            self.inner.inner_mut().flush()?;
+        }
+        Ok(())
     }
 
     /// Append `count` silent 20 ms frames in one go (used when a user joins
@@ -214,6 +220,48 @@ mod tests {
             }
         }
         assert_eq!(audio_count, 5);
+        Ok(())
+    }
+
+    /// A writer that only shows what was flushed through it, like a file
+    /// behind an unflushed `BufWriter`.
+    struct Flushed {
+        pending: Vec<u8>,
+        flushed: std::rc::Rc<std::cell::RefCell<Vec<u8>>>,
+    }
+
+    impl Write for Flushed {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.pending.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushed.borrow_mut().append(&mut self.pending);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn every_completed_page_reaches_the_file() -> Result<(), Box<dyn std::error::Error>> {
+        let flushed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut w = OggOpusWriter::new(
+            Flushed {
+                pending: Vec::new(),
+                flushed: flushed.clone(),
+            },
+            7,
+            0,
+        )?;
+        let pages = |bytes: &[u8]| bytes.windows(4).filter(|w| *w == b"OggS").count();
+        // 500 ms of silence is about 130 bytes: far too little to fill a
+        // buffer, so the live stream would wait on the next speech otherwise.
+        w.write_silence(TARGET_PAGE_PACKETS as u64)?;
+        assert_eq!(pages(&flushed.borrow()), 3, "headers and the silence page");
+        w.write_silence(TARGET_PAGE_PACKETS as u64 - 1)?;
+        assert_eq!(pages(&flushed.borrow()), 3, "an open page is not flushed");
+        w.write_silence(1)?;
+        assert_eq!(pages(&flushed.borrow()), 4);
         Ok(())
     }
 
