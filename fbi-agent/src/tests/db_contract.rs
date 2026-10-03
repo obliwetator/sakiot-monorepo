@@ -1256,6 +1256,64 @@ async fn guild_owner_update_refreshes_live_and_oauth_caches(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn full_guild_sync_refreshes_stale_oauth_owner_flags(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Ownership moved while the bot was offline: no GuildUpdate arrives, so
+    // only the next full sync can correct the OAuth snapshot's owner flags.
+    let guild_id = GuildId::new(unique_id() as u64);
+    let old_owner_id = UserId::new(guild_id.get() + 1);
+    let new_owner_id = UserId::new(guild_id.get() + 2);
+    let other_guild_id = GuildId::new(guild_id.get() + 3);
+
+    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2), ($3, $2)")
+        .bind(guild_id.get() as i64)
+        .bind(old_owner_id.get() as i64)
+        .bind(other_guild_id.get() as i64)
+        .execute(&pool)
+        .await?;
+    // The other guild is not in the bot's cache, like an imported fixture
+    // guild granted to the dev account: its flags must stay untouched.
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
+         VALUES
+            ($1, $3, 'owner-resync', true, 0, ARRAY[]::text[]),
+            ($1, $4, 'owner-resync', false, 0, ARRAY[]::text[]),
+            ($2, $4, 'not-cached', true, 0, ARRAY[]::text[])",
+    )
+    .bind(guild_id.get() as i64)
+    .bind(other_guild_id.get() as i64)
+    .bind(old_owner_id.get() as i64)
+    .bind(new_owner_id.get() as i64)
+    .execute(&pool)
+    .await?;
+
+    let mut guild = Guild::default();
+    guild.id = guild_id;
+    guild.owner_id = new_owner_id;
+    crate::database::guild_cache::sync_new_guild(&pool, &guild).await?;
+
+    let ownership: Vec<(i64, i64, bool)> = sqlx::query_as(
+        "SELECT id, user_id, owner
+           FROM user_guilds
+          WHERE id = ANY($1)
+          ORDER BY id, user_id",
+    )
+    .bind(vec![guild_id.get() as i64, other_guild_id.get() as i64])
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        ownership,
+        vec![
+            (guild_id.get() as i64, old_owner_id.get() as i64, false),
+            (guild_id.get() as i64, new_owner_id.get() as i64, true),
+            (other_guild_id.get() as i64, new_owner_id.get() as i64, true),
+        ]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn local_disconnect_releases_only_current_owner_lease(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

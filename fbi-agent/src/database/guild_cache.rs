@@ -330,6 +330,7 @@ async fn update_guilds(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResul
         return Ok(());
     }
 
+    let mut transaction = pool.begin().await?;
     for chunk in guild_cached.chunks(BIND_LIMIT / 2) {
         let mut query_builder: sqlx::QueryBuilder<Postgres> =
             sqlx::QueryBuilder::new("INSERT INTO guilds (id, owner_id) ");
@@ -341,9 +342,29 @@ async fn update_guilds(pool: &Pool<Postgres>, guild_cached: &[Guild]) -> DbResul
             })
             .push(" ON CONFLICT (id) DO UPDATE SET owner_id = EXCLUDED.owner_id");
 
-        query_builder.build().execute(pool).await?;
+        query_builder.build().execute(&mut *transaction).await?;
     }
 
+    // `web-server` grants owner rights from either `guilds.owner_id` or the
+    // OAuth-snapshot `user_guilds.owner` flag. Keep the flag in step here as
+    // `sync_guild_owner` does, or an ownership change the gateway never
+    // delivered (one made while the bot was offline) leaves the previous owner
+    // with full permissions until their next login. Only rows that disagree
+    // are written.
+    let guild_ids: Vec<i64> = guild_cached.iter().map(|guild| guild.id.to_i64()).collect();
+    sqlx::query!(
+        "UPDATE user_guilds ug
+            SET owner = (ug.user_id = g.owner_id)
+           FROM guilds g
+          WHERE g.id = ug.id
+            AND g.id = ANY($1)
+            AND ug.owner IS DISTINCT FROM (ug.user_id = g.owner_id)",
+        &guild_ids
+    )
+    .execute(&mut *transaction)
+    .await?;
+
+    transaction.commit().await?;
     Ok(())
 }
 

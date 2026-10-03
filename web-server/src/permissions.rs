@@ -196,10 +196,12 @@ pub async fn get_combined_perm_for_user(
 ) -> Result<Permissions, AppError> {
     // Owner access comes from the live `guilds.owner_id`, or from the
     // `user_guilds.owner` flag. The flag is trusted because the agent keeps it
-    // fresh — `sync_guild_owner` rewrites it on guild owner changes and
-    // `delete_live_member` drops the row when a member leaves — and the local
-    // seed / fixture tooling writes it to grant the dev account full access to
-    // imported guilds whose real owner is somebody else.
+    // fresh — `sync_guild_owner` rewrites it on guild owner changes, every
+    // full guild sync (startup, `GuildCreate`, the periodic resync) corrects
+    // it for the guilds the bot is in, and `delete_live_member` drops the row
+    // when a member leaves — and the local seed / fixture tooling writes it to
+    // grant the dev account full access to imported guilds whose real owner is
+    // somebody else. The bot is not in those guilds, so syncs leave them alone.
     let owner = sqlx::query_scalar!(
         r#"SELECT (EXISTS (
              SELECT 1
