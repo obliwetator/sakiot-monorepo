@@ -156,7 +156,6 @@ export function GuildVoiceSettingsPage() {
 						/>
 						{seconds.savedUpdate && (
 							<SavedValueChanged
-								saved={`${seconds.savedUpdate.value} seconds`}
 								onTakeSaved={seconds.takeSaved}
 								onSaveMine={() => void handleSave()}
 								isSaving={saveState.isLoading}
@@ -239,11 +238,6 @@ export function GuildVoiceSettingsPage() {
 						/>
 						{retentionDays.savedUpdate && (
 							<SavedValueChanged
-								saved={
-									retentionDays.savedUpdate.value === ""
-										? "no retention"
-										: `${retentionDays.savedUpdate.value} days`
-								}
 								onTakeSaved={retentionDays.takeSaved}
 								onSaveMine={() => void handleRecordingPolicySave()}
 								isSaving={recordingSaveState.isLoading}
@@ -279,7 +273,6 @@ export function GuildVoiceSettingsPage() {
 						</fieldset>
 						{excludedChannels.savedUpdate && (
 							<SavedValueChanged
-								saved={`${excludedChannels.savedUpdate.value.length} excluded channel(s)`}
 								onTakeSaved={excludedChannels.takeSaved}
 								onSaveMine={() => void handleRecordingPolicySave()}
 								isSaving={recordingSaveState.isLoading}

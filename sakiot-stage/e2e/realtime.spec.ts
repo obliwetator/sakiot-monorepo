@@ -151,7 +151,7 @@ test("a settings refresh keeps the field being edited and updates the rest", asy
 	).toHaveValue("45");
 	await expect(cap).toHaveValue("3600");
 	await expect(
-		page.getByText("Someone else saved 7200 seconds while you were editing."),
+		page.getByText("Someone else saved this while you were editing."),
 	).toBeVisible();
 	await page.getByRole("button", { name: "Use saved value" }).click();
 	await expect(cap).toHaveValue("7200");

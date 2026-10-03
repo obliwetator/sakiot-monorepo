@@ -209,7 +209,6 @@ export function GuildAdminCooldowns() {
 
 				{guildSeconds.savedUpdate && (
 					<SavedValueChanged
-						saved={`${guildSeconds.savedUpdate.value} seconds`}
 						onTakeSaved={guildSeconds.takeSaved}
 						onSaveMine={() => void saveGuild()}
 						isSaving={setGuildState.isLoading}

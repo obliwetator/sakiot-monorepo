@@ -1,8 +1,6 @@
 import { Button, Notice } from "./ui";
 
 interface SavedValueChangedProps {
-	/** The newer saved value, as the user would read it. */
-	saved: string;
 	onTakeSaved: () => void;
 	onSaveMine: () => void;
 	isSaving: boolean;
@@ -13,14 +11,13 @@ interface SavedValueChangedProps {
  * the user was editing it. Neither side is lost until the user picks one.
  */
 export function SavedValueChanged({
-	saved,
 	onTakeSaved,
 	onSaveMine,
 	isSaving,
 }: SavedValueChangedProps) {
 	return (
 		<Notice tone="warning" announce="status">
-			<span>Someone else saved {saved} while you were editing.</span>
+			<span>Someone else saved this while you were editing.</span>
 			<div className="mt-2 flex flex-wrap gap-2">
 				<Button size="sm" variant="outline" onPress={onTakeSaved}>
 					Use saved value
