@@ -30,6 +30,7 @@ import {
 	TextField,
 } from "../../shared/ui";
 import { useDraftField } from "../../shared/useDraftField";
+import { MemberPicker } from "./MemberPicker";
 
 function parseSeconds(value: string): number | null {
 	const seconds = Number(value);
@@ -240,9 +241,18 @@ export function GuildAdminCooldowns() {
 						Per-user overrides
 					</SectionTitle>
 					<Text tone="muted">
-						Add a new override or update an existing member by user ID.
+						Find a member or enter their user ID, then set their cooldown.
 					</Text>
 				</div>
+
+				<MemberPicker
+					guildId={gid}
+					onPick={(userId) => {
+						setNewUserId(userId);
+						setOverrideError(null);
+						setOverrideState.reset();
+					}}
+				/>
 
 				<form
 					noValidate

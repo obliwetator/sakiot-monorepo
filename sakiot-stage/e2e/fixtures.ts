@@ -37,24 +37,37 @@ export const test = base.extend<{ consoleAudit: ConsoleAudit }>({
 
 const RECORDING_OPT_OUT_PATH =
 	/\/api\/users\/current\/guilds\/[^/]+\/recording-opt-out$/;
+const VOICE_PRESENCE_PATH = /\/api\/current\/[^/]+\/voice-presence$/;
 
 /**
- * Answers the recording opt-out endpoint the account menu queries for the
- * selected server, as a member who is recorded and whose changes are
- * accepted. Returns false for any other request, so catch-all API mocks can
- * try it before their own routes.
+ * Answers the endpoints every page queries on its own, so catch-all API mocks
+ * can try it before their own routes (it returns false for anything else):
+ *
+ * - the recording opt-out the account menu shows for the selected server, as
+ *   a member who is recorded and whose changes are accepted;
+ * - voice presence for the recordings sidebar, with nobody in voice.
  */
-export async function fulfillRecordingOptOut(
+export async function fulfillSharedRoutes(
 	route: Route,
 	headers: Record<string, string>,
 ): Promise<boolean> {
 	const request = route.request();
-	if (!RECORDING_OPT_OUT_PATH.test(new URL(request.url()).pathname)) {
+	const path = new URL(request.url()).pathname;
+	const json = { ...headers, "Content-Type": "application/json" };
+	if (VOICE_PRESENCE_PATH.test(path)) {
+		await route.fulfill({
+			status: 200,
+			headers: json,
+			body: JSON.stringify({ available: true, channels: [] }),
+		});
+		return true;
+	}
+	if (!RECORDING_OPT_OUT_PATH.test(path)) {
 		return false;
 	}
 	await route.fulfill({
 		status: 200,
-		headers: { ...headers, "Content-Type": "application/json" },
+		headers: json,
 		body:
 			request.method() === "PUT"
 				? (request.postData() ?? "{}")

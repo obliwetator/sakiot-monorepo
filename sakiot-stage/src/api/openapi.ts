@@ -52,6 +52,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/members": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["search_guild_members"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/recording-deletions/{job_id}": {
 		parameters: {
 			query?: never;
@@ -687,6 +703,22 @@ export interface paths {
 		 *     missing, deleted or not visible; those cases are indistinguishable.
 		 */
 		get: operations["get_session_listing_entry"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/current/{guild_id}/voice-presence": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_voice_presence"];
 		put?: never;
 		post?: never;
 		delete?: never;
@@ -1350,6 +1382,14 @@ export interface components {
 			/** @example 268435456 */
 			permissions: string;
 		};
+		GuildMember: {
+			is_bot: boolean;
+			/** @description Nickname, display name or username, whichever is set first. */
+			name: string;
+			/** @example 146638124288704513 */
+			user_id: string;
+			username: string;
+		};
 		GuildRecordingPolicy: {
 			channels: components["schemas"]["VoiceChannel"][];
 			excluded_channel_ids: string[];
@@ -1381,8 +1421,12 @@ export interface components {
 			 * @example 255
 			 */
 			color_tertiary?: number | null;
-			/** Format: int64 */
-			member_count: number;
+			/**
+			 * Format: int64
+			 * @description Discord never lists `@everyone` among a member's roles, so its count
+			 *     comes from the member roster: null until a complete roster exists.
+			 */
+			member_count?: number | null;
 			name: string;
 			/** @example 268435456 */
 			permission: string;
@@ -1428,9 +1472,38 @@ export interface components {
 			stage: string;
 			status: string;
 		};
+		MemberPage: {
+			/**
+			 * @description Whether the roster has ever been complete. While false, members the
+			 *     bot has not seen yet are missing; enter their id by hand.
+			 */
+			complete: boolean;
+			members: components["schemas"]["GuildMember"][];
+			/** Format: int64 */
+			next_offset?: number | null;
+		};
 		PlayClipResponse: {
 			/** @description `queued`: the clip is in the bot's voice queue for the guild. */
 			status: string;
+		};
+		PresenceChannel: {
+			/** @example 146638124288704513 */
+			channel_id: string;
+			members: components["schemas"]["PresenceMember"][];
+			name: string;
+		};
+		PresenceMember: {
+			is_bot: boolean;
+			/** @description Nickname, display name or username, whichever is set first. */
+			name?: string | null;
+			self_deaf: boolean;
+			self_mute: boolean;
+			server_deaf: boolean;
+			server_mute: boolean;
+			streaming: boolean;
+			/** @example 146638124288704513 */
+			user_id: string;
+			video: boolean;
 		};
 		RecordingDeletionStatus: {
 			/** Format: int32 */
@@ -1473,7 +1546,9 @@ export interface components {
 			| "recording_opt_out"
 			| "voice_settings"
 			| "recording_policy"
-			| "cooldowns";
+			| "cooldowns"
+			| "presence"
+			| "members";
 		/**
 		 * @description Why the client must refetch everything it has subscribed to.
 		 * @enum {string}
@@ -1736,6 +1811,18 @@ export interface components {
 			offset_ms: number;
 			user_id: string;
 		};
+		VoicePresence: {
+			/**
+			 * @description False while no running bot keeps presence current (during a first
+			 *     rollout, or after the bot stopped): presence is unknown, not empty.
+			 */
+			available: boolean;
+			/**
+			 * @description Occupied channels the viewer can view, by name. Empty when not
+			 *     `available`.
+			 */
+			channels: components["schemas"]["PresenceChannel"][];
+		};
 	};
 	responses: never;
 	parameters: never;
@@ -1989,6 +2076,75 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description User cannot manage this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	search_guild_members: {
+		parameters: {
+			query?: {
+				/**
+				 * @description Part of a nickname, display name or username, or the start of a user
+				 *     id. Omitted: everyone, by name.
+				 */
+				q?: string | null;
+				/** @description 1 to 50; 20 when omitted. */
+				limit?: number | null;
+				/** @description 0 to 1000; from `next_offset` of the previous page. */
+				offset?: number | null;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Matching guild members, by name */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["MemberPage"];
+				};
+			};
+			/** @description Invalid limit or offset */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
 			};
 			/** @description Missing or invalid access token */
 			401: {
@@ -4879,6 +5035,68 @@ export interface operations {
 				};
 			};
 			/** @description Missing guild permission */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Role does not exist in this guild */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_voice_presence: {
+		parameters: {
+			query: {
+				/** @description Impersonate a guild role (managers only) */
+				as_role: number;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Who is in the voice and stage channels the viewer can view */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["VoicePresence"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Not a member, or a role preview by a non-manager */
 			403: {
 				headers: {
 					[name: string]: unknown;

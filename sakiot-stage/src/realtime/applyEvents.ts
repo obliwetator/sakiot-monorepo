@@ -30,6 +30,8 @@ const GUILD_TAGS: ApiTag[] = [
 	"GuildCooldown",
 	"UserOverrides",
 	"GuildRoles",
+	"GuildMembers",
+	"VoicePresence",
 ];
 
 function invalidate(ctx: ApplyContext, guildId: string, types: ApiTag[]) {
@@ -159,6 +161,13 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 			return;
 		case "cooldowns":
 			invalidate(ctx, guildId, ["GuildCooldown", "UserOverrides"]);
+			return;
+		case "presence":
+			invalidate(ctx, guildId, ["VoicePresence"]);
+			return;
+		case "members":
+			// Role pages count and list members from the roster.
+			invalidate(ctx, guildId, ["GuildMembers", "GuildRoles"]);
 			return;
 	}
 }

@@ -76,6 +76,8 @@ const PRIVATE_TAGS = [
 	"GuildCooldown",
 	"UserOverrides",
 	"GuildRoles",
+	"GuildMembers",
+	"VoicePresence",
 	"Session",
 ] as const;
 

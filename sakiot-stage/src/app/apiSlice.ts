@@ -138,6 +138,9 @@ export type StampData = ApiSchema["StampInfo"];
 export type GuildRole = ApiSchema["GuildRole"];
 
 export type RoleMember = ApiSchema["RoleMember"];
+export type MemberPage = ApiSchema["MemberPage"];
+export type GuildMember = ApiSchema["GuildMember"];
+export type VoicePresence = ApiSchema["VoicePresence"];
 
 export type RoleView = ApiSchema["RoleView"];
 
@@ -161,6 +164,10 @@ const TAG_TYPES = [
 	"LiveState",
 	"Stamps",
 	"GuildRoles",
+	/** Member search over the guild roster. */
+	"GuildMembers",
+	/** Who is in the guild's voice and stage channels. */
+	"VoicePresence",
 	/** One recording session's manifest and waveform, by session id. */
 	"Session",
 ] as const;
@@ -700,6 +707,30 @@ export const apiSlice = createApi({
 		>({
 			query: ({ guild_id, role_id }) =>
 				apiUrl(API_ROUTES.roleMembers, { guild_id, role_id }),
+			providesTags: guildScoped("GuildRoles"),
+		}),
+		/** Manager-only member search; `q` matches names or the start of an id. */
+		searchGuildMembers: builder.query<
+			MemberPage,
+			{ guild_id: string; q: string; offset?: number }
+		>({
+			query: ({ guild_id, q, offset }) => {
+				const params = new URLSearchParams();
+				if (q) params.set("q", q);
+				if (offset) params.set("offset", String(offset));
+				const search = params.toString();
+				return `${apiUrl(API_ROUTES.guildMembers, { guild_id })}${search ? `?${search}` : ""}`;
+			},
+			providesTags: guildScoped("GuildMembers"),
+		}),
+		/** Who is in the voice and stage channels the viewer can view. */
+		getVoicePresence: builder.query<
+			VoicePresence,
+			{ guild_id: string; as_role?: string }
+		>({
+			query: ({ guild_id, as_role }) =>
+				withAsRole(apiUrl(API_ROUTES.voicePresence, { guild_id }), as_role),
+			providesTags: guildScoped("VoicePresence"),
 		}),
 		getRoleView: builder.query<RoleView, { guild_id: string; role_id: string }>(
 			{
@@ -782,5 +813,7 @@ export const {
 	useGetRecordingDeletionQuery,
 	useGetGuildRolesQuery,
 	useGetRoleMembersQuery,
+	useSearchGuildMembersQuery,
+	useGetVoicePresenceQuery,
 	useGetRoleViewQuery,
 } = apiSlice;

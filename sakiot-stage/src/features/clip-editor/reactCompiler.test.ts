@@ -16,6 +16,8 @@ const COMPILED_HOOKS = [
 	"useSourceBuffers.ts",
 	"useTimelineViewport.ts",
 	"../../shared/useDraftField.ts",
+	"../admin-cooldowns/MemberPicker.tsx",
+	"../audio-dashboard/VoicePresencePanel.tsx",
 ];
 
 describe("React Compiler coverage", () => {

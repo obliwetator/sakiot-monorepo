@@ -1,5 +1,5 @@
 import { API_ORIGIN, corsHeaders, GUILD_ID } from "./clip-editor-fixture";
-import { expect, fulfillRecordingOptOut, test } from "./fixtures";
+import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 const API_PREFIX = "/api";
 const CLIP_COUNT = 40;
@@ -24,7 +24,7 @@ async function mockManyClips(page: import("@playwright/test").Page) {
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 		const fulfillJson = async (body: unknown) => {
 			await route.fulfill({
 				status: 200,

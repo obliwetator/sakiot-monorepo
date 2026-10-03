@@ -12,6 +12,11 @@ const treePath = `/api/current/${GUILD_ID}`;
 const modulePattern =
 	/\/(?:src\/features\/audio-dashboard\/YearSelection\.tsx|assets\/YearSelection-[^/]+\.js)(?:\?|$)/;
 
+/** The recording tree and its live stems (not the voice presence panel). */
+function isTreeRequest(pathname: string): boolean {
+	return pathname === treePath || pathname === `${treePath}/live-stems`;
+}
+
 function gate() {
 	let release!: () => void;
 	const promise = new Promise<void>((resolve) => {
@@ -43,7 +48,7 @@ test("authorized data loads while the audio module is held, without a mount refe
 	const authRequests: string[] = [];
 	page.on("request", (request) => {
 		const url = new URL(request.url());
-		if (url.pathname.startsWith(treePath)) requests.push(url.pathname);
+		if (isTreeRequest(url.pathname)) requests.push(url.pathname);
 		if (
 			["/api/users/current", "/api/users/current/guilds"].includes(url.pathname)
 		)
@@ -110,8 +115,7 @@ test("role changes and return visits refresh each query once", async ({
 	const requests: string[] = [];
 	page.on("request", (request) => {
 		const url = new URL(request.url());
-		if (url.pathname.startsWith(treePath))
-			requests.push(url.pathname + url.search);
+		if (isTreeRequest(url.pathname)) requests.push(url.pathname + url.search);
 	});
 	await page.goto(`${audioPath}?as_role=role-123`);
 	await expect(
@@ -187,7 +191,11 @@ test("an audio chunk failure has a reload action", async ({
 	).toBeVisible();
 });
 
-test("an idle recording tree does not poll live stems", async ({ page }) => {
+// Without realtime, an idle tree still checks live stems every 30 s, to
+// discover new recordings, but never at the 10 s live rate.
+test("an idle recording tree does not poll live stems at the live rate", async ({
+	page,
+}) => {
 	await page.clock.install();
 	await mockClipEditorApi(page);
 	let liveRequests = 0;
@@ -198,11 +206,12 @@ test("an idle recording tree does not poll live stems", async ({ page }) => {
 	await page.goto(audioPath);
 	await showTree(page);
 	expect(liveRequests).toBe(1);
-	await page.clock.fastForward(30_000);
-	expect(liveRequests).toBe(1);
+	// A minute holds six polls at the live rate, two at the idle rate.
+	await page.clock.runFor(60_000);
+	expect(liveRequests - 1).toBeLessThanOrEqual(2);
 });
 
-test("live-stem polling stops after the last recording ends", async ({
+test("live-stem polling slows down after the last recording ends", async ({
 	page,
 }) => {
 	await page.clock.install();
@@ -226,6 +235,6 @@ test("live-stem polling stops after the last recording ends", async ({
 	await expect.poll(() => liveRequests).toBe(2);
 	// Let React apply the empty result and remove the subscription's timer.
 	await page.clock.runFor(100);
-	await page.clock.fastForward(30_000);
-	expect(liveRequests).toBe(2);
+	await page.clock.runFor(60_000);
+	expect(liveRequests - 2).toBeLessThanOrEqual(2);
 });

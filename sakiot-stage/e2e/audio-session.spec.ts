@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expectAccessibleMediaRoute } from "./axe";
-import { expect, fulfillRecordingOptOut, test } from "./fixtures";
+import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -295,7 +295,7 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 
 		const fulfillJson = async (body: unknown, status = 200) => {
 			await route.fulfill({

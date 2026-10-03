@@ -232,9 +232,9 @@ export function GuildMembers() {
 										<div>
 											{role.name}
 											<span className="block text-xs text-muted">
-												<Badge
-													size={"sm"}
-												>{`${role.member_count} member${role.member_count === 1 ? "" : "s"}`}</Badge>
+												<Badge size={"sm"}>
+													{memberCountLabel(role.member_count)}
+												</Badge>
 											</span>
 										</div>
 									</Button>
@@ -320,4 +320,10 @@ export function GuildMembers() {
 			/>
 		</div>
 	);
+}
+
+/** `null` (only `@everyone`, before the bot has a complete roster): unknown. */
+function memberCountLabel(count: number | null | undefined): string {
+	if (count === null || count === undefined) return "Member count unknown";
+	return `${count} member${count === 1 ? "" : "s"}`;
 }

@@ -1,4 +1,4 @@
-import { expect, fulfillRecordingOptOut, test } from "./fixtures";
+import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const GUILD_ID = "guild-123";
@@ -28,7 +28,7 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 		const json = async (body: unknown, status = 200) => {
 			await route.fulfill({
 				status,
@@ -151,7 +151,7 @@ test("server validation and permission failures are explained and input is kept"
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 		const json = (body: unknown, status = 200) =>
 			route.fulfill({ status, headers: corsHeaders, json: body });
 		if (path === "/api/users/current") {

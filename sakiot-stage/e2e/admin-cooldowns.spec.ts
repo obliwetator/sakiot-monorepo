@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
-import { expect, fulfillRecordingOptOut, test } from "./fixtures";
+import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -64,6 +64,12 @@ const populatedOverrides: Override[] = [
 	},
 ];
 
+const rosterMembers = [
+	{ user_id: "300", name: "Alice", username: "alice", is_bot: false },
+	{ user_id: "301", name: "Alfred", username: "alfie", is_bot: false },
+	{ user_id: "302", name: "Bob", username: "bob", is_bot: false },
+];
+
 const corsHeaders = {
 	"Access-Control-Allow-Credentials": "true",
 	"Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
@@ -93,7 +99,7 @@ async function mockApi(
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 
 		const fulfillJson = async (body: unknown, status = 200) => {
 			await route.fulfill({
@@ -142,6 +148,19 @@ async function mockApi(
 		}
 		if (path === overridesPath && method === "GET") {
 			await fulfillJson(state.overrides);
+			return;
+		}
+		if (path === `/admin/guilds/${GUILD_ID}/members` && method === "GET") {
+			const q = (url.searchParams.get("q") ?? "").toLowerCase();
+			await fulfillJson({
+				complete: true,
+				members: rosterMembers.filter(
+					(member) =>
+						member.name.toLowerCase().includes(q) ||
+						member.user_id.startsWith(q),
+				),
+				next_offset: null,
+			});
 			return;
 		}
 		if (
@@ -324,6 +343,10 @@ test("shows loading and populated states with accessible keyboard behavior", asy
 	expect(outlineStyle).not.toBe("none");
 
 	await page.keyboard.press("Tab");
+	await expect(
+		page.getByRole("combobox", { name: "Find member" }),
+	).toBeFocused();
+	await page.keyboard.press("Tab");
 	await expect(page.getByLabel("User ID")).toBeFocused();
 
 	const results = await new AxeBuilder({ page }).include("main").analyze();
@@ -445,6 +468,24 @@ test("announces failed deletion and removes an override after success", async ({
 	await expect(
 		page.getByRole("cell", { name: SNOWFLAKE_USER_ID, exact: true }),
 	).toHaveCount(0);
+});
+
+test("finding a member fills in their user id", async ({ page }) => {
+	const state = await mockApi(page);
+	await openCooldowns(page);
+
+	const picker = page.getByRole("combobox", { name: "Find member" });
+	await picker.fill("alf");
+	await page.getByRole("option", { name: /Alfred \(alfie\)/ }).click();
+	await expect(page.getByLabel("User ID")).toHaveValue("301");
+	await expect(picker).toHaveValue("");
+
+	await page.getByLabel("Cooldown (seconds)").nth(1).fill("45");
+	await page.getByRole("button", { name: "Add / Update" }).click();
+	await expect(page.getByText("User override saved.")).toBeVisible();
+	expect(state.overrides.some((override) => override.user_id === "301")).toBe(
+		true,
+	);
 });
 
 test("renders the empty table state", async ({ page }) => {

@@ -20,6 +20,7 @@ export const API_ROUTES = {
 	liveStems: "/api/current/{guild_id}/live-stems",
 	sessionListingEntry:
 		"/api/current/{guild_id}/sessions/{recording_session_id}",
+	voicePresence: "/api/current/{guild_id}/voice-presence",
 	realtime: "/api/realtime",
 	sessionManifest: "/api/audio/sessions/{recording_session_id}/manifest",
 	sessionChannelMix: "/api/audio/sessions/{recording_session_id}/channel-mix",
@@ -67,6 +68,7 @@ export const API_ROUTES = {
 	guildRoles: "/api/admin/guilds/{guild_id}/roles",
 	roleMembers: "/api/admin/guilds/{guild_id}/roles/{role_id}/members",
 	roleChannels: "/api/admin/guilds/{guild_id}/roles/{role_id}/channels",
+	guildMembers: "/api/admin/guilds/{guild_id}/members",
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
 	recordingOptOut: "/api/users/current/guilds/{guild_id}/recording-opt-out",

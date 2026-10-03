@@ -17,6 +17,7 @@ import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { AudioInterface } from "./AudioInterface";
 import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
 import RecordingTree from "./TreeView";
+import { VoicePresencePanel } from "./VoicePresencePanel";
 
 export function YearSelection() {
 	const params = useParams();
@@ -44,7 +45,12 @@ export function YearSelection() {
 		if (isDesktop) setTreeOpen(false);
 	}, [isDesktop]);
 
-	const tree = <RecordingTree onRecordingSelect={() => setTreeOpen(false)} />;
+	const tree = (
+		<>
+			<VoicePresencePanel />
+			<RecordingTree onRecordingSelect={() => setTreeOpen(false)} />
+		</>
+	);
 
 	return (
 		<div className="flex flex-col w-full min-[900px]:h-full overflow-hidden">

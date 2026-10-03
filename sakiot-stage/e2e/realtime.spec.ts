@@ -1,5 +1,5 @@
 import type { Page, Route, WebSocketRoute } from "@playwright/test";
-import { expect, fulfillRecordingOptOut, test } from "./fixtures";
+import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 /**
  * Realtime on: the mocked server reports `realtime_enabled`, and
@@ -31,7 +31,6 @@ async function mockApi(page: Page, handler: Handler) {
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
-		if (await fulfillRecordingOptOut(route, corsHeaders)) return;
 		const json = async (body: unknown, status = 200) => {
 			await route.fulfill({
 				status,
@@ -39,6 +38,9 @@ async function mockApi(page: Page, handler: Handler) {
 				body: JSON.stringify(body),
 			});
 		};
+		// The test's own routes first: they may replace a shared one.
+		if (await handler(path, route, json)) return;
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
 		if (path === "/api/users/current") {
 			await json({
 				avatar: "",
@@ -55,7 +57,6 @@ async function mockApi(page: Page, handler: Handler) {
 			]);
 			return;
 		}
-		if (await handler(path, route, json)) return;
 		await json(
 			{ detail: `Unhandled mock route: ${request.method()} ${path}` },
 			404,
@@ -239,6 +240,75 @@ test("a recordings event patches one session into the tree", async ({
 	expect(requests.filter((p) => p === `/api/current/${GUILD_ID}`).length).toBe(
 		treeLoads,
 	);
+});
+
+test("a presence event refreshes who is in voice", async ({ page }) => {
+	const member = (user_id: string, name: string, self_mute = false) => ({
+		user_id,
+		name,
+		is_bot: false,
+		self_mute,
+		self_deaf: false,
+		server_mute: false,
+		server_deaf: false,
+		streaming: false,
+		video: false,
+	});
+	let presence: unknown = {
+		available: true,
+		channels: [
+			{ channel_id: "100", name: "General", members: [member("1", "Alice")] },
+		],
+	};
+	await mockApi(page, async (path, _route, json) => {
+		if (path === `/api/current/${GUILD_ID}`) {
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/live-stems`) {
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/voice-presence`) {
+			await json(presence);
+			return true;
+		}
+		return false;
+	});
+	let socket: WebSocketRoute | null = null;
+	await page.routeWebSocket(SOCKET_URL, (ws) => {
+		socket = ws;
+		serve(ws);
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/audio`);
+	const browse = page.getByRole("button", { name: "Browse files" });
+	const inVoice = page.getByRole("heading", { name: "In voice" });
+	await expect(browse.or(inVoice).first()).toBeVisible();
+	if (await browse.isVisible()) await browse.click();
+	const general = page.getByRole("list", { name: "In General" });
+	await expect(general.getByText("Alice")).toBeVisible();
+	await expect.poll(() => socket !== null).toBe(true);
+
+	// Bob joins muted; the event names no channel and no user.
+	presence = {
+		available: true,
+		channels: [
+			{
+				channel_id: "100",
+				name: "General",
+				members: [member("1", "Alice"), member("2", "Bob", true)],
+			},
+		],
+	};
+	(socket as unknown as WebSocketRoute).send(changed("presence"));
+	await expect(general.getByText("Bob")).toBeVisible();
+	await expect(general.getByRole("img", { name: "Muted" })).toHaveCount(1);
+
+	// The bot stopped: presence is unknown, not empty.
+	presence = { available: false, channels: [] };
+	(socket as unknown as WebSocketRoute).send(changed("presence"));
+	await expect(page.getByText("Voice activity is unavailable.")).toBeVisible();
 });
 
 test("an unsupported protocol version asks for a reload", async ({ page }) => {
