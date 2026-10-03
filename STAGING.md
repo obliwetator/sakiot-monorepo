@@ -83,6 +83,13 @@ serves both targets, driven by the env file plus `SAKIOT_WEB_UNIT` /
 ```nginx
 root /var/www/staging.patrykstyla.com;          # NOT /var/www/patrykstyla.com
 location /api/ { proxy_pass http://127.0.0.1:8901; }
+location = /api/realtime {                      # realtime WebSocket
+    proxy_pass http://127.0.0.1:8901;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 75s;
+}
 location /     { try_files $uri /index.html; }
 # don't cache HTML/version.json (assets are hash-named):
 location = /index.html   { add_header Cache-Control "no-store"; }
@@ -95,6 +102,13 @@ location = /version.json { add_header Cache-Control "no-store"; }
 location /api/ {
     proxy_pass http://127.0.0.1:8901;
 }
+location = /api/realtime {
+    proxy_pass http://127.0.0.1:8901;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 75s;
+}
 location / {
     proxy_pass http://127.0.0.1:8081;
     proxy_http_version 1.1;
@@ -102,6 +116,10 @@ location / {
     proxy_set_header Connection "Upgrade";
 }
 ```
+
+Realtime (`REALTIME_ENABLED` in `staging.env`) stays off until both vhosts have
+the `/api/realtime` location above and the page CSP allows the socket; see
+`ops/README.md`, "Realtime".
 
 ## Login on staging
 

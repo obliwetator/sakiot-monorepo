@@ -15,6 +15,15 @@ server {
     # API responses (including OAuth and media) carry their own policy. Do not
     # add the static-page CSP to /api/: it would block the OAuth nonce script.
     location /api/ { proxy_pass http://127.0.0.1:PORT; }
+    # Realtime dashboard socket: forward the WebSocket upgrade. The server
+    # sends a heartbeat every 20 s, well inside the read timeout.
+    location = /api/realtime {
+        proxy_pass http://127.0.0.1:PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 75s;
+    }
     location / {
         add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss:; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' blob: https:; worker-src 'self' blob:" always;
         add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;

@@ -230,6 +230,58 @@ Full docs in `PREVIEW.md`; remember to re-run `ops/update-deploy-engine.sh`
 after changing `ops/` so the `preview-ci`/`preview-up`/`preview-remove` forced
 command verbs and the sudo rule are installed.
 
+## Realtime
+
+Dashboards receive refresh signals over a WebSocket at `/api/realtime`
+(`docs/architecture.md`, "Realtime updates"). It is switched per environment by
+`REALTIME_ENABLED` in the env file, default off. While it is off the endpoint
+answers 404 and clients poll as they always have, so enabling it is safe to
+postpone. These are VPS steps; nothing in the deploy applies them.
+
+For each environment (production, staging, and for staging also the debug
+vhost):
+
+1. **nginx**: forward the upgrade on the socket path, next to the existing
+   `location /api/`:
+
+   ```nginx
+   location = /api/realtime {
+       proxy_pass http://127.0.0.1:<port>;   # 8900 production, 8901 staging
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_read_timeout 75s;                # server heartbeats every 20 s
+   }
+   ```
+
+   If you prefer the `map $http_upgrade $connection_upgrade { default upgrade;
+   '' close; }` form, it belongs in the `http` context
+   (`/etc/nginx/nginx.conf` or a `conf.d` file), not in the vhost.
+2. **CSP**: the page's `Content-Security-Policy` `connect-src` must allow the
+   socket's origin, `wss://<api host>` (or `wss:`). The preview template
+   already allows `wss:`. Check what production and staging actually send:
+
+   ```bash
+   curl -sI https://<page host>/ | grep -i content-security-policy
+   ```
+3. **Origins**: the server accepts the socket only from the exact origins in
+   `CORS_ALLOWED_ORIGIN` and `OAUTH_ALLOWED_OPENER_ORIGINS`; subdomains do not
+   count. Confirm the env file lists the page origin users actually load.
+4. `nginx -t && systemctl reload nginx`, then set `REALTIME_ENABLED=true` in
+   the env file and restart the web unit (no deploy needed).
+5. Verify: the dashboard's network panel shows `/api/realtime` as `101
+   Switching Protocols`, and `realtime_listener_connected` is 1. Rolling back
+   is `REALTIME_ENABLED=false` and a restart.
+
+Preview slots get the location from `ops/nginx/preview-slot.conf.example`, but
+only when provisioned: slots that existed before it keep their old vhost
+(`ops/preview-slot.sh` renders the template once), so re-render them before
+enabling realtime in `preview.env`.
+
+Watch `pg_notification_queue_usage` (alert well below 1: a full NOTIFY queue
+fails every notifying commit, including recordings), `realtime_resyncs` and
+`realtime_queue_overflows`.
+
 ## Environment isolation
 
 Staging and preview slots run code production has not shipped, and previews
