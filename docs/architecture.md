@@ -270,6 +270,49 @@ comes from the existing authorized endpoints.
   keep an admin's draft when a refresh changes the saved value
   (`shared/useDraftField.ts`).
 
+### Members and voice presence
+
+The agent keeps two projections of its gateway cache: `guild_members`, the
+current roster, and `voice_presence`, who is in which voice or stage channel
+(`sakiot-db/migrations/20261004000000_member_presence_projections.sql`,
+`fbi-agent/src/projections.rs`). They are not used for authorization yet;
+`user_guilds` still decides membership.
+
+- **Ownership**: one instance writes a guild's projections, recorded in
+  `guild_projection_state` with a generation. Every write locks that row and
+  checks owner and generation, then writes what serenity's cache holds now,
+  so writes are order-insensitive and a superseded writer is fenced out. A
+  replacement claims a guild only from a complete snapshot, by bumping the
+  generation; until then the incumbent keeps writing, even while draining.
+  A draining instance never claims. A stopping instance releases what it
+  still owns, which makes presence unknown rather than frozen.
+- **Completeness**: Discord sends every member in GUILD_CREATE only below
+  `large_threshold` (250). Above it the agent requests member chunks, one
+  guild at a time with a 1 s gap, and claims the guild once the full chunk
+  set arrives (`ChunkSet`). A guild whose request times out is retried at the
+  next 15-minute refresh. Absence from an incomplete roster is never a
+  departure: members are removed only by a member-remove event or a complete
+  snapshot.
+- **Presence** (`GET /api/current/{guild}/voice-presence`, `web-server/src/presence.rs`):
+  every member sees who is in the voice and stage channels they can view.
+  VIEW_CHANNEL is enough, as in Discord's channel list. Role previews follow
+  the role-preview rule, clipped to the manager's own presence view. The
+  response says `available: false` while no running agent owns the guild (a
+  first rollout, a stopped or crashed owner), so clients show "unknown"
+  instead of empty channels.
+- **Events**: `presence` and `members` payloads carry only the guild. Every
+  subscriber refetches its own filtered presence, so a move into a hidden
+  channel looks like leaving and nobody learns about channels they cannot
+  view. `members` goes to managers only.
+- **Members** (`GET /api/admin/guilds/{guild}/members`): manager-only search
+  by name or the start of an id, at most 50 per page and offsets up to 1000.
+  `@everyone`'s member count and list come from the roster; the count is
+  null until a roster has been complete once.
+- **Client**: the recordings sidebar shows an "In voice" panel. It polls
+  every 10 s without realtime, and every 60 s with it, because a crashed
+  agent sends no event. Per-user cooldown overrides have a member picker
+  next to manual id entry.
+
 ## Recording controls
 
 Recording is on by default. Two controls narrow it, and both are enforced in
