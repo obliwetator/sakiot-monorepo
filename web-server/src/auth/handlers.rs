@@ -408,7 +408,11 @@ pub async fn refresh_jwt(
         })?;
     require_csrf(&req, &decoded_refresh.csrf)?;
 
-    let csrf_token = Uuid::new_v4().to_string();
+    // The CSRF token stays the same for the whole login; only a fresh Discord
+    // or dev login mints a new one. Rotating it here let tabs refreshing at
+    // the same moment overwrite each other's token, and a late response from
+    // a request that started before the refresh echo the stale one back.
+    let csrf_token = decoded_refresh.csrf.clone();
 
     let (new_access_token, new_refresh_token) = create_jwt_tokens(
         decoded_refresh.user_id,
@@ -652,6 +656,37 @@ mod tests {
             let body: serde_json::Value = actix_test::read_body_json(response).await;
             assert_eq!(body["kind"], "csrf_rejected");
         }
+
+        // A successful refresh issues new tokens but keeps the login's CSRF.
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::post()
+                .uri("/refresh")
+                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, refresh.clone()))
+                .cookie(Cookie::new(CSRF_COOKIE, "csrf-123"))
+                .insert_header(("X-CSRF-Token", "csrf-123"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("x-csrf-token")
+                .and_then(|value| value.to_str().ok()),
+            Some("csrf-123")
+        );
+        let cookies: Vec<(String, String)> = response
+            .response()
+            .cookies()
+            .map(|cookie| (cookie.name().to_owned(), cookie.value().to_owned()))
+            .collect();
+        assert!(cookies.contains(&(CSRF_COOKIE.to_owned(), "csrf-123".to_owned())));
+        assert!(
+            cookies
+                .iter()
+                .any(|(name, value)| name == REFRESH_TOKEN_COOKIE && !value.is_empty())
+        );
         Ok(())
     }
 

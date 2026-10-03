@@ -183,7 +183,10 @@ Users sign in through Discord OAuth. `web-server` issues a JWT in a cookie
 (`auth/jwt.rs`, `auth/cookies.rs`) and validates it in middleware. In local
 development `/api/dev_login` trades a secret from `.env` for the same cookie,
 so Discord is not needed to work on the app; that secret never reaches the
-bundle.
+bundle. Each login mints one CSRF token for state-changing requests, and it
+stays fixed for that login: `/api/refresh` renews the access and refresh
+tokens but keeps it, so tabs refreshing at the same moment cannot invalidate
+each other.
 
 Authorization reimplements Discord's permission model against the agent's role
 cache rather than trusting the permission snapshot from the OAuth login, so
