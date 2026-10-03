@@ -12,11 +12,15 @@ pub(crate) async fn require_session_access(
     .await
 }
 
+/// The session row, its audible channels and the viewer's permitted channels
+/// come from one snapshot, so a permission or journey change committing
+/// mid-check cannot produce a mixed answer.
 async fn load_session_access(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
     viewer_user_id: i64,
 ) -> Result<SessionAccess, AppError> {
+    let mut snapshot = crate::permissions::begin_snapshot(pool).await?;
     let row = sqlx::query!(
         r#"SELECT id,
                 guild_id,
@@ -30,7 +34,7 @@ async fn load_session_access(
           WHERE id = $1 AND deletion_requested_at IS NULL"#,
         recording_session_id
     )
-    .fetch_optional(pool.get_ref())
+    .fetch_optional(&mut *snapshot)
     .await?
     .ok_or(AppError::FileNotFound)?;
 
@@ -45,15 +49,19 @@ async fn load_session_access(
         pause_started_at_ms: row.pause_started_at_ms,
     };
 
-    let permitted = visible_channels_for_user(pool, access.guild_id, viewer_user_id).await?;
+    let permitted =
+        crate::permissions::visible_channels(&mut snapshot, access.guild_id, viewer_user_id)
+            .await?;
     let rows = sqlx::query!(
         "SELECT DISTINCT channel_id
            FROM audio_files
           WHERE recording_session_id = $1",
         recording_session_id
     )
-    .fetch_all(pool.get_ref())
+    .fetch_all(&mut *snapshot)
     .await?;
+    snapshot.commit().await?;
+
     let mut audible_channels: HashSet<i64> = rows.into_iter().map(|row| row.channel_id).collect();
     if audible_channels.is_empty() {
         audible_channels.insert(access.starting_channel_id);

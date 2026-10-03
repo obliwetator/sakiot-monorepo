@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use actix_web::web;
-use sqlx::{Pool, Postgres};
+use sqlx::{PgConnection, Pool, Postgres};
 
 use crate::errors::AppError;
 
@@ -189,8 +189,34 @@ fn apply_overwrite(
     permissions
 }
 
+/// Begin a read-only transaction that sees one consistent snapshot of the
+/// permission cache. An authorization result reads up to seven queries; in
+/// separate statements a cache write committing between them could mix old
+/// and new state (a role grant from before a change with overwrites from
+/// after it). Every public check below runs its queries in one snapshot, and
+/// callers that combine a check with their own reads, such as session access,
+/// can run them in the same one.
+pub async fn begin_snapshot(
+    pool: &Pool<Postgres>,
+) -> Result<sqlx::Transaction<'static, Postgres>, AppError> {
+    Ok(pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .await?)
+}
+
 pub async fn get_combined_perm_for_user(
     pool: &web::Data<Pool<Postgres>>,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<Permissions, AppError> {
+    let mut snapshot = begin_snapshot(pool).await?;
+    let permissions = combined_perm_for_user(&mut snapshot, guild_id, user_id).await?;
+    snapshot.commit().await?;
+    Ok(permissions)
+}
+
+async fn combined_perm_for_user(
+    conn: &mut PgConnection,
     guild_id: i64,
     user_id: i64,
 ) -> Result<Permissions, AppError> {
@@ -215,7 +241,7 @@ pub async fn get_combined_perm_for_user(
         guild_id,
         user_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *conn)
     .await?;
     if owner {
         return Ok(Permissions::all());
@@ -234,7 +260,7 @@ pub async fn get_combined_perm_for_user(
         guild_id,
         user_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *conn)
     .await?;
     if !member {
         return Ok(Permissions::empty());
@@ -259,7 +285,7 @@ pub async fn get_combined_perm_for_user(
         guild_id,
         user_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *conn)
     .await?
     .unwrap_or(0);
 
@@ -275,6 +301,14 @@ pub async fn get_combined_perm_for_role(
     guild_id: i64,
     role_id: i64,
 ) -> Result<Permissions, AppError> {
+    combined_perm_for_role(&mut *pool.acquire().await?, guild_id, role_id).await
+}
+
+async fn combined_perm_for_role(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    role_id: i64,
+) -> Result<Permissions, AppError> {
     let permissions = sqlx::query_scalar!(
         "SELECT bit_or(r.permission)
            FROM roles r
@@ -283,7 +317,7 @@ pub async fn get_combined_perm_for_role(
         guild_id,
         role_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *conn)
     .await?
     .unwrap_or(0);
 
@@ -291,7 +325,7 @@ pub async fn get_combined_perm_for_role(
 }
 
 async fn apply_single_role_overwrites(
-    pool: &web::Data<Pool<Postgres>>,
+    conn: &mut PgConnection,
     role_id: i64,
     guild_id: i64,
     channels: &mut HashMap<i64, ChannelPermissionState>,
@@ -302,7 +336,7 @@ async fn apply_single_role_overwrites(
           WHERE kind = 'role' AND target_id = $1",
         role_id
     )
-    .fetch_all(pool.get_ref())
+    .fetch_all(&mut *conn)
     .await?;
 
     for overwrite in role_overwrites {
@@ -330,14 +364,14 @@ pub struct RoleChannelAccess {
 /// mirroring the user path without member-specific overwrites. `viewable` is
 /// Discord's "see the channel" (VIEW_CHANNEL); `joinable` also requires
 /// CONNECT — a channel can be visible without being joinable.
-pub async fn get_channel_access_for_role(
-    pool: &web::Data<Pool<Postgres>>,
+async fn channel_access_for_role(
+    conn: &mut PgConnection,
     guild_id: i64,
     role_id: i64,
 ) -> Result<Vec<RoleChannelAccess>, AppError> {
-    let base_permissions = get_combined_perm_for_role(pool, guild_id, role_id).await?;
+    let base_permissions = combined_perm_for_role(conn, guild_id, role_id).await?;
 
-    let channels = get_voice_channel_permission_states(pool, guild_id).await?;
+    let channels = voice_channel_permission_states(conn, guild_id).await?;
     if base_permissions.contains(Permissions::ADMINISTRATOR) {
         return Ok(channels
             .into_keys()
@@ -354,7 +388,7 @@ pub async fn get_channel_access_for_role(
         // @everyone (role_id = guild_id) needs no role-overwrite pass: its
         // per-channel overwrites are already the "everyone" state, and its
         // guild-level permission is in the base.
-        apply_single_role_overwrites(pool, role_id, guild_id, &mut channels).await?;
+        apply_single_role_overwrites(conn, role_id, guild_id, &mut channels).await?;
     }
 
     Ok(channels
@@ -407,24 +441,27 @@ pub async fn role_access_for_preview(
     manager_id: i64,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
+    let mut snapshot = begin_snapshot(pool).await?;
     let belongs_to_guild = sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
         role_id,
         guild_id
     )
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *snapshot)
     .await?;
     if !belongs_to_guild {
         return Err(AppError::RoleNotFound);
     }
 
-    let manager_channels = visible_channels_for_user(pool, guild_id, manager_id).await?;
-    Ok(get_channel_access_for_role(pool, guild_id, role_id)
+    let manager_channels = visible_channels(&mut snapshot, guild_id, manager_id).await?;
+    let access = channel_access_for_role(&mut snapshot, guild_id, role_id)
         .await?
         .into_iter()
         .filter(|access| manager_channels.contains(&access.channel_id))
         .map(|access| (access.channel_id, access))
-        .collect())
+        .collect();
+    snapshot.commit().await?;
+    Ok(access)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -447,7 +484,7 @@ pub async fn require_role_preview(
 }
 
 async fn apply_role_overwrites(
-    pool: &web::Data<Pool<Postgres>>,
+    conn: &mut PgConnection,
     user_id: i64,
     guild_id: i64,
     channels: &mut HashMap<i64, ChannelPermissionState>,
@@ -458,7 +495,7 @@ async fn apply_role_overwrites(
         user_id,
         guild_id
     )
-    .fetch_all(pool.get_ref())
+    .fetch_all(&mut *conn)
     .await?;
 
     for overwrite in role_overwrites {
@@ -481,15 +518,26 @@ pub async fn get_available_channels_for_user(
     guild_id: i64,
     user_id: i64,
 ) -> Result<HashSet<i64>, AppError> {
-    let base_permissions = get_combined_perm_for_user(pool, guild_id, user_id).await?;
+    let mut snapshot = begin_snapshot(pool).await?;
+    let channels = available_channels_for_user(&mut snapshot, guild_id, user_id).await?;
+    snapshot.commit().await?;
+    Ok(channels)
+}
 
-    let mut channels = get_voice_channel_permission_states(pool, guild_id).await?;
+async fn available_channels_for_user(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<HashSet<i64>, AppError> {
+    let base_permissions = combined_perm_for_user(conn, guild_id, user_id).await?;
+
+    let mut channels = voice_channel_permission_states(conn, guild_id).await?;
     if base_permissions.contains(Permissions::ADMINISTRATOR) {
         return Ok(channels.keys().copied().collect());
     }
 
-    apply_role_overwrites(pool, user_id, guild_id, &mut channels).await?;
-    apply_member_overwrites(pool, user_id, guild_id, &mut channels).await?;
+    apply_role_overwrites(conn, user_id, guild_id, &mut channels).await?;
+    apply_member_overwrites(conn, user_id, guild_id, &mut channels).await?;
 
     Ok(channels
         .into_values()
@@ -504,20 +552,34 @@ pub async fn visible_channels_for_user(
     user_id: i64,
 ) -> Result<HashSet<i64>, crate::errors::AppError> {
     crate::server_timing::measure("perm", async {
-        let membership = sqlx::query!(
-            "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
-            guild_id,
-            user_id
-        )
-        .fetch_optional(pool.get_ref())
-        .await?;
-        if membership.is_none() {
-            return Err(crate::errors::AppError::Forbidden);
-        }
-
-        get_available_channels_for_user(pool, guild_id, user_id).await
+        let mut snapshot = begin_snapshot(pool).await?;
+        let channels = visible_channels(&mut snapshot, guild_id, user_id).await?;
+        snapshot.commit().await?;
+        Ok(channels)
     })
     .await
+}
+
+/// The channels a guild member can view and join, read on `conn` so a
+/// caller can combine it with its own reads in one snapshot
+/// (`begin_snapshot`). A non-member is forbidden.
+pub async fn visible_channels(
+    conn: &mut PgConnection,
+    guild_id: i64,
+    user_id: i64,
+) -> Result<HashSet<i64>, AppError> {
+    let membership = sqlx::query!(
+        "SELECT 1 as present FROM user_guilds WHERE id = $1 AND user_id = $2",
+        guild_id,
+        user_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if membership.is_none() {
+        return Err(AppError::Forbidden);
+    }
+
+    available_channels_for_user(conn, guild_id, user_id).await
 }
 
 pub async fn require_channel_access(
@@ -535,7 +597,7 @@ pub async fn require_channel_access(
 }
 
 async fn apply_member_overwrites(
-    pool: &web::Data<Pool<Postgres>>,
+    conn: &mut PgConnection,
     user_id: i64,
     guild_id: i64,
     channels: &mut HashMap<i64, ChannelPermissionState>,
@@ -546,7 +608,7 @@ async fn apply_member_overwrites(
         user_id,
         guild_id
     )
-    .fetch_all(pool.get_ref())
+    .fetch_all(&mut *conn)
     .await?;
 
     for overwrite in member_overwrites {
@@ -563,8 +625,8 @@ async fn apply_member_overwrites(
 /// (type 2) and stage (type 13). The SQL overwrite helpers used by
 /// `apply_role_overwrites` and `apply_member_overwrites` filter on the same
 /// types; keep them in step.
-async fn get_voice_channel_permission_states(
-    pool: &web::Data<Pool<Postgres>>,
+async fn voice_channel_permission_states(
+    conn: &mut PgConnection,
     guild_id: i64,
 ) -> Result<HashMap<i64, ChannelPermissionState>, AppError> {
     let channel_overwrites = sqlx::query!(
@@ -580,7 +642,7 @@ async fn get_voice_channel_permission_states(
         AND channels.guild_id = $1",
         guild_id
     )
-    .fetch_all(pool.get_ref())
+    .fetch_all(&mut *conn)
     .await?;
 
     Ok(channel_overwrites

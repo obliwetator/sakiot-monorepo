@@ -12,7 +12,6 @@ use sqlx::{Pool, Postgres};
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::{MediaArchive, RemoteDisposition};
-use crate::permissions::visible_channels_for_user;
 
 use super::live::LiveContainer;
 use super::paths::{clips_path, no_silence_recording_path, recording_path, waveform_path};

@@ -192,7 +192,10 @@ role and membership revocations take effect without a new login
 transaction and only where it differs from Discord
 (`fbi-agent/src/database/guild_cache.rs`), so a request never sees a guild's
 role assignments or overwrites half rewritten. It removes member role
-assignments only when its cached member list is complete. Guild owners are resolved from `guilds.owner_id` or the
+assignments only when its cached member list is complete. On the read side,
+each authorization result runs its queries in one `REPEATABLE READ, READ ONLY`
+transaction (`begin_snapshot`), so a cache write committing mid-check cannot
+mix old and new state. Guild owners are resolved from `guilds.owner_id` or the
 agent-maintained `user_guilds.owner` flag. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
 VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the

@@ -38,7 +38,10 @@ use web_server::clips::{
 };
 use web_server::fbi_agent_registry::AgentGrpcRegistry;
 use web_server::members::get_role_view;
-use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
+use web_server::permissions::{
+    Permissions, begin_snapshot, get_combined_perm_for_user, visible_channels,
+    visible_channels_for_user,
+};
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::stamps::get_stamps;
@@ -2598,5 +2601,130 @@ async fn stage_channel_recordings_follow_view_and_connect(
             events: StatusCode::OK,
         }
     );
+    Ok(())
+}
+
+// ---- each authorization result reads one consistent snapshot ----
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn authorization_snapshot_ignores_commits_after_its_first_read(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let pool = web::Data::new(pool);
+
+    let mut snapshot = begin_snapshot(&pool).await?;
+    let first = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert!(first.contains(&ALLOWED_CHANNEL_ID));
+
+    // A cache write commits mid-check: the member loses CONNECT.
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(pool.get_ref())
+    .await?;
+
+    let second = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert_eq!(
+        second, first,
+        "the snapshot keeps the state it started with"
+    );
+    let write = sqlx::query("DELETE FROM channel_permissions")
+        .execute(&mut *snapshot)
+        .await;
+    assert!(write.is_err(), "the snapshot is read-only");
+    drop(snapshot);
+
+    let fresh = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert!(!fresh.contains(&ALLOWED_CHANNEL_ID));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn authorization_never_mixes_two_committed_states(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Two cache states that both let the member join the channel: in one the
+    // member's role grants VIEW_CHANNEL guild-wide; in the other it does not,
+    // but a channel overwrite for the role allows it. Reading the role's
+    // guild bits from the second state and the overwrites from the first
+    // denies access, so any denial is a mixed read.
+    seed_authorization_data(&pool).await?;
+    let role_id: i64 = 1301;
+    sqlx::query("UPDATE roles SET permission = $2 WHERE role_id = $1")
+        .bind(ALLOWED_GUILD_ID)
+        .bind(CONNECT_PERMISSION)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO roles (guild_id, role_id, permission, name)
+         VALUES ($1, $2, $3, 'Viewers')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(role_id)
+    .bind(VIEW_CHANNEL_PERMISSION)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)")
+        .bind(USER_ID)
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let pool = pool.clone();
+        let stop = std::sync::Arc::clone(&stop);
+        tokio::spawn(async move {
+            let mut overwrite = false;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                overwrite = !overwrite;
+                let mut transaction = pool.begin().await?;
+                sqlx::query("UPDATE roles SET permission = $2 WHERE role_id = $1")
+                    .bind(role_id)
+                    .bind(if overwrite {
+                        0
+                    } else {
+                        VIEW_CHANNEL_PERMISSION
+                    })
+                    .execute(&mut *transaction)
+                    .await?;
+                if overwrite {
+                    sqlx::query(
+                        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+                         VALUES ($1, $2, 'role', $3, 0)",
+                    )
+                    .bind(ALLOWED_CHANNEL_ID)
+                    .bind(role_id)
+                    .bind(VIEW_CHANNEL_PERMISSION)
+                    .execute(&mut *transaction)
+                    .await?;
+                } else {
+                    sqlx::query("DELETE FROM channel_permissions WHERE target_id = $1")
+                        .bind(role_id)
+                        .execute(&mut *transaction)
+                        .await?;
+                }
+                transaction.commit().await?;
+            }
+            Ok::<_, sqlx::Error>(())
+        })
+    };
+
+    let pool = web::Data::new(pool);
+    let mut denied = 0;
+    for _ in 0..400 {
+        let visible = visible_channels_for_user(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+        if !visible.contains(&ALLOWED_CHANNEL_ID) {
+            denied += 1;
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    writer.await??;
+    assert_eq!(denied, 0, "mixed reads denied access {denied} times");
     Ok(())
 }
