@@ -23,12 +23,13 @@ use web_server::admin::voice_settings::{
 use web_server::audio::{
     LiveContainer, SessionMixContainer, SilenceJobContainer, WaveformProgressContainer,
     create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
-    get_clip_waveform_data, get_recording_events, get_session_channel_mix,
-    get_session_channel_mix_media, get_session_events, get_session_manifest, get_session_segment,
-    get_session_silence_free, get_session_silence_free_waveform,
-    get_session_silence_removal_status, get_session_waveform, get_waveform_data, live_playlist,
-    live_segment, live_state, rebuild_session_silence_free_waveform, rebuild_session_waveform,
-    remove_session_silence, remove_silence, session_live_playlist, session_live_segment,
+    get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
+    get_session_channel_mix, get_session_channel_mix_media, get_session_events,
+    get_session_manifest, get_session_segment, get_session_silence_free,
+    get_session_silence_free_waveform, get_session_silence_removal_status, get_session_waveform,
+    get_waveform_data, live_playlist, live_segment, live_state,
+    rebuild_session_silence_free_waveform, rebuild_session_waveform, remove_session_silence,
+    remove_silence, session_live_playlist, session_live_segment,
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
@@ -36,6 +37,7 @@ use web_server::clips::{
     create_clip, delete as delete_clip, get_clip, get_clips, play_clip, rename_clip,
 };
 use web_server::fbi_agent_registry::AgentGrpcRegistry;
+use web_server::members::get_role_view;
 use web_server::permissions::{Permissions, get_combined_perm_for_user, visible_channels_for_user};
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
@@ -2022,5 +2024,323 @@ async fn members_manage_only_their_own_recording_opt_out(
             .fetch_one(&pool)
             .await?;
     assert_eq!(foreign_rows, 0);
+    Ok(())
+}
+
+// ---- role preview is clipped to the manager's own channels ----
+
+const PRIVATE_CHANNEL_ID: i64 = ALLOWED_CHANNEL_ID + 50;
+const INSIDER_ROLE_ID: i64 = 1101;
+const MANAGER_ROLE_ID: i64 = 1102;
+const ADMIN_ROLE_ID: i64 = 1103;
+const MANAGER_ID: i64 = 30;
+const ADMIN_ID: i64 = 40;
+const MANAGE_GUILD_PERMISSION: i64 = 1 << 5;
+const ADMINISTRATOR_PERMISSION: i64 = 1 << 3;
+
+/// Guild 1 gains a private channel P that `@everyone` cannot view and the
+/// Insiders role can. A MANAGE_GUILD-only manager cannot view P; an
+/// Administrator can. P and the public channel each hold a finalized session,
+/// a live stem, a clip and a stamp, and one more session moves from the
+/// public channel into P.
+async fn seed_role_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
+    seed_authorization_data(pool).await?;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'private')",
+    )
+    .bind(PRIVATE_CHANNEL_ID)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO roles (guild_id, role_id, permission, name)
+         VALUES ($1, $2, 0, 'Insiders'), ($1, $3, $4, 'Managers'), ($1, $5, $6, 'Admins')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(INSIDER_ROLE_ID)
+    .bind(MANAGER_ROLE_ID)
+    .bind(MANAGE_GUILD_PERMISSION)
+    .bind(ADMIN_ROLE_ID)
+    .bind(ADMINISTRATOR_PERMISSION)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'role', 0, $3), ($1, $4, 'role', $3, 0)",
+    )
+    .bind(PRIVATE_CHANNEL_ID)
+    .bind(ALLOWED_GUILD_ID)
+    .bind(VIEW_CHANNEL_PERMISSION)
+    .bind(INSIDER_ROLE_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)
+         VALUES ($1, $2, 'allowed guild', NULL, false, 0, ARRAY[]::text[]),
+                ($1, $3, 'allowed guild', NULL, false, 0, ARRAY[]::text[])",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(MANAGER_ID)
+    .bind(ADMIN_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2), ($3, $4)")
+        .bind(MANAGER_ID)
+        .bind(MANAGER_ROLE_ID)
+        .bind(ADMIN_ID)
+        .bind(ADMIN_ROLE_ID)
+        .execute(pool)
+        .await?;
+
+    // Finalized sessions: one per channel, plus one that moves from the
+    // public channel into P.
+    for (index, start, fragment, started_at_s) in [
+        (0, ALLOWED_CHANNEL_ID, ALLOWED_CHANNEL_ID, 1.0),
+        (1, PRIVATE_CHANNEL_ID, PRIVATE_CHANNEL_ID, 11.0),
+        (2, ALLOWED_CHANNEL_ID, PRIVATE_CHANNEL_ID, 21.0),
+    ] {
+        let started_at_ms = (index * 10 + 1) * 1000;
+        let session_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO recording_sessions
+                (guild_id, user_id, starting_channel_id, current_channel_id, state,
+                 started_at, ended_at, end_reason, last_segment_index)
+             VALUES ($1, $2, $3, $4, 'finalized',
+                     to_timestamp($5), to_timestamp($5 + 2), 'test', 1)
+             RETURNING id",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(OTHER_USER_ID)
+        .bind(start)
+        .bind(fragment)
+        .bind(started_at_s)
+        .fetch_one(pool)
+        .await?;
+        for (segment, channel) in [(0, start), (1, fragment)] {
+            sqlx::query(
+                "INSERT INTO audio_files
+                    (file_name, guild_id, channel_id, user_id, year, month,
+                     start_ts, end_ts, recording_session_id, segment_index)
+                 VALUES ($1, $2, $3, $4, 1970, 1, $5, $5 + 1000, $6, $7)",
+            )
+            .bind(format!("session-{index}-{segment}"))
+            .bind(ALLOWED_GUILD_ID)
+            .bind(channel)
+            .bind(OTHER_USER_ID)
+            .bind(started_at_ms + i64::from(segment) * 1000)
+            .bind(session_id)
+            .bind(segment)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    sqlx::query(
+        "INSERT INTO bot_instances (instance_id, role, state)
+         VALUES ('preview-bot', 'active', 'active')",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts,
+             recording_owner_instance_id, recording_heartbeat_at)
+         VALUES ('live-public', $1, $2, $4, 2026, 5, 1000, 'preview-bot', now()),
+                ('live-private', $1, $3, $4, 2026, 5, 1000, 'preview-bot', now())",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(PRIVATE_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time)
+         VALUES ('public-clip', $1, $2, $4, '2026/05/public.ogg', 0),
+                ('private-clip', $1, $3, $4, '2026/05/private.ogg', 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(PRIVATE_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO stamps (guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts, note)
+         VALUES ($1, $2, $4, $4, 1000, 'public-stamp'),
+                ($1, $3, $4, $4, 1000, 'private-stamp')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(PRIVATE_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// What one viewer's role preview of Insiders exposes on every `as_role` path.
+#[derive(Debug, PartialEq)]
+struct PreviewExposure {
+    /// (file, channel journey, access annotation) per listed recording.
+    sessions: Vec<(String, Vec<String>, String)>,
+    live_stems: Vec<String>,
+    clips: Vec<String>,
+    stamps: Vec<String>,
+    role_view_channels: Vec<String>,
+}
+
+async fn preview_exposure(
+    pool: &PgPool,
+    viewer: i64,
+) -> Result<PreviewExposure, Box<dyn std::error::Error>> {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_live_stems)
+                    .service(get_current_month_permission)
+                    .service(get_clips)
+                    .service(get_stamps)
+                    .service(get_role_view),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_for(viewer)?;
+    let get = async |uri: String| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let request = test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        Ok(test::read_body_json(response).await)
+    };
+    let as_role = format!("as_role={INSIDER_ROLE_ID}");
+
+    let tree = get(format!("/api/current/{ALLOWED_GUILD_ID}?{as_role}")).await?;
+    let mut sessions = Vec::new();
+    for channel in tree.as_array().into_iter().flatten() {
+        for dir in channel["dirs"].as_array().into_iter().flatten() {
+            for files in dir["months"]
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.values())
+            {
+                for file in files.as_array().into_iter().flatten() {
+                    let journey = file["channel_journey"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|c| c.as_str().map(str::to_string))
+                        .collect();
+                    sessions.push((
+                        file["file"].as_str().unwrap_or_default().to_string(),
+                        journey,
+                        file["access"].as_str().unwrap_or_default().to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    sessions.sort();
+
+    let strings = |value: serde_json::Value, field: Option<&str>| -> Vec<String> {
+        let mut out: Vec<String> = value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| match field {
+                Some(field) => item[field].as_str().map(str::to_string),
+                None => item.as_str().map(str::to_string),
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    let live_stems = strings(
+        get(format!(
+            "/api/current/{ALLOWED_GUILD_ID}/live-stems?{as_role}"
+        ))
+        .await?,
+        None,
+    );
+    let clips = strings(
+        get(format!("/api/audio/clips/{ALLOWED_GUILD_ID}?{as_role}")).await?,
+        Some("clip_id"),
+    );
+    let stamps = strings(
+        get(format!("/api/stamps/{ALLOWED_GUILD_ID}?{as_role}")).await?,
+        Some("note"),
+    );
+    let role_view = get(format!(
+        "/api/admin/guilds/{ALLOWED_GUILD_ID}/roles/{INSIDER_ROLE_ID}/channels"
+    ))
+    .await?;
+    let role_view_channels = strings(role_view["channels"].clone(), Some("channel_id"));
+
+    Ok(PreviewExposure {
+        sessions,
+        live_stems,
+        clips,
+        stamps,
+        role_view_channels,
+    })
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn role_preview_never_shows_channels_the_manager_cannot_view(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_role_preview_data(&pool).await?;
+    let public = ALLOWED_CHANNEL_ID.to_string();
+    let private = PRIVATE_CHANNEL_ID.to_string();
+    let strings = |items: &[&str]| -> Vec<String> { items.iter().map(|s| s.to_string()).collect() };
+    let listed = |file: &str, journey: &[&String]| {
+        (
+            file.to_string(),
+            journey.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            "can-listen".to_string(),
+        )
+    };
+
+    // The MANAGE_GUILD-only manager cannot view P, so nothing from P reaches
+    // them, including the session that moved from the public channel into P.
+    // (`own-clip` is the seed's public clip.)
+    assert_eq!(
+        preview_exposure(&pool, MANAGER_ID).await?,
+        PreviewExposure {
+            sessions: vec![
+                listed("live-public.ogg", &[&public]),
+                listed("session-0-0.ogg", &[&public]),
+            ],
+            live_stems: strings(&["live-public"]),
+            clips: strings(&["own-clip", "public-clip"]),
+            stamps: strings(&["public-stamp"]),
+            role_view_channels: vec![public.clone()],
+        }
+    );
+
+    // An Administrator views every channel, so their preview is unclipped.
+    assert_eq!(
+        preview_exposure(&pool, ADMIN_ID).await?,
+        PreviewExposure {
+            sessions: vec![
+                listed("live-private.ogg", &[&private]),
+                listed("live-public.ogg", &[&public]),
+                listed("session-0-0.ogg", &[&public]),
+                listed("session-1-0.ogg", &[&private]),
+                listed("session-2-0.ogg", &[&public, &private]),
+            ],
+            live_stems: strings(&["live-private", "live-public"]),
+            clips: strings(&["own-clip", "private-clip", "public-clip"]),
+            stamps: strings(&["private-stamp", "public-stamp"]),
+            role_view_channels: vec![public, private],
+        }
+    );
     Ok(())
 }

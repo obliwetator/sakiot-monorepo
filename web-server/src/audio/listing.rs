@@ -324,13 +324,18 @@ async fn get_session_tree(
         } else {
             listing.channel_journey.iter().copied().collect()
         };
-        // Role previews keep every session in the tree and annotate what the
-        // role could do with it; normal listings hide whatever the viewer
-        // cannot fully hear. The `hidden` annotation intentionally leaks
-        // session existence, but `role_access_for_preview` is manager-only
-        // (callers already see all channels).
+        // Role previews annotate what the role could do with each session;
+        // normal listings hide whatever the viewer cannot fully hear. The
+        // preview map holds only the manager's own channels
+        // (`role_access_for_preview`), so a session touching any other
+        // channel disappears rather than showing up as `hidden`.
         let access = match channel_access {
-            Some(map) => Some(session_access_level(&audible, map).to_string()),
+            Some(map) => {
+                if !audible.iter().all(|channel| map.contains_key(channel)) {
+                    continue;
+                }
+                Some(session_access_level(&audible, map).to_string())
+            }
             None => {
                 if !audible.iter().all(|channel| permitted.contains(channel)) {
                     continue;
@@ -518,9 +523,13 @@ pub async fn get_current_month_permission(
     require_role_preview(&req, &pool, guild_id_as_int, query.as_role).await?;
     let (permission_hashset, channel_access) = match query.as_role {
         Some(role_id) => {
-            let access =
-                crate::permissions::role_access_for_preview(&pool, guild_id_as_int, role_id)
-                    .await?;
+            let access = crate::permissions::role_access_for_preview(
+                &pool,
+                guild_id_as_int,
+                token.user_id,
+                role_id,
+            )
+            .await?;
             let joinable = access
                 .iter()
                 .filter(|(_, a)| a.joinable)

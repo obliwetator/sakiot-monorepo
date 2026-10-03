@@ -5,7 +5,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
 use crate::permissions::{
-    get_channel_access_for_role, get_combined_perm_for_role, require_guild_manager,
+    get_combined_perm_for_role, require_guild_manager, role_access_for_preview,
 };
 
 type DisplayFromstr = As<DisplayFromStr>;
@@ -197,26 +197,14 @@ pub async fn get_role_view(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, role_id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    let manager_id = require_guild_manager(&req, &pool, guild_id).await?;
 
-    let belongs_to_guild = sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
-        role_id,
-        guild_id
-    )
-    .fetch_one(pool.get_ref())
-    .await?;
-    if !belongs_to_guild {
-        return Err(AppError::RoleNotFound);
-    }
-
+    // Lists the role's access for every voice channel the manager can view
+    // and join themselves, including ones the role cannot see at all; a
+    // preview never shows more than the manager's own view.
+    let access = role_access_for_preview(&pool, guild_id, manager_id, role_id).await?;
     let permission = get_combined_perm_for_role(&pool, guild_id, role_id).await?;
-    let access = get_channel_access_for_role(&pool, guild_id, role_id).await?;
-    // Every voice channel is listed, including ones the role cannot see at
-    // all — the manager preview shows the full picture per channel.
-    let all_ids: Vec<i64> = access.iter().map(|a| a.channel_id).collect();
-    let access: std::collections::HashMap<i64, _> =
-        access.into_iter().map(|a| (a.channel_id, a)).collect();
+    let all_ids: Vec<i64> = access.keys().copied().collect();
     let rows = sqlx::query!(
         "SELECT channel_id, name FROM channels WHERE channel_id = ANY($1)",
         &all_ids

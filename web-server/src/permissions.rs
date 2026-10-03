@@ -365,24 +365,9 @@ pub async fn get_channel_access_for_role(
         .collect())
 }
 
-/// Voice channels a member whose only role is `role_id` could see and join,
-/// mirroring `get_available_channels_for_user` without member-specific
-/// overwrites.
-pub async fn get_available_channels_for_role(
-    pool: &web::Data<Pool<Postgres>>,
-    guild_id: i64,
-    role_id: i64,
-) -> Result<HashSet<i64>, AppError> {
-    Ok(get_channel_access_for_role(pool, guild_id, role_id)
-        .await?
-        .into_iter()
-        .filter(|access| access.joinable)
-        .map(|access| access.channel_id)
-        .collect())
-}
-
 /// Resolve the channel set a listing should show: the caller's own channels,
-/// or — when impersonating a role — the channels that role alone would see.
+/// or — when impersonating a role — the channels that role alone could join,
+/// clipped to the caller's own set by `role_access_for_preview`.
 /// A foreign role is a 404 rather than a silently empty preview.
 pub async fn listing_channels_for(
     pool: &web::Data<Pool<Postgres>>,
@@ -392,35 +377,32 @@ pub async fn listing_channels_for(
 ) -> Result<HashSet<i64>, AppError> {
     match as_role {
         None => visible_channels_for_user(pool, guild_id, user_id).await,
-        Some(role_id) => {
-            let belongs_to_guild = sqlx::query_scalar!(
-                r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
-                role_id,
-                guild_id
-            )
-            .fetch_one(pool.get_ref())
-            .await?;
-            if !belongs_to_guild {
-                return Err(AppError::RoleNotFound);
-            }
-            get_available_channels_for_role(pool, guild_id, role_id).await
-        }
+        Some(role_id) => Ok(role_access_for_preview(pool, guild_id, user_id, role_id)
+            .await?
+            .into_values()
+            .filter(|access| access.joinable)
+            .map(|access| access.channel_id)
+            .collect()),
     }
 }
 
 /// Per-channel access map for the role-preview lens, keyed by channel id and
-/// validating that the role belongs to the guild. The recording tree uses it
-/// to keep every session visible and annotate what the role could do with it.
+/// validating that the role belongs to the guild. Every role-preview path
+/// (recording tree, live stems, clips, stamps, the role view) goes through
+/// here.
 ///
-/// SECURITY / INTENTIONAL LEAK: this map retains *every* session (including
-/// `hidden` — not even viewable) and annotates `can-listen / visible-only /
-/// hidden` per channel. It is intentionally manager-only (see
-/// `require_role_preview` -> `require_guild_manager`) — callers already have
-/// `ADMINISTRATOR | MANAGE_GUILD` and can `VIEW_CHANNEL` all voice channels
-/// anyway. Do not expose this endpoint to non-managers.
+/// SECURITY: a preview never shows more than the manager's own normal view.
+/// The map holds only channels in `visible_channels_for_user(manager_id)`
+/// (VIEW_CHANNEL and CONNECT); everything else is dropped, not annotated.
+/// Previewing needs only ADMINISTRATOR or MANAGE_GUILD
+/// (`require_role_preview`), and in Discord only ADMINISTRATOR bypasses
+/// channel overwrites, so a MANAGE_GUILD-only manager must not learn about
+/// channels they cannot view and join themselves. Owners and Administrators
+/// can view every channel, so their previews are unclipped.
 pub async fn role_access_for_preview(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
+    manager_id: i64,
     role_id: i64,
 ) -> Result<HashMap<i64, RoleChannelAccess>, AppError> {
     let belongs_to_guild = sqlx::query_scalar!(
@@ -434,9 +416,11 @@ pub async fn role_access_for_preview(
         return Err(AppError::RoleNotFound);
     }
 
+    let manager_channels = visible_channels_for_user(pool, guild_id, manager_id).await?;
     Ok(get_channel_access_for_role(pool, guild_id, role_id)
         .await?
         .into_iter()
+        .filter(|access| manager_channels.contains(&access.channel_id))
         .map(|access| (access.channel_id, access))
         .collect())
 }
