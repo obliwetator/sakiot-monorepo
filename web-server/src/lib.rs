@@ -29,6 +29,7 @@ pub mod security_headers;
 pub mod server_timing;
 pub mod snowflake_serde;
 pub mod stamps;
+pub mod synthetic;
 pub mod telemetry;
 pub mod user;
 pub mod waveform;

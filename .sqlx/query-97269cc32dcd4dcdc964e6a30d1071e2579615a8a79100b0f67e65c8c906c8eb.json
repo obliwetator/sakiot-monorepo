@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_objects (audio_file_id)\n         SELECT af.id\n           FROM audio_files af\n          WHERE af.end_ts IS NOT NULL\n            AND af.guild_id < $1\n            AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=af.recording_session_id AND rs.deletion_requested_at IS NOT NULL)\n          ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "97269cc32dcd4dcdc964e6a30d1071e2579615a8a79100b0f67e65c8c906c8eb"
+}

@@ -82,14 +82,19 @@ pub(crate) struct EligibleStatus {
     pub tracked: i64,
 }
 
+/// Track every finished recording and saved clip for archiving. Synthetic
+/// load-test guilds (`crate::synthetic`) are skipped: their audio is
+/// generated noise, and uploading it would only cost storage and bandwidth.
 pub(crate) async fn reconcile(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error> {
     let recordings = sqlx::query!(
         "INSERT INTO media_objects (audio_file_id)
          SELECT af.id
            FROM audio_files af
           WHERE af.end_ts IS NOT NULL
+            AND af.guild_id < $1
             AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=af.recording_session_id AND rs.deletion_requested_at IS NOT NULL)
           ON CONFLICT (audio_file_id) WHERE audio_file_id IS NOT NULL DO NOTHING",
+        crate::synthetic::SYNTHETIC_ID_FLOOR,
     )
     .execute(pool)
     .await?
@@ -101,8 +106,10 @@ pub(crate) async fn reconcile(pool: &Pool<Postgres>) -> Result<u64, sqlx::Error>
           WHERE c.saved_file_name IS NOT NULL
             AND btrim(c.saved_file_name) <> ''
             AND c.deleted_at IS NULL
+            AND (c.guild_id IS NULL OR c.guild_id < $1)
             AND NOT EXISTS (SELECT 1 FROM recording_sessions rs WHERE rs.id=c.recording_session_id AND rs.deletion_requested_at IS NOT NULL)
           ON CONFLICT (clip_id) WHERE clip_id IS NOT NULL DO NOTHING",
+        crate::synthetic::SYNTHETIC_ID_FLOOR,
     )
     .execute(pool)
     .await?
@@ -883,6 +890,40 @@ mod tests {
                 (None, Some("media-saved-clip".to_owned())),
             ]
         );
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn reconciliation_skips_synthetic_load_test_media(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        seed_sources(&pool).await?;
+        let synthetic = crate::synthetic::SYNTHETIC_ID_FLOOR + 1;
+        sqlx::query(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts)
+             VALUES ('synthetic-finalized', $1, $1, $1, 2026, 7, 1000, 2000)",
+        )
+        .bind(synthetic)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO clips (clip_id, guild_id, start_time, saved_file_name)
+             VALUES ('synthetic-clip', $1, 0, '2026/07/synthetic-clip.ogg')",
+        )
+        .bind(synthetic)
+        .execute(&pool)
+        .await?;
+
+        assert_eq!(reconcile(&pool).await?, 2);
+        let synthetic_tracked: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM media_objects mo
+               LEFT JOIN audio_files af ON af.id = mo.audio_file_id
+              WHERE af.file_name = 'synthetic-finalized' OR mo.clip_id = 'synthetic-clip'",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(synthetic_tracked, 0);
         Ok(())
     }
 
