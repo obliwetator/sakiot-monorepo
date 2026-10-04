@@ -619,6 +619,29 @@ async fn insert_all(
     .bind(&usernames)
     .execute(&mut *tx)
     .await?;
+    // The agent records names as it first sees them, before their
+    // recordings; listings resolve names from this history. The kinds are
+    // the agent's `UserNameEventType`; a database copied from staging has
+    // them already, a fresh one does not.
+    sqlx::query(
+        "INSERT INTO user_name_event_types (id, name)
+         VALUES (1, 'username'), (2, 'global_name'), (3, 'nickname')
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_name_history (user_id, guild_id, kind_id, value, observed_at)
+         SELECT user_id, NULL, kind.id, CASE kind.id WHEN 1 THEN username ELSE 'Load Tester ' || username END,
+                now() - make_interval(days => $3 + 1)
+           FROM UNNEST($1::bigint[], $2::text[]) AS m(user_id, username)
+          CROSS JOIN (VALUES (1), (2)) AS kind(id)",
+    )
+    .bind(&member_ids)
+    .bind(&usernames)
+    .bind(i32::try_from(spec.history_days).map_err(|_| AppError::InternalError)?)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "INSERT INTO discord_auth_user (id, username, avatar)
          SELECT id, username, '' FROM UNNEST($1::bigint[], $2::text[]) AS m(id, username)
