@@ -10,6 +10,7 @@ pub(super) const MAX_GUILD: u32 = 999;
 const CHANNEL_BASE: i64 = 1_000;
 const ROLE_BASE: i64 = 2_000;
 const USER_BASE: i64 = 1_000_000;
+const NAME_HISTORY_BASE: i64 = 100_000_000_000;
 
 pub(super) fn guild_id(guild: u32) -> i64 {
     SYNTHETIC_ID_FLOOR + i64::from(guild) * GUILD_STRIDE
@@ -38,6 +39,13 @@ pub(super) fn user_id(guild_id: i64, index: u32) -> i64 {
     guild_id + USER_BASE + i64::from(index)
 }
 
+/// A `user_name_history` row id for one of a member's name kinds (1-3).
+/// Fixtures do not draw these from the table's sequence, which a database
+/// restored from older data can leave behind its highest id.
+pub(super) fn name_history_id(guild_id: i64, member: u32, kind: i32) -> i64 {
+    guild_id + NAME_HISTORY_BASE + i64::from(member) * 4 + i64::from(kind)
+}
+
 /// The half-open id range a guild's rows live in.
 pub(super) fn slot(guild_id: i64) -> (i64, i64) {
     (guild_id, guild_id + GUILD_STRIDE)
@@ -55,6 +63,8 @@ mod tests {
             assert_eq!(guild_of(channel_id(id, 3)), Some(guild));
             assert_eq!(guild_of(role_id(id, 3)), Some(guild));
             assert_eq!(guild_of(user_id(id, 500_000)), Some(guild));
+            assert_eq!(guild_of(name_history_id(id, 500_000, 3)), Some(guild));
+            assert!(name_history_id(id, 0, 1) > user_id(id, 500_000));
         }
         assert_eq!(guild_of(SYNTHETIC_ID_FLOOR - 1), None);
         assert_eq!(guild_of(SYNTHETIC_ID_FLOOR), None);

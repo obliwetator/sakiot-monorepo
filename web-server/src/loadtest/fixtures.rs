@@ -630,15 +630,32 @@ async fn insert_all(
     )
     .execute(&mut *tx)
     .await?;
+    let mut history_ids = Vec::with_capacity(member_ids.len() * 2);
+    let mut history_users = Vec::with_capacity(member_ids.len() * 2);
+    let mut history_kinds = Vec::with_capacity(member_ids.len() * 2);
+    let mut history_values = Vec::with_capacity(member_ids.len() * 2);
+    for (index, (user_id, username)) in member_ids.iter().zip(&usernames).enumerate() {
+        let index = u32::try_from(index).map_err(|_| AppError::InternalError)?;
+        for (kind, value) in [
+            (1, username.clone()),
+            (2, format!("Load Tester {username}")),
+        ] {
+            history_ids.push(ids::name_history_id(guild_id, index, kind));
+            history_users.push(*user_id);
+            history_kinds.push(kind);
+            history_values.push(value);
+        }
+    }
     sqlx::query(
-        "INSERT INTO user_name_history (user_id, guild_id, kind_id, value, observed_at)
-         SELECT user_id, NULL, kind.id, CASE kind.id WHEN 1 THEN username ELSE 'Load Tester ' || username END,
-                now() - make_interval(days => $3 + 1)
-           FROM UNNEST($1::bigint[], $2::text[]) AS m(user_id, username)
-          CROSS JOIN (VALUES (1), (2)) AS kind(id)",
+        "INSERT INTO user_name_history (id, user_id, guild_id, kind_id, value, observed_at)
+         SELECT id, user_id, NULL, kind_id, value, now() - make_interval(days => $5 + 1)
+           FROM UNNEST($1::bigint[], $2::bigint[], $3::int[], $4::text[])
+                AS h(id, user_id, kind_id, value)",
     )
-    .bind(&member_ids)
-    .bind(&usernames)
+    .bind(&history_ids)
+    .bind(&history_users)
+    .bind(&history_kinds)
+    .bind(&history_values)
     .bind(i32::try_from(spec.history_days).map_err(|_| AppError::InternalError)?)
     .execute(&mut *tx)
     .await?;
