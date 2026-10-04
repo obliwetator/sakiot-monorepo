@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT end_ts AS \"end_ts!\" FROM audio_files WHERE file_name=$1",
+  "query": "SELECT end_ts FROM audio_files WHERE file_name=$1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "end_ts!",
+        "name": "end_ts",
         "type_info": "Int8",
         "origin": {
           "Table": {
@@ -24,5 +24,5 @@
       true
     ]
   },
-  "hash": "ba5fa468176411de377988a4993544bcf0d91162eb9b7ffc0a2e7f5f1aa0b912"
+  "hash": "0d87c266b44ee15149ea8bf4c464d089e4ddb5f3f0b65329caae9a8beecae5fd"
 }

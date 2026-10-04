@@ -200,19 +200,12 @@ pub(crate) async fn run_recording_waveform_job(
     job_id: &str,
     attempt_token: &str,
 ) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
-    let end_ts: Option<i64> = if silence_free {
+    // None while the recording is live: the job builds a snapshot and leaves
+    // waveform_end_ts unset, so the next request refreshes it.
+    let end_ts = if silence_free {
         None
     } else {
-        // Decoding still rejects a NULL end_ts (a live recording), as before.
-        Some(
-            sqlx::query_scalar!(
-                r#"SELECT end_ts AS "end_ts!" FROM audio_files WHERE file_name=$1"#,
-                file_name
-            )
-            .fetch_optional(pool)
-            .await?
-            .ok_or(AppError::FileNotFound)?,
-        )
+        recording_end_ts(pool, file_name).await?
     };
     let path = (guild_id, channel_id, year, month, file_name.to_owned());
     let (input, cache_key) = if silence_free {
@@ -280,6 +273,17 @@ pub(crate) async fn run_recording_waveform_job(
     );
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))
+}
+
+/// When the recording ended, or `None` while it is still live.
+async fn recording_end_ts(pool: &Pool<Postgres>, file_name: &str) -> Result<Option<i64>, AppError> {
+    sqlx::query_scalar!(
+        "SELECT end_ts FROM audio_files WHERE file_name=$1",
+        file_name
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::FileNotFound)
 }
 
 // Include the immutable file revision so an old generator cannot populate the
@@ -440,4 +444,30 @@ pub(crate) async fn run_clip_waveform_job(
     let url = format!("/api/audio/clips/waveform/{guild_id}/{clip_id}");
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn live_recordings_have_no_end_yet(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        sqlx::query!(
+            "INSERT INTO audio_files (file_name, guild_id, channel_id, user_id, year, month, end_ts)
+             VALUES ('live', 1, 2, 3, 2026, 10, NULL), ('ended', 1, 2, 3, 2026, 10, 5000)"
+        )
+        .execute(&pool)
+        .await?;
+
+        assert_eq!(recording_end_ts(&pool, "live").await?, None);
+        assert_eq!(recording_end_ts(&pool, "ended").await?, Some(5000));
+        assert!(matches!(
+            recording_end_ts(&pool, "missing").await,
+            Err(AppError::FileNotFound)
+        ));
+        Ok(())
+    }
 }
