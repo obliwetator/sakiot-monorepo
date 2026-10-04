@@ -239,6 +239,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The main runtime runs the background workers; each HTTP worker below
     // runs on its own single-threaded runtime.
     web_server::runtime_metrics::observe_current("main".to_string());
+    web_server::process_metrics::observe();
     let server = HttpServer::new(move || {
         web_server::runtime_metrics::observe_current(
             std::thread::current()
