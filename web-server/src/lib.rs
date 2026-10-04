@@ -12,6 +12,8 @@ pub mod grpc_client;
 pub mod health;
 pub mod http_metrics;
 pub mod job_metrics;
+#[cfg(feature = "loadtest")]
+pub mod loadtest;
 pub mod media_archive;
 pub mod media_jobs;
 pub mod members;

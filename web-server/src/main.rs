@@ -155,6 +155,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
     let cfg = Config::from_env()?;
+    #[cfg(feature = "loadtest")]
+    let loadtest_state = web_server::loadtest::init(&cfg)?;
     let deletion_policy = DeletionPolicy {
         allow_permanent: cfg.recording_permanent_delete_enabled,
     };
@@ -346,6 +348,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(delete_voice_settings)
             .service(get_recording_policy)
             .service(put_recording_policy);
+        #[cfg(feature = "loadtest")]
+        let api_scope = api_scope.service(web_server::loadtest::scope(loadtest_state.clone()));
         let api_scope = api_scope
             .service(delete_recording)
             .service(get_recording_deletion)

@@ -21,6 +21,8 @@ fn is_public_api_path(path: &str) -> bool {
     path == "/api/discord_login"
         || path == "/api/oauth/start"
         || (cfg!(feature = "dev-login") && path == "/api/dev_login")
+        // The load-test harness checks the dev-login secret itself.
+        || (cfg!(feature = "loadtest") && path.starts_with("/api/loadtest/"))
         || path == "/api/refresh"
         || path == "/api/logout"
 }

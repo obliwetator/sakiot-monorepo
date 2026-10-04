@@ -76,7 +76,11 @@ tempfile = "3"
 
 [features]
 default = []
-dev-login = []
+# Non-production builds (local `cargo dev`, staging, preview) are built with
+# `dev-login`, so it also brings in the load-test harness (`src/loadtest/`).
+# Production builds enable neither.
+dev-login = ["loadtest"]
+loadtest = []
 
 [lints]
 workspace = true
