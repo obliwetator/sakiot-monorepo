@@ -277,30 +277,17 @@ pub(crate) async fn delete_live_member(
     guild_id: GuildId,
     user_id: UserId,
 ) -> DbResult<()> {
-    let mut transaction = pool.begin().await?;
-    let guild_id = guild_id.to_i64();
-    let user_id = user_id.to_i64();
-
     sqlx::query!(
         "DELETE FROM user_roles ur
           USING roles r
          WHERE ur.role_id = r.role_id
            AND ur.user_id = $1
            AND r.guild_id = $2",
-        user_id,
-        guild_id
+        user_id.to_i64(),
+        guild_id.to_i64()
     )
-    .execute(&mut *transaction)
+    .execute(pool)
     .await?;
-    sqlx::query!(
-        "DELETE FROM user_guilds WHERE id = $1 AND user_id = $2",
-        guild_id,
-        user_id
-    )
-    .execute(&mut *transaction)
-    .await?;
-
-    transaction.commit().await?;
     Ok(())
 }
 
@@ -333,9 +320,7 @@ struct GuildInfo<'a> {
 
 /// Record a guild's owner, name and icon; `web-server` takes owner rights
 /// for Discord logins from `guilds.owner_id` and shows the name and icon in
-/// the guild picker. The OAuth-snapshot `user_guilds.owner` flag is kept in
-/// step too, for anything still reading it. Only rows that disagree are
-/// written.
+/// the guild picker. Only a row that disagrees is written.
 async fn upsert_guild(connection: &mut PgConnection, guild: GuildInfo<'_>) -> DbResult<()> {
     let GuildInfo {
         id: guild_id,
@@ -356,16 +341,6 @@ async fn upsert_guild(connection: &mut PgConnection, guild: GuildInfo<'_>) -> Db
         owner_id,
         name,
         icon
-    )
-    .execute(&mut *connection)
-    .await?;
-    sqlx::query!(
-        "UPDATE user_guilds
-            SET owner = (user_id = $2)
-          WHERE id = $1
-            AND owner IS DISTINCT FROM (user_id = $2)",
-        guild_id,
-        owner_id
     )
     .execute(&mut *connection)
     .await?;

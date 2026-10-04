@@ -155,8 +155,6 @@ async fn row_versions(pool: &PgPool, fixture: &Fixture) -> sqlx::Result<Vec<(Str
     sqlx::query_as(
         "SELECT 'guilds:' || id, xmin::text FROM guilds WHERE id = $1
          UNION ALL
-         SELECT 'user_guilds:' || user_id, xmin::text FROM user_guilds WHERE id = $1
-         UNION ALL
          SELECT 'roles:' || role_id, xmin::text FROM roles WHERE guild_id = $1
          UNION ALL
          SELECT 'channels:' || channel_id, xmin::text FROM channels WHERE guild_id = $1
@@ -177,31 +175,15 @@ async fn row_versions(pool: &PgPool, fixture: &Fixture) -> sqlx::Result<Vec<(Str
     .await
 }
 
-async fn seed_oauth_rows(pool: &PgPool, fixture: &Fixture) -> sqlx::Result<()> {
-    let (guild_id, _) = fixture.ids();
-    sqlx::query(
-        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
-         VALUES ($1, $2, 'cache-writes', true, 0, ARRAY[]::text[]),
-                ($1, $3, 'cache-writes', false, 0, ARRAY[]::text[])",
-    )
-    .bind(guild_id)
-    .bind(id(fixture.owner_id.get()))
-    .bind(id(fixture.members[0].get()))
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn unchanged_cache_writes_touch_no_rows(pool: PgPool) -> TestResult {
     let fixture = Fixture::new();
     let guild = fixture.guild();
     guild_cache::sync_new_guild(&pool, &guild).await?;
-    seed_oauth_rows(&pool, &fixture).await?;
     let before = row_versions(&pool, &fixture).await?;
-    // guild, two user_guilds rows, two roles, two channels, three overwrites,
-    // three member role assignments.
-    assert_eq!(before.len(), 13);
+    // guild, two roles, two channels, three overwrites, three member role
+    // assignments.
+    assert_eq!(before.len(), 11);
 
     // A full resync and every live writer, each fed what is already cached.
     guild_cache::sync_new_guild(&pool, &guild).await?;

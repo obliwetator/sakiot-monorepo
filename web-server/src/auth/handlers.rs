@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::errors::AppError;
-use crate::user::{get_user, get_user_guilds};
+use crate::user::get_user;
 
 use super::cookies::{
     CSRF_COOKIE, OAUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE, access_token_cookie,
@@ -171,7 +171,7 @@ pub async fn oauth_start(
         "https://discord.com/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
         urlencoding::encode(&cfg.client_id),
         urlencoding::encode(&cfg.discord_redirect_uri),
-        urlencoding::encode("identify guilds"),
+        urlencoding::encode("identify"),
         urlencoding::encode(&state),
     );
 
@@ -220,8 +220,7 @@ pub async fn discord_login(
 
     let data = request_access_token(&cfg, query.code.to_owned(), client.clone()).await?;
 
-    let user = get_user(client.clone(), &data.access_token, &pool).await?;
-    let _guilds = get_user_guilds(client, &data.access_token, user.id, &pool).await?;
+    let user = get_user(client, &data.access_token, &pool).await?;
 
     let csrf_token = Uuid::new_v4().to_string();
 

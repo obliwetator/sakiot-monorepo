@@ -189,8 +189,7 @@ tokens but keeps it, so tabs refreshing at the same moment cannot invalidate
 each other.
 
 Authorization reimplements Discord's permission model against the agent's role
-cache rather than trusting the permission snapshot from the OAuth login, so
-role and membership revocations take effect without a new login
+cache, so role and membership revocations take effect without a new login
 (`web-server/src/permissions.rs`). The agent writes that cache one guild per
 transaction and only where it differs from Discord
 (`fbi-agent/src/database/guild_cache.rs`), so a request never sees a guild's
@@ -217,7 +216,9 @@ guild list Discord returned at login (`membership` in `permissions.rs`):
   different server. Every check, realtime socket and background job carries
   the login kind (`Viewer`; `requester_dev` on media and composition jobs).
 
-`user_guilds` is still written at login, for dev seeding.
+Discord sign-in asks only for the `identify` scope, so the app never learns
+which other servers someone is in. `user_guilds` holds only the dev seeds
+(`scripts/dev-seed.sql`, `cargo dev` fixtures); nothing else writes it.
 `ops/sql/membership-parity.sql` lists who a deploy of this rule would cut
 off. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
@@ -396,10 +397,8 @@ not drift:
   in `.sqlx`, refreshed by `scripts/sqlx-prepare.sh` against a disposable
   database, and the pre-commit hook re-checks it when migrations or
   SQLx-using files are staged. The deliberate runtime-checked exceptions are
-  variable-arity multi-row inserts built with `QueryBuilder` (`user_guilds`
-  in `web-server/src/user.rs`), the `sakiot-dev`
-  tooling that runs caller-supplied SQL against arbitrary databases, and test
-  fixtures.
+  the `sakiot-dev` tooling that runs caller-supplied SQL against arbitrary
+  databases, and test fixtures.
 - **Version → release.** `[workspace.package] version` is the only release
   trigger. Bumping it and merging tags `v<version>`, which deploys to
   production. See [`ops/README.md`](../ops/README.md) and

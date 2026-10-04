@@ -1106,14 +1106,6 @@ async fn live_permission_cache_replaces_and_removes_revoked_state(
     )
     .execute(&pool)
     .await?;
-    sqlx::query(
-        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
-         VALUES ($1, $2, 'live-cache-test', false, 0, ARRAY[]::text[])",
-    )
-    .bind(guild_id.get() as i64)
-    .bind(user_id.get() as i64)
-    .execute(&pool)
-    .await?;
 
     let mut role = Role::default();
     role.id = role_id;
@@ -1175,9 +1167,8 @@ async fn live_permission_cache_replaces_and_removes_revoked_state(
     crate::database::guild_cache::delete_live_role(&pool, role_id).await?;
     crate::database::guild_cache::delete_live_channel(&pool, channel_id).await?;
 
-    let membership: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM user_guilds WHERE id = $1 AND user_id = $2")
-            .bind(guild_id.get() as i64)
+    let member_roles: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_roles WHERE user_id = $1")
             .bind(user_id.get() as i64)
             .fetch_one(&pool)
             .await?;
@@ -1195,7 +1186,7 @@ async fn live_permission_cache_replaces_and_removes_revoked_state(
     .bind(role_id.get() as i64)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(membership, 0);
+    assert_eq!(member_roles, 0);
     assert_eq!(role, 0);
     assert_eq!(channel, 0);
     assert_eq!(role_overwrites, 0);
@@ -1204,7 +1195,7 @@ async fn live_permission_cache_replaces_and_removes_revoked_state(
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn guild_owner_update_refreshes_live_and_oauth_caches(
+async fn guild_owner_update_records_the_new_owner(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let guild_id = GuildId::new(unique_id() as u64);
@@ -1216,17 +1207,6 @@ async fn guild_owner_update_refreshes_live_and_oauth_caches(
         .bind(old_owner_id.get() as i64)
         .execute(&pool)
         .await?;
-    sqlx::query(
-        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
-         VALUES
-            ($1, $2, 'owner-sync', true, 0, ARRAY[]::text[]),
-            ($1, $3, 'owner-sync', false, 0, ARRAY[]::text[])",
-    )
-    .bind(guild_id.get() as i64)
-    .bind(old_owner_id.get() as i64)
-    .bind(new_owner_id.get() as i64)
-    .execute(&pool)
-    .await?;
 
     let mut guild = serenity::model::guild::Guild::default();
     guild.id = guild_id;
@@ -1237,82 +1217,51 @@ async fn guild_owner_update_refreshes_live_and_oauth_caches(
         .bind(guild_id.get() as i64)
         .fetch_one(&pool)
         .await?;
-    let ownership: Vec<(i64, bool)> = sqlx::query_as(
-        "SELECT user_id, owner
-           FROM user_guilds
-          WHERE id = $1
-          ORDER BY user_id",
-    )
-    .bind(guild_id.get() as i64)
-    .fetch_all(&pool)
-    .await?;
-
     assert_eq!(owner_id, new_owner_id.get() as i64);
-    assert_eq!(
-        ownership,
-        vec![
-            (old_owner_id.get() as i64, false),
-            (new_owner_id.get() as i64, true),
-        ]
-    );
     Ok(())
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn full_guild_sync_refreshes_stale_oauth_owner_flags(
+async fn guild_syncs_leave_the_seeded_dev_guilds_alone(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Ownership moved while the bot was offline: no GuildUpdate arrives, so
-    // only the next full sync can correct the OAuth snapshot's owner flags.
+    // `user_guilds` holds only dev-login seeds: ownership moving and the dev
+    // account leaving the guild in Discord change nothing there.
     let guild_id = GuildId::new(unique_id() as u64);
     let old_owner_id = UserId::new(guild_id.get() + 1);
     let new_owner_id = UserId::new(guild_id.get() + 2);
-    let other_guild_id = GuildId::new(guild_id.get() + 3);
+    let dev_id = UserId::new(guild_id.get() + 3);
 
-    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2), ($3, $2)")
+    sqlx::query("INSERT INTO guilds (id, owner_id) VALUES ($1, $2)")
         .bind(guild_id.get() as i64)
         .bind(old_owner_id.get() as i64)
-        .bind(other_guild_id.get() as i64)
         .execute(&pool)
         .await?;
-    // The other guild is not in the bot's cache, like an imported fixture
-    // guild granted to the dev account: its flags must stay untouched.
     sqlx::query(
         "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
-         VALUES
-            ($1, $3, 'owner-resync', true, 0, ARRAY[]::text[]),
-            ($1, $4, 'owner-resync', false, 0, ARRAY[]::text[]),
-            ($2, $4, 'not-cached', true, 0, ARRAY[]::text[])",
+         VALUES ($1, $2, 'dev seed', true, 8, ARRAY[]::text[])",
     )
     .bind(guild_id.get() as i64)
-    .bind(other_guild_id.get() as i64)
-    .bind(old_owner_id.get() as i64)
-    .bind(new_owner_id.get() as i64)
+    .bind(dev_id.get() as i64)
     .execute(&pool)
     .await?;
+    let seeded = || {
+        sqlx::query_as::<_, (i64, bool, String)>(
+            "SELECT user_id, owner, xmin::text FROM user_guilds WHERE id = $1",
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_all(&pool)
+    };
+    let before = seeded().await?;
 
     let mut guild = Guild::default();
     guild.id = guild_id;
     guild.owner_id = new_owner_id;
     crate::database::guild_cache::sync_new_guild(&pool, &guild).await?;
+    crate::database::guild_cache::sync_guild_info(&pool, &guild.into()).await?;
+    crate::database::guild_cache::delete_live_member(&pool, guild_id, dev_id).await?;
 
-    let ownership: Vec<(i64, i64, bool)> = sqlx::query_as(
-        "SELECT id, user_id, owner
-           FROM user_guilds
-          WHERE id = ANY($1)
-          ORDER BY id, user_id",
-    )
-    .bind(vec![guild_id.get() as i64, other_guild_id.get() as i64])
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(
-        ownership,
-        vec![
-            (guild_id.get() as i64, old_owner_id.get() as i64, false),
-            (guild_id.get() as i64, new_owner_id.get() as i64, true),
-            (other_guild_id.get() as i64, new_owner_id.get() as i64, true),
-        ]
-    );
+    assert_eq!(seeded().await?, before);
     Ok(())
 }
 

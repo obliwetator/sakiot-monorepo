@@ -8,21 +8,9 @@ use actix_web::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_with::{As, DisplayFromStr};
-use sqlx::{Pool, Postgres, QueryBuilder};
+use sqlx::{Pool, Postgres};
 
 pub type DisplayFromstr = As<DisplayFromStr>;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserGuilds {
-    #[serde(with = "DisplayFromstr")]
-    pub id: i64,
-    pub name: String,
-    pub icon: Option<String>,
-    pub owner: bool,
-    #[serde(with = "DisplayFromstr")]
-    pub permissions: i64,
-    pub features: Vec<String>,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -62,64 +50,6 @@ pub async fn insert_user_db(user: &User, pool: &web::Data<Pool<Postgres>>) -> Re
     .execute(pool.get_ref())
     .await?;
     Ok(())
-}
-
-pub async fn insert_user_guilds_db(
-    user_guilds: &[UserGuilds],
-    pool: &web::Data<Pool<Postgres>>,
-    user_id: i64,
-) -> Result<(), AppError> {
-    if user_guilds.is_empty() {
-        return Ok(());
-    }
-
-    // A multi-row insert whose arity follows the guild count, so it cannot be
-    // a compile-time-checked `query!`.
-    let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
-        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features) ",
-    );
-
-    query_builder.push_values(user_guilds, |mut b, guild| {
-        b.push_bind(guild.id)
-            .push_bind(user_id)
-            .push_bind(&guild.name)
-            .push_bind(&guild.icon)
-            .push_bind(guild.owner)
-            .push_bind(guild.permissions)
-            .push_bind(&guild.features);
-    });
-
-    query_builder.push(
-        " ON CONFLICT (id, user_id) DO UPDATE SET
-          name = EXCLUDED.name,
-          icon = EXCLUDED.icon,
-          owner = EXCLUDED.owner,
-          permissions = EXCLUDED.permissions,
-          features = EXCLUDED.features",
-    );
-
-    let query = query_builder.build();
-    query.execute(pool.get_ref()).await?;
-
-    Ok(())
-}
-
-pub async fn get_user_guilds(
-    client: web::Data<Client>,
-    access_token: &str,
-    user_id: i64,
-    pool: &web::Data<Pool<Postgres>>,
-) -> Result<Vec<UserGuilds>, AppError> {
-    let user_guilds: Vec<UserGuilds> = parse_discord_response(
-        "users_me_guilds",
-        client
-            .get(format!("{}users/@me/guilds", BASE_URL))
-            .bearer_auth(access_token),
-        false,
-    )
-    .await?;
-    insert_user_guilds_db(&user_guilds, pool, user_id).await?;
-    Ok(user_guilds)
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -240,9 +170,8 @@ pub async fn get_current_user_guilds(
 
 /// The guilds a Discord login belongs to, as the bot sees them: guilds it is
 /// in where the viewer owns the guild or is on a complete roster, with live
-/// names and icons and the viewer's calculated permissions. The guild list
-/// Discord returned at login plays no part; a guild whose roster is not
-/// complete yet is left out until it is.
+/// names and icons and the viewer's calculated permissions. A guild whose
+/// roster is not complete yet is left out until it is.
 async fn member_guilds(
     pool: &Pool<Postgres>,
     viewer: crate::permissions::Viewer,
