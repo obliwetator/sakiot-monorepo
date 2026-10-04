@@ -137,6 +137,18 @@ impl Connection {
     }
 }
 
+/// Open connections by what they are subscribed to.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionStates {
+    /// Subscribed to a guild they may view.
+    pub subscribed: usize,
+    /// Waiting on a refused scope: not a member (yet), membership still
+    /// loading, or a role preview they may not make.
+    pub refused: usize,
+    /// No scope yet: the page shows no guild.
+    pub unscoped: usize,
+}
+
 pub struct Hub {
     pool: Pool<Postgres>,
     connections: Mutex<HashMap<u64, Arc<Connection>>>,
@@ -163,8 +175,18 @@ impl Hub {
         lock(&self.connections).remove(&id);
     }
 
-    pub fn connection_count(&self) -> usize {
-        lock(&self.connections).len()
+    pub fn connection_states(&self) -> ConnectionStates {
+        let mut states = ConnectionStates::default();
+        for connection in self.connections() {
+            match lock(&connection.subscription).as_ref() {
+                Some(Subscription {
+                    access: Some(_), ..
+                }) => states.subscribed += 1,
+                Some(_) => states.refused += 1,
+                None => states.unscoped += 1,
+            }
+        }
+        states
     }
 
     fn connections(&self) -> Vec<Arc<Connection>> {

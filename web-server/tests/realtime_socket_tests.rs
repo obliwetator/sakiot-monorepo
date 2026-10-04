@@ -15,7 +15,7 @@ use sqlx::PgPool;
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::config::Config;
-use web_server::realtime::{Hub, realtime_socket};
+use web_server::realtime::{ConnectionStates, Hub, realtime_socket};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 type Socket = actix_codec::Framed<awc::BoxedSocket, Codec>;
@@ -474,14 +474,20 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
     let hub = web::Data::new(Hub::new(pool.clone()));
     let _tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
     let server = server(&pool, hub.clone());
+    let states = |subscribed, refused, unscoped| ConnectionStates {
+        subscribed,
+        refused,
+        unscoped,
+    };
     let mut viewer = connect(&server, VIEWER, ORIGIN)
         .await?
         .map_err(|s| format!("{s}"))?;
+    assert_eq!(hub.connection_states(), states(0, 0, 1));
     subscribe(&mut viewer).await?;
     wait_for_listener(&pool, &mut viewer).await?;
+    assert_eq!(hub.connection_states(), states(1, 0, 0));
 
-    // Leaving the guild (a member-remove event) revokes access at once, even
-    // though the login snapshot still lists the guild.
+    // Leaving the guild (a member-remove event) revokes access at once.
     support::leave_guild(&pool, GUILD, VIEWER).await?;
     let mut message = expect(&mut viewer).await?;
     while message["type"] == "changed" {
@@ -491,6 +497,7 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
         message,
         json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
     );
+    assert_eq!(hub.connection_states(), states(0, 1, 0));
     // Nothing reaches a viewer who is out of the guild.
     insert_session(&pool, PUBLIC, &[]).await?;
     assert!(
@@ -515,6 +522,7 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
         expect(&mut viewer).await?,
         json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
     );
+    assert_eq!(hub.connection_states(), states(1, 0, 0));
     let visible = insert_session(&pool, PUBLIC, &[]).await?;
     assert_eq!(
         expect(&mut viewer).await?,
