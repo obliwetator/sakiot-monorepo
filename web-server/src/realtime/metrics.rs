@@ -23,6 +23,13 @@ pub(super) struct Metrics {
     pub notification_queue_usage: Gauge<f64>,
 }
 
+/// Latency buckets in seconds; the SDK's defaults are sized for milliseconds
+/// and put every realtime sample in the first bucket. Delivery includes the
+/// listener's 100 ms coalescing window.
+const LATENCY_BOUNDARIES: [f64; 13] = [
+    0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.5,
+];
+
 pub(super) fn metrics() -> &'static Metrics {
     static METRICS: OnceLock<Metrics> = OnceLock::new();
     METRICS.get_or_init(|| {
@@ -39,10 +46,12 @@ pub(super) fn metrics() -> &'static Metrics {
             db_roundtrip_seconds: meter
                 .f64_histogram("realtime_db_roundtrip_seconds")
                 .with_description("NOTIFY round trip from the database to the realtime listener")
+                .with_boundaries(LATENCY_BOUNDARIES.to_vec())
                 .build(),
             delivery_seconds: meter
                 .f64_histogram("realtime_delivery_seconds")
                 .with_description("Time from receiving a notification batch to queueing its events")
+                .with_boundaries(LATENCY_BOUNDARIES.to_vec())
                 .build(),
             resyncs: meter
                 .u64_counter("realtime_resyncs")

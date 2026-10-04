@@ -175,6 +175,10 @@ impl Hub {
         lock(&self.connections).remove(&id);
     }
 
+    pub fn connection_count(&self) -> usize {
+        lock(&self.connections).len()
+    }
+
     pub fn connection_states(&self) -> ConnectionStates {
         let mut states = ConnectionStates::default();
         for connection in self.connections() {

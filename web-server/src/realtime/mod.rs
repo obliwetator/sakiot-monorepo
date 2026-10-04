@@ -18,15 +18,29 @@ pub use hub::{Connection, ConnectionStates, Hub};
 pub use listener::spawn as spawn_listener;
 pub use socket::{origin_allowed, realtime_socket};
 
-/// Reports the open realtime connections on every export, by subscription
-/// state (`subscribed`, `refused`, `unscoped`).
+/// Reports the open realtime connections on every export: their total, and
+/// how many are in each subscription state (`subscribed`, `refused`,
+/// `unscoped`). The two are separate metrics because Prometheus rejects one
+/// name whose labels differ between the versions that report it, as they do
+/// while staging runs ahead of production.
 pub fn observe(hub: &Arc<Hub>) {
-    let hub = Arc::downgrade(hub);
-    opentelemetry::global::meter(crate::telemetry::SERVICE_NAME)
+    let meter = opentelemetry::global::meter(crate::telemetry::SERVICE_NAME);
+    let weak = Arc::downgrade(hub);
+    meter
         .u64_observable_gauge("realtime_connections")
-        .with_description("Open realtime WebSocket connections, by subscription state")
+        .with_description("Open realtime WebSocket connections")
         .with_callback(move |observer| {
-            if let Some(hub) = hub.upgrade() {
+            if let Some(hub) = weak.upgrade() {
+                observer.observe(hub.connection_count() as u64, &[]);
+            }
+        })
+        .build();
+    let weak = Arc::downgrade(hub);
+    meter
+        .u64_observable_gauge("realtime_subscriptions")
+        .with_description("Open realtime WebSocket connections by subscription state")
+        .with_callback(move |observer| {
+            if let Some(hub) = weak.upgrade() {
                 let states = hub.connection_states();
                 for (state, count) in [
                     ("subscribed", states.subscribed),
