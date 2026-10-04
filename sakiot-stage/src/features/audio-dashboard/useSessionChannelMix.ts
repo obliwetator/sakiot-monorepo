@@ -5,6 +5,7 @@ import {
 	useGenerateSessionChannelMixMutation,
 	useGetSessionChannelMixQuery,
 } from "../../app/apiSlice";
+import { useJobPolling } from "../../realtime/status";
 import { channelMixRenderSettingsEqual } from "./channelMixDrafts";
 import {
 	canGenerateChannelMix,
@@ -56,13 +57,14 @@ export function useSessionChannelMix(options: {
 }) {
 	const { sessionId, scope, manifestState } = options;
 	const [pollingInterval, setPollingInterval] = useState(0);
+	const jobPolling = useJobPolling(pollingInterval);
 	const {
 		currentData: mix,
 		isError: statusError,
 		refetch,
 	} = useGetSessionChannelMixQuery(
 		{ recording_session_id: sessionId, scope },
-		{ pollingInterval, skip: manifestState === null },
+		{ pollingInterval: jobPolling, skip: manifestState === null },
 	);
 	const status = mix?.status;
 	useEffect(() => {

@@ -7,6 +7,7 @@ import {
 	useGetWaveformQuery,
 } from "../../app/apiSlice";
 import type { AudioParams } from "../../Constants";
+import { useJobPolling } from "../../realtime/status";
 import { palette } from "../../shared/palette";
 import { Button } from "../../shared/ui";
 import { decodeWaveformPeaks } from "./waveformPeaks";
@@ -55,6 +56,7 @@ function WaveFormButton(props: {
 	// Both hooks must be called (RTK rule); gate each with `skip` by mode.
 	// On the clip route, `params.file_name` holds the clip_id.
 	const isClip = !!props.isClip;
+	const jobPolling = useJobPolling(1_000);
 	const recording = useGetWaveformQuery(
 		{
 			guild_id: props.params.guild_id ?? "",
@@ -67,8 +69,8 @@ function WaveFormButton(props: {
 		},
 		{
 			skip: !shouldGenerate || isClip,
-			// Poll every 1 second while generating
-			pollingInterval: shouldGenerate && !isClip ? 1000 : 0,
+			// Poll while generating (slowly while realtime reports the job).
+			pollingInterval: shouldGenerate && !isClip ? jobPolling : 0,
 		},
 	);
 	const clip = useGetClipWaveformQuery(
@@ -79,7 +81,7 @@ function WaveFormButton(props: {
 		},
 		{
 			skip: !shouldGenerate || !isClip,
-			pollingInterval: shouldGenerate && isClip ? 1000 : 0,
+			pollingInterval: shouldGenerate && isClip ? jobPolling : 0,
 		},
 	);
 	const waveformData = isClip ? clip.data : recording.data;

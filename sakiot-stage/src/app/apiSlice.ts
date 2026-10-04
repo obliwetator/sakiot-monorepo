@@ -142,6 +142,8 @@ export interface WaveformResponse {
 	progress: number;
 	data?: string;
 	error?: string;
+	/** The media job building it, until the data is ready (a 202 job status). */
+	id?: string;
 }
 
 export type StampData = ApiSchema["StampInfo"];
@@ -181,8 +183,17 @@ const TAG_TYPES = [
 	"VoicePresence",
 	/** One recording session's manifest and waveform, by session id. */
 	"Session",
+	/**
+	 * A background job a page is waiting on, by job id: realtime `jobs`
+	 * events refresh exactly the queries still waiting on that job.
+	 */
+	"Job",
 ] as const;
 export type ApiTag = (typeof TAG_TYPES)[number];
+
+/** The `Job` tag of a response that is still waiting on a job, if any. */
+const jobTags = (jobId: string | null | undefined) =>
+	jobId ? [{ type: "Job" as const, id: jobId }] : [];
 
 /** Tags for anything scoped to one guild, given the id bare or in an object. */
 const guildScoped =
@@ -296,6 +307,7 @@ export const apiSlice = createApi({
 		>({
 			query: ({ recording_session_id, scope = "all_recordings" }) =>
 				`${apiUrl(API_ROUTES.sessionChannelMix, { recording_session_id })}?scope=${scope}`,
+			providesTags: (result) => jobTags(result?.job_id),
 		}),
 		generateSessionChannelMix: builder.mutation<
 			ChannelMixResponse | MediaJobStatus,
@@ -314,7 +326,10 @@ export const apiSlice = createApi({
 		getSessionWaveform: builder.query<SessionWaveformResponse, string>({
 			query: (recording_session_id) =>
 				apiUrl(API_ROUTES.sessionWaveform, { recording_session_id }),
-			providesTags: (_result, _error, id) => [{ type: "Session", id }],
+			providesTags: (result, _error, id) => [
+				{ type: "Session", id },
+				...jobTags(result?.job_id),
+			],
 		}),
 		getSilenceFreeSessionWaveform: builder.query<
 			SessionWaveformResponse,
@@ -324,6 +339,7 @@ export const apiSlice = createApi({
 				apiUrl(API_ROUTES.sessionSilenceFreeWaveform, {
 					recording_session_id,
 				}),
+			providesTags: (result) => jobTags(result?.job_id),
 		}),
 		rebuildSessionWaveform: builder.mutation<MediaJobStatus, string>({
 			query: (recording_session_id) => ({
@@ -395,6 +411,8 @@ export const apiSlice = createApi({
 			query: ({ guild_id, clip_id }) => ({
 				url: apiUrl(API_ROUTES.clipComposeStatus, { guild_id, clip_id }),
 			}),
+			// `clip_id` is the export job's id.
+			providesTags: (_result, _error, { clip_id }) => jobTags(clip_id),
 		}),
 		getStamps: builder.query<
 			StampData[],
@@ -560,6 +578,7 @@ export const apiSlice = createApi({
 					})}${suffix}`,
 				};
 			},
+			providesTags: (result) => jobTags(result?.id),
 		}),
 		// Channel-mix source metadata already contains the canonical root-relative
 		// waveform URL. Keep those requests in RTK Query's cache too so the same
@@ -567,6 +586,7 @@ export const apiSlice = createApi({
 		// starting another fetch (or another server-side build).
 		getWaveformByUrl: builder.query<WaveformResponse, string>({
 			query: (url) => url.replace(/^\/api\//, ""),
+			providesTags: (result) => jobTags(result?.id),
 		}),
 		// Clips are their own trimmed file, keyed by clip_id — separate endpoint
 		// from the recording waveform (which needs channel_id/year/month).
@@ -582,6 +602,7 @@ export const apiSlice = createApi({
 					url: `${apiUrl(API_ROUTES.clipWaveform, { guild_id, clip_id })}${suffix}`,
 				};
 			},
+			providesTags: (result) => jobTags(result?.id),
 		}),
 		getGuildCooldown: builder.query<ApiSchema["GuildCooldown"], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildCooldown, { guild_id }),
@@ -707,6 +728,7 @@ export const apiSlice = createApi({
 		>({
 			query: ({ guild_id, job_id }) =>
 				apiUrl(API_ROUTES.recordingDeletion, { guild_id, job_id }),
+			providesTags: (_result, _error, { job_id }) => jobTags(job_id),
 		}),
 		getGuildRoles: builder.query<GuildRole[], string>({
 			query: (guild_id) => apiUrl(API_ROUTES.guildRoles, { guild_id }),

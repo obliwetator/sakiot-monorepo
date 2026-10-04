@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useGetClipWaveformQuery } from "../../app/apiSlice";
+import { useJobPolling } from "../../realtime/status";
 import { Button } from "../../shared/ui";
 import { WaveformCanvas } from "../audio-dashboard/WaveformCanvas";
 import { WaveformStatusOverlay } from "../audio-dashboard/WaveformStatusOverlay";
@@ -20,6 +21,7 @@ export function ClipWaveform(props: {
 }) {
 	const [requestKey, setRequestKey] = useState<number | undefined>();
 	const [generating, setGenerating] = useState(true);
+	const jobPolling = useJobPolling(1_000);
 	const {
 		currentData: data,
 		isError,
@@ -31,7 +33,7 @@ export function ClipWaveform(props: {
 			timestamp: requestKey,
 		},
 		{
-			pollingInterval: generating ? 1_000 : 0,
+			pollingInterval: generating ? jobPolling : 0,
 		},
 	);
 

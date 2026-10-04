@@ -248,7 +248,9 @@ comes from the existing authorized endpoints.
   cache. They fire for whichever binary writes, including a draining bot.
   Update triggers compare displayed columns only, so heartbeats and no-op
   writes are silent, and permission tables send one guild-wide payload per
-  transaction.
+  transaction. Media jobs, clip exports and recording deletions notify when
+  their state, stage, progress or error changes, never on a lease renewal
+  (`20261006000000_realtime_job_notifications.sql`).
 - **Listener** (`web-server/src/realtime/listener.rs`) holds a dedicated
   connection and coalesces notifications for 100 ms. A lost connection or a
   notification gap re-authorizes every subscription and sends
@@ -262,7 +264,9 @@ comes from the existing authorized endpoints.
   viewers the HTTP listing would show the item to. A viewer who may have seen
   a session before a change hid it gets an identifier-free `changed` instead.
   Opt-outs reach only their owner, settings only managers, and role previews
-  follow the role-preview rule above. A refused scope (not a member yet, or a
+  follow the role-preview rule above. Job ids reach only whoever may read the
+  job's status: a media job's viewers (`media_job_viewers`), an export's
+  owner, and the guild's managers for a deletion. A refused scope (not a member yet, or a
   roster still loading) stays pending: the next permission event that grants
   it sends `subscribed`, then `access_changed` for the guild list.
 - **Socket** (`GET /api/realtime`, `web-server/src/realtime/socket.rs`)
@@ -291,7 +295,11 @@ comes from the existing authorized endpoints.
   every 30 s. Manifests (every 5 s until finalized) and a file's live state
   (every 10 s) poll even while realtime is live: a growing recording changes
   only its heartbeat, which notifies nothing, so no event announces new
-  audio. Settings forms
+  audio. A query still waiting on a job carries its `Job` tag (by job id), so
+  a `jobs` event refetches exactly that query; while realtime is live such
+  pages poll every 5 s instead of every second, which only covers an event
+  that arrived before the page knew the job's id. Silence removal and download
+  preparation still poll every second. Settings forms
   keep an admin's draft when a refresh changes the saved value
   (`shared/useDraftField.ts`).
 

@@ -12,6 +12,7 @@ import {
 	useGetComposeClipStatusQuery,
 } from "../../app/apiSlice";
 import { useAppDispatch } from "../../app/hooks";
+import { useJobPolling } from "../../realtime/status";
 
 type Body = components["schemas"]["ComposeClipBody"];
 interface PendingExport {
@@ -68,10 +69,11 @@ export function useCompositionExport(guildId: string) {
 	}, [storageKey]);
 
 	const active = loadedKey === storageKey ? pending : null;
+	const jobPolling = useJobPolling(1_000);
 	const { currentData: status, error: pollError } =
 		useGetComposeClipStatusQuery(
 			{ guild_id: guildId, clip_id: active?.jobId ?? "" },
-			{ skip: !active?.jobId, pollingInterval: 1000 },
+			{ skip: !active?.jobId, pollingInterval: jobPolling },
 		);
 
 	const submit = useCallback(

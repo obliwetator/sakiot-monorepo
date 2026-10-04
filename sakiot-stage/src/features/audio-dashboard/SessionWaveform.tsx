@@ -5,6 +5,7 @@ import {
 	useRebuildSessionWaveformMutation,
 	useRebuildSilenceFreeSessionWaveformMutation,
 } from "../../app/apiSlice";
+import { useJobPolling } from "../../realtime/status";
 import { Button } from "../../shared/ui";
 import { formatSessionTimecode } from "../../utils/formatTime";
 import { TimelineGrid, TimelinePlayhead } from "./timelineLayout";
@@ -22,12 +23,21 @@ export function SessionWaveform(props: {
 	silenceFree?: boolean;
 }) {
 	const [rebuilding, setRebuilding] = useState(false);
+	/** When the current rebuild was requested; answers before it are stale. */
+	const [rebuildRequestedAt, setRebuildRequestedAt] = useState(0);
 	const [rebuildProgress, setRebuildProgress] = useState(0);
+	const jobPolling = useJobPolling(1_000);
 	const { query, peaks } = useSessionWaveformPeaks(
 		props.sessionId,
 		props.silenceFree,
 	);
-	const { currentData: data, isError, error, refetch } = query;
+	const {
+		currentData: data,
+		fulfilledTimeStamp,
+		isError,
+		error,
+		refetch,
+	} = query;
 	const [rebuildNormalWaveform, normalRebuildState] =
 		useRebuildSessionWaveformMutation();
 	const [rebuildSilenceFreeWaveform, silenceFreeRebuildState] =
@@ -58,6 +68,18 @@ export function SessionWaveform(props: {
 		}
 	}, [data?.building, data?.progress]);
 
+	// A realtime `jobs` event refetches the waveform as soon as the build
+	// finishes, without waiting for the next poll.
+	useEffect(() => {
+		if (
+			rebuilding &&
+			data?.building === false &&
+			(fulfilledTimeStamp ?? 0) > rebuildRequestedAt
+		) {
+			setRebuilding(false);
+		}
+	}, [data?.building, fulfilledTimeStamp, rebuildRequestedAt, rebuilding]);
+
 	useEffect(() => {
 		if (!rebuilding) return;
 		let cancelled = false;
@@ -68,13 +90,13 @@ export function SessionWaveform(props: {
 				return;
 			}
 		};
-		const interval = window.setInterval(() => void tick(), 1_000);
+		const interval = window.setInterval(() => void tick(), jobPolling);
 		void tick();
 		return () => {
 			cancelled = true;
 			window.clearInterval(interval);
 		};
-	}, [pollRebuild, rebuilding]);
+	}, [jobPolling, pollRebuild, rebuilding]);
 
 	const startRebuild = async () => {
 		setRebuildProgress(0);
@@ -83,6 +105,7 @@ export function SessionWaveform(props: {
 				? rebuildSilenceFreeWaveform
 				: rebuildNormalWaveform;
 			await rebuild(props.sessionId).unwrap();
+			setRebuildRequestedAt(Date.now());
 			setRebuilding(true);
 		} catch {
 			setRebuilding(false);

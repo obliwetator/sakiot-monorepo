@@ -47,7 +47,9 @@ function invalidate(ctx: ApplyContext, guildId: string, types: ApiTag[]) {
  */
 export function reconcileGuild(ctx: ApplyContext, guildId: string): void {
 	invalidate(ctx, guildId, GUILD_TAGS);
-	ctx.dispatch(apiSlice.util.invalidateTags(["Session"]));
+	// Job events may have been missed too; only queries still waiting on a
+	// job carry its tag.
+	ctx.dispatch(apiSlice.util.invalidateTags(["Session", "Job"]));
 }
 
 const inFlight = new Map<string, { again: boolean }>();
@@ -168,6 +170,16 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 		case "members":
 			// Role pages count and list members from the roster.
 			invalidate(ctx, guildId, ["GuildMembers", "GuildRoles"]);
+			return;
+		case "jobs":
+			// Only the queries still waiting on these jobs refetch.
+			ctx.dispatch(
+				apiSlice.util.invalidateTags(
+					message.ids
+						? message.ids.map((id) => ({ type: "Job" as const, id }))
+						: ["Job"],
+				),
+			);
 			return;
 	}
 }

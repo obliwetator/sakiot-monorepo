@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type ApiProblem, problemFromQueryError } from "../../app/apiError";
 import {
+	apiSlice,
 	type RecordingDeletionStatus as DeletionStatus,
 	useDeleteRecordingMutation,
 	useGetRecordingDeletionQuery,
 } from "../../app/apiSlice";
+import { useJobPolling } from "../../realtime/status";
 import { Button, Notice } from "../../shared/ui";
 
 export type RecordingDeletionJob = {
@@ -124,9 +126,13 @@ function describe(status: DeletionStatus): {
 export function RecordingDeletionStatus(props: { job: RecordingDeletionJob }) {
 	const navigate = useNavigate();
 	const { initial, ...job } = props.job;
-	const query = useGetRecordingDeletionQuery(job, {
-		pollingInterval: initial && TERMINAL_STATES.has(initial.state) ? 0 : 2_000,
-	});
+	// Poll until the deletion settles, by the latest known state.
+	const latest =
+		apiSlice.endpoints.getRecordingDeletion.useQueryState(job).data ?? initial;
+	const pollingInterval = useJobPolling(
+		latest && TERMINAL_STATES.has(latest.state) ? 0 : 2_000,
+	);
+	const query = useGetRecordingDeletionQuery(job, { pollingInterval });
 	// Fall back on the confirmed answer to the removal request, never on a
 	// guess: without either, the page says it does not know.
 	const status = query.data ?? initial;

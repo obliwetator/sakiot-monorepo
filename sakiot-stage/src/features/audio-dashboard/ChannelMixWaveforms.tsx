@@ -3,6 +3,7 @@ import type {
 	ChannelMixTrack,
 } from "../../app/apiSlice";
 import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
+import { useJobPolling } from "../../realtime/status";
 import { fractionInTarget } from "../../shared/geometry";
 import { Button } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
@@ -26,11 +27,12 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	);
 	const cachedData = cached.currentData?.data;
 	const cachedError = Boolean(cached.error || cached.currentData?.error);
+	const jobPolling = useJobPolling(1_000);
 	const query = useGetWaveformByUrlQuery(segment.waveform_url, {
 		// Both live and finalized sources poll only until their first successful
 		// payload. RTK Query shares that one request across every rendering of the
 		// same physical source, and a live snapshot stays cached for this page.
-		pollingInterval: cachedError || cachedData ? 0 : 1_000,
+		pollingInterval: cachedError || cachedData ? 0 : jobPolling,
 	});
 	const encoded = query.currentData?.data;
 	const peaks = useDecodedPeaks(encoded);

@@ -50,3 +50,22 @@ export function useRealtimeLive(): boolean {
 export function useFallbackPolling(whenOffline: number): number {
 	return useRealtimeLive() ? 0 : whenOffline;
 }
+
+/** While live, how often a page waiting on a job still checks it. */
+export const JOB_POLL_WHILE_LIVE_MS = 5_000;
+
+/**
+ * Polling interval for a job's progress (`interval`, or 0 when not waiting).
+ * While realtime is live, `jobs` events refresh the job as it changes, and a
+ * slow poll only covers an event that arrives before the page knows the job's
+ * id.
+ */
+export function jobPollingInterval(interval: number, live: boolean): number {
+	return interval > 0 && live
+		? Math.max(interval, JOB_POLL_WHILE_LIVE_MS)
+		: interval;
+}
+
+export function useJobPolling(interval: number): number {
+	return jobPollingInterval(interval, useRealtimeLive());
+}
