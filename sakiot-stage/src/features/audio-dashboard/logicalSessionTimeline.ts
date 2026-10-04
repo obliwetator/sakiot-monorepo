@@ -69,3 +69,27 @@ export function isolateSessionChannel(
 		};
 	});
 }
+
+/**
+ * An active session's timeline ends "now": the server's `duration_ms` when it
+ * answered. Between manifest polls the client keeps that end moving, adding
+ * `elapsedMs` since the answer to the duration and to the fragments still
+ * recording, so live playback, which trails real time, never passes the end
+ * the timeline shows. Other sessions are returned unchanged.
+ */
+export function extendActiveManifest(
+	manifest: SessionManifest,
+	elapsedMs: number,
+): SessionManifest {
+	if (manifest.state !== "active" || !(elapsedMs > 0)) return manifest;
+	const durationMs = manifest.duration_ms + elapsedMs;
+	return {
+		...manifest,
+		duration_ms: durationMs,
+		segments: manifest.segments.map((segment) =>
+			segment.kind === "active_hls" && segment.end_ms === manifest.duration_ms
+				? { ...segment, end_ms: durationMs }
+				: segment,
+		),
+	};
+}

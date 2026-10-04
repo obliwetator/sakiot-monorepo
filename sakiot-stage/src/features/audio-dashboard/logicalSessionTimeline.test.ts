@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionManifest } from "../../app/apiSlice";
 import {
+	extendActiveManifest,
 	isolateSessionChannel,
 	normalizeSessionSegments,
 } from "./logicalSessionTimeline";
@@ -128,5 +129,45 @@ describe("normalizeSessionSegments", () => {
 				media_url: "/second",
 			},
 		]);
+	});
+});
+
+describe("extendActiveManifest", () => {
+	const recording = (): SessionManifest => ({
+		...manifest(
+			[
+				{ kind: "audio", start_ms: 0, end_ms: 3_000, media_url: "/done" },
+				{
+					kind: "active_hls",
+					start_ms: 4_000,
+					end_ms: 8_000,
+					media_url: "/live",
+				},
+			],
+			8_000,
+		),
+		state: "active",
+		ended_at_ms: null,
+	});
+
+	it("moves an active session's end and its recording fragment with the clock", () => {
+		const extended = extendActiveManifest(recording(), 1_500);
+		expect(extended.duration_ms).toBe(9_500);
+		expect(extended.segments.map(({ kind, end_ms }) => [kind, end_ms])).toEqual(
+			[
+				["audio", 3_000],
+				["active_hls", 9_500],
+			],
+		);
+	});
+
+	it("leaves finished, paused and freshly fetched sessions alone", () => {
+		const active = recording();
+		expect(extendActiveManifest(active, 0)).toBe(active);
+		expect(extendActiveManifest(active, -200)).toBe(active);
+		const paused = { ...active, state: "pending" };
+		expect(extendActiveManifest(paused, 1_500)).toBe(paused);
+		const finalized = manifest([]);
+		expect(extendActiveManifest(finalized, 1_500)).toBe(finalized);
 	});
 });
