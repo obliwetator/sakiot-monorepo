@@ -17,6 +17,13 @@ export interface WaveformCanvasContext {
 export interface WaveformWindow {
 	startFraction: number;
 	endFraction: number;
+	/**
+	 * Length of the recording the fractions are of. With it, points are placed
+	 * by their time instead of stretched to fill the window, so a waveform built
+	 * partway through a live recording stops where its audio stops and the rest
+	 * stays blank.
+	 */
+	durationMs?: number;
 }
 
 /** Color overrides for the waveform bars and its backdrop fill. */
@@ -50,22 +57,20 @@ export function drawSessionWaveform(
 	const pointCount = Math.min(peaks.min.length, peaks.max.length);
 	if (pointCount === 0 || width <= 0) return;
 
-	if (style.fillStyle !== null) {
-		context.fillStyle = style.fillStyle ?? alpha(palette.purple500, 0.18);
-		context.fillRect(0, 0, width, height);
-	}
-	const center = height / 2;
-	context.strokeStyle = style.strokeStyle ?? palette.fuchsia500;
-	context.lineWidth = 1;
-	context.beginPath();
-
-	const from = clampFraction(window.startFraction) * pointCount;
-	const to = clampFraction(window.endFraction) * pointCount;
+	// Points spanning the whole recording: more than exist when the waveform
+	// covers only its start.
+	const wholePoints =
+		isPositive(window.durationMs) && isPositive(peaks.durationMs)
+			? pointCount * (window.durationMs / peaks.durationMs)
+			: pointCount;
+	const from = clampFraction(window.startFraction) * wholePoints;
+	const to = clampFraction(window.endFraction) * wholePoints;
 	// Reversed segments walk the source window from its end, so column 0
 	// samples the point the playback will reach last.
 	const start = style.reverse ? to : from;
 	const end = style.reverse ? from : to;
 
+	const columns: { x: number; min: number; max: number }[] = [];
 	for (let x = 0; x < width; x += 1) {
 		// Every point falling in this column contributes, so raising the peak
 		// resolution sharpens the envelope instead of aliasing it into noise.
@@ -73,22 +78,47 @@ export function drawSessionWaveform(
 		// delimit the same column, so aggregate their range either way.
 		const rawStart = start + (x / width) * (end - start);
 		const rawEnd = start + ((x + 1) / width) * (end - start);
-		const first = Math.floor(Math.min(rawStart, rawEnd));
-		const last = Math.max(first + 1, Math.ceil(Math.max(rawStart, rawEnd)));
+		const first = Math.max(0, Math.floor(Math.min(rawStart, rawEnd)));
+		const last = Math.min(
+			pointCount,
+			Math.max(first + 1, Math.ceil(Math.max(rawStart, rawEnd))),
+		);
+		// Past the end of the waveform: left blank.
+		if (first >= last) continue;
 		let min = 0;
 		let max = 0;
-		for (
-			let point = Math.max(0, first);
-			point < Math.min(pointCount, last);
-			point += 1
-		) {
+		for (let point = first; point < last; point += 1) {
 			min = Math.min(min, peaks.min[point] ?? 0);
 			max = Math.max(max, peaks.max[point] ?? 0);
 		}
+		columns.push({ x, min, max });
+	}
+	const firstColumn = columns[0];
+	const lastColumn = columns.at(-1);
+	if (!firstColumn || !lastColumn) return;
+
+	if (style.fillStyle !== null) {
+		context.fillStyle = style.fillStyle ?? alpha(palette.purple500, 0.18);
+		context.fillRect(
+			firstColumn.x,
+			0,
+			lastColumn.x + 1 - firstColumn.x,
+			height,
+		);
+	}
+	const center = height / 2;
+	context.strokeStyle = style.strokeStyle ?? palette.fuchsia500;
+	context.lineWidth = 1;
+	context.beginPath();
+	for (const { x, min, max } of columns) {
 		context.moveTo(x, center - clampAmplitude(max) * center);
 		context.lineTo(x, center - clampAmplitude(min) * center);
 	}
 	context.stroke();
+}
+
+function isPositive(value: number | undefined): value is number {
+	return value !== undefined && Number.isFinite(value) && value > 0;
 }
 
 function clampFraction(value: number): number {

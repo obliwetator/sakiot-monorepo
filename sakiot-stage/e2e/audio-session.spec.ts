@@ -266,6 +266,11 @@ interface MockAudioOptions {
 	mediaSeconds?: number;
 	/** Serve a ready-to-preview channel mix with one decodable source. */
 	channelMixReady?: boolean;
+	/**
+	 * Serve the channel mix source as still recording: its waveform exists
+	 * only once a build is asked for.
+	 */
+	channelMixLive?: boolean;
 	/** Serve the session as still recording. */
 	stillRecording?: boolean;
 }
@@ -274,6 +279,19 @@ interface MockAudioOptions {
 const EMPTY_WAVEFORM_PAYLOAD = Buffer.from(new Uint8Array(20)).toString(
 	"base64",
 );
+/** An audiowaveform payload of `points` loud points, one per second. */
+function waveformPayload(points: number): string {
+	const view = new DataView(new ArrayBuffer(20 + points * 4));
+	view.setInt32(0, 1, true);
+	view.setUint32(8, 1_000, true);
+	view.setUint32(12, 1_000, true);
+	view.setUint32(16, points, true);
+	for (let point = 0; point < points; point += 1) {
+		view.setInt16(20 + point * 4, -16_000, true);
+		view.setInt16(22 + point * 4, 16_000, true);
+	}
+	return Buffer.from(view.buffer).toString("base64");
+}
 const CHANNEL_MIX_SEGMENT_PATH = `/audio/sessions/${SESSION_ID}/segments/1`;
 const CHANNEL_MIX_WAVEFORM_PATH =
 	"/audio/waveform/guild-123/voice-123/2026/8/channel-mix-source";
@@ -288,6 +306,7 @@ declare global {
 }
 
 async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
+	let channelMixWaveformBuilt = false;
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
@@ -497,7 +516,7 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 								end_ms: 30_000,
 								hls_playlist_url: `/api/audio/sessions/${SESSION_ID}/live/1/playlist.m3u8`,
 								id: "1:0",
-								live: false,
+								live: Boolean(options.channelMixLive),
 								media_url: `/api/audio/sessions/${SESSION_ID}/segments/1`,
 								recording_session_id: SESSION_ID,
 								source_duration_ms: 30_000,
@@ -525,6 +544,17 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 			return;
 		}
 		if (options.channelMixReady && path === CHANNEL_MIX_WAVEFORM_PATH) {
+			if (options.channelMixLive) {
+				if (url.searchParams.get("build") === "true") {
+					channelMixWaveformBuilt = true;
+				}
+				await fulfillJson(
+					channelMixWaveformBuilt
+						? { data: waveformPayload(10), progress: 100 }
+						: { built: false, progress: 0 },
+				);
+				return;
+			}
 			await fulfillJson({ data: EMPTY_WAVEFORM_PAYLOAD, progress: 100 });
 			return;
 		}
@@ -1001,6 +1031,37 @@ test("channel mix playback starts once and never re-seeks from canplay", async (
 	);
 	expect(writesAfter - writesBefore).toBeLessThanOrEqual(10);
 	await expect.poll(isPlaying).toBe(true);
+});
+
+test("a live channel mix source builds its waveform only when asked", async ({
+	page,
+}) => {
+	await mockAudioApi(page, { channelMixReady: true, channelMixLive: true });
+	const waveformQueries: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (url.pathname === `${API_PREFIX}${CHANNEL_MIX_WAVEFORM_PATH}`) {
+			waveformQueries.push(url.search);
+		}
+	});
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+	await page.getByRole("tab", { name: "Channel mix", exact: true }).click();
+	const mixPanel = page.getByRole("tabpanel", {
+		name: "Channel mix",
+		exact: true,
+	});
+	const build = mixPanel.getByRole("button", { name: "Build waveform" });
+	await expect(build).toBeVisible();
+
+	// Each build reads the whole recording so far, so viewing never polls.
+	const viewed = waveformQueries.length;
+	await page.waitForTimeout(2_500);
+	expect(waveformQueries).toHaveLength(viewed);
+	expect(waveformQueries).not.toContain("?build=true");
+
+	await build.click();
+	await expect(build).toHaveCount(0);
+	expect(waveformQueries).toContain("?build=true");
 });
 
 test("the playhead glides over audio instead of stepping on timeupdate", async ({

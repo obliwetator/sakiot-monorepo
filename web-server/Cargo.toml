@@ -69,6 +69,7 @@ fastrand = "2"
 
 [dev-dependencies]
 actix-codec = "0.5"
+actix-http = "3"
 actix-test = "0.1"
 awc = "3"
 tempfile = "3"

@@ -66,6 +66,8 @@ function WaveFormButton(props: {
 			file_name: props.params.file_name ?? "",
 			timestamp,
 			silence: props.isSilence,
+			// Generated on request only, so a live recording is built too.
+			build: true,
 		},
 		{
 			skip: !shouldGenerate || isClip,

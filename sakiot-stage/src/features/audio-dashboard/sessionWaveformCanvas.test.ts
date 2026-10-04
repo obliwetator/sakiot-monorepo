@@ -81,6 +81,42 @@ describe("drawSessionWaveform", () => {
 		expect(drawnColumns(context)).toEqual([[37.5, 62.5]]);
 	});
 
+	it("leaves the time past a live waveform's end blank", () => {
+		const context = canvasContext();
+
+		// A waveform built 1 s into what is now a 2 s recording.
+		drawSessionWaveform(
+			context,
+			4,
+			100,
+			{ min: [-1, -0.5], max: [1, 0.5], durationMs: 1_000 },
+			{ startFraction: 0, endFraction: 1, durationMs: 2_000 },
+		);
+
+		expect(drawnColumns(context)).toEqual([
+			[0, 100],
+			[25, 75],
+		]);
+		expect(context.fillRect).toHaveBeenCalledWith(0, 0, 2, 100);
+	});
+
+	it("keeps points at their time inside a window of a longer recording", () => {
+		const context = canvasContext();
+
+		// The window is the second half of a 4 s recording whose waveform
+		// covers only its first 3 s: one point per second.
+		drawSessionWaveform(
+			context,
+			2,
+			100,
+			{ min: [0, 0, -1], max: [0, 0, 1], durationMs: 3_000 },
+			{ startFraction: 0.5, endFraction: 1, durationMs: 4_000 },
+		);
+
+		expect(drawnColumns(context)).toEqual([[0, 100]]);
+		expect(context.fillRect).toHaveBeenCalledWith(0, 0, 1, 100);
+	});
+
 	it("survives a window given back to front", () => {
 		const context = canvasContext();
 

@@ -138,6 +138,7 @@ export function ClipRangeEditorView({
 							label="Clip window waveform"
 							startFraction={view.startMs / Math.max(1, durationMs)}
 							endFraction={view.endMs / Math.max(1, durationMs)}
+							durationMs={durationMs}
 						/>
 						{[
 							{ key: "before", left: "0%", right: percent(1 - startFraction) },

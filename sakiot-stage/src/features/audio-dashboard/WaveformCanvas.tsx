@@ -34,11 +34,23 @@ export function WaveformCanvas(props: {
 	/** Portion of the recording to draw; defaults to all of it. */
 	startFraction?: number;
 	endFraction?: number;
+	/**
+	 * Length of the recording, when known. Peaks are then placed by time, so a
+	 * waveform built partway through a live recording leaves the rest blank
+	 * instead of stretching out of step with playback.
+	 */
+	durationMs?: number;
 	onSeekFraction?: (fraction: number) => void;
 	onHoverFraction?: (fraction: number | null) => void;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const { peaks, height, startFraction = 0, endFraction = 1 } = props;
+	const {
+		peaks,
+		height,
+		startFraction = 0,
+		endFraction = 1,
+		durationMs,
+	} = props;
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -55,6 +67,7 @@ export function WaveformCanvas(props: {
 			drawSessionWaveform(context, width, height, peaks, {
 				startFraction,
 				endFraction,
+				durationMs,
 			});
 		};
 
@@ -62,7 +75,7 @@ export function WaveformCanvas(props: {
 		const observer = new ResizeObserver(draw);
 		observer.observe(canvas);
 		return () => observer.disconnect();
-	}, [endFraction, height, peaks, startFraction]);
+	}, [durationMs, endFraction, height, peaks, startFraction]);
 
 	return (
 		<canvas

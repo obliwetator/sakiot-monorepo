@@ -101,7 +101,14 @@ same paths from the same crate rather than reading them from the database.
   (`audio/live.rs`).
 
 Waveform peaks are generated with `audiowaveform` and served alongside, so the
-client draws waveforms without downloading the audio.
+client draws waveforms without downloading the audio. A finished recording or
+session builds its waveform the first time it is viewed. A live one builds only
+when someone asks, because each build reads everything recorded so far. A
+waveform built while live is rebuilt once the recording ends: per-recording
+waveforms through `waveform_end_ts`, session waveforms because each build
+stamps its file with when it started reading. The client places peaks by time,
+so a waveform built partway through a recording stops where its audio stops and
+the rest of the timeline stays blank.
 
 ## Clip editing and the DSP parity story
 

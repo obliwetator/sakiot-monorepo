@@ -23,18 +23,32 @@ pub async fn get_session_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access =
+        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let (cache_key, output) = session_waveform_cache(session_id, false);
     if let Some(job) =
         crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &cache_key)
             .await?
     {
-        return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-            progress: job.progress,
-            building: true,
-            data: None,
-            job_id: Some(job.id),
-        }));
+        return Ok(building_response(job));
+    }
+    // A live session's waveform is built only when asked for, since each
+    // build reads the whole session so far. Once the session has finished,
+    // one that does not cover all of it is rebuilt without being asked.
+    if let Some(ended_at_ms) = finished_at_ms(&access)
+        && modified_ms(&output)
+            .await
+            .is_none_or(|built_from| built_from < ended_at_ms)
+    {
+        return build_finished_session_waveform(
+            &pool,
+            crate::permissions::Viewer::of(&token),
+            access.guild_id,
+            session_id,
+            false,
+            ended_at_ms,
+        )
+        .await;
     }
     session_waveform_status(&cache_key, &output, &progress).await
 }
@@ -113,12 +127,19 @@ pub async fn get_session_silence_free_waveform(
         crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &cache_key)
             .await?
     {
-        return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-            progress: job.progress,
-            building: true,
-            data: None,
-            job_id: Some(job.id),
-        }));
+        return Ok(building_response(job));
+    }
+    // Silence-free audio exists only once the session has finished.
+    if !tokio::fs::try_exists(&output).await.unwrap_or(false) {
+        return build_finished_session_waveform(
+            &pool,
+            crate::permissions::Viewer::of(&token),
+            access.guild_id,
+            session_id,
+            true,
+            modified_ms(&source).await.unwrap_or_default(),
+        )
+        .await;
     }
     session_waveform_status(&cache_key, &output, &progress).await
 }
@@ -194,6 +215,71 @@ async fn enqueue_session_waveform(
         .json(status))
 }
 
+fn building_response(job: crate::media_jobs::MediaJobStatus) -> HttpResponse {
+    HttpResponse::Ok().json(SessionWaveformResponse {
+        progress: job.progress,
+        building: true,
+        data: None,
+        job_id: Some(job.id),
+        error: None,
+    })
+}
+
+/// When a finalized session ended; `None` while it can still grow.
+fn finished_at_ms(access: &SessionAccess) -> Option<i64> {
+    (access.state == "finalized").then(|| access.ended_at_ms.unwrap_or(access.started_at_ms))
+}
+
+/// A file's modification time in Unix milliseconds. Session waveform jobs
+/// set it to when they started reading the session.
+async fn modified_ms(path: &Path) -> Option<i64> {
+    let modified = tokio::fs::metadata(path).await.ok()?.modified().ok()?;
+    let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(since_epoch.as_millis()).ok()
+}
+
+/// Starts a finished session's waveform without being asked. The job key
+/// names what the waveform covers, so repeated requests share one job and a
+/// failed build is reported instead of retried on every request.
+async fn build_finished_session_waveform(
+    pool: &web::Data<Pool<Postgres>>,
+    requester: crate::permissions::Viewer,
+    guild_id: i64,
+    session_id: i64,
+    silence_free: bool,
+    covers: i64,
+) -> Result<HttpResponse, AppError> {
+    let (resource, _) = session_waveform_cache(session_id, silence_free);
+    let request = crate::media_jobs::MediaJobRequest::SessionWaveform {
+        session_id,
+        silence_free,
+    };
+    let key = format!("{resource}-{covers}");
+    let mut job =
+        crate::media_jobs::enqueue(pool, Some(guild_id), requester, &key, &resource, &request)
+            .await?;
+    if job.status == "ready" {
+        // That build finished, but its waveform has since gone.
+        let key = format!("{key}-{}", chrono::Utc::now().timestamp_millis());
+        job =
+            crate::media_jobs::enqueue(pool, Some(guild_id), requester, &key, &resource, &request)
+                .await?;
+    }
+    if job.status == "failed" {
+        return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
+            progress: 0,
+            building: false,
+            data: None,
+            job_id: None,
+            error: Some(
+                job.error
+                    .unwrap_or_else(|| "The waveform could not be built.".to_owned()),
+            ),
+        }));
+    }
+    Ok(building_response(job))
+}
+
 pub(crate) async fn run_session_waveform_job(
     pool: &Pool<Postgres>,
     media: &MediaArchive,
@@ -213,6 +299,8 @@ pub(crate) async fn run_session_waveform_job(
     let progress = web::Data::new(WaveformProgressContainer(tokio::sync::RwLock::new(
         std::collections::HashMap::new(),
     )));
+    // Audio recorded after this is not in the waveform.
+    let read_from = std::time::SystemTime::now();
     let input = if silence_free {
         let source = session_silence_free_path(&access)?;
         if !tokio::fs::try_exists(&source).await? {
@@ -278,6 +366,15 @@ pub(crate) async fn run_session_waveform_job(
         let _ = tokio::fs::remove_file(&input).await;
     }
     generation?;
+    // Stamped with when reading started, so a waveform built while the
+    // session was live reads as older than its end and is rebuilt.
+    tokio::fs::File::options()
+        .write(true)
+        .open(&attempt_output)
+        .await?
+        .into_std()
+        .await
+        .set_modified(read_from)?;
     let tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
     tokio::fs::rename(&attempt_output, &output).await?;
     let route = if silence_free {
@@ -306,6 +403,7 @@ pub(super) async fn session_waveform_status(
                 building: true,
                 data: None,
                 job_id: None,
+                error: None,
             }));
         }
     }
@@ -319,6 +417,7 @@ pub(super) async fn session_waveform_status(
         building: false,
         data: None,
         job_id: None,
+        error: None,
     }))
 }
 
@@ -352,5 +451,6 @@ pub(super) async fn waveform_file_response(path: &Path) -> Result<HttpResponse, 
         building: false,
         data: Some(BASE64_STANDARD.encode(bytes)),
         job_id: None,
+        error: None,
     }))
 }

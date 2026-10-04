@@ -133,6 +133,9 @@ pub struct SessionWaveformResponse {
     /// it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+    /// Why the build started without being asked failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

@@ -6764,6 +6764,7 @@ dependencies = [
  "actix-codec",
  "actix-cors",
  "actix-files",
+ "actix-http",
  "actix-rt",
  "actix-test",
  "actix-web",

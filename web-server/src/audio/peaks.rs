@@ -1,5 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, get, web};
 use base64::prelude::*;
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
@@ -7,7 +8,7 @@ use std::time::Duration;
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
-use crate::media_jobs::MediaJobRequest;
+use crate::media_jobs::{MediaJobRequest, MediaJobStatus};
 use crate::permissions::require_channel_access;
 use crate::waveform::{PeakDensity, generate_peaks_background};
 
@@ -17,6 +18,17 @@ use super::types::WaveformProgressContainer;
 use super::util::{file_exists, get_file_path_root, is_stale, is_valid_file_segment};
 
 const LIVE_WAVEFORM_MIN_REFRESH: Duration = Duration::from_secs(5);
+
+#[derive(Deserialize, Debug)]
+pub struct WaveformQuery {
+    /// Selects the silence-free waveform when true.
+    pub silence: Option<bool>,
+    /// Explicit cache-busting retry token.
+    pub t: Option<u64>,
+    /// Builds a live recording's waveform. Each build reads the whole
+    /// recording so far, so a live one is never built without being asked.
+    pub build: Option<bool>,
+}
 
 async fn waveform_response(output: &str) -> Result<HttpResponse, AppError> {
     waveform_response_with_progress(output, 100).await
@@ -45,9 +57,10 @@ async fn waveform_response_with_progress(
         ("month" = u32, Path, description = "Recording month"),
         ("file" = String, Path, description = "Recording file name"),
         ("silence" = Option<bool>, Query, description = "Serve the silence-free waveform when true"),
+        ("build" = Option<bool>, Query, description = "Build a live recording's waveform; one is never built without it"),
     ),
     responses(
-        (status = 200, description = "Base64 waveform peaks"),
+        (status = 200, description = "Base64 waveform peaks, or `built: false` while a live recording has none"),
         (status = 202, description = "Waveform is still being generated"),
         (status = 400, description = "Invalid file name", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
@@ -60,7 +73,7 @@ async fn waveform_response_with_progress(
 pub async fn get_waveform_data(
     _req: HttpRequest,
     path: web::Path<(i64, i64, i32, i32, String)>,
-    query: web::Query<AudioQuery>,
+    query: web::Query<WaveformQuery>,
     _progress_map: web::Data<WaveformProgressContainer>,
     pool: web::Data<Pool<Postgres>>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -84,7 +97,7 @@ pub async fn get_waveform_data(
     // Silence-free version is a separate static file: distinct input,
     // distinct cache/progress key. No DB cache marker — the file is final
     // once produced, so on-disk existence is the cache.
-    if query.wants_silence_free() {
+    if query.silence == Some(true) {
         let base = get_file_path_root(&no_silence_recording_path(), &path);
         let input_file = format!("{base}/{NO_SILENCE_PREFIX}{}.ogg", path.4);
         let output = format!("{}{}{}.dat", waveform_path(), NO_SILENCE_PREFIX, path.4);
@@ -124,10 +137,12 @@ pub async fn get_waveform_data(
         return waveform_response(&output).await;
     }
 
-    // A live recording keeps serving its last complete atomic snapshot while
-    // a refresh is in flight. Do not launch a new audiowaveform process more
-    // often than the snapshot interval, even when several track rows poll at
-    // once.
+    if end_ts.is_none() && query.build != Some(true) {
+        return live_waveform_status(&pool, token.user_id, &path, &output).await;
+    }
+
+    // An asked-for live build serves the last snapshot if it is recent, so
+    // several track rows asking at once start one audiowaveform process.
     if end_ts.is_none()
         && file_exists(&output).await
         && tokio::fs::metadata(&output)
@@ -155,6 +170,44 @@ pub async fn get_waveform_data(
     .await
 }
 
+/// A live recording's waveform without a build request: the build running
+/// for it, else the last one built, else `built: false`.
+async fn live_waveform_status(
+    pool: &Pool<Postgres>,
+    user_id: i64,
+    path: &(i64, i64, i32, i32, String),
+    output: &str,
+) -> Result<HttpResponse, AppError> {
+    let resource = recording_waveform_resource(path, false);
+    if let Some(status) =
+        crate::media_jobs::active_for_resource(pool, user_id, "recording_waveform", &resource)
+            .await?
+    {
+        return Ok(job_accepted(status));
+    }
+    if file_exists(output).await {
+        return waveform_response(output).await;
+    }
+    Ok(HttpResponse::Ok().json(json!({ "progress": 0, "built": false })))
+}
+
+fn recording_waveform_resource(path: &(i64, i64, i32, i32, String), silence_free: bool) -> String {
+    let variant = if silence_free { "silence" } else { "original" };
+    format!(
+        "recording-waveform:{}/{}/{}/{}/{}:{variant}",
+        path.0, path.1, path.2, path.3, path.4
+    )
+}
+
+fn job_accepted(status: MediaJobStatus) -> HttpResponse {
+    HttpResponse::Accepted()
+        .insert_header((
+            actix_web::http::header::LOCATION,
+            format!("/api/media-jobs/{}", status.id),
+        ))
+        .json(status)
+}
+
 async fn enqueue_recording_waveform(
     pool: &web::Data<Pool<Postgres>>,
     requester: crate::permissions::Viewer,
@@ -171,20 +224,12 @@ async fn enqueue_recording_waveform(
         silence_free,
     };
     let variant = if silence_free { "silence" } else { "original" };
-    let resource = format!(
-        "recording-waveform:{}/{}/{}/{}/{}:{variant}",
-        path.0, path.1, path.2, path.3, path.4
-    );
+    let resource = recording_waveform_resource(path, silence_free);
     let key = format!("waveform-{variant}-{}-{version}", path.4);
     let status =
         crate::media_jobs::enqueue(pool, Some(path.0), requester, &key, &resource, &request)
             .await?;
-    Ok(HttpResponse::Accepted()
-        .insert_header((
-            actix_web::http::header::LOCATION,
-            format!("/api/media-jobs/{}", status.id),
-        ))
-        .json(status))
+    Ok(job_accepted(status))
 }
 
 #[allow(clippy::too_many_arguments)]

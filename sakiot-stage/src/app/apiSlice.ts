@@ -144,6 +144,11 @@ export interface WaveformResponse {
 	error?: string;
 	/** The media job building it, until the data is ready (a 202 job status). */
 	id?: string;
+	/**
+	 * False while a live recording has no waveform: each build reads the whole
+	 * recording so far, so one is built only when asked for.
+	 */
+	built?: false;
 }
 
 export type StampData = ApiSchema["StampInfo"];
@@ -553,6 +558,8 @@ export const apiSlice = createApi({
 				file_name: string;
 				timestamp?: number;
 				silence?: boolean;
+				/** Build it even while the recording is live. */
+				build?: boolean;
 			}
 		>({
 			query: ({
@@ -563,10 +570,12 @@ export const apiSlice = createApi({
 				file_name,
 				timestamp,
 				silence,
+				build,
 			}) => {
 				const qs = new URLSearchParams();
 				if (timestamp) qs.set("t", String(timestamp));
 				if (silence) qs.set("silence", "true");
+				if (build) qs.set("build", "true");
 				const suffix = qs.toString() ? `?${qs}` : "";
 				return {
 					url: `${apiUrl(API_ROUTES.recordingWaveform, {
@@ -587,6 +596,10 @@ export const apiSlice = createApi({
 		getWaveformByUrl: builder.query<WaveformResponse, string>({
 			query: (url) => url.replace(/^\/api\//, ""),
 			providesTags: (result) => jobTags(result?.id),
+		}),
+		// A live recording's waveform is built only when asked for.
+		buildWaveformByUrl: builder.mutation<WaveformResponse, string>({
+			query: (url) => `${url.replace(/^\/api\//, "")}?build=true`,
 		}),
 		// Clips are their own trimmed file, keyed by clip_id — separate endpoint
 		// from the recording waveform (which needs channel_id/year/month).
@@ -827,6 +840,7 @@ export const {
 	useGetRecordingEventsQuery,
 	useGetWaveformQuery,
 	useGetWaveformByUrlQuery,
+	useBuildWaveformByUrlMutation,
 	useLazyGetWaveformQuery,
 	useGetClipWaveformQuery,
 	useGetStampsQuery,

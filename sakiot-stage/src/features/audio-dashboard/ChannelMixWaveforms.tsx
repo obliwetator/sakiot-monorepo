@@ -1,8 +1,13 @@
+import { useEffect, useRef } from "react";
 import type {
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
-import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
+import {
+	apiSlice,
+	useBuildWaveformByUrlMutation,
+	useGetWaveformByUrlQuery,
+} from "../../app/apiSlice";
 import { useJobPolling } from "../../realtime/status";
 import { fractionInTarget } from "../../shared/geometry";
 import { Button } from "../../shared/ui";
@@ -25,25 +30,44 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	const cached = apiSlice.endpoints.getWaveformByUrl.useQueryState(
 		segment.waveform_url,
 	);
-	const cachedData = cached.currentData?.data;
-	const cachedError = Boolean(cached.error || cached.currentData?.error);
+	const settled = Boolean(
+		cached.error ||
+			cached.currentData?.error ||
+			cached.currentData?.data ||
+			cached.currentData?.built === false,
+	);
 	const jobPolling = useJobPolling(1_000);
 	const query = useGetWaveformByUrlQuery(segment.waveform_url, {
-		// Both live and finalized sources poll only until their first successful
-		// payload. RTK Query shares that one request across every rendering of the
-		// same physical source, and a live snapshot stays cached for this page.
-		pollingInterval: cachedError || cachedData ? 0 : jobPolling,
+		// Polls only while a build is under way. RTK Query shares that request
+		// across every rendering of the same physical source. A live source is
+		// built only when asked for, and its waveform stays cached for this page.
+		pollingInterval: settled ? 0 : jobPolling,
 	});
+	const { refetch } = query;
+	const [requestBuild, buildRequest] = useBuildWaveformByUrlMutation();
+	// A waveform built while the source was live is rebuilt once it ends.
+	const wasLive = useRef(segment.live);
+	useEffect(() => {
+		if (wasLive.current && !segment.live) void refetch();
+		wasLive.current = segment.live;
+	}, [refetch, segment.live]);
 	const encoded = query.currentData?.data;
 	const peaks = useDecodedPeaks(encoded);
 	const hasData = Boolean(encoded);
-	const error = query.isError || Boolean(query.currentData?.error);
+	const notBuilt = query.currentData?.built === false;
+	const error =
+		query.isError || Boolean(query.currentData?.error) || buildRequest.isError;
 	const loading = query.isLoading && !hasData;
-	const building = !hasData && !error && Boolean(query.currentData);
+	const building =
+		buildRequest.isLoading ||
+		(!hasData && !error && !notBuilt && Boolean(query.currentData));
 	const progress = Math.max(0, Math.min(99, query.currentData?.progress ?? 0));
 
 	const build = () => {
-		void query.refetch();
+		void requestBuild(segment.waveform_url)
+			.unwrap()
+			.then(() => refetch())
+			.catch(() => {});
 	};
 
 	return { peaks, loading, building, progress, error, build };
@@ -74,6 +98,7 @@ function PlacedSourceWaveform(props: {
 					label={props.label}
 					startFraction={layout.startFraction}
 					endFraction={layout.endFraction}
+					durationMs={props.segment.source_duration_ms}
 				/>
 			)}
 			{waveform.loading && waveform.peaks.min.length === 0 && (

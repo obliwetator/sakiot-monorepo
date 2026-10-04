@@ -1718,6 +1718,8 @@ export interface components {
 		SessionWaveformResponse: {
 			building: boolean;
 			data?: string | null;
+			/** @description Why the build started without being asked failed. */
+			error?: string | null;
 			/**
 			 * @description The media job building it, while one is: realtime `jobs` events name
 			 *     it.
@@ -4705,6 +4707,8 @@ export interface operations {
 			query?: {
 				/** @description Serve the silence-free waveform when true */
 				silence?: boolean;
+				/** @description Build a live recording's waveform; one is never built without it */
+				build?: boolean;
 			};
 			header?: never;
 			path: {
@@ -4723,7 +4727,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Base64 waveform peaks */
+			/** @description Base64 waveform peaks, or `built: false` while a live recording has none */
 			200: {
 				headers: {
 					[name: string]: unknown;

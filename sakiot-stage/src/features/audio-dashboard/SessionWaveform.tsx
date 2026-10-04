@@ -114,13 +114,15 @@ export function SessionWaveform(props: {
 
 	const buildInProgress =
 		rebuilding || rebuildState.isLoading || data?.building === true;
-	const waveformError = isError || rebuildState.isError;
-	const waveformProblem = waveformError
+	const requestFailed = isError || rebuildState.isError;
+	// A build the server started on its own reports its failure in the data.
+	const waveformError = requestFailed || Boolean(data?.error);
+	const waveformProblem = requestFailed
 		? problemFromQueryError(
 				rebuildState.isError ? rebuildState.error : error,
 				"It could not be loaded.",
 			).message
-		: "";
+		: (data?.error ?? "");
 
 	return (
 		<SessionWaveformDisplay
@@ -178,6 +180,7 @@ export function SessionWaveformDisplay(props: {
 				peaks={props.peaks}
 				height={WAVEFORM_HEIGHT_PX}
 				label={props.label}
+				durationMs={props.durationMs}
 				onSeekFraction={(fraction) => props.onSeek(fraction * props.durationMs)}
 				onHoverFraction={setHoverFraction}
 			/>
