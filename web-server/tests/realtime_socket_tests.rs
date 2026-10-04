@@ -530,3 +530,61 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
     );
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn job_progress_reaches_only_the_jobs_viewers(pool: PgPool) -> TestResult {
+    tokio::task::LocalSet::new()
+        .run_until(job_progress_reaches_only_the_jobs_viewers_body(pool))
+        .await
+}
+
+async fn job_progress_reaches_only_the_jobs_viewers_body(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let hub = web::Data::new(Hub::new(pool.clone()));
+    let _tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
+    let server = server(&pool, hub.clone());
+    let mut viewer = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    let mut insider = connect(&server, INSIDER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe(&mut viewer).await?;
+    subscribe(&mut insider).await?;
+    wait_for_listener(&pool, &mut viewer).await?;
+    for socket in [&mut viewer, &mut insider] {
+        while let Ok(Ok(Ok(_))) =
+            tokio::time::timeout(Duration::from_millis(300), next(socket)).await
+        {}
+    }
+
+    // Both are members of the guild, but only the viewer waits on the job.
+    sqlx::query(
+        "INSERT INTO media_jobs (id, kind, guild_id, user_id, idempotency_key, resource_key, request)
+         VALUES ('job', 'session_waveform', $1, $2, 'k', 'r', '{}')",
+    )
+    .bind(GUILD)
+    .bind(VIEWER)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO media_job_viewers (job_id, user_id) VALUES ('job', $1)")
+        .bind(VIEWER)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE media_jobs SET progress = 50 WHERE id = 'job'")
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        expect(&mut viewer).await?,
+        json!({
+            "type": "changed", "v": 1, "guild_id": GUILD.to_string(),
+            "resource": "jobs", "ids": ["job"],
+        })
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), next(&mut insider))
+            .await
+            .is_err()
+    );
+    Ok(())
+}

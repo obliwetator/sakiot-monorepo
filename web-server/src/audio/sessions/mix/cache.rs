@@ -286,6 +286,7 @@ pub(super) async fn mix_response(
             can_generate: plan.can_generate(access),
             tracks: plan.tracks.clone(),
             generation_settings,
+            job_id: None,
         }
     };
     if let Some(reason) = plan.blocking_reason(access) {

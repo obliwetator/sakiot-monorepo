@@ -129,6 +129,10 @@ pub struct SessionWaveformResponse {
     pub progress: i16,
     pub building: bool,
     pub data: Option<String>,
+    /// The media job building it, while one is: realtime `jobs` events name
+    /// it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

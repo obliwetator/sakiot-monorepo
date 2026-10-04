@@ -1089,6 +1089,11 @@ export interface components {
 			generation_settings?:
 				| null
 				| components["schemas"]["ChannelMixGenerationSettings"];
+			/**
+			 * @description The media job rendering the mix, while one is: realtime `jobs` events
+			 *     name it.
+			 */
+			job_id?: string | null;
 			media_url?: string | null;
 			participants: components["schemas"]["ChannelMixParticipant"][];
 			/** Format: int32 */
@@ -1549,7 +1554,8 @@ export interface components {
 			| "recording_policy"
 			| "cooldowns"
 			| "presence"
-			| "members";
+			| "members"
+			| "jobs";
 		/**
 		 * @description Why the client must refetch everything it has subscribed to.
 		 * @enum {string}
@@ -1712,6 +1718,11 @@ export interface components {
 		SessionWaveformResponse: {
 			building: boolean;
 			data?: string | null;
+			/**
+			 * @description The media job building it, while one is: realtime `jobs` events name
+			 *     it.
+			 */
+			job_id?: string | null;
 			/** Format: int32 */
 			progress: number;
 		};

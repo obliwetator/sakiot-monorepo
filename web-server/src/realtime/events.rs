@@ -1,5 +1,6 @@
 //! Payloads of the `sakiot_realtime` NOTIFY channel, written by the triggers
-//! in `sakiot-db/migrations/20261003010000_realtime_notifications.sql`.
+//! in `sakiot-db/migrations/20261003010000_realtime_notifications.sql` and the
+//! migrations after it.
 
 use serde::Deserialize;
 
@@ -57,11 +58,29 @@ pub enum Event {
     Presence {
         guild_id: i64,
     },
+    /// A background job's state, stage, progress or error changed.
+    Job {
+        guild_id: i64,
+        job_id: String,
+        audience: JobAudience,
+    },
     /// This server's own round-trip probe.
     Probe {
         nonce: String,
         sent_at_ms: i64,
     },
+}
+
+/// Who may read a job's status, and so hears about its changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum JobAudience {
+    /// A media job (waveforms, mixes, downloads): the users attached to it in
+    /// `media_job_viewers`.
+    Viewers,
+    /// A clip export: the user who started it.
+    Owner(i64),
+    /// A recording deletion: the guild's managers.
+    Managers,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +148,16 @@ pub fn parse(payload: &str) -> Option<Event> {
         },
         "presence" => Event::Presence {
             guild_id: guild_id?,
+        },
+        "job" => Event::Job {
+            guild_id: guild_id?,
+            job_id: payload.id?,
+            audience: match payload.r.as_deref()? {
+                "media" => JobAudience::Viewers,
+                "composition" => JobAudience::Owner(id(payload.u.as_ref())?),
+                "deletion" => JobAudience::Managers,
+                _ => return None,
+            },
         },
         "probe" => Event::Probe {
             nonce: payload.n?,
@@ -203,6 +232,30 @@ mod tests {
             parse(r#"{"v":1,"k":"presence","g":"1"}"#),
             Some(Event::Presence { guild_id: 1 })
         );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"media","g":"1","id":"j1"}"#),
+            Some(Event::Job {
+                guild_id: 1,
+                job_id: "j1".into(),
+                audience: JobAudience::Viewers,
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"composition","g":"1","id":"j2","u":"7"}"#),
+            Some(Event::Job {
+                guild_id: 1,
+                job_id: "j2".into(),
+                audience: JobAudience::Owner(7),
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"deletion","g":"1","id":"j3"}"#),
+            Some(Event::Job {
+                guild_id: 1,
+                job_id: "j3".into(),
+                audience: JobAudience::Managers,
+            })
+        );
     }
 
     #[test]
@@ -212,5 +265,14 @@ mod tests {
         assert_eq!(parse(r#"{"v":1,"k":"session","g":"x","s":"2"}"#), None);
         assert_eq!(parse("not json"), None);
         assert_eq!(parse(r#"{"v":1,"k":"presence"}"#), None);
+        // An export's owner is required; an unknown job table is skipped.
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"composition","g":"1","id":"j"}"#),
+            None
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"future","g":"1","id":"j"}"#),
+            None
+        );
     }
 }

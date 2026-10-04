@@ -44,6 +44,10 @@ pub enum Resource {
     /// The guild's member roster: member search and role member counts
     /// (managers only).
     Members,
+    /// Background jobs the viewer may be waiting on: media builds (waveforms,
+    /// mixes, downloads), clip exports and recording deletions. `ids` are job
+    /// ids, sent only to whoever may read that job's status.
+    Jobs,
 }
 
 /// Why the client must refetch everything it has subscribed to.

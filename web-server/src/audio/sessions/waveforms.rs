@@ -33,6 +33,7 @@ pub async fn get_session_waveform(
             progress: job.progress,
             building: true,
             data: None,
+            job_id: Some(job.id),
         }));
     }
     session_waveform_status(&cache_key, &output, &progress).await
@@ -116,6 +117,7 @@ pub async fn get_session_silence_free_waveform(
             progress: job.progress,
             building: true,
             data: None,
+            job_id: Some(job.id),
         }));
     }
     session_waveform_status(&cache_key, &output, &progress).await
@@ -303,6 +305,7 @@ pub(super) async fn session_waveform_status(
                 progress: value.min(99),
                 building: true,
                 data: None,
+                job_id: None,
             }));
         }
     }
@@ -315,6 +318,7 @@ pub(super) async fn session_waveform_status(
         progress: 0,
         building: false,
         data: None,
+        job_id: None,
     }))
 }
 
@@ -347,5 +351,6 @@ pub(super) async fn waveform_file_response(path: &Path) -> Result<HttpResponse, 
         progress: 100,
         building: false,
         data: Some(BASE64_STANDARD.encode(bytes)),
+        job_id: None,
     }))
 }

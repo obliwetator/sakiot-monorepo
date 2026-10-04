@@ -142,6 +142,10 @@ pub struct ChannelMixResponse {
     pub can_generate: bool,
     pub tracks: Vec<ChannelMixTrack>,
     pub generation_settings: Option<ChannelMixGenerationSettings>,
+    /// The media job rendering the mix, while one is: realtime `jobs` events
+    /// name it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, utoipa::ToSchema)]
@@ -367,6 +371,7 @@ pub async fn get_session_channel_mix(
     {
         response.status = ChannelMixStatus::Processing;
         response.progress = job.progress;
+        response.job_id = Some(job.id);
     }
     Ok(web::Json(response))
 }

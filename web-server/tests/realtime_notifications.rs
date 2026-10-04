@@ -409,6 +409,74 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn jobs_notify_what_their_status_shows(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    sqlx::query(
+        "INSERT INTO media_jobs (id, kind, guild_id, user_id, idempotency_key, resource_key, request)
+         VALUES ('m1', 'session_waveform', $1, $2, 'k', 'r', '{}')",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO composition_jobs
+            (id, guild_id, user_id, idempotency_key, request, snapshot, result_clip_id)
+         VALUES ('c1', $1, $2, 'k', '{}', '{}', 'clip')",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO recording_deletion_jobs (id, recording_session_id, guild_id, reason, mode)
+         VALUES ('d1', 5, $1, 'manager', 'permanent')",
+    )
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
+    // Whoever creates or joins a job reads its status in that request.
+    assert_eq!(notifications.drain().await?, Vec::<Value>::new());
+
+    sqlx::query("UPDATE media_jobs SET progress = 40 WHERE id = 'm1'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE composition_jobs SET stage = 'rendering' WHERE id = 'c1'")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "UPDATE recording_deletion_jobs SET state = 'failed', stage = 'failed' WHERE id = 'd1'",
+    )
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        vec![
+            json!({ "v": 1, "k": "job", "r": "media", "g": GUILD.to_string(), "id": "m1" }),
+            json!({
+                "v": 1, "k": "job", "r": "composition", "g": GUILD.to_string(), "id": "c1",
+                "u": USER.to_string(),
+            }),
+            json!({ "v": 1, "k": "job", "r": "deletion", "g": GUILD.to_string(), "id": "d1" }),
+        ]
+    );
+
+    // Unchanged progress and bookkeeping (retry times, timestamps) are silent.
+    sqlx::query("UPDATE media_jobs SET progress = 40, retry_at = now(), updated_at = now()")
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE composition_jobs SET updated_at = now()")
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE recording_deletion_jobs SET attempts = 1, updated_at = now()")
+        .execute(&pool)
+        .await?;
+    assert_eq!(notifications.drain().await?, Vec::<Value>::new());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn concurrent_recording_writes_all_commit_and_notify(pool: PgPool) -> TestResult {
     // NOTIFY serializes notifying commits on a global lock; many recorders
     // writing at once must still all commit, and every write must arrive.

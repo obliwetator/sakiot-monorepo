@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use sqlx::{Pool, Postgres};
 use tokio::sync::Notify;
 
-use super::events::Event;
+use super::events::{Event, JobAudience};
 use super::metrics::{self, metrics};
 use super::protocol::{PROTOCOL_VERSION, Resource, ResyncReason, ServerMessage};
 use crate::permissions::{SubscriptionAccess, Viewer, subscription_access};
@@ -376,16 +376,43 @@ impl Hub {
                 None
             }
         };
+        let media_job_ids: Vec<String> = changes
+            .iter()
+            .filter_map(|event| match event {
+                Event::Job {
+                    job_id,
+                    audience: JobAudience::Viewers,
+                    ..
+                } => Some(job_id.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let job_viewers = load_job_viewers(&self.pool, &media_job_ids)
+            .await
+            .unwrap_or_else(|error| {
+                // Pages waiting on these jobs still poll slowly meanwhile.
+                tracing::warn!(%error, "realtime job viewer lookup failed");
+                HashMap::new()
+            });
 
         for connection in &connections {
             let Some(subscription) = connection.subscription() else {
                 continue;
             };
-            let routed = route(
+            let mut routed = route(
                 &changes,
                 &subscription,
                 connection.viewer.user_id,
                 journeys.as_ref(),
+            );
+            route_jobs(
+                &changes,
+                &subscription,
+                connection.viewer.user_id,
+                &job_viewers,
+                &mut routed,
             );
             for (resource, ids) in routed {
                 connection.push(ServerMessage::Changed {
@@ -454,6 +481,27 @@ async fn load_journeys(
             )
         })
         .collect())
+}
+
+/// The users attached to each media job (`media_job_viewers`).
+async fn load_job_viewers(
+    pool: &Pool<Postgres>,
+    job_ids: &[String],
+) -> Result<HashMap<String, HashSet<i64>>, sqlx::Error> {
+    if job_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query!(
+        "SELECT job_id, user_id FROM media_job_viewers WHERE job_id = ANY($1)",
+        job_ids
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut viewers: HashMap<String, HashSet<i64>> = HashMap::new();
+    for row in rows {
+        viewers.entry(row.job_id).or_default().insert(row.user_id);
+    }
+    Ok(viewers)
 }
 
 /// Per resource: `Some(ids)` to refresh those items, `None` to refresh the
@@ -576,6 +624,44 @@ fn route(
         }
     }
     routed
+}
+
+/// Adds the batch's job events whose status this subscription's viewer may
+/// read, as the job status endpoints decide it. Jobs belong to a guild, so
+/// only a subscription to that guild hears about them.
+fn route_jobs(
+    changes: &[Event],
+    subscription: &Subscription,
+    user_id: i64,
+    job_viewers: &HashMap<String, HashSet<i64>>,
+    routed: &mut Routed,
+) {
+    let Some(access) = subscription.access.as_ref() else {
+        return;
+    };
+    for change in changes {
+        let Event::Job {
+            guild_id,
+            job_id,
+            audience,
+        } = change
+        else {
+            continue;
+        };
+        if *guild_id != subscription.guild_id {
+            continue;
+        }
+        let allowed = match audience {
+            JobAudience::Viewers => job_viewers
+                .get(job_id)
+                .is_some_and(|viewers| viewers.contains(&user_id)),
+            JobAudience::Owner(owner) => *owner == user_id,
+            JobAudience::Managers => access.manager,
+        };
+        if allowed {
+            add_id(routed, Resource::Jobs, job_id.clone());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -744,6 +830,56 @@ mod tests {
             route(&changes, &manager, 9, Some(&HashMap::new())),
             Routed::from([(Resource::Presence, None), (Resource::Members, None)])
         );
+    }
+
+    #[test]
+    fn job_events_reach_only_who_may_read_the_job() {
+        let changes = [
+            Event::Job {
+                guild_id: GUILD,
+                job_id: "media".into(),
+                audience: JobAudience::Viewers,
+            },
+            Event::Job {
+                guild_id: GUILD,
+                job_id: "export".into(),
+                audience: JobAudience::Owner(9),
+            },
+            Event::Job {
+                guild_id: GUILD,
+                job_id: "deletion".into(),
+                audience: JobAudience::Managers,
+            },
+            Event::Job {
+                guild_id: 2,
+                job_id: "elsewhere".into(),
+                audience: JobAudience::Owner(9),
+            },
+        ];
+        let viewers = HashMap::from([("media".to_string(), HashSet::from([9]))]);
+        let jobs = |subscription: &Subscription, user_id| {
+            let mut routed = Routed::new();
+            route_jobs(&changes, subscription, user_id, &viewers, &mut routed);
+            routed
+        };
+
+        let member = subscription(&[PUBLIC], &[PUBLIC], false);
+        assert_eq!(
+            jobs(&member, 9),
+            Routed::from([(Resource::Jobs, ids(&["export", "media"]))])
+        );
+        assert!(jobs(&member, 10).is_empty());
+        let manager = subscription(&[PUBLIC], &[PUBLIC], true);
+        assert_eq!(
+            jobs(&manager, 10),
+            Routed::from([(Resource::Jobs, ids(&["deletion"]))])
+        );
+        // A refused scope hears nothing, not even about the viewer's own jobs.
+        let refused = Subscription {
+            access: None,
+            ..member
+        };
+        assert!(jobs(&refused, 9).is_empty());
     }
 
     #[test]
