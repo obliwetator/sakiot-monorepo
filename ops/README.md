@@ -233,10 +233,9 @@ command verbs and the sudo rule are installed.
 ## Realtime
 
 Dashboards receive refresh signals over a WebSocket at `/api/realtime`
-(`docs/architecture.md`, "Realtime updates"). It is switched per environment by
-`REALTIME_ENABLED` in the env file, default off. While it is off the endpoint
-answers 404 and clients poll as they always have, so enabling it is safe to
-postpone. These are VPS steps; nothing in the deploy applies them.
+(`docs/architecture.md`, "Realtime updates"). Where the socket cannot connect,
+clients fall back to polling. These are VPS steps; nothing in the deploy
+applies them.
 
 For each environment (production, staging, and for staging also the debug
 vhost):
@@ -267,16 +266,14 @@ vhost):
 3. **Origins**: the server accepts the socket only from the exact origins in
    `CORS_ALLOWED_ORIGIN` and `OAUTH_ALLOWED_OPENER_ORIGINS`; subdomains do not
    count. Confirm the env file lists the page origin users actually load.
-4. `nginx -t && systemctl reload nginx`, then set `REALTIME_ENABLED=true` in
-   the env file and restart the web unit (no deploy needed).
+4. `nginx -t && systemctl reload nginx`.
 5. Verify: the dashboard's network panel shows `/api/realtime` as `101
-   Switching Protocols`, and `realtime_listener_connected` is 1. Rolling back
-   is `REALTIME_ENABLED=false` and a restart.
+   Switching Protocols`, and `realtime_listener_connected` is 1.
 
 Preview slots get the location from `ops/nginx/preview-slot.conf.example`, but
 only when provisioned: slots that existed before it keep their old vhost
-(`ops/preview-slot.sh` renders the template once), so re-render them before
-enabling realtime in `preview.env`.
+(`ops/preview-slot.sh` renders the template once), so re-render them or their
+dashboards fall back to polling.
 
 Watch `pg_notification_queue_usage` (alert well below 1: a full NOTIFY queue
 fails every notifying commit, including recordings), `realtime_resyncs` and

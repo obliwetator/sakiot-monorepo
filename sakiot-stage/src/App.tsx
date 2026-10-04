@@ -37,8 +37,7 @@ function AuthenticatedApp() {
 		}
 	}, [isLoading, userId]);
 	useCrossTabLogin();
-	// A missing `realtime_enabled` (an older server) means off.
-	useRealtime(mainRouter, userId, authData?.user?.realtime_enabled === true);
+	useRealtime(mainRouter, userId);
 
 	let content: ReactNode;
 	if (isLoading || !isLoggedIn) {

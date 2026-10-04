@@ -23,16 +23,15 @@ function scopeOf(state: Router["state"]): Scope | null {
 }
 
 /**
- * Keeps this tab's realtime socket running while `userId` is logged in on a
- * server with realtime enabled, scoped to whatever guild the router shows.
+ * Keeps this tab's realtime socket running while `userId` is logged in,
+ * scoped to whatever guild the router shows.
  */
 export function useRealtime(
 	router: Router,
 	userId: string | null | undefined,
-	enabled: boolean,
 ): void {
 	useEffect(() => {
-		if (!userId || !enabled) return;
+		if (!userId) return;
 		const realtime = getCoordinator();
 		realtime.setScope(scopeOf(router.state));
 		const unsubscribe = router.subscribe((state) =>
@@ -43,7 +42,7 @@ export function useRealtime(
 			unsubscribe();
 			realtime.stop();
 		};
-	}, [router, userId, enabled]);
+	}, [router, userId]);
 }
 
 /**

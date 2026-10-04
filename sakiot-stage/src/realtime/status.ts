@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * - `off`: realtime is disabled on the server, or nobody is logged in.
+ * - `off`: nobody is logged in.
  * - `connecting`: opening the socket or (re)subscribing to the current scope.
  * - `live`: subscribed to the current scope; polling can stop.
  * - `fallback`: the socket keeps failing while HTTP works (a proxy without
@@ -44,8 +44,8 @@ export function useRealtimeLive(): boolean {
 
 /**
  * Polling interval for a resource that realtime keeps fresh: none while live,
- * otherwise `whenOffline` (today's interval for growing data, 30 s for the
- * rest so discovery still happens without realtime).
+ * otherwise `whenOffline` (the interval for growing data, 30 s for the rest
+ * so discovery still happens without realtime).
  */
 export function useFallbackPolling(whenOffline: number): number {
 	return useRealtimeLive() ? 0 : whenOffline;

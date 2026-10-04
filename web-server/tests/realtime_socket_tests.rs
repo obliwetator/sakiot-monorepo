@@ -41,7 +41,7 @@ fn keys() -> AccessKeys {
     }
 }
 
-fn config(realtime_enabled: bool) -> Config {
+fn config() -> Config {
     Config {
         database_url: String::new(),
         client_id: String::new(),
@@ -62,7 +62,6 @@ fn config(realtime_enabled: bool) -> Config {
         db_max_connections: 5,
         recording_permanent_delete_enabled: false,
         server_timing_header: false,
-        realtime_enabled,
     }
 }
 
@@ -160,13 +159,13 @@ async fn add_fragment(pool: &PgPool, session: i64, channel: i64, index: i32) -> 
     Ok(())
 }
 
-fn server(pool: &PgPool, hub: web::Data<Hub>, realtime_enabled: bool) -> actix_test::TestServer {
+fn server(pool: &PgPool, hub: web::Data<Hub>) -> actix_test::TestServer {
     let pool = pool.clone();
     actix_test::start(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(keys()))
-            .app_data(web::Data::new(config(realtime_enabled)))
+            .app_data(web::Data::new(config()))
             .app_data(hub.clone())
             .service(
                 web::scope("/api")
@@ -281,7 +280,7 @@ async fn viewers_receive_only_what_they_may_list_body(pool: PgPool) -> TestResul
     seed(&pool).await?;
     let hub = web::Data::new(Hub::new(pool.clone()));
     let tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
-    let server = server(&pool, hub.clone(), true);
+    let server = server(&pool, hub.clone());
 
     let mut viewer = connect(&server, VIEWER, ORIGIN)
         .await?
@@ -372,11 +371,7 @@ async fn refused_connections_and_messages_body(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     let hub = web::Data::new(Hub::new(pool.clone()));
 
-    // Realtime off: the endpoint does not exist.
-    let off = server(&pool, hub.clone(), false);
-    assert_eq!(connect(&off, VIEWER, ORIGIN).await?.err(), Some(404));
-
-    let on = server(&pool, hub.clone(), true);
+    let on = server(&pool, hub.clone());
     // Another site, or a subdomain the CORS rule would accept: refused.
     for origin in ["https://evil.example", "https://x.app.example.com", "null"] {
         assert_eq!(
@@ -428,7 +423,7 @@ async fn a_lost_listener_connection_resyncs_every_socket_body(pool: PgPool) -> T
     seed(&pool).await?;
     let hub = web::Data::new(Hub::new(pool.clone()));
     let tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
-    let server = server(&pool, hub.clone(), true);
+    let server = server(&pool, hub.clone());
     let mut socket = connect(&server, VIEWER, ORIGIN)
         .await?
         .map_err(|s| format!("{s}"))?;
@@ -478,7 +473,7 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
     seed(&pool).await?;
     let hub = web::Data::new(Hub::new(pool.clone()));
     let _tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
-    let server = server(&pool, hub.clone(), true);
+    let server = server(&pool, hub.clone());
     let mut viewer = connect(&server, VIEWER, ORIGIN)
         .await?
         .map_err(|s| format!("{s}"))?;

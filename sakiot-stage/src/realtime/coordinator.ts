@@ -96,7 +96,7 @@ export class RealtimeCoordinator {
 		document.addEventListener("visibilitychange", this.onVisibilityChange);
 	}
 
-	/** Logout, account change, or realtime switched off: close everything. */
+	/** Logout or account change: close everything. */
 	stop(): void {
 		this.running = false;
 		this.generation += 1;

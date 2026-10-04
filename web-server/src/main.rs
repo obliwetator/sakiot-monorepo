@@ -187,13 +187,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let realtime_hub = web::Data::new(Hub::new(pool.clone()));
     let shutdown_hub = realtime_hub.clone();
     web_server::realtime::observe(&realtime_hub.clone().into_inner());
-    // The listener runs only where realtime is on; with it off nothing
-    // listens and `/api/realtime` refuses connections.
-    let realtime_tasks = if cfg.realtime_enabled {
-        web_server::realtime::spawn_listener(&pool, realtime_hub.clone().into_inner())
-    } else {
-        Vec::new()
-    };
+    let realtime_tasks =
+        web_server::realtime::spawn_listener(&pool, realtime_hub.clone().into_inner());
 
     let compose_worker = web_server::clip_editor::spawn_compose_worker(pool.clone());
     let media_worker = spawn_media_worker(pool.clone(), media_archive.clone());

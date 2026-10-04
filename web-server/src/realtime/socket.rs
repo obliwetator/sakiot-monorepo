@@ -52,7 +52,6 @@ pub fn origin_allowed(origin: Option<&str>, config: &Config) -> bool {
         (status = 101, description = "WebSocket upgrade; see the realtime protocol schemas"),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 403, description = "Origin not allowed", body = crate::errors::ApiError),
-        (status = 404, description = "Realtime is disabled on this server", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
 )]
@@ -64,9 +63,6 @@ pub async fn realtime_socket(
     config: web::Data<Config>,
     hub: web::Data<Hub>,
 ) -> Result<HttpResponse, AppError> {
-    if !config.realtime_enabled {
-        return Err(AppError::NotFound);
-    }
     let token = token.ok_or(AppError::Unauthorized)?.into_inner();
     let origin = req
         .headers()
@@ -226,7 +222,6 @@ mod tests {
             db_max_connections: 1,
             recording_permanent_delete_enabled: false,
             server_timing_header: false,
-            realtime_enabled: true,
         }
     }
 

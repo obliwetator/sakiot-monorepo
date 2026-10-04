@@ -276,11 +276,10 @@ comes from the existing authorized endpoints.
 - **Shutdown**: on SIGTERM the server closes every socket with 1012 at once,
   then gives in-flight HTTP requests 5 s. actix's default handling waited the
   full 30 s for open sockets.
-- **Switch**: `REALTIME_ENABLED` (default off) turns on the listener and the
-  endpoint; `GET /api/users/current` reports it as `realtime_enabled`, and
-  clients keep polling while it is off or the socket keeps failing.
-  Enabling it per environment needs nginx to forward WebSocket upgrades and
-  the CSP to allow the socket; see [`ops/README.md`](../ops/README.md).
+- **Hosting**: every environment needs nginx to forward WebSocket upgrades
+  on `/api/realtime` and the CSP to allow the socket; see
+  [`ops/README.md`](../ops/README.md). Where the socket keeps failing,
+  clients keep polling.
 - **Targeted refresh**: `GET /api/current/{guild}/sessions/{session}` returns
   one session's tree entry, or null when it is missing, deleted or not visible,
   so a `changed` event refreshes one session instead of the whole tree.

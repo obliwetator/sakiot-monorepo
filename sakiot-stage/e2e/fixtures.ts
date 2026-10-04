@@ -7,7 +7,23 @@ interface ConsoleAudit {
 
 export { expect };
 
-export const test = base.extend<{ consoleAudit: ConsoleAudit }>({
+export const test = base.extend<{
+	consoleAudit: ConsoleAudit;
+	realtimeSocket: undefined;
+}>({
+	// Every logged-in page opens the realtime socket. Unless a test plays the
+	// server side itself (its own `page.routeWebSocket` takes precedence),
+	// the socket opens but the server never sends `ready`: realtime stays
+	// `connecting` and pages keep polling.
+	realtimeSocket: [
+		async ({ page }, use) => {
+			await page.routeWebSocket(/\/api\/realtime$/, () => {
+				// Silent server.
+			});
+			await use(undefined);
+		},
+		{ auto: true },
+	],
 	consoleAudit: [
 		async ({ page }, use) => {
 			const diagnostics: string[] = [];

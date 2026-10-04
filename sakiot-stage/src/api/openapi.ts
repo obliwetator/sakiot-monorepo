@@ -1778,12 +1778,6 @@ export interface components {
 		UserDataForFrontEnd: {
 			avatar: string;
 			is_dev: boolean;
-			/**
-			 * @description Whether this server serves `/api/realtime`. Clients must not open a
-			 *     socket when it is false (or absent, from an older server) and keep
-			 *     polling instead.
-			 */
-			realtime_enabled: boolean;
 			/** @example 146638124288704513 */
 			user_id: string;
 			username: string;
@@ -5398,15 +5392,6 @@ export interface operations {
 			};
 			/** @description Origin not allowed */
 			403: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["ApiError"];
-				};
-			};
-			/** @description Realtime is disabled on this server */
-			404: {
 				headers: {
 					[name: string]: unknown;
 				};

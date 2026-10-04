@@ -117,9 +117,9 @@ location / {
 }
 ```
 
-Realtime (`REALTIME_ENABLED` in `staging.env`) stays off until both vhosts have
-the `/api/realtime` location above and the page CSP allows the socket; see
-`ops/README.md`, "Realtime".
+Realtime needs both vhosts to have the `/api/realtime` location above and the
+page CSP to allow the socket; without them, dashboards fall back to polling.
+See `ops/README.md`, "Realtime".
 
 ## Login on staging
 

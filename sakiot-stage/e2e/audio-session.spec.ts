@@ -266,8 +266,8 @@ interface MockAudioOptions {
 	mediaSeconds?: number;
 	/** Serve a ready-to-preview channel mix with one decodable source. */
 	channelMixReady?: boolean;
-	/** Report realtime as enabled and the session as still recording. */
-	liveWithRealtime?: boolean;
+	/** Serve the session as still recording. */
+	stillRecording?: boolean;
 }
 
 /** A valid audiowaveform payload with no points, so the preview renders quietly. */
@@ -311,7 +311,6 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 			await fulfillJson({
 				avatar: "",
 				is_dev: false,
-				realtime_enabled: options.liveWithRealtime ?? false,
 				user_id: "current-user",
 				username: "Test Admin",
 			});
@@ -437,7 +436,7 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 				],
 				started_at_ms: 1_786_460_400_000,
 				starting_channel_id: "voice-123",
-				state: options.liveWithRealtime ? "active" : "finalized",
+				state: options.stillRecording ? "active" : "finalized",
 				user_id: "user-123",
 			});
 			return;
@@ -1056,7 +1055,7 @@ test("a live session keeps loading new audio while realtime is connected", async
 }) => {
 	// A growing recording changes only its heartbeat, which sends no realtime
 	// event, so the manifest poll must run even while the socket is live.
-	await mockAudioApi(page, { liveWithRealtime: true });
+	await mockAudioApi(page, { stillRecording: true });
 	let subscribed = false;
 	await page.routeWebSocket(
 		`${API_ORIGIN}/api/realtime`.replace("http", "ws"),

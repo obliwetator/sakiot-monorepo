@@ -36,10 +36,6 @@ pub struct Config {
     pub recording_permanent_delete_enabled: bool,
     /// Return each request's timing breakdown as a `Server-Timing` header.
     pub server_timing_header: bool,
-    /// Serve `/api/realtime` and tell clients to use it. Off until the
-    /// environment's nginx forwards WebSocket upgrades and its CSP allows the
-    /// socket; clients poll as before while it is off.
-    pub realtime_enabled: bool,
 }
 
 fn require(key: &'static str) -> Result<String, ConfigError> {
@@ -112,7 +108,6 @@ impl Config {
                 false,
             )?,
             server_timing_header: parse("SAKIOT_SERVER_TIMING_HEADER", false)?,
-            realtime_enabled: parse("REALTIME_ENABLED", false)?,
         })
     }
 }

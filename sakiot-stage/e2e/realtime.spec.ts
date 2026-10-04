@@ -2,7 +2,6 @@ import type { Page, Route, WebSocketRoute } from "@playwright/test";
 import { expect, fulfillSharedRoutes, test } from "./fixtures";
 
 /**
- * Realtime on: the mocked server reports `realtime_enabled`, and
  * `page.routeWebSocket` plays the `/api/realtime` side of the protocol.
  */
 
@@ -45,7 +44,6 @@ async function mockApi(page: Page, handler: Handler) {
 			await json({
 				avatar: "",
 				is_dev: false,
-				realtime_enabled: true,
 				user_id: "current-user",
 				username: "Test Admin",
 			});

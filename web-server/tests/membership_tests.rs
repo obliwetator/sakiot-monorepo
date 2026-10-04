@@ -191,7 +191,6 @@ fn config(dev_account_id: i64) -> Config {
         db_max_connections: 5,
         recording_permanent_delete_enabled: false,
         server_timing_header: false,
-        realtime_enabled: true,
     }
 }
 
