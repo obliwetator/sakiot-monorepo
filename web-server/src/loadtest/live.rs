@@ -514,7 +514,11 @@ async fn join(
         }
     };
 
-    let start_ms = Utc::now().timestamp_millis();
+    // The agent flushes every Ogg page, so a live file holds audio almost as
+    // soon as its row exists. The file starts with the headers and the first
+    // audio page, and the recording started that page's length ago.
+    let first_audio = *pages.get(2).ok_or(AppError::InternalError)?;
+    let start_ms = Utc::now().timestamp_millis() - first_audio.end_ms;
     let started = Utc
         .timestamp_millis_opt(start_ms)
         .single()
@@ -529,9 +533,8 @@ async fn join(
     );
     let path = key.recording_path(&sakiot_paths::DataRoots::from_env().recordings_str());
 
-    // The file exists, with its headers, before the row says it is live.
     let source_path = planned.source.clone();
-    let header_len = pages[1].offset + pages[1].len;
+    let header_len = first_audio.offset + first_audio.len;
     let (source, dest) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -615,7 +618,7 @@ async fn join(
             audio_file_id,
             start_ms,
             pages,
-            next_page: 2,
+            next_page: 3,
             source,
             dest,
         },
