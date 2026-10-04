@@ -340,6 +340,11 @@ struct Planned {
 }
 
 /// One participant's writer, moved into the blocking pool for each tick.
+///
+/// It opens its files only while appending. The agent records in its own
+/// process, so a writer that kept them open would spend two of the web
+/// server's file descriptors per participant that the real server never
+/// spends.
 struct Writer {
     user_id: i64,
     session_id: i64,
@@ -347,8 +352,8 @@ struct Writer {
     start_ms: i64,
     pages: Arc<Vec<Page>>,
     next_page: usize,
-    source: std::fs::File,
-    dest: std::fs::File,
+    source: PathBuf,
+    dest: PathBuf,
 }
 
 impl Writer {
@@ -366,9 +371,13 @@ impl Writer {
         let last = self.pages[end - 1];
         let len = (last.offset + last.len - first.offset) as usize;
         let mut buffer = vec![0_u8; len];
-        self.source.seek(SeekFrom::Start(first.offset))?;
-        self.source.read_exact(&mut buffer)?;
-        self.dest.write_all(&buffer)?;
+        let mut source = std::fs::File::open(&self.source)?;
+        source.seek(SeekFrom::Start(first.offset))?;
+        source.read_exact(&mut buffer)?;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&self.dest)?
+            .write_all(&buffer)?;
         self.next_page = end;
         Ok(())
     }
@@ -533,21 +542,20 @@ async fn join(
     );
     let path = key.recording_path(&sakiot_paths::DataRoots::from_env().recordings_str());
 
-    let source_path = planned.source.clone();
+    let source = planned.source.clone();
+    let dest = path.clone();
     let header_len = first_audio.offset + first_audio.len;
-    let (source, dest) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut source = std::fs::File::open(&source_path)?;
-        let mut dest = std::fs::OpenOptions::new()
+        let mut header = vec![0_u8; header_len as usize];
+        std::fs::File::open(&source)?.read_exact(&mut header)?;
+        std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(&path)?;
-        let mut header = vec![0_u8; header_len as usize];
-        source.read_exact(&mut header)?;
-        dest.write_all(&header)?;
-        Ok((source, dest))
+            .open(&path)?
+            .write_all(&header)
     })
     .await
     .map_err(|_| AppError::InternalError)??;
@@ -619,7 +627,7 @@ async fn join(
             start_ms,
             pages,
             next_page: 3,
-            source,
+            source: planned.source.clone(),
             dest,
         },
         ParticipantSummary {
