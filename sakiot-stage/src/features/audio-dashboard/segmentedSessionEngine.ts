@@ -168,7 +168,9 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 		selection: SessionSelection,
 		loop: boolean,
 	): void => {
-		const target = clampPlaybackPosition(nextPositionMs, this.durationMs);
+		const target = this.liveEdgeAware(
+			clampPlaybackPosition(nextPositionMs, this.durationMs),
+		);
 		this.bound.prepareSeek(selection, loop, target);
 		this.seekWithinSource(target);
 	};
@@ -197,6 +199,19 @@ export class SegmentedSessionEngine extends PlaybackStore<SegmentedSessionSnapsh
 			) ?? segment;
 		if (latest.kind === "active_hls") return Number.POSITIVE_INFINITY;
 		return Math.min(latest.end_ms, this.durationMs);
+	}
+
+	/**
+	 * A seek to the end of a session that is still recording lands inside its
+	 * live fragment, whose media holds it behind the playlist's end, rather
+	 * than past the last segment, where playback would stop.
+	 */
+	private liveEdgeAware(positionMs: number): number {
+		const last = this.segments.at(-1);
+		if (last?.kind !== "active_hls" || positionMs < last.end_ms) {
+			return positionMs;
+		}
+		return Math.max(last.start_ms, last.end_ms - 1);
 	}
 
 	/** Moves on from the end of a segment: the bound, the next one, or stop. */

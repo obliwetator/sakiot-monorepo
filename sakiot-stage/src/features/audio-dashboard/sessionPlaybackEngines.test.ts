@@ -189,6 +189,34 @@ describe("SegmentedSessionEngine while the session records", () => {
 		expect(engine.getSnapshot().positionMs).toBe(5_000);
 	});
 
+	test("seeking to the very end of a recording session plays from its live edge", () => {
+		fakeBrowser();
+		const { engine } = segmented([liveFragment(15_000)], 15_000);
+		// Paused: the playhead parks at the end without leaving the fragment,
+		// so play resumes there instead of restarting from the beginning.
+		engine.seek(15_000, [0, 15_000], false);
+		expect(engine.getSnapshot()).toMatchObject({
+			positionMs: 14_999,
+			playing: false,
+		});
+		engine.togglePlay([0, 15_000], false);
+		const audio = FakeAudio.created[0];
+		if (!audio) throw new Error("no media element");
+		audio.duration = 10;
+		audio.dispatchEvent(new Event("loadedmetadata"));
+		expect(engine.getSnapshot()).toMatchObject({
+			positionMs: 8_000,
+			playing: true,
+		});
+		// Playing: the same seek stays in the live media.
+		engine.seek(15_000, [0, 15_000], false);
+		expect(FakeAudio.created).toHaveLength(1);
+		expect(engine.getSnapshot()).toMatchObject({
+			positionMs: 8_000,
+			playing: true,
+		});
+	});
+
 	test("a finalized fragment continues into the next one", () => {
 		fakeBrowser();
 		const { engine } = segmented([liveFragment(5_000)], 5_000);
