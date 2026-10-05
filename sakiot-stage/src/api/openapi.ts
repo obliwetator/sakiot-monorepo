@@ -3397,7 +3397,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description HLS playlist for the live recording */
+			/** @description HLS playlist for the live recording; live and empty until its first audio is written */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -4071,7 +4071,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description HLS playlist for the live fragment */
+			/** @description HLS playlist for the live fragment; live and empty until its first audio is written */
 			200: {
 				headers: {
 					[name: string]: unknown;

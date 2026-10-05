@@ -575,6 +575,85 @@ pub(crate) async fn ensure_job(
     result
 }
 
+/// The Ogg header pages (OpusHead, OpusTags) and the first audio page.
+const FIRST_AUDIBLE_PAGES: usize = 3;
+/// Enough of a file's start for the header pages and a first audio page of
+/// 25 packets at Opus's largest packet size.
+const FIRST_PAGES_MAX_BYTES: u64 = 64 * 1024;
+
+/// A live playlist before the first segment: valid, live (no ENDLIST), and
+/// empty. hls.js retries an empty live playlist instead of failing.
+const STARTING_PLAYLIST: &str = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n";
+
+/// Complete Ogg pages at the start of `head`, counting up to `want`.
+fn complete_ogg_pages(head: &[u8], want: usize) -> usize {
+    let mut offset = 0;
+    let mut pages = 0;
+    while pages < want {
+        let Some(header) = head.get(offset..offset + 27) else {
+            break;
+        };
+        if &header[..4] != b"OggS" {
+            break;
+        }
+        let segments = usize::from(header[26]);
+        let Some(lacing) = head.get(offset + 27..offset + 27 + segments) else {
+            break;
+        };
+        let length = 27 + segments + lacing.iter().map(|&size| usize::from(size)).sum::<usize>();
+        if offset + length > head.len() {
+            break;
+        }
+        offset += length;
+        pages += 1;
+    }
+    pages
+}
+
+/// Whether a recording's file holds its first audio page yet. The agent
+/// creates the file empty and flushes the Ogg headers together with the
+/// first audio page, 25 packets (500 ms) later, while the recording's row
+/// already says it is live; ffprobe cannot read the file before that.
+async fn has_first_audio_page(src: &Path) -> std::io::Result<bool> {
+    let file = tokio::fs::File::open(src).await?;
+    let mut head = Vec::new();
+    file.take(FIRST_PAGES_MAX_BYTES)
+        .read_to_end(&mut head)
+        .await?;
+    Ok(complete_ogg_pages(&head, FIRST_AUDIBLE_PAGES) == FIRST_AUDIBLE_PAGES)
+}
+
+/// Start (or reuse) the HLS job behind a live playlist request. `None` while
+/// the recording is live but its file has no audio yet: the handler answers
+/// [`starting_playlist`] and the player asks again, instead of the probe
+/// failing on the empty file. Only a recording's first request checks.
+pub(crate) async fn ensure_playlist_job(
+    container: web::Data<LiveContainer>,
+    pool: web::Data<Pool<Postgres>>,
+    key: RecordingKey,
+) -> Result<Option<Arc<Mutex<JobState>>>, AppError> {
+    let started = container.jobs.read().await.contains_key(&key_id(&key));
+    if !started
+        && let Some(src) = source_path(&key).await
+        && !has_first_audio_page(&src)
+            .await
+            .map_err(AppError::IoError)?
+        && db_state(&pool, &key.stem).await?.live
+    {
+        return Ok(None);
+    }
+    ensure_job(container, pool, key).await.map(Some)
+}
+
+/// The answer to a live playlist request while the recording has no audio
+/// yet: an empty live playlist, which hls.js reloads.
+pub(crate) fn starting_playlist() -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("application/vnd.apple.mpegurl")
+        .insert_header((header::CACHE_CONTROL, "no-cache"))
+        .body(STARTING_PLAYLIST)
+}
+
 async fn ensure_job_locked(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
@@ -642,7 +721,7 @@ async fn ensure_job_locked(
         ("stem" = String, Path, description = "Recording file stem"),
     ),
     responses(
-        (status = 200, description = "HLS playlist for the live recording", content_type = "application/vnd.apple.mpegurl"),
+        (status = 200, description = "HLS playlist for the live recording; live and empty until its first audio is written", content_type = "application/vnd.apple.mpegurl"),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 404, description = "Live recording not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
@@ -672,7 +751,12 @@ pub async fn live_playlist(
     )
     .await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
-    let _ = ensure_job(container, pool, key.clone()).await?;
+    if ensure_playlist_job(container, pool, key.clone())
+        .await?
+        .is_none()
+    {
+        return Ok(starting_playlist());
+    }
     mark_cache_access(&key.live_dir(&recording_path())).await;
     let pl = key.live_playlist_path(&recording_path());
     let body = tokio::fs::read(&pl)
@@ -813,6 +897,45 @@ pub async fn live_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One Ogg page with a body of `body` bytes.
+    fn ogg_page(body: usize) -> Vec<u8> {
+        let mut lacing = vec![255_u8; body / 255];
+        lacing.push(u8::try_from(body % 255).unwrap());
+        let mut page = b"OggS".to_vec();
+        page.extend_from_slice(&[0; 22]);
+        page.push(u8::try_from(lacing.len()).unwrap());
+        page.extend_from_slice(&lacing);
+        page.extend(std::iter::repeat_n(0_u8, body));
+        page
+    }
+
+    #[test]
+    fn a_file_is_audible_once_its_first_audio_page_is_complete() {
+        let headers = [ogg_page(19), ogg_page(26)].concat();
+        let audio = ogg_page(3_900);
+        let whole = [headers.clone(), audio.clone()].concat();
+
+        assert_eq!(complete_ogg_pages(&[], FIRST_AUDIBLE_PAGES), 0);
+        assert_eq!(complete_ogg_pages(&headers, FIRST_AUDIBLE_PAGES), 2);
+        assert_eq!(
+            complete_ogg_pages(&whole[..whole.len() - 1], FIRST_AUDIBLE_PAGES),
+            2
+        );
+        assert_eq!(complete_ogg_pages(&whole, FIRST_AUDIBLE_PAGES), 3);
+        assert_eq!(
+            complete_ogg_pages(b"not an ogg file at all, no capture pattern", 3),
+            0
+        );
+    }
+
+    #[test]
+    fn the_starting_playlist_is_live_and_empty() {
+        assert!(STARTING_PLAYLIST.starts_with("#EXTM3U\n"));
+        assert!(STARTING_PLAYLIST.contains("#EXT-X-PLAYLIST-TYPE:EVENT"));
+        assert!(!STARTING_PLAYLIST.contains("#EXT-X-ENDLIST"));
+        assert!(!STARTING_PLAYLIST.contains("#EXTINF"));
+    }
 
     #[tokio::test]
     async fn creation_lock_survives_failed_job_retries() {

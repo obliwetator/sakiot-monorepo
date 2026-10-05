@@ -111,7 +111,7 @@ pub async fn get_session_segment(
         ("audio_file_id" = i64, Path, description = "Audio fragment id"),
     ),
     responses(
-        (status = 200, description = "HLS playlist for the live fragment", content_type = "application/vnd.apple.mpegurl"),
+        (status = 200, description = "HLS playlist for the live fragment; live and empty until its first audio is written", content_type = "application/vnd.apple.mpegurl"),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
         (status = 404, description = "Fragment not found", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
@@ -130,7 +130,12 @@ pub async fn session_live_playlist(
     require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let key = fragment_key(&fragment);
-    let _ = super::super::live::ensure_job(container, pool, key.clone()).await?;
+    if super::super::live::ensure_playlist_job(container, pool, key.clone())
+        .await?
+        .is_none()
+    {
+        return Ok(super::super::live::starting_playlist());
+    }
     super::super::live::mark_cache_access(&key.live_dir(&recording_path())).await;
     let playlist = key.live_playlist_path(&recording_path());
     let body = tokio::fs::read(playlist)
