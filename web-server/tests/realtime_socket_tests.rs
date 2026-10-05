@@ -117,7 +117,13 @@ async fn seed(pool: &PgPool) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// A session and its fragments, written in one transaction as the agent's
+/// `create_fragment_in` writes them. Their notifications then reach the
+/// listener together and become one event; written as separate statements,
+/// a stall between them longer than the listener's batch window splits
+/// them into two events.
 async fn insert_session(pool: &PgPool, starting: i64, fragments: &[i64]) -> sqlx::Result<i64> {
+    let mut tx = pool.begin().await?;
     let session: i64 = sqlx::query_scalar(
         "INSERT INTO recording_sessions
             (guild_id, user_id, starting_channel_id, current_channel_id, state, started_at)
@@ -127,21 +133,27 @@ async fn insert_session(pool: &PgPool, starting: i64, fragments: &[i64]) -> sqlx
     .bind(GUILD)
     .bind(OWNER)
     .bind(starting)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
     for (index, channel) in fragments.iter().enumerate() {
         add_fragment(
-            pool,
+            &mut *tx,
             session,
             *channel,
             i32::try_from(index).unwrap_or_default(),
         )
         .await?;
     }
+    tx.commit().await?;
     Ok(session)
 }
 
-async fn add_fragment(pool: &PgPool, session: i64, channel: i64, index: i32) -> sqlx::Result<()> {
+async fn add_fragment(
+    executor: impl sqlx::PgExecutor<'_>,
+    session: i64,
+    channel: i64,
+    index: i32,
+) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts,
@@ -154,7 +166,7 @@ async fn add_fragment(pool: &PgPool, session: i64, channel: i64, index: i32) -> 
     .bind(OWNER)
     .bind(session)
     .bind(index)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
