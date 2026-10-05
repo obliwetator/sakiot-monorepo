@@ -4,9 +4,9 @@
 //! Each participant joins at a staggered time, gets an active recording
 //! session, a growing fragment and a voice presence row, exactly as the
 //! recorder's `create_fragment` leaves them. Their Ogg/Opus file then grows
-//! in real time: every 500 ms the pages of a pre-encoded source that have
-//! "happened" are appended, so readers see a valid file up to its last
-//! complete page, as with the recorder. The synthetic agent heartbeats the
+//! in real time: each 500 ms page of a pre-encoded source is appended within
+//! a tick of its end, so readers see a valid file up to its last complete
+//! page, as with the recorder. The synthetic agent heartbeats the
 //! fragments. At the end each participant leaves the way a disconnect plays
 //! out: the fragment closes, the session finalizes, presence goes.
 
@@ -28,7 +28,9 @@ use super::{LoadtestState, authorize, ids, media};
 use crate::config::Config;
 use crate::errors::AppError;
 
-const TICK: Duration = Duration::from_millis(500);
+/// Short next to a page, so each lands about when the agent would flush
+/// it. A tick with no page due does no I/O.
+const TICK: Duration = Duration::from_millis(100);
 const FINALIZE_WRITER_CLOSE: i32 = 1;
 const FINALIZE_ZOMBIE_REAPED: i32 = 3;
 const INSIDERS_ROLE: u32 = 0;
@@ -339,7 +341,15 @@ struct Planned {
     source: PathBuf,
 }
 
+/// The Ogg header pages (OpusHead, OpusTags) at the start of every source.
+const HEADER_PAGES: usize = 2;
+
 /// One participant's writer, moved into the blocking pool for each tick.
+///
+/// It follows the agent's timing. The agent's writer buffers the header
+/// pages and flushes each audio page as it ends (25 packets, 500 ms), so a
+/// new recording's file is empty, while its row already says it is live,
+/// until the first audio page lands together with the headers.
 ///
 /// It opens its files only while appending. The agent records in its own
 /// process, so a writer that kept them open would spend two of the web
@@ -364,7 +374,8 @@ impl Writer {
         while end < self.pages.len() && self.pages[end].end_ms <= elapsed {
             end += 1;
         }
-        if end == self.next_page {
+        // The headers wait for the first audio page, as in the agent.
+        if end == self.next_page || end <= HEADER_PAGES {
             return Ok(());
         }
         let first = self.pages[self.next_page];
@@ -523,11 +534,7 @@ async fn join(
         }
     };
 
-    // The agent flushes every Ogg page, so a live file holds audio almost as
-    // soon as its row exists. The file starts with the headers and the first
-    // audio page, and the recording started that page's length ago.
-    let first_audio = *pages.get(2).ok_or(AppError::InternalError)?;
-    let start_ms = Utc::now().timestamp_millis() - first_audio.end_ms;
+    let start_ms = Utc::now().timestamp_millis();
     let started = Utc
         .timestamp_millis_opt(start_ms)
         .single()
@@ -542,20 +549,17 @@ async fn join(
     );
     let path = key.recording_path(&sakiot_paths::DataRoots::from_env().recordings_str());
 
-    let source = planned.source.clone();
+    // Empty until the writer's first audio page, like the agent's file.
     let dest = path.clone();
-    let header_len = first_audio.offset + first_audio.len;
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut header = vec![0_u8; header_len as usize];
-        std::fs::File::open(&source)?.read_exact(&mut header)?;
         std::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(&path)?
-            .write_all(&header)
+            .open(&path)
+            .map(drop)
     })
     .await
     .map_err(|_| AppError::InternalError)??;
@@ -626,7 +630,7 @@ async fn join(
             audio_file_id,
             start_ms,
             pages,
-            next_page: 3,
+            next_page: 0,
             source: planned.source.clone(),
             dest,
         },
