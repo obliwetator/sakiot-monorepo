@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            (SELECT count(*) FROM composition_jobs WHERE state IN ('queued','running'))\n              + (SELECT count(*) FROM media_jobs WHERE state IN ('queued','running')) AS \"total!\",\n            (SELECT count(*) FROM composition_jobs WHERE user_id=$1 AND state IN ('queued','running'))\n              + (SELECT count(*) FROM media_jobs WHERE user_id=$1 AND kind <> $2 AND state IN ('queued','running')) AS \"owned!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "owned!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "9fe1e6e648ddb9eebbc2099c230cab36c930286712f403a01e79c12a47bb25f2"
+}

@@ -337,3 +337,14 @@ async fn legacy_export_errors_are_not_echoed(pool: PgPool) -> TestResult {
     );
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn waveform_builds_do_not_use_up_the_callers_share(pool: PgPool) -> TestResult {
+    // A cold channel mix left more waveform builds running for this caller
+    // than their own limit; their export is still admitted.
+    sqlx::query("INSERT INTO media_jobs (id,kind,user_id,idempotency_key,resource_key,request) SELECT 'wave-' || n, 'recording_waveform', 100, 'wave-key-' || n, 'wave-resource-' || n, '{}' FROM generate_series(1, 5) n")
+        .execute(&pool)
+        .await?;
+    submit(&pool, "export", &snapshot()).await?;
+    Ok(())
+}

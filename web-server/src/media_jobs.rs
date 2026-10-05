@@ -24,6 +24,13 @@ const MAX_ATTEMPTS: i32 = 3;
 const GLOBAL_RUNNING_LIMIT: i64 = 4;
 /// Active media plus composition jobs one user may have queued or running.
 pub(crate) const PER_USER_ACTIVE_LIMIT: i64 = 3;
+/// A recording's waveform. A page builds one for each recording it shows (the
+/// channel mix, for every source of a session) without the viewer choosing how
+/// many, so these jobs neither count towards nor are refused by the per-user
+/// limit: the fourth source of a cold mix would otherwise show as failed.
+/// They are shared per file, and [`GLOBAL_RUNNING_LIMIT`] still bounds how many
+/// run at once.
+pub(crate) const UNMETERED_KIND: &str = "recording_waveform";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -171,14 +178,17 @@ pub async fn enqueue(
         return load_status(pool, user_id, &row.id).await;
     }
 
-    let active = sqlx::query_scalar!(
-        r#"SELECT (SELECT count(*) FROM media_jobs WHERE user_id = $1 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE user_id = $1 AND state IN ('queued','running')) AS "active!""#,
-        user_id
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    if active >= PER_USER_ACTIVE_LIMIT {
-        return Err(AppError::UserJobLimitReached);
+    if request.kind() != UNMETERED_KIND {
+        let active = sqlx::query_scalar!(
+            r#"SELECT (SELECT count(*) FROM media_jobs WHERE user_id = $1 AND kind <> $2 AND state IN ('queued','running')) + (SELECT count(*) FROM composition_jobs WHERE user_id = $1 AND state IN ('queued','running')) AS "active!""#,
+            user_id,
+            UNMETERED_KIND
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if active >= PER_USER_ACTIVE_LIMIT {
+            return Err(AppError::UserJobLimitReached);
+        }
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -873,6 +883,63 @@ mod tests {
             .await,
             Err(AppError::UserJobLimitReached)
         ));
+        Ok(())
+    }
+
+    fn recording_waveform(n: i64) -> MediaJobRequest {
+        MediaJobRequest::RecordingWaveform {
+            guild_id: 1,
+            channel_id: 2,
+            year: 2026,
+            month: 10,
+            file_name: format!("recording-{n}"),
+            silence_free: false,
+        }
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn recording_waveforms_are_not_metered_per_user(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let viewer = crate::permissions::Viewer::discord(10);
+        // A cold channel mix: one waveform per source, more than the limit.
+        for n in 1..=PER_USER_ACTIVE_LIMIT + 3 {
+            enqueue(
+                &pool,
+                None,
+                viewer,
+                &format!("waveform-{n}"),
+                &format!("waveform-resource-{n}"),
+                &recording_waveform(n),
+            )
+            .await?;
+        }
+        // They leave the user's own limit to the jobs the user asked for.
+        for id in 1..=PER_USER_ACTIVE_LIMIT {
+            enqueue(
+                &pool,
+                None,
+                viewer,
+                &format!("key-{id}"),
+                &format!("resource-{id}"),
+                &request(id),
+            )
+            .await?;
+        }
+        assert!(matches!(
+            enqueue(&pool, None, viewer, "key-4", "resource-4", &request(4)).await,
+            Err(AppError::UserJobLimitReached)
+        ));
+        // And a user at that limit can still see a mix's waveforms.
+        enqueue(
+            &pool,
+            None,
+            viewer,
+            "waveform-late",
+            "waveform-resource-late",
+            &recording_waveform(99),
+        )
+        .await?;
         Ok(())
     }
 

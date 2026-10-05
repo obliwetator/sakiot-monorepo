@@ -85,13 +85,16 @@ pub(super) async fn enqueue(
     }
     // Personal and shared capacity are reported separately: only the first is
     // something the caller can resolve by waiting for their own exports.
+    // Waveform jobs fill the shared queue like any other work, but not the
+    // caller's own share (`media_jobs::UNMETERED_KIND`).
     let active = sqlx::query!(
         r#"SELECT
             (SELECT count(*) FROM composition_jobs WHERE state IN ('queued','running'))
               + (SELECT count(*) FROM media_jobs WHERE state IN ('queued','running')) AS "total!",
             (SELECT count(*) FROM composition_jobs WHERE user_id=$1 AND state IN ('queued','running'))
-              + (SELECT count(*) FROM media_jobs WHERE user_id=$1 AND state IN ('queued','running')) AS "owned!""#,
-        user_id
+              + (SELECT count(*) FROM media_jobs WHERE user_id=$1 AND kind <> $2 AND state IN ('queued','running')) AS "owned!""#,
+        user_id,
+        crate::media_jobs::UNMETERED_KIND
     )
     .fetch_one(&mut *tx)
     .await?;
