@@ -24,6 +24,11 @@ pub(super) const DURATIONS_MINUTES: [u32; 6] = [5, 15, 30, 60, 90, 120];
 const BASE_SECONDS: u32 = 600;
 const CLIP_SECONDS: u32 = 15;
 const MANIFEST: &str = "manifest.json";
+/// Bump when the generated audio changes, so every environment regenerates
+/// it once. 2: concatenations keep 500 ms pages (they had ffmpeg's 1 s).
+const SOURCES_VERSION: u32 = 2;
+/// The agent ends an Ogg page every 25 packets.
+const PAGE_DURATION_US: &str = "500000";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Source {
@@ -60,10 +65,29 @@ impl Sources {
 }
 
 pub(super) fn sources_dir() -> PathBuf {
-    sakiot_paths::DataRoots::from_env()
-        .base
-        .join(".loadtest")
-        .join("sources")
+    loadtest_dir().join(format!("sources-v{SOURCES_VERSION}"))
+}
+
+fn loadtest_dir() -> PathBuf {
+    sakiot_paths::DataRoots::from_env().base.join(".loadtest")
+}
+
+/// Remove sources of other versions. Fixture files are hard links, so
+/// existing fixtures keep their audio.
+async fn remove_old_sources(current: &Path) -> std::io::Result<()> {
+    let mut entries = match tokio::fs::read_dir(loadtest_dir()).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let is_sources = entry.file_name().to_string_lossy().starts_with("sources");
+        if is_sources && path != current && entry.file_type().await?.is_dir() {
+            tokio::fs::remove_dir_all(&path).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Load the generated sources, generating whatever is missing first.
@@ -80,6 +104,7 @@ pub(super) async fn ensure_sources() -> Result<Sources, AppError> {
     {
         return Ok(sources);
     }
+    remove_old_sources(&dir).await?;
     tokio::fs::create_dir_all(&dir).await?;
 
     // The variants are independent; generate them side by side.
@@ -130,6 +155,7 @@ async fn generate_variant(dir: &Path, variant: u8) -> Result<(Vec<Source>, Sourc
                     .args(["-f", "concat", "-safe", "0", "-i"])
                     .arg(&list)
                     .args(["-t", &(minutes * 60).to_string(), "-c", "copy"])
+                    .args(["-page_duration", PAGE_DURATION_US])
                     .arg(out);
                 command
             })
@@ -146,6 +172,7 @@ async fn generate_variant(dir: &Path, variant: u8) -> Result<(Vec<Source>, Sourc
                 .args(["-ss", "60", "-i"])
                 .arg(&base)
                 .args(["-t", &CLIP_SECONDS.to_string(), "-c", "copy"])
+                .args(["-page_duration", PAGE_DURATION_US])
                 .arg(out);
             command
         })
@@ -177,7 +204,7 @@ async fn encode_base(path: &Path, variant: u8) -> Result<(), AppError> {
             .args(["-ac", "2", "-ar", "48000"])
             .args(["-c:a", "libopus", "-b:a", "64k", "-vbr", "on"])
             .args(["-frame_duration", "20", "-application", "voip"])
-            .args(["-page_duration", "500000"])
+            .args(["-page_duration", PAGE_DURATION_US])
             .arg(out);
         command
     })
