@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH target AS (\n               SELECT id FROM media_jobs\n                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()\n                  FOR UPDATE SKIP LOCKED\n           ), reported AS (\n               UPDATE media_jobs j SET stage=$3,progress=$4,updated_at=now()\n                 FROM target WHERE j.id=target.id\n           )\n           SELECT EXISTS (\n               SELECT 1 FROM media_jobs\n                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()\n           ) AS \"owned!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owned!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "056e73cdf8d7b20a3241f202266635325768fa6f1df912de9fe21172bb7272b0"
+}

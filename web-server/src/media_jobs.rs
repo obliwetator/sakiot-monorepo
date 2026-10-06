@@ -328,16 +328,33 @@ async fn claim(pool: &Pool<Postgres>) -> Result<Option<ClaimedMediaJob>, AppErro
     .transpose()
 }
 
+// Lease renewals and progress reports skip the job row while it is locked
+// instead of waiting for it. The only lock on a running attempt's row is its
+// own publication (`begin_publication` until commit), and the loops that
+// renew and report are the same tasks that must keep polling that
+// publication: waiting there deadlocked the job and held its connections
+// until a restart. Both still answer whether the attempt owns the lease; a
+// locked row counts as owned, so only a lost or expired lease returns false.
+
 async fn renew(pool: &Pool<Postgres>, job: &ClaimedMediaJob) -> Result<bool, AppError> {
-    Ok(sqlx::query!(
-        "UPDATE media_jobs SET lease_expires_at=now()+interval '60 seconds',updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+    Ok(sqlx::query_scalar!(
+        r#"WITH target AS (
+               SELECT id FROM media_jobs
+                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()
+                  FOR UPDATE SKIP LOCKED
+           ), renewed AS (
+               UPDATE media_jobs j SET lease_expires_at=now()+interval '60 seconds',updated_at=now()
+                 FROM target WHERE j.id=target.id
+           )
+           SELECT EXISTS (
+               SELECT 1 FROM media_jobs
+                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()
+           ) AS "owned!""#,
         job.id,
         job.token
     )
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+    .fetch_one(pool)
+    .await?)
 }
 
 pub async fn report_progress(
@@ -347,17 +364,26 @@ pub async fn report_progress(
     stage: &str,
     progress: i16,
 ) -> Result<bool, AppError> {
-    Ok(sqlx::query!(
-        "UPDATE media_jobs SET stage=$3,progress=$4,updated_at=now() WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()",
+    Ok(sqlx::query_scalar!(
+        r#"WITH target AS (
+               SELECT id FROM media_jobs
+                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()
+                  FOR UPDATE SKIP LOCKED
+           ), reported AS (
+               UPDATE media_jobs j SET stage=$3,progress=$4,updated_at=now()
+                 FROM target WHERE j.id=target.id
+           )
+           SELECT EXISTS (
+               SELECT 1 FROM media_jobs
+                WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at > now()
+           ) AS "owned!""#,
         id,
         token,
         stage,
         progress.clamp(0, 99)
     )
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Mirror the existing FFmpeg/audiowaveform progress source into the durable
@@ -985,6 +1011,53 @@ mod tests {
                 .status,
             "ready"
         );
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "../sakiot-db/migrations")]
+    async fn lease_updates_skip_the_attempts_own_publication(
+        pool: PgPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        enqueue(
+            &pool,
+            None,
+            crate::permissions::Viewer::discord(1),
+            "key-1",
+            "resource-1",
+            &request(1),
+        )
+        .await?;
+        let job = claim(&pool).await?.ok_or("job was not claimed")?;
+        sqlx::query(
+            "UPDATE media_jobs SET lease_expires_at=now()+interval '5 seconds' WHERE id=$1",
+        )
+        .bind(&job.id)
+        .execute(&pool)
+        .await?;
+        assert!(renew(&pool, &job).await?);
+        let left: f64 = sqlx::query_scalar(
+            "SELECT EXTRACT(EPOCH FROM lease_expires_at-now())::float8 FROM media_jobs WHERE id=$1",
+        )
+        .bind(&job.id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(left > 50.0, "the lease was not extended: {left}s left");
+
+        // The attempt's own loops renew and report while its publication
+        // holds the row. Waiting for that lock deadlocked them.
+        let tx = begin_publication(&pool, &job.id, &job.token).await?;
+        let within = Duration::from_secs(5);
+        assert!(tokio::time::timeout(within, renew(&pool, &job)).await??);
+        assert!(
+            tokio::time::timeout(
+                within,
+                report_progress(&pool, &job.id, &job.token, "rendering", 50)
+            )
+            .await??
+        );
+        complete_publication(tx, &job.id, &job.token, "/result", None).await?;
+        assert!(!renew(&pool, &job).await?);
+        assert!(!report_progress(&pool, &job.id, &job.token, "late", 90).await?);
         Ok(())
     }
 

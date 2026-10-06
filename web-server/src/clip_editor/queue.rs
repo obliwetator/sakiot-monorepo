@@ -206,20 +206,36 @@ pub(super) async fn load(pool: &Pool<Postgres>, id: &str, token: &str) -> Result
     })
 }
 
+// Renewals and progress reports skip the job row while it is locked instead
+// of waiting for it: the only lock on a running attempt's row is its own
+// publication (`jobs::publish` until commit), and the worker reports progress
+// from the loop that drives that publication, so waiting there deadlocked the
+// attempt until its timeout. A locked row still counts as owned; only a lost
+// or expired lease returns false.
+
 pub(super) async fn renew(
     pool: &Pool<Postgres>,
     id: &str,
     token: &str,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!(
-        "UPDATE composition_jobs SET lease_expires_at = now() + interval '60 seconds', updated_at = now() WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()",
+    sqlx::query_scalar!(
+        r#"WITH target AS (
+               SELECT id FROM composition_jobs
+                WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()
+                  FOR UPDATE SKIP LOCKED
+           ), renewed AS (
+               UPDATE composition_jobs j SET lease_expires_at = now() + interval '60 seconds', updated_at = now()
+                 FROM target WHERE j.id = target.id
+           )
+           SELECT EXISTS (
+               SELECT 1 FROM composition_jobs
+                WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()
+           ) AS "owned!""#,
         id,
         token
     )
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+    .fetch_one(pool)
+    .await
 }
 
 pub(super) async fn report(
@@ -229,17 +245,26 @@ pub(super) async fn report(
     stage: &str,
     progress: i16,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!(
-        "UPDATE composition_jobs SET stage = $3, progress = GREATEST(progress, $4), updated_at = now() WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()",
+    sqlx::query_scalar!(
+        r#"WITH target AS (
+               SELECT id FROM composition_jobs
+                WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()
+                  FOR UPDATE SKIP LOCKED
+           ), reported AS (
+               UPDATE composition_jobs j SET stage = $3, progress = GREATEST(j.progress, $4), updated_at = now()
+                 FROM target WHERE j.id = target.id
+           )
+           SELECT EXISTS (
+               SELECT 1 FROM composition_jobs
+                WHERE id = $1 AND attempt_token = $2 AND state = 'running' AND lease_expires_at > now()
+           ) AS "owned!""#,
         id,
         token,
         stage,
         progress.clamp(0, 99)
     )
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+    .fetch_one(pool)
+    .await
 }
 
 /// Record a failed attempt. `retryable` alone decides whether it is retried;

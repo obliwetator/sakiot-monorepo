@@ -348,3 +348,33 @@ async fn waveform_builds_do_not_use_up_the_callers_share(pool: PgPool) -> TestRe
     submit(&pool, "export", &snapshot()).await?;
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn lease_updates_skip_the_attempts_own_publication(pool: PgPool) -> TestResult {
+    submit(&pool, "export", &snapshot()).await?;
+    let job = claimed(&pool).await;
+    // Hold the row the way `jobs::publish` does until it commits. The worker
+    // renews and reports from the loop that drives that publication, so
+    // waiting for the lock deadlocked the attempt.
+    let mut publication = pool.begin().await?;
+    sqlx::query("SELECT id FROM composition_jobs WHERE id = $1 FOR UPDATE")
+        .bind(&job.id)
+        .execute(&mut *publication)
+        .await?;
+    let within = std::time::Duration::from_secs(5);
+    assert!(tokio::time::timeout(within, renew(&pool, &job.id, &job.token)).await??);
+    assert!(
+        tokio::time::timeout(within, report(&pool, &job.id, &job.token, "rendering", 50)).await??
+    );
+    publication.rollback().await?;
+
+    assert!(report(&pool, &job.id, &job.token, "rendering", 60).await?);
+    let progress: i16 = sqlx::query_scalar("SELECT progress FROM composition_jobs WHERE id = $1")
+        .bind(&job.id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(progress, 60);
+    publish(&pool, &job, "export.ogg", 1.0, 100).await?;
+    assert!(!renew(&pool, &job.id, &job.token).await?);
+    Ok(())
+}
