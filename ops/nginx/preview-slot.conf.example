@@ -1,8 +1,21 @@
 # Preview slot vhost; ops/preview-slot.sh renders SLOT/PORT and installs it
 # under /etc/nginx/sites-available/<slot>.preview.<domain>.
+
+# Reused connections to the slot's web server. keepalive_timeout stays under
+# actix-web's 5 s keep-alive, so nginx never reuses a socket the server is
+# about to close.
+upstream SLOT_web {
+    server 127.0.0.1:PORT;
+    keepalive 16;
+    keepalive_timeout 4s;
+}
+
 server {
     listen 80;
     listen [::]:80;
+    # Server-wide, so it also covers the 443 listener certbot adds; plain
+    # HTTP/1.1 on port 80 keeps working.
+    http2 on;
     server_name SLOT.preview.patrykstyla.com;
     root /var/www/SLOT.preview.patrykstyla.com;
 
@@ -14,11 +27,16 @@ server {
 
     # API responses (including OAuth and media) carry their own policy. Do not
     # add the static-page CSP to /api/: it would block the OAuth nonce script.
-    location /api/ { proxy_pass http://127.0.0.1:PORT; }
+    # An empty Connection header keeps the upstream connection open for reuse.
+    location /api/ {
+        proxy_pass http://SLOT_web;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
     # Realtime dashboard socket: forward the WebSocket upgrade. The server
     # sends a heartbeat every 20 s, well inside the read timeout.
     location = /api/realtime {
-        proxy_pass http://127.0.0.1:PORT;
+        proxy_pass http://SLOT_web;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
