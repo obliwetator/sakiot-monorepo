@@ -12,12 +12,18 @@
 //! follower, which reads the (now complete) source to EOF and closes ffmpeg's
 //! stdin. ffmpeg flushes its final segment and exits, then we append
 //! `ENDLIST`.
+//!
+//! A live job also stops once nobody has asked for its playlist for
+//! [`LIVE_IDLE_STOP`]: each one holds an ffmpeg process, and a recording
+//! somebody listened to once would otherwise keep one until the recording
+//! ends. The next request rebuilds the output from the start of the recording.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::PoisonError;
+use std::time::{Duration, Instant};
 
 use actix_files::NamedFile;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, web};
@@ -66,6 +72,13 @@ const FOLLOW_CHUNK: usize = 64 * 1024;
 const PIPELINE_EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long after SIGTERM before escalating to SIGKILL.
 const PIPELINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often a live job checks whether its recording is still live and
+/// whether anyone still listens.
+const LIVE_POLL: Duration = Duration::from_secs(5);
+/// How long a live job keeps its ffmpeg after the last playlist request.
+/// Players re-read a live playlist every target duration (2 s), so a minute
+/// without one means nobody is listening.
+const LIVE_IDLE_STOP: Duration = Duration::from_secs(60);
 
 #[derive(Default, Debug)]
 pub struct LiveContainer {
@@ -75,9 +88,42 @@ pub struct LiveContainer {
     /// the same `hls-{stem}` directory. Locks live as long as the job map;
     /// retaining them also serializes retries after a failed spawn.
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// When each running live job's playlist was last requested. Only running
+    /// live jobs have an entry, so finished recordings do not accumulate.
+    requested: std::sync::Mutex<HashMap<String, Instant>>,
 }
 
 impl LiveContainer {
+    fn requested(&self) -> std::sync::MutexGuard<'_, HashMap<String, Instant>> {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Starts tracking playlist requests for a live job that has just started.
+    fn track_requests(&self, id: &str) {
+        self.requested().insert(id.to_owned(), Instant::now());
+    }
+
+    /// Records a playlist request. A no-op unless the job is running live.
+    fn touch(&self, id: &str) {
+        if let Some(at) = self.requested().get_mut(id) {
+            *at = Instant::now();
+        }
+    }
+
+    /// Time since the job's playlist was last requested. Zero for a job that
+    /// is not tracked, so only a running live job is ever considered idle.
+    fn idle_for(&self, id: &str) -> Duration {
+        self.requested()
+            .get(id)
+            .map_or(Duration::ZERO, Instant::elapsed)
+    }
+
+    fn untrack_requests(&self, id: &str) {
+        self.requested().remove(id);
+    }
+
     /// Serializes job creation for one recording. The returned guard is held
     /// for the whole spawn; while it is held, any other request for the same
     /// key waits and then reuses the completed entry.
@@ -420,6 +466,54 @@ async fn drain_live_pipeline(child: &mut Child, stop: Option<&watch::Sender<bool
     let _ = child.kill().await;
 }
 
+/// Stops a running live job whose playlist nobody has requested for
+/// `idle_after`, and forgets it, so the next request starts a new job. That
+/// job finds the unfinished playlist and rebuilds the output from the start of
+/// the recording.
+///
+/// Holds the job's creation lock throughout, so a new job cannot start writing
+/// the same directory before the old ffmpeg has exited. A request that took
+/// the old job from the map just before it was stopped still gets the old
+/// playlist; the player's next request starts the new job.
+async fn stop_if_idle(
+    container: &LiveContainer,
+    id: &str,
+    state: &Arc<Mutex<JobState>>,
+    idle_after: Duration,
+) -> bool {
+    if container.idle_for(id) < idle_after {
+        return false;
+    }
+    let key_guard = container.key_lock(id).await;
+    let stopped = {
+        let _creation = key_guard.lock().await;
+        // A request may have arrived while this waited for the lock.
+        if container.idle_for(id) < idle_after {
+            false
+        } else {
+            {
+                let mut jobs = container.jobs.write().await;
+                if jobs.get(id).is_some_and(|job| Arc::ptr_eq(job, state)) {
+                    jobs.remove(id);
+                }
+            }
+            container.untrack_requests(id);
+            let mut job = state.lock().await;
+            if let Some(stop) = job.follow_stop.take() {
+                let _ = stop.send(true);
+            }
+            if let Some(mut child) = job.child.take()
+                && let Err(error) = child.kill().await
+            {
+                warn!(stem = %id, ?error, "stopping an idle live ffmpeg failed");
+            }
+            true
+        }
+    };
+    container.release_key_lock(id, key_guard).await;
+    stopped
+}
+
 async fn spawn_job(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
@@ -492,8 +586,12 @@ async fn spawn_job(
         .write()
         .await
         .insert(key_id(&key), state.clone());
+    if is_live {
+        container.track_requests(&id);
+    }
 
     // Lifecycle task.
+    let container_c = container.clone();
     let state_c = state.clone();
     let pool_c = pool.clone();
     let stem = key.stem.clone();
@@ -501,9 +599,13 @@ async fn spawn_job(
     tokio::spawn(async move {
         if is_live {
             // Poll DB until the row is no longer lease-backed live, then kill
-            // the pipeline.
+            // the pipeline. Stop early once nobody listens.
             loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(LIVE_POLL).await;
+                if stop_if_idle(&container_c, &id, &state_c, LIVE_IDLE_STOP).await {
+                    info!(stem = %id, "live job stopped: no listeners");
+                    return;
+                }
                 match db_state(&pool_c, &stem).await {
                     Ok(state) if !state.live => break,
                     Ok(_) => {}
@@ -523,6 +625,7 @@ async fn spawn_job(
                 error!(stem = %id, error = ?e, "append_endlist failed");
             }
             state_c.lock().await.finalized = true;
+            container_c.untrack_requests(&id);
             info!(stem = %id, "live job finalized");
         } else {
             let mut g = state_c.lock().await;
@@ -627,12 +730,14 @@ async fn has_first_audio_page(src: &Path) -> std::io::Result<bool> {
 /// the recording is live but its file has no audio yet: the handler answers
 /// [`starting_playlist`] and the player asks again, instead of the probe
 /// failing on the empty file. Only a recording's first request checks.
+/// Every call counts as a listener for the job's idle stop.
 pub(crate) async fn ensure_playlist_job(
     container: web::Data<LiveContainer>,
     pool: web::Data<Pool<Postgres>>,
     key: RecordingKey,
 ) -> Result<Option<Arc<Mutex<JobState>>>, AppError> {
-    let started = container.jobs.read().await.contains_key(&key_id(&key));
+    let id = key_id(&key);
+    let started = container.jobs.read().await.contains_key(&id);
     if !started
         && let Some(src) = source_path(&key).await
         && !has_first_audio_page(&src)
@@ -642,7 +747,9 @@ pub(crate) async fn ensure_playlist_job(
     {
         return Ok(None);
     }
-    ensure_job(container, pool, key).await.map(Some)
+    let job = ensure_job(container.clone(), pool, key).await?;
+    container.touch(&id);
+    Ok(Some(job))
 }
 
 /// The answer to a live playlist request while the recording has no audio
@@ -975,6 +1082,76 @@ mod tests {
         let stored = container.locks.lock().await.get("recording").cloned();
         assert_eq!(container.locks.lock().await.len(), 1);
         assert!(stored.is_some_and(|stored| Arc::ptr_eq(&recreated, &stored)));
+    }
+
+    /// A running live job whose ffmpeg is stood in for by `sleep`. Returns the
+    /// receiver of the follower's stop signal.
+    async fn running_live_job(
+        container: &LiveContainer,
+        id: &str,
+    ) -> Result<(Arc<Mutex<JobState>>, watch::Receiver<bool>), Box<dyn std::error::Error>> {
+        let child = Command::new("sleep")
+            .arg("600")
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        let (stop, stopped) = watch::channel(false);
+        let job = Arc::new(Mutex::new(JobState {
+            finalized: false,
+            child: Some(child),
+            follow_stop: Some(stop),
+        }));
+        container
+            .jobs
+            .write()
+            .await
+            .insert(id.to_owned(), job.clone());
+        container.track_requests(id);
+        Ok((job, stopped))
+    }
+
+    #[tokio::test]
+    async fn a_live_job_with_listeners_keeps_running() -> Result<(), Box<dyn std::error::Error>> {
+        let container = LiveContainer::default();
+        let (job, stopped) = running_live_job(&container, "recording").await?;
+        container.touch("recording");
+
+        assert!(!stop_if_idle(&container, "recording", &job, LIVE_IDLE_STOP).await);
+        assert!(container.jobs.read().await.contains_key("recording"));
+        assert!(job.lock().await.child.is_some());
+        assert!(!*stopped.borrow());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_idle_live_job_stops_and_is_forgotten() -> Result<(), Box<dyn std::error::Error>> {
+        let container = LiveContainer::default();
+        let (job, stopped) = running_live_job(&container, "recording").await?;
+
+        assert!(stop_if_idle(&container, "recording", &job, Duration::ZERO).await);
+        assert!(container.jobs.read().await.is_empty());
+        assert!(job.lock().await.child.is_none());
+        assert!(*stopped.borrow());
+        assert!(container.locks.lock().await.is_empty());
+
+        // Requests for the stopped job do not track it again; the job that
+        // replaces it starts tracking when it spawns.
+        container.touch("recording");
+        assert!(container.requested().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn only_running_live_jobs_count_as_idle() -> Result<(), Box<dyn std::error::Error>> {
+        let container = LiveContainer::default();
+        let (job, _stopped) = running_live_job(&container, "recording").await?;
+        container.untrack_requests("recording");
+
+        // A finished or VOD job has no request tracking and never stops.
+        assert_eq!(container.idle_for("recording"), Duration::ZERO);
+        assert!(!stop_if_idle(&container, "recording", &job, Duration::from_millis(1)).await);
+        assert!(job.lock().await.child.is_some());
+        Ok(())
     }
 
     #[tokio::test]
