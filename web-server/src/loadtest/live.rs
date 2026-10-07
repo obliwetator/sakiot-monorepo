@@ -69,6 +69,11 @@ pub(super) struct SimSummary {
     started_ms: i64,
     ends_ms: i64,
     participants: Vec<ParticipantSummary>,
+    /// How far the furthest-behind participant's file trailed real time
+    /// after the last write tick, beyond the page still being filled. Stays
+    /// near 0 while the writers keep up; the agent drops audio once it falls
+    /// about 5 s behind (its recorder queue holds 256 ticks of 20 ms).
+    behind_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -274,6 +279,7 @@ pub async fn start_call(
                 month: None,
             })
             .collect(),
+        behind_ms: 0,
     };
     let (stop, stopped) = watch::channel(false);
     let shared = state.clone().into_inner();
@@ -343,6 +349,10 @@ struct Planned {
 
 /// The Ogg header pages (OpusHead, OpusTags) at the start of every source.
 const HEADER_PAGES: usize = 2;
+
+/// Audio per page of the sources; a file trails real time by up to one page
+/// while the next is being filled.
+const PAGE_MS: i64 = 500;
 
 /// One participant's writer, moved into the blocking pool for each tick.
 ///
@@ -424,6 +434,7 @@ async fn run(
     let mut indexes: HashMap<PathBuf, Arc<Vec<Page>>> = HashMap::new();
     let mut writers: Vec<Writer> = Vec::new();
     let mut seats: Vec<Seat> = Vec::new();
+    let mut reported_behind_ms = 0;
     let mut interval = tokio::time::interval(TICK);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     plan.sort_by_key(|planned| std::cmp::Reverse(planned.joins_ms));
@@ -500,6 +511,19 @@ async fn run(
         };
         for (seat, writer) in seats.iter_mut().zip(&writers) {
             seat.written_ms = writer.written_ms();
+        }
+        let done_ms = Utc::now().timestamp_millis();
+        let behind_ms = seats
+            .iter()
+            .map(|seat| done_ms - seat.start_ms - seat.written_ms - PAGE_MS)
+            .max()
+            .unwrap_or(0)
+            .max(0);
+        if behind_ms != reported_behind_ms {
+            reported_behind_ms = behind_ms;
+            if let Some(entry) = state.sims.entries.lock().get_mut(&sim_id) {
+                entry.summary.behind_ms = behind_ms;
+            }
         }
     }
 
