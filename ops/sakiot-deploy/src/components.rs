@@ -109,6 +109,21 @@ fn is_compose_file(path: &str) -> bool {
         && (path.ends_with(".yml") || path.ends_with(".yaml"))
 }
 
+/// What a preview slot deploys, whatever its changed paths select: the
+/// database (migrations), the web server and the frontend, never the bot.
+///
+/// - Migrations run every time. A slot's database is a staging snapshot plus
+///   whatever earlier deploys applied, so the branch's migrations may be
+///   missing even when this push does not touch them, and `sqlx migrate run`
+///   does nothing when there is nothing to apply.
+/// - The frontend deploys every time because CI verifies a preview by the
+///   commit in its version.json, which only a fresh frontend build stamps.
+/// - Preview branches need no Discord bot (one gateway per token); bot
+///   behavior is exercised on staging.
+pub fn preview_components() -> Vec<Component> {
+    vec![Component::Database, Component::Web, Component::Frontend]
+}
+
 pub fn component_selected(wanted: Component, components: &[Component]) -> bool {
     components.contains(&wanted)
 }
@@ -135,6 +150,11 @@ mod tests {
     fn docs_and_ops_select_nothing() {
         assert_components(&["README.md", "docs/notes.txt", "ops/deploy"], &[]);
         assert_components(&["STAGING.md", "ops/systemctl-wrapper"], &[]);
+    }
+
+    #[test]
+    fn previews_always_migrate_and_never_deploy_the_bot() {
+        assert_eq!(preview_components(), [Database, Web, Frontend]);
     }
 
     #[test]

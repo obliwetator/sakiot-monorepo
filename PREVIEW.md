@@ -110,6 +110,14 @@ ops/preview-slot.sh clip-editor --remove
   when available. Re-provisioning preserves slot-local data. Staging must have
   a migrated schema before this bootstrap; the script then seeds the configured
   dev-login account on every run.
+- **Migrations:** every deploy applies the branch's pending migrations to
+  the slot's database, as `sakiot_slot`, without a backup
+  (`SAKIOT_SKIP_DB_BACKUP=1`). With nothing pending, nothing changes. It
+  passes `--ignore-missing`, because the staging snapshot may already hold
+  migrations the branch has not merged. Editing a migration after a slot has
+  applied it makes the slot's next deploy fail on the checksum. Recreate the
+  slot's database (`preview-remove`, then `preview-up`) or restore the
+  migration.
 - Installs the web systemd unit from the staging template (no bot unit —
   previews run no FBI Agent) and the nginx vhost from
   `ops/nginx/preview-slot.conf.example`; configures nginx's server-name hash

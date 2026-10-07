@@ -9,7 +9,9 @@ use anyhow::{Context, Result, bail};
 
 use crate::admin_api::AdminApi;
 use crate::clock::Clock;
-use crate::components::{Component, all_components, component_selected, components_for_paths};
+use crate::components::{
+    Component, all_components, component_selected, components_for_paths, preview_components,
+};
 use crate::config::{Config, Mode, Request, Target};
 use crate::fsx;
 use crate::git;
@@ -159,6 +161,21 @@ impl BotHandoff {
     }
 }
 
+/// `sqlx migrate run` for a deploy without a pre-migrate backup. A preview
+/// slot's database starts as a staging snapshot, which can hold migrations
+/// the branch does not have yet; sqlx refuses to run past an applied
+/// migration it cannot find, so previews ignore those.
+fn migrate_run_args(source: &str, target: Target) -> Vec<String> {
+    let mut args: Vec<String> = ["migrate", "run", "--source", source]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    if target == Target::Preview {
+        args.push("--ignore-missing".into());
+    }
+    args
+}
+
 pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     request.validate()?;
     let mode = request.mode;
@@ -259,17 +276,11 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         changed_paths = Some(paths);
         components
     };
-    // Preview slots deploy the web server and frontend only. Bot behavior is
-    // exercised on the staging instance, so preview branches need no Discord
-    // bot (one gateway per token) and skip the blue/green bot handoff.
-    //
-    // The frontend is deployed unconditionally, ignoring path-based component
-    // selection: the CI verify step polls the slot's public version.json — a
-    // frontend artifact stamped at build time — for the deployed commit, so a
-    // component-scoped deploy that skips the frontend would fail its own
-    // verification while serving the previous commit's UI.
+    // Preview slots always migrate and deploy the web server and frontend, and
+    // never deploy the bot (`preview_components`). Without the bot there is no
+    // blue/green bot handoff.
     let components: Vec<Component> = if target == Target::Preview {
-        vec![Component::Web, Component::Frontend]
+        preview_components()
     } else {
         components
     };
@@ -559,12 +570,10 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
         ]))?;
         if config.skip_db_backup {
             log("SAKIOT_SKIP_DB_BACKUP=1: applying migrations without a pre-migrate backup");
-            deps.runner.run(&Cmd::new("sqlx").args([
-                "migrate",
-                "run",
-                "--source",
+            deps.runner.run(&Cmd::new("sqlx").args(migrate_run_args(
                 &migrations_source.display().to_string(),
-            ]))?;
+                target,
+            )))?;
         } else {
             (deps.require_command)("pg_dump")?;
             (deps.require_command)("age")?;
@@ -1111,4 +1120,21 @@ fn deploy_services(
     bot.new_bot_started = false;
     bot.old_bot_disabled = false;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previews_migrate_past_migrations_the_branch_lacks() {
+        assert_eq!(
+            migrate_run_args("/m", Target::Preview),
+            ["migrate", "run", "--source", "/m", "--ignore-missing"]
+        );
+        assert_eq!(
+            migrate_run_args("/m", Target::Staging),
+            ["migrate", "run", "--source", "/m"]
+        );
+    }
 }
