@@ -1146,6 +1146,12 @@ export interface components {
 			| {
 					as_role?: string | null;
 					guild_id: string;
+					/**
+					 * @description Receive voice presence changes as `presence` messages instead of
+					 *     `changed` signals to refetch. Servers without them ignore this
+					 *     and keep sending `changed`.
+					 */
+					presence_updates?: boolean;
 					/** @enum {string} */
 					type: "set_scope";
 					/** Format: int32 */
@@ -1511,6 +1517,19 @@ export interface components {
 			user_id: string;
 			video: boolean;
 		};
+		PresenceSeat: {
+			/** @example 146638124288704513 */
+			channel_id: string;
+			/** @description The channel's name, as `PresenceChannel.name`. */
+			channel_name: string;
+			member: components["schemas"]["PresenceMember"];
+		};
+		/** @description Where one member is in the viewer's voice-presence list after a change. */
+		PresenceUpdate: {
+			channel?: null | components["schemas"]["PresenceSeat"];
+			/** @example 146638124288704513 */
+			user_id: string;
+		};
 		RecordingDeletionStatus: {
 			/** Format: int32 */
 			attempts: number;
@@ -1656,6 +1675,14 @@ export interface components {
 					reason: components["schemas"]["ResyncReason"];
 					/** @enum {string} */
 					type: "resync_required";
+					/** Format: int32 */
+					v: number;
+			  }
+			| {
+					guild_id: string;
+					/** @enum {string} */
+					type: "presence";
+					updates: components["schemas"]["PresenceUpdate"][];
 					/** Format: int32 */
 					v: number;
 			  }

@@ -1,0 +1,146 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT vp.guild_id,\n                  vp.channel_id,\n                  COALESCE(c.name, '') AS \"channel_name!\",\n                  vp.user_id,\n                  COALESCE(gm.nickname, gm.global_name, gm.username,\n                           un.global_name, un.username) AS name,\n                  COALESCE(gm.is_bot, false) AS \"is_bot!\",\n                  vp.self_mute, vp.self_deaf, vp.server_mute, vp.server_deaf,\n                  vp.streaming, vp.video\n             FROM unnest($1::bigint[], $2::bigint[]) AS wanted(guild_id, user_id)\n             JOIN voice_presence vp\n               ON vp.guild_id = wanted.guild_id AND vp.user_id = wanted.user_id\n             JOIN channels c ON c.channel_id = vp.channel_id AND c.guild_id = vp.guild_id\n             LEFT JOIN guild_members gm\n                    ON gm.guild_id = vp.guild_id AND gm.user_id = vp.user_id\n             LEFT JOIN user_names un ON un.user_id = vp.user_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guild_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_name!",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_bot!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "self_mute",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "self_mute"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "self_deaf",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "self_deaf"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "server_mute",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "server_mute"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "server_deaf",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "server_deaf"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "streaming",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "streaming"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "video",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "voice_presence",
+            "name": "video"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      null,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "510de7db03c277067d20ed67baf95f0b3acca73eff97d0d6edeebc60a1dffb78"
+}

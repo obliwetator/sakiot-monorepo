@@ -1,7 +1,8 @@
 //! Messages exchanged over `/api/realtime`. Every message carries the
 //! protocol version `v`; Discord ids are strings so JavaScript never rounds
-//! them. Events are refresh signals only: clients re-read data through the
-//! authorized HTTP endpoints.
+//! them. Events are refresh signals: clients re-read data through the
+//! authorized HTTP endpoints. The one exception is voice presence, which
+//! clients that ask for it (`presence_updates`) receive as changes to apply.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -39,7 +40,9 @@ pub enum Resource {
     RecordingPolicy,
     /// Guild and per-user Jam cooldowns (managers only).
     Cooldowns,
-    /// Who is in which voice or stage channel. Never carries `ids`.
+    /// Who is in which voice or stage channel. Never carries `ids`. Clients
+    /// that set `presence_updates` get it only when a change cannot be sent
+    /// as `presence` updates.
     Presence,
     /// The guild's member roster: member search and role member counts
     /// (managers only).
@@ -100,8 +103,37 @@ pub enum ServerMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         guild_id: Option<String>,
     },
+    /// Members who joined, left, moved or changed state in the voice and
+    /// stage channels the viewer can view, in order. Sent instead of
+    /// `changed` `presence` to clients that set `presence_updates`, while the
+    /// guild's presence is known. Apply them to the `VoicePresence` list.
+    Presence {
+        v: u8,
+        guild_id: String,
+        updates: Vec<PresenceUpdate>,
+    },
     /// Sent every 20 s; drives the client's staleness timer.
     Heartbeat { v: u8 },
+}
+
+/// Where one member is in the viewer's voice-presence list after a change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct PresenceUpdate {
+    #[schema(example = "146638124288704513")]
+    pub user_id: String,
+    /// The member's channel and state. Absent when the member is no longer in
+    /// a channel the viewer can view: remove them from the list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<PresenceSeat>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct PresenceSeat {
+    #[schema(example = "146638124288704513")]
+    pub channel_id: String,
+    /// The channel's name, as `PresenceChannel.name`.
+    pub channel_name: String,
+    pub member: crate::presence::PresenceMember,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
@@ -114,6 +146,11 @@ pub enum ClientMessage {
         guild_id: String,
         #[serde(default)]
         as_role: Option<String>,
+        /// Receive voice presence changes as `presence` messages instead of
+        /// `changed` signals to refetch. Servers without them ignore this
+        /// and keep sending `changed`.
+        #[serde(default)]
+        presence_updates: bool,
     },
     Heartbeat {
         v: u8,
@@ -183,6 +220,60 @@ mod tests {
     }
 
     #[test]
+    fn presence_updates_say_where_each_member_is_now() -> Result<(), serde_json::Error> {
+        let message = ServerMessage::Presence {
+            v: PROTOCOL_VERSION,
+            guild_id: "1".into(),
+            updates: vec![
+                PresenceUpdate {
+                    user_id: "7".into(),
+                    channel: Some(PresenceSeat {
+                        channel_id: "3".into(),
+                        channel_name: "General".into(),
+                        member: crate::presence::PresenceMember {
+                            user_id: 7,
+                            name: Some("Ann".into()),
+                            is_bot: false,
+                            self_mute: true,
+                            self_deaf: false,
+                            server_mute: false,
+                            server_deaf: false,
+                            streaming: false,
+                            video: false,
+                        },
+                    }),
+                },
+                PresenceUpdate {
+                    user_id: "8".into(),
+                    channel: None,
+                },
+            ],
+        };
+        assert_eq!(
+            serde_json::to_value(&message)?,
+            serde_json::json!({
+                "type": "presence", "v": 1, "guild_id": "1",
+                "updates": [
+                    {
+                        "user_id": "7",
+                        "channel": {
+                            "channel_id": "3", "channel_name": "General",
+                            "member": {
+                                "user_id": "7", "name": "Ann", "is_bot": false,
+                                "self_mute": true, "self_deaf": false,
+                                "server_mute": false, "server_deaf": false,
+                                "streaming": false, "video": false,
+                            },
+                        },
+                    },
+                    { "user_id": "8" },
+                ],
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn client_messages_are_versioned() {
         assert_eq!(
             parse_client_message(r#"{"type":"set_scope","v":1,"guild_id":"5"}"#),
@@ -190,6 +281,18 @@ mod tests {
                 v: 1,
                 guild_id: "5".into(),
                 as_role: None,
+                presence_updates: false,
+            })
+        );
+        assert_eq!(
+            parse_client_message(
+                r#"{"type":"set_scope","v":1,"guild_id":"5","presence_updates":true}"#
+            ),
+            Ok(ClientMessage::SetScope {
+                v: 1,
+                guild_id: "5".into(),
+                as_role: None,
+                presence_updates: true,
             })
         );
         assert_eq!(

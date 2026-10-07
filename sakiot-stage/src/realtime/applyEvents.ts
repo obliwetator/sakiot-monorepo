@@ -1,10 +1,12 @@
 import type { components } from "../api/openapi";
 import { type ApiTag, apiSlice } from "../app/apiSlice";
 import type { AppDispatch, RootState } from "../store";
+import { applyPresenceUpdates } from "./patchPresence";
 import { patchSession } from "./patchTree";
 
 type ServerMessage = components["schemas"]["ServerMessage"];
 export type ChangedMessage = Extract<ServerMessage, { type: "changed" }>;
+export type PresenceMessage = Extract<ServerMessage, { type: "presence" }>;
 
 export interface ApplyContext {
 	dispatch: AppDispatch;
@@ -181,5 +183,38 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 				),
 			);
 			return;
+	}
+}
+
+/**
+ * Applies pushed presence changes to the voice-presence list cached for the
+ * subscribed scope (`asRole` is its role preview, if any). A list that is
+ * still loading, or that says presence is unknown, is refetched instead.
+ * Lists cached for another role preview are refreshed when that scope is
+ * subscribed again.
+ */
+export function applyPresence(
+	ctx: ApplyContext,
+	message: PresenceMessage,
+	asRole: string | undefined,
+): void {
+	const guildId = message.guild_id;
+	const state = ctx.getState();
+	const args = apiSlice.util
+		.selectCachedArgsForQuery(state, "getVoicePresence")
+		.filter((arg) => arg.guild_id === guildId && arg.as_role === asRole);
+	for (const arg of args) {
+		const cached = apiSlice.endpoints.getVoicePresence.select(arg)(state);
+		if (cached.status !== "fulfilled" || !cached.data?.available) {
+			// RTK refetches a pending load once it finishes, so the change is
+			// not lost to the load's older snapshot.
+			invalidate(ctx, guildId, ["VoicePresence"]);
+			return;
+		}
+		ctx.dispatch(
+			apiSlice.util.updateQueryData("getVoicePresence", arg, (presence) => {
+				applyPresenceUpdates(presence, message.updates);
+			}),
+		);
 	}
 }

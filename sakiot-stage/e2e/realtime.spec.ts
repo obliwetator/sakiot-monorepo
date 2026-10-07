@@ -65,7 +65,10 @@ async function mockApi(page: Page, handler: Handler) {
 const now = Date.now();
 
 /** A server that says `ready`, then subscribes whatever scope is asked for. */
-function serve(ws: WebSocketRoute, onScope?: (ws: WebSocketRoute) => void) {
+function serve(
+	ws: WebSocketRoute,
+	onScope?: (ws: WebSocketRoute, scope: Record<string, unknown>) => void,
+) {
 	ws.send(
 		JSON.stringify({
 			type: "ready",
@@ -90,7 +93,7 @@ function serve(ws: WebSocketRoute, onScope?: (ws: WebSocketRoute) => void) {
 				...(message.as_role ? { as_role: message.as_role } : {}),
 			}),
 		);
-		onScope?.(ws);
+		onScope?.(ws, message);
 	});
 }
 
@@ -307,6 +310,105 @@ test("a presence event refreshes who is in voice", async ({ page }) => {
 	presence = { available: false, channels: [] };
 	(socket as unknown as WebSocketRoute).send(changed("presence"));
 	await expect(page.getByText("Voice activity is unavailable.")).toBeVisible();
+});
+
+test("presence updates change who is in voice without refetching", async ({
+	page,
+}) => {
+	const member = (user_id: string, name: string, self_mute = false) => ({
+		user_id,
+		name,
+		is_bot: false,
+		self_mute,
+		self_deaf: false,
+		server_mute: false,
+		server_deaf: false,
+		streaming: false,
+		video: false,
+	});
+	let presenceLoads = 0;
+	await mockApi(page, async (path, _route, json) => {
+		if (path === `/api/current/${GUILD_ID}`) {
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/live-stems`) {
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/voice-presence`) {
+			presenceLoads += 1;
+			await json({
+				available: true,
+				channels: [
+					{
+						channel_id: "100",
+						name: "General",
+						members: [member("1", "Alice")],
+					},
+				],
+			});
+			return true;
+		}
+		return false;
+	});
+	let socket: WebSocketRoute | null = null;
+	const scopes: unknown[] = [];
+	await page.routeWebSocket(SOCKET_URL, (ws) => {
+		socket = ws;
+		serve(ws, (_ws, scope) => scopes.push(scope));
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/audio`);
+	const browse = page.getByRole("button", { name: "Browse files" });
+	const inVoice = page.getByRole("heading", { name: "In voice" });
+	await expect(browse.or(inVoice).first()).toBeVisible();
+	if (await browse.isVisible()) await browse.click();
+	const general = page.getByRole("list", { name: "In General" });
+	await expect(general.getByText("Alice")).toBeVisible();
+	await expect.poll(() => socket !== null).toBe(true);
+	await expect
+		.poll(() => scopes)
+		.toContainEqual(
+			expect.objectContaining({ type: "set_scope", presence_updates: true }),
+		);
+	const loads = presenceLoads;
+	const send = (updates: unknown[]) =>
+		(socket as unknown as WebSocketRoute).send(
+			JSON.stringify({ type: "presence", v: 1, guild_id: GUILD_ID, updates }),
+		);
+
+	// Bob joins muted, then Alice moves to a new channel.
+	send([
+		{
+			user_id: "2",
+			channel: {
+				channel_id: "100",
+				channel_name: "General",
+				member: member("2", "Bob", true),
+			},
+		},
+	]);
+	await expect(general.getByText("Bob")).toBeVisible();
+	await expect(general.getByRole("img", { name: "Muted" })).toHaveCount(1);
+	send([
+		{
+			user_id: "1",
+			channel: {
+				channel_id: "200",
+				channel_name: "Music",
+				member: member("1", "Alice"),
+			},
+		},
+	]);
+	const music = page.getByRole("list", { name: "In Music" });
+	await expect(music.getByText("Alice")).toBeVisible();
+	await expect(general.getByText("Alice")).toHaveCount(0);
+
+	// Everyone leaves.
+	send([{ user_id: "1" }, { user_id: "2" }]);
+	await expect(page.getByText("Nobody is in voice.")).toBeVisible();
+	expect(presenceLoads).toBe(loads);
 });
 
 test("an unsupported protocol version asks for a reload", async ({ page }) => {

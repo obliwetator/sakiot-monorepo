@@ -52,11 +52,13 @@ pub enum Event {
     Members {
         guild_id: i64,
     },
-    /// Someone joined, left or changed state in a voice or stage channel. No
-    /// channel or user travels with it: every viewer refetches its own
-    /// filtered view.
+    /// Someone joined, left or changed state in a voice or stage channel.
+    /// `member` says who and where they were; without it (a rename of someone
+    /// in voice, an ownership change) every viewer refetches its own filtered
+    /// view.
     Presence {
         guild_id: i64,
+        member: Option<PresenceChange>,
     },
     /// A background job's state, stage, progress or error changed.
     Job {
@@ -69,6 +71,15 @@ pub enum Event {
         nonce: String,
         sent_at_ms: i64,
     },
+}
+
+/// One member's voice state changed. Where they are now is read when the
+/// change is routed, so several changes to one member coalesce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PresenceChange {
+    pub user_id: i64,
+    /// The channel they were in before the change; `None` when they joined.
+    pub left_channel_id: Option<i64>,
 }
 
 /// Who may read a job's status, and so hears about its changes.
@@ -95,6 +106,7 @@ struct Payload {
     r: Option<String>,
     n: Option<String>,
     t: Option<i64>,
+    o: Option<String>,
 }
 
 fn id(value: Option<&String>) -> Option<i64> {
@@ -148,6 +160,16 @@ pub fn parse(payload: &str) -> Option<Event> {
         },
         "presence" => Event::Presence {
             guild_id: guild_id?,
+            member: match payload.u.as_ref() {
+                None => None,
+                Some(user_id) => Some(PresenceChange {
+                    user_id: user_id.parse().ok()?,
+                    left_channel_id: match payload.o.as_ref() {
+                        None => None,
+                        Some(channel_id) => Some(channel_id.parse().ok()?),
+                    },
+                }),
+            },
         },
         "job" => Event::Job {
             guild_id: guild_id?,
@@ -230,7 +252,30 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"v":1,"k":"presence","g":"1"}"#),
-            Some(Event::Presence { guild_id: 1 })
+            Some(Event::Presence {
+                guild_id: 1,
+                member: None
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"presence","g":"1","u":"7"}"#),
+            Some(Event::Presence {
+                guild_id: 1,
+                member: Some(PresenceChange {
+                    user_id: 7,
+                    left_channel_id: None
+                })
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"presence","g":"1","u":"7","o":"3"}"#),
+            Some(Event::Presence {
+                guild_id: 1,
+                member: Some(PresenceChange {
+                    user_id: 7,
+                    left_channel_id: Some(3)
+                })
+            })
         );
         assert_eq!(
             parse(r#"{"v":1,"k":"job","r":"media","g":"1","id":"j1"}"#),
@@ -265,6 +310,11 @@ mod tests {
         assert_eq!(parse(r#"{"v":1,"k":"session","g":"x","s":"2"}"#), None);
         assert_eq!(parse("not json"), None);
         assert_eq!(parse(r#"{"v":1,"k":"presence"}"#), None);
+        assert_eq!(parse(r#"{"v":1,"k":"presence","g":"1","u":"x"}"#), None);
+        assert_eq!(
+            parse(r#"{"v":1,"k":"presence","g":"1","u":"7","o":"x"}"#),
+            None
+        );
         // An export's owner is required; an unknown job table is skipped.
         assert_eq!(
             parse(r#"{"v":1,"k":"job","r":"composition","g":"1","id":"j"}"#),

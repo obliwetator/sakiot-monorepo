@@ -312,10 +312,20 @@ async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool)
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) -> TestResult {
+async fn presence_changes_name_the_member_and_the_channel_they_left(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     let mut notifications = Notifications::listen(&pool).await?;
+    // Without a member: refetch the whole list.
     let presence = json!({ "v": 1, "k": "presence", "g": GUILD.to_string() });
+    let joined = json!({
+        "v": 1, "k": "presence", "g": GUILD.to_string(), "u": USER.to_string(),
+    });
+    let changed_in = |channel: i64| {
+        json!({
+            "v": 1, "k": "presence", "g": GUILD.to_string(), "u": USER.to_string(),
+            "o": channel.to_string(),
+        })
+    };
     let members = json!({ "v": 1, "k": "members", "g": GUILD.to_string() });
     // Membership decides access, so joins, leaves and a roster becoming
     // complete also re-authorize the guild's sockets.
@@ -335,8 +345,9 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
         [members.clone(), presence.clone(), perm.clone()]
     );
 
-    // Joining, muting and leaving voice: one guild-only payload per
-    // transaction, never a channel or a user.
+    // Joining, muting, moving and leaving voice name the member and, after
+    // joining, the channel they were in. Where they are now is read when the
+    // change is routed, so no payload says where they went.
     let mut transaction = pool.begin().await?;
     sqlx::query("INSERT INTO guild_members (guild_id, user_id, username) VALUES ($1, $2, 'user')")
         .bind(GUILD)
@@ -352,15 +363,26 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
     transaction.commit().await?;
     assert_eq!(
         notifications.drain().await?,
-        [members.clone(), perm.clone(), presence.clone()]
+        [members.clone(), perm.clone(), joined]
     );
     sqlx::query("UPDATE voice_presence SET self_mute = true WHERE user_id = $1")
         .bind(USER)
         .execute(&pool)
         .await?;
+    assert_eq!(notifications.drain().await?, [changed_in(CHANNEL)]);
+    sqlx::query("UPDATE voice_presence SET channel_id = $2 WHERE user_id = $1")
+        .bind(USER)
+        .bind(CHANNEL + 1)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE voice_presence SET channel_id = $2 WHERE user_id = $1")
+        .bind(USER)
+        .bind(CHANNEL)
+        .execute(&pool)
+        .await?;
     assert_eq!(
         notifications.drain().await?,
-        std::slice::from_ref(&presence)
+        [changed_in(CHANNEL), changed_in(CHANNEL + 1)]
     );
 
     // A rename of someone in voice changes what presence shows; a no-op
@@ -394,10 +416,7 @@ async fn presence_and_roster_changes_notify_without_identifiers(pool: PgPool) ->
         .bind(USER)
         .execute(&pool)
         .await?;
-    assert_eq!(
-        notifications.drain().await?,
-        std::slice::from_ref(&presence)
-    );
+    assert_eq!(notifications.drain().await?, [changed_in(CHANNEL)]);
 
     // The owner stopping makes both unknown; the complete roster stays
     // authoritative, so access does not change.

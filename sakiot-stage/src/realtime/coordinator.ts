@@ -3,7 +3,12 @@ import { API_ROUTES } from "../api/routes";
 import { apiSlice } from "../app/apiSlice";
 import { BASE_API_URL, refreshSession } from "../app/authedFetch";
 import type { AppDispatch, RootState } from "../store";
-import { type ApplyContext, applyChanged, reconcileGuild } from "./applyEvents";
+import {
+	type ApplyContext,
+	applyChanged,
+	applyPresence,
+	reconcileGuild,
+} from "./applyEvents";
 import { type RealtimeStatus, setRealtimeStatus } from "./status";
 
 type ServerMessage = components["schemas"]["ServerMessage"];
@@ -178,6 +183,9 @@ export class RealtimeCoordinator {
 			v: PROTOCOL_VERSION,
 			guild_id: scope.guildId,
 			...(scope.asRole ? { as_role: scope.asRole } : {}),
+			// Who is in voice arrives as changes to apply, not as a signal for
+			// every tab to refetch the whole list.
+			presence_updates: true,
 		});
 	}
 
@@ -229,6 +237,11 @@ export class RealtimeCoordinator {
 			case "changed":
 				if (message.guild_id === this.scope?.guildId) {
 					applyChanged(this.ctx, message);
+				}
+				return;
+			case "presence":
+				if (this.scope && message.guild_id === this.scope.guildId) {
+					applyPresence(this.ctx, message, this.scope.asRole);
 				}
 				return;
 			case "access_changed":

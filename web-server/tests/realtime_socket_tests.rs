@@ -241,14 +241,17 @@ async fn expect(socket: &mut Socket) -> Result<Value, Box<dyn std::error::Error>
 }
 
 async fn subscribe(socket: &mut Socket) -> TestResult {
+    subscribe_with(socket, json!({})).await
+}
+
+/// Subscribes to the guild with extra `set_scope` fields.
+async fn subscribe_with(socket: &mut Socket, extra: Value) -> TestResult {
     assert_eq!(expect(socket).await?["type"], "ready");
-    socket
-        .send(Message::Text(
-            json!({ "type": "set_scope", "v": 1, "guild_id": GUILD.to_string() })
-                .to_string()
-                .into(),
-        ))
-        .await?;
+    let mut scope = json!({ "type": "set_scope", "v": 1, "guild_id": GUILD.to_string() });
+    if let (Some(scope), Some(extra)) = (scope.as_object_mut(), extra.as_object()) {
+        scope.extend(extra.clone());
+    }
+    socket.send(Message::Text(scope.to_string().into())).await?;
     assert_eq!(
         expect(socket).await?,
         json!({ "type": "subscribed", "v": 1, "guild_id": GUILD.to_string() })
@@ -365,6 +368,136 @@ async fn viewers_receive_only_what_they_may_list_body(pool: PgPool) -> TestResul
             }
         }
     }
+    for task in tasks {
+        task.abort();
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn presence_changes_reach_each_viewer_where_they_can_see_them(pool: PgPool) -> TestResult {
+    tokio::task::LocalSet::new()
+        .run_until(presence_changes_reach_each_viewer_where_they_can_see_them_body(pool))
+        .await
+}
+
+async fn presence_changes_reach_each_viewer_where_they_can_see_them_body(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let hub = web::Data::new(Hub::new(pool.clone()));
+    let tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
+    let server = server(&pool, hub.clone());
+
+    // Two clients that apply presence updates, one seeing only the public
+    // channel and one seeing both, and an older client that refetches.
+    let mut viewer = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    let mut insider = connect(&server, INSIDER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    let mut older = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe_with(&mut viewer, json!({ "presence_updates": true })).await?;
+    subscribe_with(&mut insider, json!({ "presence_updates": true })).await?;
+    subscribe(&mut older).await?;
+    wait_for_listener(&pool, &mut viewer).await?;
+    let marker = insert_session(&pool, PUBLIC, &[]).await?;
+    for socket in [&mut viewer, &mut insider, &mut older] {
+        while expect(socket).await? != changed("recordings", Some(&[marker])) {}
+    }
+
+    let seat = |channel: i64, name: &str, self_mute: bool| {
+        json!({
+            "user_id": INSIDER.to_string(),
+            "channel": {
+                "channel_id": channel.to_string(),
+                "channel_name": name,
+                "member": {
+                    "user_id": INSIDER.to_string(), "name": format!("member-{INSIDER}"),
+                    "is_bot": false, "self_mute": self_mute, "self_deaf": false,
+                    "server_mute": false, "server_deaf": false,
+                    "streaming": false, "video": false,
+                },
+            },
+        })
+    };
+    let presence = |updates: Value| json!({ "type": "presence", "v": 1, "guild_id": GUILD.to_string(), "updates": updates });
+    let gone = json!({ "user_id": INSIDER.to_string() });
+
+    // Joining the private channel reaches only the insider.
+    sqlx::query("INSERT INTO voice_presence (guild_id, user_id, channel_id) VALUES ($1, $2, $3)")
+        .bind(GUILD)
+        .bind(INSIDER)
+        .bind(PRIVATE)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        expect(&mut insider).await?,
+        presence(json!([seat(PRIVATE, "private", false)]))
+    );
+
+    // Moving to the public channel: both see where they are now; the older
+    // client refetches.
+    sqlx::query("UPDATE voice_presence SET channel_id = $2 WHERE user_id = $1")
+        .bind(INSIDER)
+        .bind(PUBLIC)
+        .execute(&pool)
+        .await?;
+    for socket in [&mut viewer, &mut insider] {
+        assert_eq!(
+            expect(socket).await?,
+            presence(json!([seat(PUBLIC, "public", false)]))
+        );
+    }
+    assert_eq!(expect(&mut older).await?, changed("presence", None));
+
+    // A state change, then moving out of the viewer's sight: the viewer is
+    // told only that they left.
+    sqlx::query("UPDATE voice_presence SET self_mute = true WHERE user_id = $1")
+        .bind(INSIDER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        expect(&mut viewer).await?,
+        presence(json!([seat(PUBLIC, "public", true)]))
+    );
+    sqlx::query("UPDATE voice_presence SET channel_id = $2 WHERE user_id = $1")
+        .bind(INSIDER)
+        .bind(PRIVATE)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut viewer).await?, presence(json!([gone.clone()])));
+    assert_eq!(
+        expect(&mut insider).await?,
+        presence(json!([seat(PUBLIC, "public", true)]))
+    );
+    assert_eq!(
+        expect(&mut insider).await?,
+        presence(json!([seat(PRIVATE, "private", true)]))
+    );
+
+    // Leaving voice; a rename of someone in voice still refetches.
+    sqlx::query("DELETE FROM voice_presence WHERE user_id = $1")
+        .bind(INSIDER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut insider).await?, presence(json!([gone])));
+    sqlx::query("INSERT INTO voice_presence (guild_id, user_id, channel_id) VALUES ($1, $2, $3)")
+        .bind(GUILD)
+        .bind(VIEWER)
+        .bind(PUBLIC)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut viewer).await?["type"], "presence");
+    sqlx::query("UPDATE guild_members SET nickname = 'renamed' WHERE user_id = $1")
+        .bind(VIEWER)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut viewer).await?, changed("presence", None));
+
     for task in tasks {
         task.abort();
     }

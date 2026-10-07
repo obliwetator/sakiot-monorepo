@@ -15,12 +15,19 @@ use tokio::sync::Notify;
 
 use super::events::{Event, JobAudience};
 use super::metrics::{self, metrics};
-use super::protocol::{PROTOCOL_VERSION, Resource, ResyncReason, ServerMessage};
+use super::protocol::{
+    PROTOCOL_VERSION, PresenceSeat, PresenceUpdate, Resource, ResyncReason, ServerMessage,
+};
 use crate::permissions::{SubscriptionAccess, Viewer, subscription_access};
+use crate::presence::Seat;
 
 /// Messages a connection may have queued before it is considered too slow:
 /// the queue is then replaced by one `resync_required`.
 const OUTBOX_CAPACITY: usize = 256;
+
+/// Presence changes to one guild in one batch beyond which its subscribers
+/// refetch the list instead: a bot resyncing a large guild rewrites everyone.
+const PRESENCE_UPDATES_MAX: usize = 64;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding one of these locks cannot leave the data
@@ -53,6 +60,9 @@ struct Subscription {
     /// The `set_scope` call this subscription came from. A recomputed
     /// authorization is stored only if no newer `set_scope` replaced it.
     generation: u64,
+    /// The client applies presence changes (`presence` messages) instead of
+    /// refetching on `changed` `presence`.
+    presence_updates: bool,
 }
 
 #[derive(Default)]
@@ -208,7 +218,13 @@ impl Hub {
     /// Replaces the connection's scope. On success the client gets
     /// `subscribed`; when the viewer may not see the guild (or the role
     /// preview is not theirs to make) it gets `access_changed` and no scope.
-    pub async fn set_scope(&self, connection: &Connection, guild_id: i64, as_role: Option<i64>) {
+    pub async fn set_scope(
+        &self,
+        connection: &Connection,
+        guild_id: i64,
+        as_role: Option<i64>,
+        presence_updates: bool,
+    ) {
         let generation = connection.generation.fetch_add(1, Ordering::SeqCst) + 1;
         metrics().authorization_recomputes.add(1, &[]);
         let result = subscription_access(&self.pool, guild_id, connection.viewer, as_role).await;
@@ -222,6 +238,7 @@ impl Hub {
                     as_role,
                     access: Some(access),
                     generation,
+                    presence_updates,
                 });
                 connection.push(ServerMessage::Subscribed {
                     v: PROTOCOL_VERSION,
@@ -236,6 +253,7 @@ impl Hub {
                     as_role,
                     access: None,
                     generation,
+                    presence_updates,
                 });
                 connection.push(ServerMessage::AccessChanged {
                     v: PROTOCOL_VERSION,
@@ -400,6 +418,7 @@ impl Hub {
                 tracing::warn!(%error, "realtime job viewer lookup failed");
                 HashMap::new()
             });
+        let presence = PresenceBatch::load(&self.pool, &changes).await;
 
         for connection in &connections {
             let Some(subscription) = connection.subscription() else {
@@ -418,6 +437,7 @@ impl Hub {
                 &job_viewers,
                 &mut routed,
             );
+            let updates = route_presence(&presence, &subscription, &mut routed);
             for (resource, ids) in routed {
                 connection.push(ServerMessage::Changed {
                     v: PROTOCOL_VERSION,
@@ -426,8 +446,148 @@ impl Hub {
                     ids: ids.map(|ids| ids.into_iter().collect()),
                 });
             }
+            if !updates.is_empty() {
+                connection.push(ServerMessage::Presence {
+                    v: PROTOCOL_VERSION,
+                    guild_id: subscription.guild_id.to_string(),
+                    updates,
+                });
+            }
         }
     }
+}
+
+/// One member's voice state changed in this batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PresenceMove {
+    user_id: i64,
+    /// Every channel the batch's changes say they were in before.
+    left: BTreeSet<i64>,
+    /// Where the voice-presence list shows them now; `None` when it does not.
+    seat: Option<Seat>,
+}
+
+/// A batch's voice presence changes, resolved to where each member is now.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PresenceBatch {
+    /// Guilds whose subscribers refetch the whole list: a change that names
+    /// no member, more changes than are worth sending one by one, or a failed
+    /// lookup.
+    refetch: HashSet<i64>,
+    /// Per guild, the members whose voice state changed.
+    moves: HashMap<i64, Vec<PresenceMove>>,
+}
+
+impl PresenceBatch {
+    async fn load(pool: &Pool<Postgres>, changes: &[Event]) -> Self {
+        let (mut batch, members) = Self::collect(changes);
+        let wanted: Vec<(i64, i64)> = members
+            .iter()
+            .flat_map(|(guild_id, users)| users.keys().map(|user_id| (*guild_id, *user_id)))
+            .collect();
+        match crate::presence::seats(pool, &wanted).await {
+            Ok(mut seats) => {
+                for (guild_id, users) in members {
+                    let moves = users
+                        .into_iter()
+                        .map(|(user_id, left)| PresenceMove {
+                            user_id,
+                            left,
+                            seat: seats.remove(&(guild_id, user_id)),
+                        })
+                        .collect();
+                    batch.moves.insert(guild_id, moves);
+                }
+            }
+            Err(error) => {
+                // Refetching leaks nothing and loses nothing.
+                tracing::warn!(%error, "realtime presence lookup failed");
+                batch.refetch.extend(members.into_keys());
+            }
+        }
+        batch
+    }
+
+    /// Sorts the batch's presence events into guilds that refetch and, per
+    /// remaining guild, the members to look up with the channels they left.
+    fn collect(changes: &[Event]) -> (Self, BTreeMap<i64, BTreeMap<i64, BTreeSet<i64>>>) {
+        let mut batch = Self::default();
+        let mut members: BTreeMap<i64, BTreeMap<i64, BTreeSet<i64>>> = BTreeMap::new();
+        for change in changes {
+            match change {
+                Event::Presence {
+                    guild_id,
+                    member: None,
+                } => {
+                    batch.refetch.insert(*guild_id);
+                }
+                Event::Presence {
+                    guild_id,
+                    member: Some(member),
+                } => {
+                    members
+                        .entry(*guild_id)
+                        .or_default()
+                        .entry(member.user_id)
+                        .or_default()
+                        .extend(member.left_channel_id);
+                }
+                _ => {}
+            }
+        }
+        for (guild_id, users) in &members {
+            if users.len() > PRESENCE_UPDATES_MAX {
+                batch.refetch.insert(*guild_id);
+            }
+        }
+        members.retain(|guild_id, _| !batch.refetch.contains(guild_id));
+        (batch, members)
+    }
+}
+
+/// The batch's presence changes this subscription may see, where the
+/// voice-presence endpoint would list them: a member who is now in a channel
+/// the viewer can view, or who left one. A viewer that cannot see either
+/// side hears nothing about the member. Clients that asked for updates get
+/// them; the others, and every client when the guild must refetch, get one
+/// `changed` `presence`.
+fn route_presence(
+    presence: &PresenceBatch,
+    subscription: &Subscription,
+    routed: &mut Routed,
+) -> Vec<PresenceUpdate> {
+    let Some(access) = subscription.access.as_ref() else {
+        return Vec::new();
+    };
+    let guild_id = subscription.guild_id;
+    if presence.refetch.contains(&guild_id) {
+        add_all(routed, Resource::Presence);
+        return Vec::new();
+    }
+    let channels = &access.presence_channels;
+    let mut updates = Vec::new();
+    for change in presence.moves.get(&guild_id).into_iter().flatten() {
+        let seat = change
+            .seat
+            .as_ref()
+            .filter(|seat| channels.contains(&seat.channel_id));
+        if seat.is_none() && !change.left.iter().any(|left| channels.contains(left)) {
+            continue;
+        }
+        if !subscription.presence_updates {
+            add_all(routed, Resource::Presence);
+            return Vec::new();
+        }
+        updates.push(PresenceUpdate {
+            user_id: change.user_id.to_string(),
+            channel: seat.map(|seat| PresenceSeat {
+                channel_id: seat.channel_id.to_string(),
+                channel_name: seat.channel_name.clone(),
+                member: seat.member.clone(),
+            }),
+        });
+    }
+    updates
 }
 
 /// The channels a session touches, as the HTTP listings authorize it.
@@ -618,9 +778,6 @@ fn route(
             {
                 add_all(&mut routed, *resource);
             }
-            Event::Presence { guild_id } if *guild_id == subscription.guild_id => {
-                add_all(&mut routed, Resource::Presence);
-            }
             Event::Members { guild_id } if *guild_id == subscription.guild_id && access.manager => {
                 add_all(&mut routed, Resource::Members);
             }
@@ -671,6 +828,7 @@ fn route_jobs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::realtime::events::PresenceChange;
 
     const GUILD: i64 = 1;
     const PUBLIC: i64 = 100;
@@ -683,9 +841,62 @@ mod tests {
             access: Some(SubscriptionAccess {
                 tree_channels: tree.iter().copied().collect(),
                 media_channels: media.iter().copied().collect(),
+                presence_channels: tree.iter().copied().collect(),
                 manager,
             }),
             generation: 1,
+            presence_updates: false,
+        }
+    }
+
+    /// A subscription that sees presence in `channels`, and applies presence
+    /// updates when `updates` is set.
+    fn presence_viewer(channels: &[i64], updates: bool) -> Subscription {
+        let mut viewer = subscription(&[], &[], false);
+        if let Some(access) = viewer.access.as_mut() {
+            access.presence_channels = channels.iter().copied().collect();
+        }
+        viewer.presence_updates = updates;
+        viewer
+    }
+
+    fn seat(user_id: i64, channel_id: i64) -> Seat {
+        Seat {
+            channel_id,
+            channel_name: format!("channel {channel_id}"),
+            member: crate::presence::PresenceMember {
+                user_id,
+                name: Some(format!("user {user_id}")),
+                is_bot: false,
+                self_mute: false,
+                self_deaf: false,
+                server_mute: false,
+                server_deaf: false,
+                streaming: false,
+                video: false,
+            },
+        }
+    }
+
+    fn moved(user_id: i64, left: &[i64], now: Option<i64>) -> PresenceMove {
+        PresenceMove {
+            user_id,
+            left: left.iter().copied().collect(),
+            seat: now.map(|channel_id| seat(user_id, channel_id)),
+        }
+    }
+
+    fn update(user_id: i64, now: Option<i64>) -> PresenceUpdate {
+        PresenceUpdate {
+            user_id: user_id.to_string(),
+            channel: now.map(|channel_id| {
+                let seat = seat(user_id, channel_id);
+                PresenceSeat {
+                    channel_id: channel_id.to_string(),
+                    channel_name: seat.channel_name,
+                    member: seat.member,
+                }
+            }),
         }
     }
 
@@ -816,23 +1027,129 @@ mod tests {
     }
 
     #[test]
-    fn presence_reaches_every_viewer_without_ids_and_members_only_managers() {
+    fn members_reach_only_managers() {
         let changes = [
-            Event::Presence { guild_id: GUILD },
             Event::Members { guild_id: GUILD },
-            Event::Presence { guild_id: 2 },
+            Event::Members { guild_id: 2 },
         ];
-        // Even a viewer who sees no channel at all refetches its own,
-        // filtered view: the event says nothing about where anyone is.
-        let nobody = subscription(&[], &[], false);
+        let viewer = subscription(&[PUBLIC], &[PUBLIC], false);
         assert_eq!(
-            route(&changes, &nobody, 9, Some(&HashMap::new())),
-            Routed::from([(Resource::Presence, None)])
+            route(&changes, &viewer, 9, Some(&HashMap::new())),
+            Routed::new()
         );
         let manager = subscription(&[PUBLIC], &[PUBLIC], true);
         assert_eq!(
             route(&changes, &manager, 9, Some(&HashMap::new())),
-            Routed::from([(Resource::Presence, None), (Resource::Members, None)])
+            Routed::from([(Resource::Members, None)])
+        );
+    }
+
+    #[test]
+    fn presence_without_a_member_refetches_for_every_viewer() {
+        let (batch, members) = PresenceBatch::collect(&[
+            Event::Presence {
+                guild_id: GUILD,
+                member: None,
+            },
+            Event::Presence {
+                guild_id: GUILD,
+                member: Some(PresenceChange {
+                    user_id: 7,
+                    left_channel_id: None,
+                }),
+            },
+        ]);
+        assert!(members.is_empty());
+        // Even a viewer who sees no channel refetches its own, filtered view:
+        // the event says nothing about where anyone is.
+        for viewer in [presence_viewer(&[], false), presence_viewer(&[], true)] {
+            let mut routed = Routed::new();
+            assert!(route_presence(&batch, &viewer, &mut routed).is_empty());
+            assert_eq!(routed, Routed::from([(Resource::Presence, None)]));
+        }
+    }
+
+    #[test]
+    fn presence_updates_reach_only_viewers_who_see_either_side() {
+        let batch = PresenceBatch {
+            refetch: HashSet::new(),
+            moves: HashMap::from([
+                (
+                    GUILD,
+                    vec![
+                        moved(7, &[PRIVATE], Some(PUBLIC)),
+                        moved(8, &[PRIVATE], None),
+                        moved(9, &[], Some(PRIVATE)),
+                    ],
+                ),
+                (2, vec![moved(10, &[], Some(PUBLIC))]),
+            ]),
+        };
+        let updates_for = |channels: &[i64]| {
+            let mut routed = Routed::new();
+            let updates = route_presence(&batch, &presence_viewer(channels, true), &mut routed);
+            assert_eq!(routed, Routed::new());
+            updates
+        };
+
+        assert_eq!(updates_for(&[PUBLIC]), [update(7, Some(PUBLIC))]);
+        assert_eq!(
+            updates_for(&[PUBLIC, PRIVATE]),
+            [
+                update(7, Some(PUBLIC)),
+                update(8, None),
+                update(9, Some(PRIVATE))
+            ]
+        );
+        // Someone moving out of sight is removed, never shown where they went.
+        assert_eq!(
+            updates_for(&[PRIVATE]),
+            [update(7, None), update(8, None), update(9, Some(PRIVATE))]
+        );
+        assert!(updates_for(&[]).is_empty());
+    }
+
+    #[test]
+    fn clients_without_presence_updates_refetch_only_what_they_can_see() {
+        let batch = PresenceBatch {
+            refetch: HashSet::new(),
+            moves: HashMap::from([(GUILD, vec![moved(9, &[], Some(PRIVATE))])]),
+        };
+        let mut routed = Routed::new();
+        assert!(
+            route_presence(&batch, &presence_viewer(&[PRIVATE], false), &mut routed).is_empty()
+        );
+        assert_eq!(routed, Routed::from([(Resource::Presence, None)]));
+
+        let mut routed = Routed::new();
+        assert!(route_presence(&batch, &presence_viewer(&[PUBLIC], false), &mut routed).is_empty());
+        assert_eq!(routed, Routed::new());
+    }
+
+    #[test]
+    fn presence_changes_coalesce_per_member_and_large_batches_refetch() {
+        let change = |guild_id: i64, user_id: i64, left: Option<i64>| Event::Presence {
+            guild_id,
+            member: Some(PresenceChange {
+                user_id,
+                left_channel_id: left,
+            }),
+        };
+        let mut changes = vec![
+            change(GUILD, 7, None),
+            change(GUILD, 7, Some(PUBLIC)),
+            change(GUILD, 7, Some(PRIVATE)),
+        ];
+        changes.extend((0..=PRESENCE_UPDATES_MAX as i64).map(|user_id| change(2, user_id, None)));
+        let (batch, members) = PresenceBatch::collect(&changes);
+
+        assert_eq!(batch.refetch, HashSet::from([2]));
+        assert_eq!(
+            members,
+            BTreeMap::from([(
+                GUILD,
+                BTreeMap::from([(7, BTreeSet::from([PUBLIC, PRIVATE]))])
+            )])
         );
     }
 

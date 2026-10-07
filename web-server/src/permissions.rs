@@ -550,16 +550,20 @@ const MANAGER_PERMISSIONS: Permissions =
 
 /// What one realtime subscription may receive, read in one snapshot: the
 /// channels whose sessions its recording tree lists, the channels whose clips
-/// and stamps it lists, and whether the viewer manages the guild.
+/// and stamps it lists, the channels whose voice presence it shows, and
+/// whether the viewer manages the guild.
 ///
-/// For a normal view both sets are the viewer's own visible channels. For a
-/// manager's role preview they follow the HTTP listings: the tree lists every
-/// channel of the preview map (the manager's own channels, annotated for the
-/// role), while clips and stamps list the channels the role could join.
+/// For a normal view the tree and media sets are the viewer's own visible
+/// channels. For a manager's role preview they follow the HTTP listings: the
+/// tree lists every channel of the preview map (the manager's own channels,
+/// annotated for the role), while clips and stamps list the channels the role
+/// could join. Presence follows `presence_channels`, as the voice-presence
+/// endpoint does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubscriptionAccess {
     pub tree_channels: HashSet<i64>,
     pub media_channels: HashSet<i64>,
+    pub presence_channels: HashSet<i64>,
     pub manager: bool,
 }
 
@@ -579,6 +583,7 @@ pub async fn subscription_access(
             SubscriptionAccess {
                 tree_channels: channels.clone(),
                 media_channels: channels,
+                presence_channels: presence_channels(&mut snapshot, guild_id, viewer, None).await?,
                 manager,
             }
         }
@@ -592,6 +597,13 @@ pub async fn subscription_access(
                     .filter(|access| access.joinable)
                     .map(|access| access.channel_id)
                     .collect(),
+                presence_channels: presence_channels(
+                    &mut snapshot,
+                    guild_id,
+                    viewer,
+                    Some(role_id),
+                )
+                .await?,
                 manager,
             }
         }

@@ -165,7 +165,12 @@ async fn serve(
                 last_seen = tokio::time::Instant::now();
                 match message {
                     AggregatedMessage::Text(text) => match parse_client_message(&text) {
-                        Ok(ClientMessage::SetScope { guild_id, as_role, .. }) => {
+                        Ok(ClientMessage::SetScope {
+                            guild_id,
+                            as_role,
+                            presence_updates,
+                            ..
+                        }) => {
                             let Ok(guild_id) = guild_id.parse::<i64>() else {
                                 return Some(CloseCode::Invalid.into());
                             };
@@ -174,7 +179,8 @@ async fn serve(
                                 Some(Ok(role)) => Some(role),
                                 Some(Err(_)) => return Some(CloseCode::Invalid.into()),
                             };
-                            hub.set_scope(connection, guild_id, as_role).await;
+                            hub.set_scope(connection, guild_id, as_role, presence_updates)
+                                .await;
                         }
                         Ok(ClientMessage::Heartbeat { .. }) => {}
                         Err(ParseError::UnsupportedVersion) => {

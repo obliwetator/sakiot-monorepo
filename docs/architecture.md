@@ -248,7 +248,9 @@ Dashboards learn about changes from a WebSocket instead of polling. The path
 is: committed write → PostgreSQL trigger → `NOTIFY sakiot_realtime` → one
 listener per `web-server` process → authorized fan-out → the client refetches
 over HTTP. Events are refresh signals that carry identifiers only; data always
-comes from the existing authorized endpoints.
+comes from the existing authorized endpoints. Voice presence is the one
+exception: clients that ask for it get each change as data (see Members and
+voice presence).
 
 - **Triggers** (`sakiot-db/migrations/20261003010000_realtime_notifications.sql`)
   cover recordings, clips, stamps, opt-outs, guild settings and the permission
@@ -341,15 +343,26 @@ so open sockets are re-authorized.
   response says `available: false` while no running agent owns the guild (a
   first rollout, a stopped or crashed owner), so clients show "unknown"
   instead of empty channels.
-- **Events**: `presence` and `members` payloads carry only the guild. Every
-  subscriber refetches its own filtered presence, so a move into a hidden
-  channel looks like leaving and nobody learns about channels they cannot
-  view. `members` goes to managers only.
+- **Events**: a `presence` payload names the member and the channel they
+  were in (`20261007000000_realtime_presence_updates.sql`). The hub reads
+  where each changed member is now, once per batch
+  (`presence::seats`), and routes the change by each subscription's presence
+  channels, computed as the endpoint does. A client that sets
+  `presence_updates` in `set_scope` gets a `presence` message with the
+  member's channel and state, or with no channel when they left the channels
+  it can view; it patches its list instead of refetching it. So a move into a
+  hidden channel looks like leaving, and a viewer who can see neither side
+  hears nothing. Other clients get `changed` `presence` only for changes they
+  can see. A payload without a member (a rename of someone in voice, an
+  ownership change), more than 64 changes to one guild in a batch, or a failed
+  lookup makes everyone refetch. `members` payloads carry only the guild and
+  go to managers only.
 - **Members** (`GET /api/admin/guilds/{guild}/members`): manager-only search
   by name or the start of an id, at most 50 per page and offsets up to 1000.
   `@everyone`'s member count and list come from the roster; the count is
   null until a roster has been complete once.
-- **Client**: the recordings sidebar shows an "In voice" panel. It polls
+- **Client**: the recordings sidebar shows an "In voice" panel. It applies
+  `presence` updates (`sakiot-stage/src/realtime/patchPresence.ts`), polls
   every 10 s without realtime, and every 60 s with it, because a crashed
   agent sends no event. Per-user cooldown overrides have a member picker
   next to manual id entry.
