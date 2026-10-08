@@ -81,12 +81,6 @@ export default defineConfig(({ command, mode }) => {
 				// The generated shared-DSP package is a sibling of sakiot-stage.
 				allow: [monorepoRoot],
 			},
-			allowedHosts: [
-				"debug.patrykstyla.com",
-				"staging.patrykstyla.com",
-				"dev.patrykstyla.com",
-				"patrykstyla.com",
-			],
 		},
 		build: {
 			rolldownOptions: {

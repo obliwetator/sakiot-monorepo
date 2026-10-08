@@ -64,17 +64,18 @@ serves both targets, driven by the env file plus `SAKIOT_WEB_UNIT` /
   so `staging.env` puts the **DEBUG** bot's token/app-id in
   `DISCORD_TOKEN_RELEASE` / `APPLICATION_ID_RELEASE`. Don't run a manual debug
   bot with that token while staging is up (one gateway connection per token).
-- **Domain roles:** `staging.patrykstyla.com` serves deployed staging;
-  `debug.patrykstyla.com` proxies the Vite server started by `bun run dev`.
+- **Domain roles:** `staging.patrykstyla.com` serves the deployed staging
+  frontend and its API from one origin, the way `patrykstyla.com` serves
+  production.
 - **Frontend API origin** is baked at build time from `VITE_API_URL` in
-  `staging.env` (`https://debug.patrykstyla.com/api/`). Vite reads `VITE_*` from
+  `staging.env` (`https://staging.patrykstyla.com/api/`). Vite reads `VITE_*` from
   the (exported) env. There is **no fallback origin**: the build fails without
   `VITE_API_URL` (`vite.config.ts`). Make sure `production.env` also sets
   `VITE_API_URL`, or the production deploy's frontend build aborts (safely,
   before cutover).
 - **Auth cookies are host-only** `__Host-sakiot-*` cookies. Never add a
   `Domain` attribute: parent-domain cookies collide across production,
-  staging, and debug hosts.
+  staging, and preview hosts.
 
 ## nginx
 
@@ -96,37 +97,17 @@ location = /index.html   { add_header Cache-Control "no-store"; }
 location = /version.json { add_header Cache-Control "no-store"; }
 ```
 
-`debug.patrykstyla.com` proxies the API and Vite:
-
-```nginx
-location /api/ {
-    proxy_pass http://127.0.0.1:8901;
-}
-location = /api/realtime {
-    proxy_pass http://127.0.0.1:8901;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 75s;
-}
-location / {
-    proxy_pass http://127.0.0.1:8081;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "Upgrade";
-}
-```
-
-Realtime needs both vhosts to have the `/api/realtime` location above and the
+Realtime needs the vhost to have the `/api/realtime` location above and the
 page CSP to allow the socket; without them, dashboards fall back to polling.
 See `ops/README.md`, "Realtime".
 
 ## Login on staging
 
-- **Discord OAuth:** `OAUTH_ALLOWED_OPENER_ORIGINS` in `staging.env` must list the
-  deployed and debug browser origins, with no trailing slash. Exact opener
-  origins are also allowed credentialed CORS origins. OAuth cookies remain
-  scoped to `debug.patrykstyla.com`, where the staging API is exposed.
+- **Discord OAuth:** `OAUTH_ALLOWED_OPENER_ORIGINS` in `staging.env` must list
+  `https://staging.patrykstyla.com`, with no trailing slash, and the debug
+  bot's Discord application must allow the redirect
+  `https://staging.patrykstyla.com/api/discord_login`. OAuth cookies are
+  host-only on `staging.patrykstyla.com`, the same origin as the page.
 - **Dev login** (skip OAuth) requires the `dev-login` Cargo feature, which the
   deployer enables for staging and preview release builds. It is also
   runtime-gated: set

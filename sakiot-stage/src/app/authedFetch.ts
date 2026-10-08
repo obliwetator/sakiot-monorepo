@@ -85,10 +85,9 @@ export function healCsrfToken(
 }
 
 export function isLoggedIn(): boolean {
-	// Staging deploys the bundle on staging.patrykstyla.com while
-	// VITE_API_URL points at debug.patrykstyla.com/api/, so the host-only
-	// auth cookies are scoped to the API origin and never appear in this
-	// page's document.cookie. In that topology login state can only be
+	// When VITE_API_URL points at another origin than the page, the
+	// host-only auth cookies are scoped to the API origin and never appear
+	// in this page's document.cookie. In that topology login state can only be
 	// decided by probing the API; report "unknown" as logged in so the
 	// skip-gated queries actually run (they fall back to the login screen
 	// on 401).
