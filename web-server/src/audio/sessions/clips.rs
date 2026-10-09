@@ -54,9 +54,11 @@ pub async fn create_session_clip(
         compose_session_inner(
             &pool,
             &access,
-            Some(start),
-            Some(end),
-            false,
+            CompositionRequest {
+                start_seconds: Some(start),
+                end_seconds: Some(end),
+                remove_silence: false,
+            },
             &full_path,
             None,
             media.get_ref(),

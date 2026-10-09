@@ -329,9 +329,7 @@ pub(crate) async fn run_session_waveform_job(
             compose_session_inner(
                 &pool_data,
                 &access,
-                None,
-                None,
-                false,
+                CompositionRequest::default(),
                 &composite,
                 Some(composition_progress),
                 media,

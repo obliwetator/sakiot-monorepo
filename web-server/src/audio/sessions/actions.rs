@@ -109,9 +109,11 @@ pub(crate) async fn run_download_job(
         compose_session_inner(
             &pool_data,
             &access,
-            start,
-            end,
-            remove_silence,
+            CompositionRequest {
+                start_seconds: start,
+                end_seconds: end,
+                remove_silence,
+            },
             &output,
             Some(composition_progress),
             media,
@@ -339,9 +341,10 @@ pub(crate) async fn run_session_silence_job(
         compose_session_inner(
             &pool_data,
             &access,
-            None,
-            None,
-            true,
+            CompositionRequest {
+                remove_silence: true,
+                ..CompositionRequest::default()
+            },
             &temporary,
             Some(composition_progress.clone()),
             media,

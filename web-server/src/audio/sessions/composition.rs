@@ -7,22 +7,33 @@ pub(super) struct CompositionProgress {
     pub(super) completed: i16,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Which part of a session to compose and whether to drop its silences. The
+/// default is the whole session, silences kept.
+#[derive(Clone, Copy, Default)]
+pub(super) struct CompositionRequest {
+    pub(super) start_seconds: Option<f64>,
+    pub(super) end_seconds: Option<f64>,
+    pub(super) remove_silence: bool,
+}
+
 pub(super) async fn compose_session_inner(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
-    range_start_seconds: Option<f64>,
-    range_end_seconds: Option<f64>,
-    remove_silence: bool,
+    request: CompositionRequest,
     output: &Path,
     progress: Option<CompositionProgress>,
     media: &MediaArchive,
 ) -> Result<(), AppError> {
+    let CompositionRequest {
+        start_seconds,
+        end_seconds,
+        remove_silence,
+    } = request;
     let SessionCompositionPlan {
         selected_start_ms: selected_start,
         selected_end_ms: selected_end,
         parts: selected,
-    } = composition_plan(pool, access, range_start_seconds, range_end_seconds, media).await?;
+    } = composition_plan(pool, access, start_seconds, end_seconds, media).await?;
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
