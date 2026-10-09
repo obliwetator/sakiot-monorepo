@@ -26,7 +26,6 @@ pub struct Config {
     pub cors_allowed_origin: String,
     pub oauth_allowed_opener_origins: Vec<String>,
     pub oauth_allowed_opener_host_suffixes: Vec<String>,
-    pub cookie_domain: String,
     pub discord_redirect_uri: String,
     pub grpc_address: String,
     pub fbi_agent_registry_secret: Option<String>,
@@ -93,7 +92,6 @@ impl Config {
             cors_allowed_origin,
             oauth_allowed_opener_origins,
             oauth_allowed_opener_host_suffixes: optional_csv("OAUTH_ALLOWED_OPENER_HOST_SUFFIXES"),
-            cookie_domain: optional("COOKIE_DOMAIN", "localhost"),
             discord_redirect_uri: optional(
                 "DISCORD_REDIRECT_URI",
                 "http://localhost:8900/api/discord_login",

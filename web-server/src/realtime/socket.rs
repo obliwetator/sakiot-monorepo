@@ -219,7 +219,6 @@ mod tests {
             cors_allowed_origin: "https://debug.example.com".into(),
             oauth_allowed_opener_origins: vec!["https://staging.example.com".into()],
             oauth_allowed_opener_host_suffixes: Vec::new(),
-            cookie_domain: String::new(),
             discord_redirect_uri: String::new(),
             grpc_address: String::new(),
             fbi_agent_registry_secret: None,

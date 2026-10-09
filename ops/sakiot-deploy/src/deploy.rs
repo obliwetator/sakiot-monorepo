@@ -934,7 +934,6 @@ fn deploy_services(
         // per-slot database would otherwise not exist.
         if target == Target::Preview {
             for key in [
-                "COOKIE_DOMAIN",
                 "CORS_ALLOWED_ORIGIN",
                 "OAUTH_ALLOWED_OPENER_ORIGINS",
                 "DISCORD_REDIRECT_URI",

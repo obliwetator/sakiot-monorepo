@@ -83,42 +83,6 @@ pub fn clear_oauth_state_cookie() -> Cookie<'static> {
     host_cookie(OAUTH_STATE_COOKIE, String::new(), true, CLEAR)
 }
 
-// The opener-origin cookie is intentionally domain-scoped (OAuth popup and
-// opener may live on different subdomains) and JS-readable.
-fn opener_origin(domain: &str, value: &str, max_age: Duration) -> Cookie<'static> {
-    Cookie::build("opener_origin", value.to_string())
-        .domain(domain.to_string())
-        .path("/")
-        .same_site(SameSite::Lax)
-        .secure(true)
-        .http_only(false)
-        .max_age(max_age)
-        .finish()
-}
-
-pub fn clear_opener_origin_cookie(domain: &str) -> Cookie<'static> {
-    opener_origin(domain, "", CLEAR)
-}
-
-// Clear legacy cookies stored under Path=/api from pre-fix server versions.
-// Same name + different Path = separate browser entries; without this the
-// stale ones shadow the new Path=/ cookies on every /api/* request.
-fn clear_legacy_api_cookie(name: &'static str, domain: &str) -> Cookie<'static> {
-    Cookie::build(name, "")
-        .domain(domain.to_string())
-        .path("/api")
-        .max_age(CLEAR)
-        .finish()
-}
-
-pub fn clear_legacy_access_cookie(domain: &str) -> Cookie<'static> {
-    clear_legacy_api_cookie("access_token", domain)
-}
-
-pub fn clear_legacy_refresh_cookie(domain: &str) -> Cookie<'static> {
-    clear_legacy_api_cookie("refresh_token", domain)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{ACCESS_TOKEN_COOKIE, access_token_cookie};

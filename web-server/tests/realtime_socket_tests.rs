@@ -53,7 +53,6 @@ fn config() -> Config {
         cors_allowed_origin: ORIGIN.into(),
         oauth_allowed_opener_origins: Vec::new(),
         oauth_allowed_opener_host_suffixes: Vec::new(),
-        cookie_domain: String::new(),
         discord_redirect_uri: String::new(),
         grpc_address: String::new(),
         fbi_agent_registry_secret: None,

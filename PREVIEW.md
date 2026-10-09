@@ -77,9 +77,9 @@ $EDITOR /etc/sakiot/preview.env
 #    (the only login is dev login), CERTBOT_EMAIL (slot HTTPS certs), and
 #    JWT/registry/DB secrets. DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET are
 #    startup placeholders — any non-empty value works since OAuth is never
-#    used on preview hosts. API host variables (VITE_API_URL, COOKIE_DOMAIN,
-#    CORS/opener origins) are derived per slot automatically — nothing to
-#    edit for those.
+#    used on preview hosts. API host variables (VITE_API_URL, CORS/opener
+#    origins) are derived per slot automatically — nothing to edit for
+#    those.
 
 # 3. Provision the slot after credentials are configured:
 ops/preview-slot.sh clip-editor
@@ -150,7 +150,7 @@ these tokens per slot:
 
 The per-slot port is also written into each release's `web/service.env`, so
 every slot's web server binds its own port while reading the shared env file.
-The same file carries the slot's `COOKIE_DOMAIN`, `CORS_ALLOWED_ORIGIN`,
+The same file carries the slot's `CORS_ALLOWED_ORIGIN`,
 `OAUTH_ALLOWED_OPENER_ORIGINS`, and `DISCORD_REDIRECT_URI` (later
 `EnvironmentFile` wins in the systemd unit), and the frontend build's
 `VITE_API_URL` is rewritten before `bun build` runs.

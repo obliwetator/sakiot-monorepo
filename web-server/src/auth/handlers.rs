@@ -11,10 +11,9 @@ use crate::user::get_user;
 
 use super::cookies::{
     CSRF_COOKIE, OAUTH_STATE_COOKIE, REFRESH_TOKEN_COOKIE, access_token_cookie,
-    clear_access_token_cookie, clear_csrf_cookie, clear_legacy_access_cookie,
-    clear_legacy_refresh_cookie, clear_logged_in_cookie, clear_oauth_state_cookie,
-    clear_opener_origin_cookie, clear_refresh_token_cookie, csrf_cookie, logged_in_cookie,
-    oauth_state_cookie, refresh_token_cookie,
+    clear_access_token_cookie, clear_csrf_cookie, clear_logged_in_cookie, clear_oauth_state_cookie,
+    clear_refresh_token_cookie, csrf_cookie, logged_in_cookie, oauth_state_cookie,
+    refresh_token_cookie,
 };
 use super::discord::{DiscordLoginCode, request_access_token};
 use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
@@ -229,15 +228,11 @@ pub async fn discord_login(
 
     let mut html = oauth_completion_page(&opener_origin, &csrf_token);
 
-    let d = cfg.cookie_domain.as_str();
-    html.add_cookie(&clear_legacy_access_cookie(d))?;
-    html.add_cookie(&clear_legacy_refresh_cookie(d))?;
     html.add_cookie(&access_token_cookie(&access_token))?;
     html.add_cookie(&refresh_token_cookie(&refresh_token))?;
     html.add_cookie(&csrf_cookie(&csrf_token))?;
     html.add_cookie(&logged_in_cookie())?;
     html.add_cookie(&clear_oauth_state_cookie())?;
-    html.add_cookie(&clear_opener_origin_cookie(d))?;
 
     Ok(html)
 }
@@ -310,9 +305,6 @@ pub async fn dev_login(
         .content_type("text/plain; charset=utf-8")
         .body("dev login ok");
 
-    let d = cfg.cookie_domain.as_str();
-    b.add_cookie(&clear_legacy_access_cookie(d))?;
-    b.add_cookie(&clear_legacy_refresh_cookie(d))?;
     b.add_cookie(&access_token_cookie(&access_token))?;
     b.add_cookie(&refresh_token_cookie(&refresh_token))?;
     b.add_cookie(&csrf_cookie(&csrf_token))?;
@@ -478,7 +470,6 @@ mod tests {
             cors_allowed_origin: "http://localhost:3000".into(),
             oauth_allowed_opener_origins: vec!["http://localhost:3000".into()],
             oauth_allowed_opener_host_suffixes: vec!["patrykstyla.com".into()],
-            cookie_domain: "localhost".into(),
             discord_redirect_uri: "http://localhost:8900/api/discord_login".into(),
             grpc_address: "http://[::1]:50052".into(),
             fbi_agent_registry_secret: None,
