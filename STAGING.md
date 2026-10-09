@@ -119,8 +119,7 @@ See `ops/README.md`, "Realtime".
 ## GitHub
 
 - `staging` environment holds the same four `DEPLOY_*` secrets as `production`
-  (same VPS/user/key); CI uses the `staging-ci <sha>` forced command, with
-  `staging <sha>` retained as the legacy fallback.
+  (same VPS/user/key); CI uses the `staging-ci <sha>` forced command.
 - CI sends its job-scoped, read-only `GITHUB_TOKEN` over SSH stdin for the
   deployer's authenticated Git protocol v2 fetch. No persistent PAT lives on
   the VPS.

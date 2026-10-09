@@ -214,9 +214,6 @@ pub struct Config {
     pub frontend_root: PathBuf,
     pub web_health_url: String,
     pub web_registry_url: String,
-    pub legacy_bot_unit: String,
-    pub legacy_bot_grpc: String,
-    pub legacy_web_enabled: bool,
     pub systemctl_use_sudo: bool,
     pub skip_db_backup: bool,
     pub rollback_force_rebuild: bool,
@@ -319,9 +316,6 @@ impl Config {
             web_registry_url: var("SAKIOT_WEB_REGISTRY_URL").unwrap_or_else(|| {
                 "http://127.0.0.1:8900/internal/fbi-agent/grpc-endpoints".into()
             }),
-            legacy_bot_unit: var("SAKIOT_LEGACY_BOT_UNIT").unwrap_or_default(),
-            legacy_bot_grpc: var("SAKIOT_LEGACY_BOT_GRPC").unwrap_or_default(),
-            legacy_web_enabled: flag("SAKIOT_LEGACY_WEB_ENABLED", "0"),
             systemctl_use_sudo: flag("SAKIOT_SYSTEMCTL_USE_SUDO", "1"),
             skip_db_backup: flag("SAKIOT_SKIP_DB_BACKUP", "0"),
             rollback_force_rebuild: flag("SAKIOT_ROLLBACK_FORCE_REBUILD", "0"),

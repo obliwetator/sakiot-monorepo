@@ -10,11 +10,10 @@ for arguments in \
   "stop postgresql.service" \
   "start sakiot-fbi-agent@good.service extra.service" \
   "is-active sakiot-fbi-agent@good.service" \
-  "legacy-bot-is-active ssh.service" \
-  "legacy-bot-disable fbi-agent@good.service extra.service" \
-  "legacy-bot-enable ssh.service" \
-  "legacy-bot-restart ssh.service" \
-  "legacy-web-stop-disable extra" \
+  "legacy-bot-is-active fbi-agent@good.service" \
+  "legacy-bot-restart fbi-agent@good.service" \
+  "legacy-web-is-active" \
+  "legacy-web-stop-disable" \
   "enable-web extra" \
   "enable-web sakiot-staging-web.service.evil" \
   "enable-web sakiot-web.service extra" \

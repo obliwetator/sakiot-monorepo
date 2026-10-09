@@ -101,7 +101,6 @@ jobs:
           if [[ -n "${RELEASE_TAG}" ]]; then
             command+=" prepare ${RELEASE_TAG}"
           fi
-          set +e
           printf '%s\n' "${GH_FETCH_TOKEN}" \
             | ssh -i "${HOME}/.ssh/deploy_key" \
               -o BatchMode=yes \
@@ -109,20 +108,6 @@ jobs:
               -o StrictHostKeyChecking=yes \
               "${DEPLOY_USER}@${DEPLOY_HOST}" \
               "${command}"
-          status=$?
-          set -e
-          if [[ "${status}" -eq 126 ]]; then
-            echo "deploy engine predates CI attestation; using tested legacy path"
-            printf '%s\n' "${GH_FETCH_TOKEN}" \
-              | ssh -i "${HOME}/.ssh/deploy_key" \
-                -o BatchMode=yes \
-                -o IdentitiesOnly=yes \
-                -o StrictHostKeyChecking=yes \
-                "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                "staging ${STAGING_SHA}"
-          elif [[ "${status}" -ne 0 ]]; then
-            exit "${status}"
-          fi
 
   auto-tag:
     needs:

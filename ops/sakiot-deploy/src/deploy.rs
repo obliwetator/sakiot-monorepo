@@ -98,7 +98,6 @@ struct BotHandoff {
     new_bot_grpc: String,
     old_bot_unit: String,
     old_bot_grpc: String,
-    old_bot_is_legacy: bool,
     previous_bot_unit: String,
     previous_bot_grpc: String,
 }
@@ -106,20 +105,12 @@ struct BotHandoff {
 impl BotHandoff {
     /// Tells the old bot to stop draining and keep serving. `reason` names the
     /// actual failure; it is logged and sent as the CancelDrain reason.
-    fn cancel_old_drain(&self, deps: &Deps, systemctl: &Systemctl, reason: &str) {
+    fn cancel_old_drain(&self, deps: &Deps, reason: &str) {
         if !self.recovery_required || self.old_bot_grpc.is_empty() {
             return;
         }
         log(format!("{reason}; cancelling old FBI Agent drain"));
-        if deps.admin.cancel_drain(&self.old_bot_grpc, reason).is_ok() {
-            return;
-        }
-        if self.old_bot_is_legacy {
-            log("legacy FBI Agent lacks CancelDrain; restarting it to clear drain state");
-            if !systemctl.run_ok(&["legacy-bot-restart", &self.old_bot_unit]) {
-                log("legacy FBI Agent restart unavailable; manual restart required");
-            }
-        }
+        let _ = deps.admin.cancel_drain(&self.old_bot_grpc, reason);
     }
 
     /// Undoes a failed handoff: stops and disables the new bot, points the
@@ -143,13 +134,9 @@ impl BotHandoff {
             let _ = fsx::write_line(&state_dir.join("current-bot.grpc"), &self.previous_bot_grpc);
         }
         if self.old_bot_disabled && !self.old_bot_unit.is_empty() {
-            if self.old_bot_is_legacy {
-                let _ = systemctl.run_ok(&["legacy-bot-enable", &self.old_bot_unit]);
-            } else {
-                let _ = systemctl.run_ok(&["enable", &self.old_bot_unit]);
-            }
+            let _ = systemctl.run_ok(&["enable", &self.old_bot_unit]);
         }
-        self.cancel_old_drain(deps, systemctl, reason);
+        self.cancel_old_drain(deps, reason);
         if !self.old_bot_grpc.is_empty()
             && deps
                 .web
@@ -842,25 +829,8 @@ fn deploy_services(
             std::fs::Permissions::from_mode(0o640),
         )?;
 
-        let mut old_bot_active = false;
-        if !bot.old_bot_unit.is_empty()
-            && systemctl.run_ok(&["is-active", "--quiet", &bot.old_bot_unit])
-        {
-            old_bot_active = true;
-        } else if bot.old_bot_unit.is_empty()
-            && !config.legacy_bot_unit.is_empty()
-            && !config.legacy_bot_grpc.is_empty()
-            && systemctl.run_ok(&["legacy-bot-is-active", &config.legacy_bot_unit])
-        {
-            bot.old_bot_unit = config.legacy_bot_unit.clone();
-            bot.old_bot_grpc = config.legacy_bot_grpc.clone();
-            bot.old_bot_is_legacy = true;
-            old_bot_active = true;
-            log(format!(
-                "adopting legacy FBI Agent {} for first-release handoff",
-                bot.old_bot_unit
-            ));
-        }
+        let old_bot_active = !bot.old_bot_unit.is_empty()
+            && systemctl.run_ok(&["is-active", "--quiet", &bot.old_bot_unit]);
 
         if old_bot_active {
             if bot.old_bot_grpc.is_empty() {
@@ -881,11 +851,7 @@ fn deploy_services(
             // at the old bot, so stop the unit, cancel the old drain, and leave
             // them untouched.
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
-            bot.cancel_old_drain(
-                deps,
-                systemctl,
-                &format!("release {release_id} failed to start"),
-            );
+            bot.cancel_old_drain(deps, &format!("release {release_id} failed to start"));
             *bot = BotHandoff::default();
             bail!("failed to start new FBI Agent unit");
         }
@@ -904,11 +870,7 @@ fn deploy_services(
             // since state files and registry are still untouched.
             systemctl.stop_bot_bounded(&bot.new_bot_unit, RECOVERY_STOP_TIMEOUT);
             bot.new_bot_started = false;
-            bot.cancel_old_drain(
-                deps,
-                systemctl,
-                &format!("release {release_id} failed readiness"),
-            );
+            bot.cancel_old_drain(deps, &format!("release {release_id} failed readiness"));
             *bot = BotHandoff::default();
             bail!("new FBI Agent failed readiness");
         }
@@ -991,32 +953,18 @@ fn deploy_services(
 
         let web_link = config.current_root.join("web");
         let previous_web_target = std::fs::read_link(&web_link).ok();
-        let mut legacy_web_stopped = false;
-        let restore_previous_web = |systemctl: &Systemctl, legacy_web_stopped: bool| {
+        let restore_previous_web = |systemctl: &Systemctl| {
             if let Some(previous) = &previous_web_target {
                 let _ = fsx::atomic_symlink(previous, &web_link);
                 let _ = systemctl.run_ok(&["restart", &config.web_unit]);
-            } else if legacy_web_stopped {
-                let _ = systemctl.run_ok(&["legacy-web-start-enable"]);
             }
         };
 
         fsx::atomic_symlink(&artifact_dir.join("web"), &web_link)?;
-        if previous_web_target.is_none()
-            && config.legacy_web_enabled
-            && systemctl.run_ok(&["legacy-web-is-active"])
-        {
-            log("stopping legacy web server for first-release handoff");
-            if !systemctl.run_ok(&["legacy-web-stop-disable"]) {
-                let _ = systemctl.run_ok(&["legacy-web-start-enable"]);
-                bail!("failed to stop legacy web server");
-            }
-            legacy_web_stopped = true;
-        }
 
         log("restarting web server");
         if !systemctl.run_ok(&["restart", &config.web_unit]) {
-            restore_previous_web(systemctl, legacy_web_stopped);
+            restore_previous_web(systemctl);
             bail!("web server restart failed");
         }
         if !systemctl.run_ok(&["enable-web", &config.web_unit]) {
@@ -1033,7 +981,7 @@ fn deploy_services(
         }
         if !web_ready {
             let _ = systemctl.run_ok(&["stop", &config.web_unit]);
-            restore_previous_web(systemctl, legacy_web_stopped);
+            restore_previous_web(systemctl);
             bail!("web server failed readiness; previous release restored");
         }
 
@@ -1078,11 +1026,7 @@ fn deploy_services(
 
     // Finish the old bot's drain once everything is serving.
     if bot.handoff_pending {
-        if bot.old_bot_is_legacy {
-            systemctl.run(&["legacy-bot-disable", &bot.old_bot_unit])?;
-        } else {
-            systemctl.run(&["disable", &bot.old_bot_unit])?;
-        }
+        systemctl.run(&["disable", &bot.old_bot_unit])?;
         bot.old_bot_disabled = true;
         deps.admin.shutdown_when_empty(
             &bot.old_bot_grpc,
