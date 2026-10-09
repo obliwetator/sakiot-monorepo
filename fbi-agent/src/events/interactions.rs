@@ -10,6 +10,7 @@ use serenity::{
 };
 use tracing::warn;
 
+use crate::commands::voice_controls::{ClipPlayer, play_clip};
 use crate::event_handler::Handler;
 
 pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Interaction) {
@@ -325,18 +326,14 @@ async fn handle_jam(
     };
 
     let user_id = application_command.user.id.to_i64();
-    match crate::commands::voice_controls::play_clip(
+    let player = ClipPlayer {
         pool,
-        &media_archive,
-        &manager,
-        &ctx.cache,
+        media_archive: &media_archive,
+        manager: &manager,
+        cache: &ctx.cache,
         cooldown,
-        guild_id,
-        &clip_name,
-        user_id,
-    )
-    .await
-    {
+    };
+    match play_clip(&player, guild_id, &clip_name, user_id).await {
         Ok(msg) => (msg, Some(clip_name)),
         Err(e) => {
             warn!("Failed to play clip: {}", e);
@@ -366,18 +363,14 @@ async fn replay_clip(
         None => return "This command can only be used in a server.".to_string(),
     };
 
-    match crate::commands::voice_controls::play_clip(
+    let player = ClipPlayer {
         pool,
-        &media_archive,
-        &manager,
-        &ctx.cache,
+        media_archive: &media_archive,
+        manager: &manager,
+        cache: &ctx.cache,
         cooldown,
-        guild_id,
-        clip_id,
-        user_id,
-    )
-    .await
-    {
+    };
+    match play_clip(&player, guild_id, clip_id, user_id).await {
         Ok(msg) => msg,
         Err(e) => {
             warn!("Failed to replay clip: {}", e);

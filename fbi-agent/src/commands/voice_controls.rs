@@ -38,25 +38,34 @@ impl PlayClipError {
     }
 }
 
+/// The handles playing a clip reaches into. The gRPC, slash-command, and replay
+/// callers each hold them separately.
+pub struct ClipPlayer<'a> {
+    pub pool: &'a Pool<Postgres>,
+    pub media_archive: &'a crate::media_archive::MediaArchive,
+    pub manager: &'a std::sync::Arc<Songbird>,
+    pub cache: &'a Cache,
+    pub cooldown: &'a JamCooldown,
+}
+
 /// Queues a clip in the guild's voice call for the user.
 ///
 /// The user's jam cooldown is spent last, once this instance is in the call, the
 /// clip is theirs to play, and its media is local, so a failed attempt never costs
 /// them their turn.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the gRPC, slash-command, and replay callers each hold these handles separately"
-)]
 pub async fn play_clip(
-    pool: &Pool<Postgres>,
-    media_archive: &crate::media_archive::MediaArchive,
-    manager: &std::sync::Arc<Songbird>,
-    cache: &Cache,
-    cooldown: &JamCooldown,
+    player: &ClipPlayer<'_>,
     guild_id: GuildId,
     clip_id: &str,
     user_id: i64,
 ) -> Result<String, PlayClipError> {
+    let ClipPlayer {
+        pool,
+        media_archive,
+        manager,
+        cache,
+        cooldown,
+    } = *player;
     // Answer this from our own songbird, not from the guild cache: the bot user id
     // is shared with any draining instance, so seeing "the bot" in a voice channel
     // says nothing about whether *this* process holds that connection. Songbird

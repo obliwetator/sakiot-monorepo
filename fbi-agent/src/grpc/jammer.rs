@@ -3,7 +3,7 @@ use songbird::SongbirdKey;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
-use crate::commands::voice_controls::PlayClipError;
+use crate::commands::voice_controls::{ClipPlayer, PlayClipError, play_clip};
 
 use super::FbiAgentGrpc;
 use super::proto::jam_response::JamResponseEnum;
@@ -40,18 +40,14 @@ impl Jammer for FbiAgentGrpc {
                 cooldown_remaining_seconds,
             }))
         };
-        match crate::commands::voice_controls::play_clip(
-            &self.data_cache.pool,
-            &self.data_cache.media_archive,
-            &manager,
-            &self.data_cache.cache,
-            &self.data_cache.jam_cooldown,
-            guild_id,
-            &data.clip_name,
-            data.user_id,
-        )
-        .await
-        {
+        let player = ClipPlayer {
+            pool: &self.data_cache.pool,
+            media_archive: &self.data_cache.media_archive,
+            manager: &manager,
+            cache: &self.data_cache.cache,
+            cooldown: &self.data_cache.jam_cooldown,
+        };
+        match play_clip(&player, guild_id, &data.clip_name, data.user_id).await {
             Ok(message) => {
                 info!(guild_id = guild_id.get(), "{}", message);
                 response(JamResponseEnum::Ok, 0)
