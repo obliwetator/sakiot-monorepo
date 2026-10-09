@@ -9,6 +9,7 @@ use actix_web::{
     web,
 };
 use futures_util::future::{LocalBoxFuture, Ready, ready};
+use subtle::ConstantTimeEq;
 use tracing::warn;
 
 use super::cookies::ACCESS_TOKEN_COOKIE;
@@ -107,11 +108,11 @@ where
             && req.method() != Method::HEAD
             && req.method() != Method::OPTIONS
         {
-            let csrf_header = req
+            let csrf_matches = req
                 .headers()
                 .get("X-CSRF-Token")
-                .and_then(|v| v.to_str().ok());
-            if csrf_header != Some(&decoded_access.csrf) {
+                .is_some_and(|v| v.as_bytes().ct_eq(decoded_access.csrf.as_bytes()).into());
+            if !csrf_matches {
                 warn!("CSRF token mismatch for {} (expected present)", req.path());
                 let (request, _pl) = req.into_parts();
                 let response = AppError::CsrfRejected
