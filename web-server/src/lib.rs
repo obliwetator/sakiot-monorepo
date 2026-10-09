@@ -4,6 +4,7 @@ pub mod auth;
 pub mod clip_editor;
 pub mod clips;
 pub mod config;
+pub mod cors;
 pub mod db_pool_metrics;
 pub mod errors;
 pub mod fbi_agent_registry;

@@ -1,4 +1,3 @@
-use actix_cors::Cors;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use std::error::Error;
 use web_server::http_metrics::HttpMetrics;
@@ -66,29 +65,6 @@ async fn not_found() -> impl Responder {
     HttpResponse::NotFound()
         .content_type("text/html; charset=utf-8")
         .body(html)
-}
-
-// (scheme_prefix, suffix-including-dot) for subdomain match, or None if exact-only.
-fn cors_subdomain_pattern(allowed: &str) -> Option<(&'static str, String)> {
-    for scheme in ["https://", "http://"] {
-        if let Some(domain) = allowed.strip_prefix(scheme) {
-            return Some((scheme, format!(".{domain}")));
-        }
-    }
-    None
-}
-
-fn is_cors_origin_allowed(
-    origin: &str,
-    exact: &str,
-    oauth_opener_origins: &[String],
-    subdomain: Option<&(&'static str, String)>,
-) -> bool {
-    if origin == exact || oauth_opener_origins.iter().any(|allowed| origin == allowed) {
-        return true;
-    }
-
-    subdomain.is_some_and(|(scheme, suffix)| origin.starts_with(scheme) && origin.ends_with(suffix))
 }
 
 /// SIGTERM (systemd stop) or Ctrl-C.
@@ -227,9 +203,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         refresh_decode: jsonwebtoken::DecodingKey::from_secret(cfg.refresh_secret.as_bytes()),
     });
 
-    let cors_subdomain = cors_subdomain_pattern(&cfg.cors_allowed_origin);
-    let cors_exact = cfg.cors_allowed_origin.clone();
-    let cors_oauth_openers = cfg.oauth_allowed_opener_origins.clone();
     let host = cfg.host.clone();
     let port = cfg.port;
     let server_timing_header = cfg.server_timing_header;
@@ -249,35 +222,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap_or("http-worker")
                 .to_string(),
         );
-        let cors_exact = cors_exact.clone();
-        let cors_sub = cors_subdomain.clone();
-        let cors_oauth_openers = cors_oauth_openers.clone();
-        let cors = Cors::default()
-            .allowed_origin_fn(move |origin, _req_head| {
-                let Ok(origin_str) = origin.to_str() else {
-                    return false;
-                };
-                is_cors_origin_allowed(
-                    origin_str,
-                    &cors_exact,
-                    &cors_oauth_openers,
-                    cors_sub.as_ref(),
-                )
-            })
-            .allow_any_method()
-            .allow_any_header()
-            // Media element streaming needs these readable from JS / browser
-            // internals; not safelisted by default under CORS.
-            .expose_headers([
-                "Content-Length",
-                "Content-Range",
-                "Content-Disposition",
-                "ETag",
-                "Accept-Ranges",
-                "X-CSRF-Token",
-            ])
-            .supports_credentials()
-            .max_age(3600);
+        let cors = web_server::cors::cors(cfg_data.clone());
 
         let api_scope = web::scope("/api")
             .wrap(AuthMiddleware)
@@ -435,29 +380,4 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = health_monitor.await;
     result?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{cors_subdomain_pattern, is_cors_origin_allowed};
-
-    #[test]
-    fn cors_allows_exact_oauth_opener_origin() {
-        let exact = "https://debug.patrykstyla.com";
-        let openers = vec!["https://staging.patrykstyla.com".to_string()];
-        let subdomain = cors_subdomain_pattern(exact);
-
-        assert!(is_cors_origin_allowed(
-            "https://staging.patrykstyla.com",
-            exact,
-            &openers,
-            subdomain.as_ref(),
-        ));
-        assert!(!is_cors_origin_allowed(
-            "https://evil.example",
-            exact,
-            &openers,
-            subdomain.as_ref(),
-        ));
-    }
 }

@@ -108,4 +108,16 @@ impl Config {
             server_timing_header: parse("SAKIOT_SERVER_TIMING_HEADER", false)?,
         })
     }
+
+    /// Whether `origin` is one of this deployment's own frontends: the CORS
+    /// origin or an OAuth opener origin, matched exactly. Subdomains are never
+    /// trusted: sibling hosts (other environments, preview slots, admin tools)
+    /// share the site, so the session cookies reach this API from them.
+    pub fn is_frontend_origin(&self, origin: &str) -> bool {
+        origin == self.cors_allowed_origin
+            || self
+                .oauth_allowed_opener_origins
+                .iter()
+                .any(|allowed| allowed == origin)
+    }
 }

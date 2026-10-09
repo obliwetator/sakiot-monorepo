@@ -25,8 +25,8 @@ const MAX_MESSAGE_BYTES: usize = 4 * 1024;
 /// Only the frontend's own origins may open the socket. Browsers send cookies
 /// with cross-site WebSocket handshakes and actix-cors does not block a
 /// disallowed origin on a non-preflight request, so this check is what stops
-/// another site from riding the viewer's session. Unlike the CORS check it is
-/// exact: no subdomain wildcard.
+/// another site from riding the viewer's session. It matches the CORS policy:
+/// exact origins only.
 pub fn origin_allowed(origin: Option<&str>, config: &Config) -> bool {
     let Some(origin) = origin else {
         return false;
@@ -34,14 +34,7 @@ pub fn origin_allowed(origin: Option<&str>, config: &Config) -> bool {
     let well_formed = origin.parse::<actix_web::http::Uri>().is_ok_and(|uri| {
         matches!(uri.scheme_str(), Some("http" | "https")) && uri.authority().is_some()
     });
-    if !well_formed {
-        return false;
-    }
-    origin == config.cors_allowed_origin
-        || config
-            .oauth_allowed_opener_origins
-            .iter()
-            .any(|allowed| allowed == origin)
+    well_formed && config.is_frontend_origin(origin)
 }
 
 #[utoipa::path(
