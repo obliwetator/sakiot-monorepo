@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
+use crate::media_jobs::JobAttempt;
 
 use super::super::milliseconds_as_seconds;
 use super::cache::MixCacheMetadata;
@@ -49,12 +50,12 @@ impl PublicationGuard {
     }
 }
 
-pub(super) async fn render_mix<'a>(
+pub(super) async fn render_mix(
     pool: &web::Data<Pool<Postgres>>,
     media: &MediaArchive,
     plan: &MixPlan,
     job: &Arc<Mutex<MixJob>>,
-    fence: Option<(&'a Pool<Postgres>, &'a str, &'a str)>,
+    fence: Option<&JobAttempt<'_>>,
 ) -> Result<(), AppError> {
     if plan.duration_ms <= 0 || plan.sources.is_empty() {
         return Err(AppError::BadRequest(
@@ -99,8 +100,11 @@ pub(super) async fn render_mix<'a>(
         };
         let settings = serde_json::to_vec_pretty(&metadata).map_err(std::io::Error::other)?;
         tokio::fs::write(&settings_temporary, &settings).await?;
-        let publication_tx = if let Some((fence_pool, job_id, attempt_token)) = fence {
-            Some(crate::media_jobs::begin_publication(fence_pool, job_id, attempt_token).await?)
+        let publication_tx = if let Some(attempt) = fence {
+            Some(
+                crate::media_jobs::begin_publication(attempt.pool, attempt.id, attempt.token)
+                    .await?,
+            )
         } else {
             None
         };
@@ -127,13 +131,13 @@ pub(super) async fn render_mix<'a>(
 
     // The cache files are in place; a failure completing the job record must
     // not remove them - the next attempt would have to re-render the mix.
-    if let (Some(tx), Some((_, job_id, attempt_token))) = (publication_tx, fence) {
+    if let (Some(tx), Some(attempt)) = (publication_tx, fence) {
         let url = format!(
             "/api/audio/sessions/{}/channel-mix/media?scope={}",
             plan.session_id,
             plan.scope.as_str()
         );
-        crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
+        crate::media_jobs::complete_publication(tx, attempt.id, attempt.token, &url, None).await?;
     }
     job.lock().await.progress = 100;
     Ok(())

@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::media_archive::MediaArchive;
+use crate::media_jobs::JobAttempt;
 use crate::permissions::require_channel_access;
 use crate::server_timing::measure;
 
@@ -470,17 +470,19 @@ pub async fn generate_session_channel_mix(
         .json(job))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_session_mix_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
-    requester: crate::permissions::Viewer,
+    attempt: &JobAttempt<'_>,
     session_id: i64,
     scope: &str,
     participants: serde_json::Value,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        requester,
+        id: job_id,
+        token: attempt_token,
+    } = *attempt;
     let scope = match scope {
         "all_recordings" => ChannelMixScope::AllRecordings,
         "selected_session" => ChannelMixScope::SelectedSession,
@@ -505,13 +507,7 @@ pub(crate) async fn run_session_mix_job(
         failed: None,
     }));
     crate::media_jobs::report_progress(pool, job_id, attempt_token, "rendering", 5).await?;
-    let rendering = render::render_mix(
-        &pool_data,
-        media,
-        &plan,
-        &job,
-        Some((pool, job_id, attempt_token)),
-    );
+    let rendering = render::render_mix(&pool_data, media, &plan, &job, Some(attempt));
     tokio::pin!(rendering);
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     interval.tick().await;

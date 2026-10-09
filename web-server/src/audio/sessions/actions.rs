@@ -1,5 +1,5 @@
 use super::*;
-use crate::media_jobs::{MediaJobRequest, MediaJobStatus};
+use crate::media_jobs::{JobAttempt, MediaJobRequest, MediaJobStatus};
 
 #[utoipa::path(
     get,
@@ -72,18 +72,20 @@ pub async fn download_session(
         .json(status))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_download_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
-    requester: crate::permissions::Viewer,
+    attempt: &JobAttempt<'_>,
     session_id: i64,
     start: Option<f64>,
     end: Option<f64>,
     remove_silence: bool,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        requester,
+        id: job_id,
+        token: attempt_token,
+    } = *attempt;
     let pool_data = web::Data::new(pool.clone());
     let access = require_session_access(&pool_data, session_id, requester).await?;
     let output_dir = PathBuf::from(recording_path()).join(".media-jobs");
@@ -301,13 +303,16 @@ pub async fn remove_session_silence(
 }
 
 pub(crate) async fn run_session_silence_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
-    requester: crate::permissions::Viewer,
+    attempt: &JobAttempt<'_>,
     session_id: i64,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        requester,
+        id: job_id,
+        token: attempt_token,
+    } = *attempt;
     let pool_data = web::Data::new(pool.clone());
     let access = require_session_access(&pool_data, session_id, requester).await?;
     let output = session_silence_free_path(&access)?;

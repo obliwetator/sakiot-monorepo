@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::media_archive::MediaArchive;
-use crate::media_jobs::{MediaJobRequest, MediaJobStatus};
+use crate::media_jobs::{JobAttempt, MediaJobRequest, MediaJobStatus};
 use crate::permissions::require_channel_access;
 use crate::waveform::{PeakDensity, generate_peaks_background};
 
@@ -232,19 +231,22 @@ async fn enqueue_recording_waveform(
     Ok(job_accepted(status))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_recording_waveform_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
+    attempt: &JobAttempt<'_>,
     guild_id: i64,
     channel_id: i64,
     year: i32,
     month: i32,
     file_name: &str,
     silence_free: bool,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        id: job_id,
+        token: attempt_token,
+        ..
+    } = *attempt;
     // None while the recording is live: the job builds a snapshot and leaves
     // waveform_end_ts unset, so the next request refreshes it.
     let end_ts = if silence_free {
@@ -438,13 +440,17 @@ pub async fn get_clip_waveform_data(
 }
 
 pub(crate) async fn run_clip_waveform_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
+    attempt: &JobAttempt<'_>,
     guild_id: i64,
     clip_id: &str,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        id: job_id,
+        token: attempt_token,
+        ..
+    } = *attempt;
     let saved_file_name = sqlx::query_scalar!(
         "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND deleted_at IS NULL",
         guild_id,

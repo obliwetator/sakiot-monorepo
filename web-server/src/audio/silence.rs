@@ -4,8 +4,7 @@ use tracing::info;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::media_archive::MediaArchive;
-use crate::media_jobs::{MediaJobRequest, MediaJobStatus};
+use crate::media_jobs::{JobAttempt, MediaJobRequest, MediaJobStatus};
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
 use super::util::{
@@ -127,18 +126,21 @@ pub async fn remove_silence(
         .json(status))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_recording_silence_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
+    attempt: &JobAttempt<'_>,
     guild_id: i64,
     channel_id: i64,
     year: i32,
     month: i32,
     file_name: &str,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<std::path::PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        id: job_id,
+        token: attempt_token,
+        ..
+    } = *attempt;
     let tuple = (guild_id, channel_id, year, month, file_name.to_owned());
     let source_dir = get_file_path_root(&recording_path(), &tuple);
     let output_dir = get_file_path_root(&no_silence_recording_path(), &tuple);

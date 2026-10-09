@@ -32,6 +32,18 @@ pub(crate) const PER_USER_ACTIVE_LIMIT: i64 = 3;
 /// run at once.
 pub(crate) const UNMETERED_KIND: &str = "recording_waveform";
 
+/// The attempt a job runner works inside: where it reads and writes, who
+/// asked (access is re-checked as them), and the fencing token its progress
+/// reports and final publication must still hold.
+#[derive(Clone, Copy)]
+pub(crate) struct JobAttempt<'a> {
+    pub pool: &'a Pool<Postgres>,
+    pub media: &'a MediaArchive,
+    pub requester: crate::permissions::Viewer,
+    pub id: &'a str,
+    pub token: &'a str,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MediaJobRequest {
@@ -529,6 +541,13 @@ async fn run_attempt(
     job: &ClaimedMediaJob,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
     report_progress(pool, &job.id, &job.token, "processing", 1).await?;
+    let attempt = JobAttempt {
+        pool,
+        media,
+        requester: job.requester,
+        id: &job.id,
+        token: &job.token,
+    };
     match &job.request {
         MediaJobRequest::RecordingSilence {
             guild_id,
@@ -538,15 +557,12 @@ async fn run_attempt(
             file_name,
         } => {
             crate::audio::silence::run_recording_silence_job(
-                pool,
-                media,
+                &attempt,
                 *guild_id,
                 *channel_id,
                 *year,
                 *month,
                 file_name,
-                &job.id,
-                &job.token,
             )
             .await
         }
@@ -559,50 +575,28 @@ async fn run_attempt(
             silence_free,
         } => {
             crate::audio::peaks::run_recording_waveform_job(
-                pool,
-                media,
+                &attempt,
                 *guild_id,
                 *channel_id,
                 *year,
                 *month,
                 file_name,
                 *silence_free,
-                &job.id,
-                &job.token,
             )
             .await
         }
         MediaJobRequest::ClipWaveform { guild_id, clip_id } => {
-            crate::audio::peaks::run_clip_waveform_job(
-                pool, media, *guild_id, clip_id, &job.id, &job.token,
-            )
-            .await
+            crate::audio::peaks::run_clip_waveform_job(&attempt, *guild_id, clip_id).await
         }
         MediaJobRequest::SessionWaveform {
             session_id,
             silence_free,
         } => {
-            crate::audio::sessions::run_session_waveform_job(
-                pool,
-                media,
-                job.requester,
-                *session_id,
-                *silence_free,
-                &job.id,
-                &job.token,
-            )
-            .await
+            crate::audio::sessions::run_session_waveform_job(&attempt, *session_id, *silence_free)
+                .await
         }
         MediaJobRequest::SessionSilence { session_id } => {
-            crate::audio::sessions::run_session_silence_job(
-                pool,
-                media,
-                job.requester,
-                *session_id,
-                &job.id,
-                &job.token,
-            )
-            .await
+            crate::audio::sessions::run_session_silence_job(&attempt, *session_id).await
         }
         MediaJobRequest::SessionMix {
             session_id,
@@ -610,14 +604,10 @@ async fn run_attempt(
             participants,
         } => {
             crate::audio::sessions::run_session_mix_job(
-                pool,
-                media,
-                job.requester,
+                &attempt,
                 *session_id,
                 scope,
                 participants.clone(),
-                &job.id,
-                &job.token,
             )
             .await
         }
@@ -628,15 +618,11 @@ async fn run_attempt(
             remove_silence,
         } => {
             crate::audio::sessions::run_download_job(
-                pool,
-                media,
-                job.requester,
+                &attempt,
                 *session_id,
                 *start,
                 *end,
                 *remove_silence,
-                &job.id,
-                &job.token,
             )
             .await
         }

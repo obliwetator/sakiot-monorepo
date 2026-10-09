@@ -1,4 +1,5 @@
 use super::*;
+use crate::media_jobs::JobAttempt;
 
 #[utoipa::path(
     get,
@@ -281,14 +282,17 @@ async fn build_finished_session_waveform(
 }
 
 pub(crate) async fn run_session_waveform_job(
-    pool: &Pool<Postgres>,
-    media: &MediaArchive,
-    requester: crate::permissions::Viewer,
+    attempt: &JobAttempt<'_>,
     session_id: i64,
     silence_free: bool,
-    job_id: &str,
-    attempt_token: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
+    let JobAttempt {
+        pool,
+        media,
+        requester,
+        id: job_id,
+        token: attempt_token,
+    } = *attempt;
     let pool_data = web::Data::new(pool.clone());
     let access = require_session_access(&pool_data, session_id, requester).await?;
     let (cache_key, output) = session_waveform_cache(session_id, silence_free);
