@@ -116,19 +116,18 @@ pub async fn handle_stamp(
     let recording_session_id =
         active_recording.and_then(|recording| recording.recording_session_id);
 
-    let insert = crate::database::stamps::create_stamp(
-        pool,
-        guild_id.to_i64(),
-        channel_id.to_i64(),
-        target.to_i64(),
-        stamper_id.to_i64(),
-        now_ms,
+    let stamp = crate::database::stamps::NewStamp {
+        guild_id: guild_id.to_i64(),
+        channel_id: channel_id.to_i64(),
+        target_user_id: target.to_i64(),
+        stamper_user_id: stamper_id.to_i64(),
+        stamp_ts: now_ms,
         offset_ms,
-        active_file_id,
+        audio_file_id: active_file_id,
         recording_session_id,
-        note.as_deref(),
-    )
-    .await;
+        note: note.as_deref(),
+    };
+    let insert = crate::database::stamps::create_stamp(pool, &stamp).await;
 
     match insert {
         Ok(stamp_id) => {

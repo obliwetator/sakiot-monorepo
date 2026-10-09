@@ -166,15 +166,17 @@ async fn stamp_creation_persists_fragment_and_logical_session(
 
     let stamp_id = stamps::create_stamp(
         &pool,
-        guild_id,
-        channel_id,
-        user_id,
-        stamper_user_id,
-        now.timestamp_millis(),
-        -5_000,
-        Some(active.audio_file_id),
-        active.recording_session_id,
-        Some("test stamp"),
+        &stamps::NewStamp {
+            guild_id,
+            channel_id,
+            target_user_id: user_id,
+            stamper_user_id,
+            stamp_ts: now.timestamp_millis(),
+            offset_ms: -5_000,
+            audio_file_id: Some(active.audio_file_id),
+            recording_session_id: active.recording_session_id,
+            note: Some("test stamp"),
+        },
     )
     .await?;
     let stored: (Option<i64>, Option<i64>) = sqlx::query_as(

@@ -8,22 +8,31 @@ pub struct ActiveStampRecording {
     pub recording_session_id: Option<i64>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "stamps insert mirrors command payload"
-)]
-pub async fn create_stamp(
-    pool: &Pool<Postgres>,
-    guild_id: i64,
-    channel_id: i64,
-    target_user_id: i64,
-    stamper_user_id: i64,
-    stamp_ts: i64,
-    offset_ms: i32,
-    audio_file_id: Option<i64>,
-    recording_session_id: Option<i64>,
-    note: Option<&str>,
-) -> DbResult<i64> {
+/// A `stamps` row to insert, as the stamp command assembles it.
+pub struct NewStamp<'a> {
+    pub guild_id: i64,
+    pub channel_id: i64,
+    pub target_user_id: i64,
+    pub stamper_user_id: i64,
+    pub stamp_ts: i64,
+    pub offset_ms: i32,
+    pub audio_file_id: Option<i64>,
+    pub recording_session_id: Option<i64>,
+    pub note: Option<&'a str>,
+}
+
+pub async fn create_stamp(pool: &Pool<Postgres>, stamp: &NewStamp<'_>) -> DbResult<i64> {
+    let NewStamp {
+        guild_id,
+        channel_id,
+        target_user_id,
+        stamper_user_id,
+        stamp_ts,
+        offset_ms,
+        audio_file_id,
+        recording_session_id,
+        note,
+    } = *stamp;
     let stamp_id = sqlx::query_scalar!(
         r#"INSERT INTO stamps
              (guild_id, channel_id, target_user_id, stamper_user_id,
