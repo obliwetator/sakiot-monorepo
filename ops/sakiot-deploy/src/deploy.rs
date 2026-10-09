@@ -581,17 +581,14 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
 
     // Service handoff under the bot recovery scope.
     let mut bot = BotHandoff::default();
-    let handoff = deploy_services(
-        config,
-        deps,
-        &systemctl,
+    let release = ServiceRelease {
         target,
-        &components,
-        &artifact_dir,
-        worktree.path(),
-        &release_id,
-        &mut bot,
-    );
+        release_id: &release_id,
+        components: &components,
+        artifact_dir: &artifact_dir,
+        worktree_path: worktree.path(),
+    };
+    let handoff = deploy_services(config, deps, &systemctl, &release, &mut bot);
     if let Err(error) = handoff {
         bot.recover(
             deps,
@@ -793,18 +790,29 @@ fn is_executable(path: &Path) -> bool {
 
 /// Bot blue/green handoff, web swap, frontend publish, and handoff
 /// completion. Any error here unwinds through BotHandoff::recover.
-#[allow(clippy::too_many_arguments)]
+/// The built release `deploy_services` puts into service.
+struct ServiceRelease<'a> {
+    target: Target,
+    release_id: &'a str,
+    components: &'a [Component],
+    artifact_dir: &'a Path,
+    worktree_path: &'a Path,
+}
+
 fn deploy_services(
     config: &Config,
     deps: &Deps,
     systemctl: &Systemctl,
-    target: Target,
-    components: &[Component],
-    artifact_dir: &Path,
-    worktree_path: &Path,
-    release_id: &str,
+    release: &ServiceRelease,
     bot: &mut BotHandoff,
 ) -> Result<()> {
+    let ServiceRelease {
+        target,
+        release_id,
+        components,
+        artifact_dir,
+        worktree_path,
+    } = *release;
     if component_selected(Component::Bot, components) {
         bot.old_bot_unit =
             fsx::read_line(&config.state_dir.join("current-bot.unit")).unwrap_or_default();
