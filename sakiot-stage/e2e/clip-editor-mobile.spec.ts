@@ -87,7 +87,6 @@ test("the source drawer gives the timeline room and recovers rejected additions"
 			}),
 		);
 	}, touchStart);
-	await page.waitForTimeout(350);
 	await expect
 		.poll(() =>
 			page
@@ -198,6 +197,9 @@ test("drawer restores focus and copied outlines respect reduced motion", async (
 test("a wide touch viewport does not enter a stuck native drag", async ({
 	page,
 }) => {
+	// The hold timer must fire before touchend; a fake clock guarantees that
+	// even when a loaded machine delays real timers past the hold.
+	await page.clock.install();
 	await page.setViewportSize({ width: 1000, height: 700 });
 	await page.goto(`/dashboard/${GUILD_ID}/clips/editor`);
 
@@ -231,7 +233,7 @@ test("a wide touch viewport does not enter a stuck native drag", async ({
 			}),
 		);
 	}, point);
-	await page.waitForTimeout(350);
+	await page.clock.runFor(350);
 	await workingSource.evaluate((element, position) => {
 		const touch = new Touch({
 			identifier: 23,

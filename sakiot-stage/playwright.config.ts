@@ -4,7 +4,10 @@ export default defineConfig({
 	testDir: "./e2e",
 	fullyParallel: true,
 	forbidOnly: Boolean(process.env.CI),
-	retries: process.env.CI ? 2 : 0,
+	// One retry only to label a failure as flaky in the report; a flaky test
+	// still fails the run instead of passing silently on its second attempt.
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: Boolean(process.env.CI),
 	reporter: process.env.CI ? "github" : "list",
 	use: {
 		baseURL: "http://127.0.0.1:4173",
