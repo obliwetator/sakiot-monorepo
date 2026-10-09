@@ -259,6 +259,18 @@ struct Clip {
     variant: u8,
 }
 
+/// One fixture guild's planned contents, with ids allocated, ready to insert.
+struct FixturePlan {
+    guild_id: i64,
+    members: Vec<Member>,
+    channels: Vec<i64>,
+    /// Channels before this index are public; the rest admit only insiders.
+    public: usize,
+    fragments: Vec<Fragment>,
+    clips: Vec<Clip>,
+    stamps: Vec<Stamp>,
+}
+
 struct Stamp {
     fragment: usize,
     stamper: i64,
@@ -387,16 +399,22 @@ async fn seed(state: &LoadtestState, fixture: u32, spec: &FixtureSpec) -> Result
     }
 
     link_media(&fragments, &clips, &sources, guild_id).await?;
-    insert_all(
-        state, spec, &sources, guild_id, &members, &channels, public, &fragments, &clips, &stamps,
-    )
-    .await?;
+    let plan = FixturePlan {
+        guild_id,
+        members,
+        channels,
+        public,
+        fragments,
+        clips,
+        stamps,
+    };
+    insert_all(state, spec, &sources, &plan).await?;
     tracing::info!(
         fixture,
         guild_id,
-        sessions = fragments.len(),
-        clips = clips.len(),
-        stamps = stamps.len(),
+        sessions = plan.fragments.len(),
+        clips = plan.clips.len(),
+        stamps = plan.stamps.len(),
         "load-test fixture seeded"
     );
     Ok(())
@@ -486,19 +504,21 @@ async fn link_media(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn insert_all(
     state: &LoadtestState,
     spec: &FixtureSpec,
     sources: &Sources,
-    guild_id: i64,
-    members: &[Member],
-    channels: &[i64],
-    public: usize,
-    fragments: &[Fragment],
-    clips: &[Clip],
-    stamps: &[Stamp],
+    plan: &FixturePlan,
 ) -> Result<(), AppError> {
+    let FixturePlan {
+        guild_id,
+        ref members,
+        ref channels,
+        public,
+        ref fragments,
+        ref clips,
+        ref stamps,
+    } = *plan;
     let mut tx = state.pool.begin().await?;
     let owner = members
         .first()
