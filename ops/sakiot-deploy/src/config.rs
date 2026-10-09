@@ -51,8 +51,8 @@ pub struct Request {
     pub schema_option: Option<String>,
     pub dry_run: bool,
     /// Trusted CI reached the deploy job through `needs: test` and attested
-    /// that result by using a dedicated restricted-SSH verb. Legacy/local
-    /// verbs leave this false and retain deploy-time test execution.
+    /// that result by using a dedicated restricted-SSH verb. The manual
+    /// `release` and `staging` verbs leave this false and run the tests here.
     pub ci_verified: bool,
     /// Auto-releases must consume the exact production bundle prepared by
     /// staging. Manual releases may still build from source as a fallback.

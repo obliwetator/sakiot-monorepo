@@ -33,9 +33,10 @@ changes; `scripts/build-dsp.sh` fails the frontend build on a version mismatch. 
 Python 3. `grpcurl` is useful for manual bot diagnostics; the Rust deploy engine
 uses its own gRPC client.
 
-Create a dedicated SQLx test role and master database. Legacy/local deploy
-verbs retain deploy-time Rust tests as a safe fallback; those tests create and
-remove a temporary database per test and never use runtime `DATABASE_URL`.
+Create a dedicated SQLx test role and master database. The manual `release`
+and `staging` deploy verbs, which CI has not verified, run the Rust tests on
+the VPS; those tests create and remove a temporary database per test and never
+use runtime `DATABASE_URL`.
 
 ```sql
 CREATE ROLE sakiot_test LOGIN CREATEDB PASSWORD 'replace_me';
@@ -85,12 +86,6 @@ manual debug services under the developer account; production units are named
 instance uses `sakiot-staging-web.service` and
 `sakiot-staging-fbi-agent@<release>.service`.
 
-For the first release on a host still running the prior `tulipan` user units,
-set `SAKIOT_LEGACY_BOT_UNIT`, `SAKIOT_LEGACY_BOT_GRPC`, and
-`SAKIOT_LEGACY_WEB_ENABLED=1`. The deployer drains the old bot, stops the old
-web service only after builds pass, and restores the old web service if new
-health checks fail. These settings are ignored after production state exists.
-
 Copy this repository's `ops` directory to `/usr/local/lib/sakiot-deploy` after
 reviewing deployment-framework changes (`ops/update-deploy-engine.sh` does this
 plus the engine build below). Application release tags cannot modify the
@@ -121,7 +116,7 @@ covered. It runs every suite when no such commit is found, and for a version
 bump. The verbs receive that job's read-only `GITHUB_TOKEN` on stdin, force
 authenticated Git protocol v2 for the source fetch, and skip the duplicate VPS
 test pass.
-Legacy/local verbs still test on the VPS. The bash suites for the
+The manual `release` and `staging` verbs test on the VPS. The bash suites for the
 out-of-band shims (`ops/tests/run.sh`: forced command, systemctl wrapper,
 frontend publish) run in CI on every PR and on the VPS via
 `update-deploy-engine.sh`.
