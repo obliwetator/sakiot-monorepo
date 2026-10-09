@@ -257,7 +257,7 @@ fn validate_filename(value: &str) -> Result<()> {
 pub fn source_for_host(host: &str) -> Option<Source> {
     match host.trim_start_matches("www.") {
         "patrykstyla.com" => Some(Source::Production),
-        "staging.patrykstyla.com" | "debug.patrykstyla.com" => Some(Source::Staging),
+        "staging.patrykstyla.com" => Some(Source::Staging),
         _ => None,
     }
 }
