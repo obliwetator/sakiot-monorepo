@@ -157,11 +157,13 @@ test("an invalid ?t= deep link does not break the player", async ({ page }) => {
 	);
 
 	// canplay must run to completion: assigning NaN to currentTime throws and
-	// would otherwise leave the view stuck on "Loading Audio" forever.
-	await expect(page.getByText("Loading Audio")).toHaveCount(0, {
+	// would otherwise leave the view stuck on "Loading Audio" forever. Wait for
+	// the player itself: "Loading Audio" is also absent before the route has
+	// rendered, which a cold dev server on CI can take seconds to reach.
+	await expect(page.getByRole("slider").first()).toBeVisible({
 		timeout: 15_000,
 	});
-	await expect(page.getByRole("slider").first()).toBeVisible();
+	await expect(page.getByText("Loading Audio")).toHaveCount(0);
 	expect(pageErrors).toEqual([]);
 });
 
