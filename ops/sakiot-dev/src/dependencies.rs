@@ -31,7 +31,7 @@ pub fn check<R: CommandRunner + ?Sized>(
             check("cargo", "install Rust from rustup");
             check("cargo-watch", "cargo install cargo-watch --locked");
             check("bun", "install Bun from https://bun.sh");
-            check("ffmpeg", "install FFmpeg with the rubberband filter");
+            check("ffmpeg", "install FFmpeg");
             check("ffprobe", "install FFmpeg (ffprobe is normally included)");
             check(
                 "audiowaveform",
@@ -51,19 +51,6 @@ pub fn check<R: CommandRunner + ?Sized>(
         && !runner.run_ok(&Cmd::new("docker").args(["compose", "version"]))
     {
         missing.push("docker compose plugin — enable/install Docker Compose v2".into());
-    }
-
-    if set == DependencySet::Up && runner.command_exists("ffmpeg") {
-        let filters = Cmd::new("ffmpeg").args(["-hide_banner", "-filters"]);
-        match runner.run_capture(&filters) {
-            Ok(output) if output.lines().any(|line| line.contains("rubberband")) => {}
-            Ok(_) => missing.push(
-                "ffmpeg rubberband filter — install an FFmpeg build with rubberband support".into(),
-            ),
-            Err(_) => missing.push(
-                "ffmpeg probe — verify the installed FFmpeg binary can list its filters".into(),
-            ),
-        }
     }
 
     if missing.is_empty() {
