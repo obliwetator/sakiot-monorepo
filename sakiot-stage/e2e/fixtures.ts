@@ -7,6 +7,15 @@ interface ConsoleAudit {
 
 export { expect };
 
+/**
+ * Redux Toolkit's development checks warn when they take more than 32 ms. On a
+ * loaded CI runner that measures the machine, not the app, so no test fails on
+ * it; developers still see it in the browser.
+ */
+const MACHINE_SPEED_WARNINGS = [
+	/(?:Immutable|Serializable)StateInvariantMiddleware took \d+ms/,
+];
+
 export const test = base.extend<{
 	consoleAudit: ConsoleAudit;
 	realtimeSocket: undefined;
@@ -27,7 +36,7 @@ export const test = base.extend<{
 	consoleAudit: [
 		async ({ page }, use) => {
 			const diagnostics: string[] = [];
-			const allowed: RegExp[] = [];
+			const allowed: RegExp[] = [...MACHINE_SPEED_WARNINGS];
 			page.on("console", (message) => {
 				if (message.type() === "warning" || message.type() === "error") {
 					const url = message.location().url;

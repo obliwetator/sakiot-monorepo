@@ -604,6 +604,9 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 test("a short multi-file session keeps its draft inside the clip window", async ({
 	page,
 }) => {
+	// The longest journey in the suite: about 7 s locally, over the 30 s test
+	// timeout on a loaded 2-core runner.
+	test.slow();
 	const updateDepthErrors: string[] = [];
 	const styleWarnings: string[] = [];
 	page.on("console", (message) => {
@@ -1087,17 +1090,22 @@ test("the playhead glides over audio instead of stepping on timeupdate", async (
 		.toBeGreaterThan(0);
 
 	// Sample the playhead every animation frame. `timeupdate` alone advances it
-	// only a few times a second, which is what made the head step over audio
-	// while the (per-frame) silence branches glided.
-	const distinctPositions = await positionSlider.evaluate((element) => {
+	// about four times a second, which is what made the head step over audio
+	// while the (per-frame) silence branches glided. Gliding moves it on nearly
+	// every frame, stepping repeats it across frames; comparing the two counts,
+	// rather than expecting a fixed number of positions, holds on a slow runner
+	// that renders fewer frames.
+	const { frames, positions } = await positionSlider.evaluate((element) => {
 		const input = element as HTMLInputElement;
 		const seen = new Set<string>();
-		const deadline = performance.now() + 600;
-		return new Promise<number>((resolve) => {
+		let frames = 0;
+		const deadline = performance.now() + 6_000;
+		return new Promise<{ frames: number; positions: number }>((resolve) => {
 			const sample = () => {
+				frames += 1;
 				seen.add(input.value);
-				if (performance.now() >= deadline) {
-					resolve(seen.size);
+				if (frames >= 30 || performance.now() >= deadline) {
+					resolve({ frames, positions: seen.size });
 					return;
 				}
 				requestAnimationFrame(sample);
@@ -1105,7 +1113,8 @@ test("the playhead glides over audio instead of stepping on timeupdate", async (
 			requestAnimationFrame(sample);
 		});
 	});
-	expect(distinctPositions).toBeGreaterThan(10);
+	expect(frames).toBeGreaterThanOrEqual(10);
+	expect(positions).toBeGreaterThanOrEqual(frames * 0.7);
 	await expect(
 		normalPanel.getByRole("button", { name: "Pause", exact: true }),
 	).toBeVisible();

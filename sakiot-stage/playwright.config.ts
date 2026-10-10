@@ -8,6 +8,9 @@ export default defineConfig({
 	// still fails the run instead of passing silently on its second attempt.
 	retries: process.env.CI ? 1 : 0,
 	failOnFlakyTests: Boolean(process.env.CI),
+	// A shared CI runner can take longer than the 5 s default to render the
+	// heaviest pages (clip editor, session player) on a cold dev server.
+	expect: { timeout: process.env.CI ? 10_000 : 5_000 },
 	reporter: process.env.CI ? "github" : "list",
 	use: {
 		baseURL: "http://127.0.0.1:4173",
