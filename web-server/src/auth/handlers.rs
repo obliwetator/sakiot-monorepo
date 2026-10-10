@@ -1,4 +1,5 @@
-use actix_web::{HttpRequest, HttpResponse, Responder, ResponseError, get, post, web};
+use actix_web::web::ReqData;
+use actix_web::{HttpRequest, HttpResponse, Responder, ResponseError, delete, get, post, web};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
@@ -17,16 +18,25 @@ use super::cookies::{
 };
 use super::discord::{DiscordLoginCode, request_access_token};
 use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
+use super::sessions;
 use subtle::ConstantTimeEq;
 
 async fn create_jwt_tokens(
     id: i64,
     auth_kind: AuthKind,
+    session_id: String,
     csrf: String,
     keys: &web::Data<AccessKeys>,
 ) -> Result<(String, String), AppError> {
-    let access_token = Token::<Access>::encode(id, auth_kind, csrf.clone(), &keys.access_encode)?;
-    let refresh_token = Token::<Refresh>::encode(id, auth_kind, csrf, &keys.refresh_encode)?;
+    let access_token = Token::<Access>::encode(
+        id,
+        auth_kind,
+        session_id.clone(),
+        csrf.clone(),
+        &keys.access_encode,
+    )?;
+    let refresh_token =
+        Token::<Refresh>::encode(id, auth_kind, session_id, csrf, &keys.refresh_encode)?;
     Ok((access_token, refresh_token))
 }
 
@@ -222,9 +232,16 @@ pub async fn discord_login(
     let user = get_user(client, &data.access_token, &pool).await?;
 
     let csrf_token = Uuid::new_v4().to_string();
+    let session_id = sessions::start(&pool, user.id, AuthKind::Discord).await?;
 
-    let (access_token, refresh_token) =
-        create_jwt_tokens(user.id, AuthKind::Discord, csrf_token.clone(), &keys).await?;
+    let (access_token, refresh_token) = create_jwt_tokens(
+        user.id,
+        AuthKind::Discord,
+        session_id,
+        csrf_token.clone(),
+        &keys,
+    )
+    .await?;
 
     let mut html = oauth_completion_page(&opener_origin, &csrf_token);
 
@@ -275,6 +292,7 @@ fn oauth_completion_page(opener_origin: &str, csrf_token: &str) -> HttpResponse 
 #[get("/dev_login")]
 pub async fn dev_login(
     req: HttpRequest,
+    pool: web::Data<Pool<Postgres>>,
     keys: web::Data<AccessKeys>,
     cfg: web::Data<Config>,
 ) -> Result<impl Responder, AppError> {
@@ -296,9 +314,16 @@ pub async fn dev_login(
     }
 
     let csrf_token = Uuid::new_v4().to_string();
+    let session_id = sessions::start(&pool, dev_account_id, AuthKind::Dev).await?;
 
-    let (access_token, refresh_token) =
-        create_jwt_tokens(dev_account_id, AuthKind::Dev, csrf_token.clone(), &keys).await?;
+    let (access_token, refresh_token) = create_jwt_tokens(
+        dev_account_id,
+        AuthKind::Dev,
+        session_id,
+        csrf_token.clone(),
+        &keys,
+    )
+    .await?;
     // The caller (the SPA's dev-login button) reads the CSRF header and the
     // Set-Cookie headers; the body is ignored, so no page is served.
     let mut b = HttpResponse::Ok()
@@ -318,15 +343,35 @@ pub async fn dev_login(
     Ok(b)
 }
 
-/// The refresh token is missing or no longer valid, so the session is over: a
-/// contract `unauthorized` body that also clears every session cookie.
-fn session_ended() -> Result<HttpResponse, AppError> {
-    let mut response = AppError::Unauthorized.error_response();
+fn clear_session_cookies(response: &mut HttpResponse) -> Result<(), AppError> {
     response.add_cookie(&clear_access_token_cookie())?;
     response.add_cookie(&clear_refresh_token_cookie())?;
     response.add_cookie(&clear_csrf_cookie())?;
     response.add_cookie(&clear_logged_in_cookie())?;
+    Ok(())
+}
+
+/// The refresh token is missing or no longer valid, so the session is over: a
+/// contract `unauthorized` body that also clears every session cookie.
+fn session_ended() -> Result<HttpResponse, AppError> {
+    let mut response = AppError::Unauthorized.error_response();
+    clear_session_cookies(&mut response)?;
     Ok(response)
+}
+
+/// Every refresh-token cookie the browser sent; a cookie set by an older path
+/// can sit next to the current one.
+fn refresh_cookie_values(req: &HttpRequest) -> Vec<String> {
+    req.cookies()
+        .ok()
+        .map(|cookies| {
+            cookies
+                .iter()
+                .filter(|cookie| cookie.name() == REFRESH_TOKEN_COOKIE)
+                .map(|cookie| cookie.value().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[utoipa::path(
@@ -335,7 +380,7 @@ fn session_ended() -> Result<HttpResponse, AppError> {
     tag = "auth",
     responses(
         (status = 200, description = "New access token issued", body = RefreshTokenResponse),
-        (status = 401, description = "Missing, expired, or invalid refresh token; the session cookies are cleared", body = crate::errors::ApiError),
+        (status = 401, description = "Missing, expired, or invalid refresh token, or a signed-out session; the session cookies are cleared", body = crate::errors::ApiError),
         (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
@@ -344,19 +389,10 @@ fn session_ended() -> Result<HttpResponse, AppError> {
 #[post("/refresh")]
 pub async fn refresh_jwt(
     req: HttpRequest,
+    pool: web::Data<Pool<Postgres>>,
     keys: web::Data<AccessKeys>,
 ) -> Result<impl Responder, AppError> {
-    let refresh_cookies = req
-        .cookies()
-        .ok()
-        .map(|cookies| {
-            cookies
-                .iter()
-                .filter(|cookie| cookie.name() == REFRESH_TOKEN_COOKIE)
-                .map(|cookie| cookie.value().to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let refresh_cookies = refresh_cookie_values(&req);
     if refresh_cookies.is_empty() {
         warn!(
             "Unauthorized access attempt to refresh_jwt{}: missing refresh_token cookie",
@@ -399,6 +435,16 @@ pub async fn refresh_jwt(
         })?;
     require_csrf(&req, &decoded_refresh.csrf)?;
 
+    // Logout or "sign out everywhere" deleted the session.
+    if !sessions::refresh(&pool, &decoded_refresh).await? {
+        warn!(
+            "Refresh rejected for {}: session {} has ended",
+            req.path(),
+            decoded_refresh.session_id
+        );
+        return session_ended();
+    }
+
     // The CSRF token stays the same for the whole login; only a fresh Discord
     // or dev login mints a new one. Rotating it here let tabs refreshing at
     // the same moment overwrite each other's token, and a late response from
@@ -408,6 +454,7 @@ pub async fn refresh_jwt(
     let (new_access_token, new_refresh_token) = create_jwt_tokens(
         decoded_refresh.user_id,
         decoded_refresh.auth_kind,
+        decoded_refresh.session_id.clone(),
         csrf_token.clone(),
         &keys,
     )
@@ -432,20 +479,57 @@ pub async fn refresh_jwt(
     path = "/api/logout",
     tag = "auth",
     responses(
-        (status = 200, description = "Cookies cleared"),
+        (status = 200, description = "This browser's session ended and its cookies cleared"),
         (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error; the session may still be valid", body = crate::errors::ApiError),
     ),
     security(("csrf_token" = [])),
 )]
 #[post("/logout")]
-pub async fn logout(req: HttpRequest) -> Result<impl Responder, AppError> {
+pub async fn logout(
+    req: HttpRequest,
+    pool: web::Data<Pool<Postgres>>,
+    keys: web::Data<AccessKeys>,
+) -> Result<impl Responder, AppError> {
     require_cookie_csrf(&req)?;
 
+    // End the session on the server, not just the cookies in this browser. An
+    // expired or invalid token names no session that could still refresh.
+    for token in refresh_cookie_values(&req)
+        .iter()
+        .filter_map(|value| Token::<Refresh>::decode(value, &keys).ok())
+    {
+        sessions::end(&pool, &token).await?;
+    }
+
     let mut resp = HttpResponse::Ok().finish();
-    resp.add_cookie(&clear_access_token_cookie())?;
-    resp.add_cookie(&clear_refresh_token_cookie())?;
-    resp.add_cookie(&clear_csrf_cookie())?;
-    resp.add_cookie(&clear_logged_in_cookie())?;
+    clear_session_cookies(&mut resp)?;
+    Ok(resp)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/users/current/sessions",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Every session of the signed-in account ended; this browser's cookies are cleared. Other browsers stop at their next refresh, within 15 minutes"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
+        (status = 500, description = "Server error; the sessions may still be valid", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
+#[delete("/users/current/sessions")]
+pub async fn end_all_sessions(
+    pool: web::Data<Pool<Postgres>>,
+    token: Option<ReqData<Token<Access>>>,
+) -> Result<impl Responder, AppError> {
+    let token = token.ok_or(AppError::Forbidden)?;
+    let ended = sessions::end_all(&pool, token.user_id, token.auth_kind).await?;
+    tracing::info!(user_id = token.user_id, ended, "signed out everywhere");
+
+    let mut resp = HttpResponse::Ok().finish();
+    clear_session_cookies(&mut resp)?;
     Ok(resp)
 }
 
@@ -580,104 +664,6 @@ mod tests {
 
         assert!(require_csrf(&req, "csrf-current").is_ok());
         assert!(require_cookie_csrf(&req).is_ok());
-    }
-
-    #[actix_web::test]
-    async fn refresh_failures_follow_the_error_contract() -> Result<(), Box<dyn std::error::Error>>
-    {
-        use super::super::cookies::{LOGGED_IN_COOKIE, REFRESH_TOKEN_COOKIE};
-        use super::super::jwt::{AccessKeys, AuthKind, Refresh, Token};
-        use super::refresh_jwt;
-        use actix_web::{App, http::StatusCode, web};
-        use jsonwebtoken::{DecodingKey, EncodingKey};
-
-        let keys = AccessKeys {
-            access_encode: EncodingKey::from_secret(b"access"),
-            refresh_encode: EncodingKey::from_secret(b"refresh"),
-            access_decode: DecodingKey::from_secret(b"access"),
-            refresh_decode: DecodingKey::from_secret(b"refresh"),
-        };
-        let refresh = Token::<Refresh>::encode(
-            7,
-            AuthKind::Discord,
-            "csrf-123".into(),
-            &keys.refresh_encode,
-        )?;
-        let app = actix_test::init_service(
-            App::new()
-                .app_data(web::Data::new(keys))
-                .service(refresh_jwt),
-        )
-        .await;
-
-        // No refresh token, or one that does not verify: the session is over.
-        for request in [
-            actix_test::TestRequest::post().uri("/refresh"),
-            actix_test::TestRequest::post()
-                .uri("/refresh")
-                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, "not-a-token")),
-        ] {
-            let response = actix_test::call_service(&app, request.to_request()).await;
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-            let cleared = response
-                .response()
-                .cookies()
-                .filter(|cookie| cookie.value().is_empty())
-                .map(|cookie| cookie.name().to_owned())
-                .collect::<Vec<_>>();
-            assert!(cleared.iter().any(|name| name == REFRESH_TOKEN_COOKIE));
-            assert!(cleared.iter().any(|name| name == LOGGED_IN_COOKIE));
-            let body: serde_json::Value = actix_test::read_body_json(response).await;
-            assert_eq!(body["code"], 401);
-            assert_eq!(body["kind"], "unauthorized");
-        }
-
-        // A valid refresh token with a stale or missing CSRF token.
-        for csrf_header in [Some("csrf-stale"), None] {
-            let mut request = actix_test::TestRequest::post()
-                .uri("/refresh")
-                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, refresh.clone()))
-                .cookie(Cookie::new(CSRF_COOKIE, "csrf-123"));
-            if let Some(csrf) = csrf_header {
-                request = request.insert_header(("X-CSRF-Token", csrf));
-            }
-            let response = actix_test::call_service(&app, request.to_request()).await;
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
-            let body: serde_json::Value = actix_test::read_body_json(response).await;
-            assert_eq!(body["kind"], "csrf_rejected");
-        }
-
-        // A successful refresh issues new tokens but keeps the login's CSRF.
-        let response = actix_test::call_service(
-            &app,
-            actix_test::TestRequest::post()
-                .uri("/refresh")
-                .cookie(Cookie::new(REFRESH_TOKEN_COOKIE, refresh.clone()))
-                .cookie(Cookie::new(CSRF_COOKIE, "csrf-123"))
-                .insert_header(("X-CSRF-Token", "csrf-123"))
-                .to_request(),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response
-                .headers()
-                .get("x-csrf-token")
-                .and_then(|value| value.to_str().ok()),
-            Some("csrf-123")
-        );
-        let cookies: Vec<(String, String)> = response
-            .response()
-            .cookies()
-            .map(|cookie| (cookie.name().to_owned(), cookie.value().to_owned()))
-            .collect();
-        assert!(cookies.contains(&(CSRF_COOKIE.to_owned(), "csrf-123".to_owned())));
-        assert!(
-            cookies
-                .iter()
-                .any(|(name, value)| name == REFRESH_TOKEN_COOKIE && !value.is_empty())
-        );
-        Ok(())
     }
 
     #[test]

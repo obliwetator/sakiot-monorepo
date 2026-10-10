@@ -26,6 +26,16 @@ pub enum AuthKind {
     Dev,
 }
 
+impl AuthKind {
+    /// The `auth_sessions.auth_kind` value, matching the JSON form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Discord => "discord",
+            Self::Dev => "dev",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum TokenPurpose {
@@ -38,6 +48,9 @@ pub struct Token<T> {
     #[serde(with = "jwt_numeric_date")]
     pub exp: OffsetDateTime,
     pub user_id: i64,
+    /// The `auth_sessions` row this sign-in belongs to.
+    #[serde(rename = "sid")]
+    pub session_id: String,
     pub csrf: String,
     pub auth_kind: AuthKind,
     purpose: TokenPurpose,
@@ -55,6 +68,7 @@ impl Token<Access> {
     pub fn encode(
         id: i64,
         auth_kind: AuthKind,
+        session_id: String,
         csrf: String,
         key: &EncodingKey,
     ) -> Result<String, AppError> {
@@ -64,6 +78,7 @@ impl Token<Access> {
         let access = Self {
             exp,
             user_id: id,
+            session_id,
             csrf,
             auth_kind,
             purpose: TokenPurpose::Access,
@@ -94,6 +109,7 @@ impl Token<Refresh> {
     pub fn encode(
         id: i64,
         auth_kind: AuthKind,
+        session_id: String,
         csrf: String,
         key: &EncodingKey,
     ) -> Result<String, AppError> {
@@ -103,6 +119,7 @@ impl Token<Refresh> {
         let refresh = Self {
             exp,
             user_id: id,
+            session_id,
             csrf,
             auth_kind,
             purpose: TokenPurpose::Refresh,

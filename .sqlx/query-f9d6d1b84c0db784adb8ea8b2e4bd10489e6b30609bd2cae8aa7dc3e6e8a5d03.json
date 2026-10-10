@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM auth_sessions WHERE id = $1 AND user_id = $2 AND auth_kind = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f9d6d1b84c0db784adb8ea8b2e4bd10489e6b30609bd2cae8aa7dc3e6e8a5d03"
+}

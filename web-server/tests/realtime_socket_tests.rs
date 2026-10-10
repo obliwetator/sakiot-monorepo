@@ -190,6 +190,7 @@ fn cookie(user_id: i64) -> Result<String, Box<dyn std::error::Error>> {
     let token = Token::<Access>::encode(
         user_id,
         AuthKind::Discord,
+        "test-session".into(),
         "csrf".into(),
         &EncodingKey::from_secret(b"test_secret"),
     )?;

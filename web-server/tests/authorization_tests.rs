@@ -67,6 +67,7 @@ fn dev_access_cookie_for(user_id: i64) -> Result<String, Box<dyn std::error::Err
     let token = Token::<Access>::encode(
         user_id,
         AuthKind::Dev,
+        "test-session".into(),
         CSRF.to_string(),
         &EncodingKey::from_secret(b"test_secret"),
     )?;
@@ -77,6 +78,7 @@ fn access_cookie_for(user_id: i64) -> Result<String, Box<dyn std::error::Error>>
     let token = Token::<Access>::encode(
         user_id,
         AuthKind::Discord,
+        "test-session".into(),
         CSRF.to_string(),
         &EncodingKey::from_secret(b"test_secret"),
     )?;

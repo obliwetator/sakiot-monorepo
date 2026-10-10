@@ -168,6 +168,7 @@ mod tests {
         let valid = Token::<super::Access>::encode(
             42,
             AuthKind::Discord,
+            "test-session".into(),
             "csrf-current".into(),
             &keys.access_encode,
         )?;

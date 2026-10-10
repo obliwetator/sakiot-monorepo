@@ -29,7 +29,7 @@ use web_server::audio::{
 #[cfg(feature = "dev-login")]
 use web_server::auth::dev_login;
 use web_server::auth::{
-    AccessKeys, AuthMiddleware, discord_login, logout, oauth_start, refresh_jwt,
+    AccessKeys, AuthMiddleware, discord_login, end_all_sessions, logout, oauth_start, refresh_jwt,
 };
 use web_server::clip_editor::{compose_clip, compose_clip_status};
 use web_server::clips::{create_clip, delete, get_clip, get_clips, play_clip, rename_clip};
@@ -234,6 +234,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let api_scope = api_scope
             .service(refresh_jwt)
             .service(logout)
+            .service(end_all_sessions)
             .service(get_current_user)
             .service(get_current_user_guilds)
             .service(get_media_job)

@@ -170,7 +170,13 @@ async fn http_admission_is_durable_idempotent_and_does_not_load_media(pool: PgPo
         refresh_decode: jsonwebtoken::DecodingKey::from_secret(b"test"),
     };
     let token = Token::<Access>::decode(
-        &Token::<Access>::encode(100, AuthKind::Discord, "csrf".into(), &keys.access_encode)?,
+        &Token::<Access>::encode(
+            100,
+            AuthKind::Discord,
+            "test-session".into(),
+            "csrf".into(),
+            &keys.access_encode,
+        )?,
         &keys,
     )?;
     sqlx::raw_sql("INSERT INTO guilds (id,owner_id) VALUES (1,100);

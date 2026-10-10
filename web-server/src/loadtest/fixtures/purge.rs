@@ -89,6 +89,7 @@ pub(super) async fn teardown(
         "DELETE FROM user_name_history WHERE user_id >= $1 AND user_id < $2",
         "DELETE FROM user_names WHERE user_id >= $1 AND user_id < $2",
         "DELETE FROM discord_auth_user WHERE id >= $1 AND id < $2",
+        "DELETE FROM auth_sessions WHERE user_id >= $1 AND user_id < $2",
     ] {
         rows += sqlx::query(statement)
             .bind(low)

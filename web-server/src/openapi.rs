@@ -12,7 +12,7 @@ use utoipa::{
     ),
     modifiers(&SecurityAddon),
     tags(
-        (name = "auth", description = "Discord OAuth, JWT refresh, logout"),
+        (name = "auth", description = "Discord OAuth, JWT refresh, logout, ending sessions"),
         (name = "user", description = "Current user + guild membership"),
         (name = "audio", description = "Recording listing, processing, and event metadata"),
         (name = "media", description = "Durable media job status and results"),
@@ -68,6 +68,7 @@ use utoipa::{
         crate::auth::handlers::oauth_start,
         crate::auth::handlers::refresh_jwt,
         crate::auth::handlers::logout,
+        crate::auth::handlers::end_all_sessions,
         crate::clip_editor::compose_clip,
         crate::clip_editor::compose_clip_status,
         crate::clips::create_clip,

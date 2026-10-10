@@ -919,6 +919,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/users/current/sessions": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		delete: operations["end_all_sessions"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5300,7 +5316,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Cookies cleared */
+			/** @description This browser's session ended and its cookies cleared */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -5309,6 +5325,15 @@ export interface operations {
 			};
 			/** @description Missing or invalid CSRF token */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error; the session may still be valid */
+			500: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -5461,7 +5486,7 @@ export interface operations {
 					"application/json": components["schemas"]["RefreshTokenResponse"];
 				};
 			};
-			/** @description Missing, expired, or invalid refresh token; the session cookies are cleared */
+			/** @description Missing, expired, or invalid refresh token, or a signed-out session; the session cookies are cleared */
 			401: {
 				headers: {
 					[name: string]: unknown;
@@ -5683,6 +5708,51 @@ export interface operations {
 			};
 			/** @description Not a member of this guild */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	end_all_sessions: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Every session of the signed-in account ended; this browser's cookies are cleared. Other browsers stop at their next refresh, within 15 minutes */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid CSRF token */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error; the sessions may still be valid */
+			500: {
 				headers: {
 					[name: string]: unknown;
 				};

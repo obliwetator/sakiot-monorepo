@@ -8,6 +8,7 @@ use super::{LoadtestState, authorize, ids};
 use crate::auth::cookies::{
     access_token_cookie, csrf_cookie, logged_in_cookie, refresh_token_cookie,
 };
+use crate::auth::sessions;
 use crate::auth::{Access, AccessKeys, AuthKind, Refresh, Token};
 use crate::config::Config;
 use crate::errors::AppError;
@@ -56,15 +57,18 @@ pub async fn login(
     }
 
     let csrf = Uuid::new_v4().to_string();
+    let session_id = sessions::start(&state.pool, user_id, AuthKind::Discord).await?;
     let access_token = Token::<Access>::encode(
         user_id,
         AuthKind::Discord,
+        session_id.clone(),
         csrf.clone(),
         &keys.access_encode,
     )?;
     let refresh_token = Token::<Refresh>::encode(
         user_id,
         AuthKind::Discord,
+        session_id,
         csrf.clone(),
         &keys.refresh_encode,
     )?;

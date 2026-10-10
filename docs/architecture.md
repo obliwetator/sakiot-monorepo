@@ -195,6 +195,16 @@ stays fixed for that login: `/api/refresh` renews the access and refresh
 tokens but keeps it, so tabs refreshing at the same moment cannot invalidate
 each other.
 
+Each login is also a row in `auth_sessions` (`auth/sessions.rs`), and both
+tokens carry its id. The 15-minute access token is checked only by signature,
+but `/api/refresh` succeeds only while the row exists, and each refresh issues
+a new 7-day refresh token, so a session lasts as long as it keeps being used.
+Logout deletes the browser's own row, and "Log out everywhere"
+(`DELETE /api/users/current/sessions`) deletes every row of that identity (a
+dev login and a Discord login with the same id are different identities).
+Other browsers stop within 15 minutes, when their access token expires, which
+also closes their realtime socket.
+
 Authorization reimplements Discord's permission model against the agent's role
 cache, so role and membership revocations take effect without a new login
 (`web-server/src/permissions.rs`). The agent writes that cache one guild per

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE auth_sessions SET refreshed_at = now()\n         WHERE id = $1 AND user_id = $2 AND auth_kind = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c7eaf6fa16a65ba26699b14fe84149d87a8b8b3d95a271b17db7043be62285ea"
+}

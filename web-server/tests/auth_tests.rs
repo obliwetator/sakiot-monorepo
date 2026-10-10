@@ -18,6 +18,7 @@ fn test_access_token_encode_decode() -> Result<(), Box<dyn std::error::Error>> {
     let encoded = Token::<Access>::encode(
         user_id,
         AuthKind::Discord,
+        "test-session".into(),
         "csrf_test".into(),
         &keys.access_encode,
     )?;
@@ -46,6 +47,7 @@ fn test_refresh_token_encode_decode() -> Result<(), Box<dyn std::error::Error>> 
     let encoded = Token::<Refresh>::encode(
         user_id,
         AuthKind::Discord,
+        "test-session".into(),
         "csrf_test".into(),
         &keys.refresh_encode,
     )?;
@@ -71,6 +73,7 @@ fn test_token_type_mismatch() -> Result<(), Box<dyn std::error::Error>> {
     let encoded_access = Token::<Access>::encode(
         1,
         AuthKind::Discord,
+        "test-session".into(),
         "csrf_test".into(),
         &keys.access_encode,
     )?;
