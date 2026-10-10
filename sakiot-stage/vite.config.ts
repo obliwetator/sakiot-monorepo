@@ -1,10 +1,22 @@
 import { fileURLToPath } from "node:url";
 import babel from "@rolldown/plugin-babel";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import type { PluginOptions as ReactCompilerOptions } from "babel-plugin-react-compiler";
 import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const monorepoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+// By default the React Compiler silently leaves a component it cannot prove
+// safe uncompiled. Fail the build, and show the dev overlay, instead when
+// code breaks the Rules of React (reading refs during render, mutating props
+// or state) or defeats existing memoization. Syntax the compiler does not
+// support yet, such as try/finally, still just skips that function.
+// plugin-react's type lists only some options; the preset passes all of
+// them through.
+const reactCompilerOptions: ReactCompilerOptions = {
+	panicThreshold: "critical_errors",
+};
 
 // The bundle visualizer writes a ~1 MB module graph. It is a debugging tool,
 // not a product asset, so it stays out of `dist/` unless explicitly requested
@@ -64,7 +76,7 @@ export default defineConfig(({ command, mode }) => {
 			react(),
 			// plugin-react v6 transforms JSX with oxc and no longer accepts a
 			// `babel` option, so the React Compiler runs as its own preset.
-			babel({ presets: [reactCompilerPreset()] }),
+			babel({ presets: [reactCompilerPreset(reactCompilerOptions)] }),
 			...(analyzeBundle
 				? [
 						visualizer({
