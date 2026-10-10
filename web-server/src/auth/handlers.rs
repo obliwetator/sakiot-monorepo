@@ -16,6 +16,7 @@ use super::cookies::{
     clear_refresh_token_cookie, csrf_cookie, logged_in_cookie, oauth_state_cookie,
     refresh_token_cookie,
 };
+use super::device::Device;
 use super::discord::{DiscordLoginCode, request_access_token};
 use super::jwt::{Access, AccessKeys, AuthKind, Refresh, Token};
 use super::sessions;
@@ -232,7 +233,13 @@ pub async fn discord_login(
     let user = get_user(client, &data.access_token, &pool).await?;
 
     let csrf_token = Uuid::new_v4().to_string();
-    let session_id = sessions::start(&pool, user.id, AuthKind::Discord).await?;
+    let session_id = sessions::start(
+        &pool,
+        user.id,
+        AuthKind::Discord,
+        Device::from_request(&req),
+    )
+    .await?;
 
     let (access_token, refresh_token) = create_jwt_tokens(
         user.id,
@@ -314,7 +321,13 @@ pub async fn dev_login(
     }
 
     let csrf_token = Uuid::new_v4().to_string();
-    let session_id = sessions::start(&pool, dev_account_id, AuthKind::Dev).await?;
+    let session_id = sessions::start(
+        &pool,
+        dev_account_id,
+        AuthKind::Dev,
+        Device::from_request(&req),
+    )
+    .await?;
 
     let (access_token, refresh_token) = create_jwt_tokens(
         dev_account_id,
@@ -499,11 +512,92 @@ pub async fn logout(
         .iter()
         .filter_map(|value| Token::<Refresh>::decode(value, &keys).ok())
     {
-        sessions::end(&pool, &token).await?;
+        sessions::end(&pool, &token.session_id, token.user_id, token.auth_kind).await?;
     }
 
     let mut resp = HttpResponse::Ok().finish();
     clear_session_cookies(&mut resp)?;
+    Ok(resp)
+}
+
+/// One sign-in of the current account, for the signed-in devices list.
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub struct SessionInfo {
+    pub id: String,
+    /// The browser named by the User-Agent at sign-in, such as "Chrome" or
+    /// "Firefox"; null when it was not recognized.
+    pub browser: Option<String>,
+    /// The platform named at sign-in, such as "Windows", "Android" or
+    /// "iPhone"; null when it was not recognized.
+    pub platform: Option<String>,
+    pub signed_in_at: chrono::DateTime<chrono::Utc>,
+    /// When the session last refreshed its access token, which an active tab
+    /// does at least every 15 minutes.
+    pub last_active_at: chrono::DateTime<chrono::Utc>,
+    /// Whether this is the session making the request.
+    pub current: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/users/current/sessions",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Every session of the signed-in account, most recently active first", body = [SessionInfo]),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = [])),
+)]
+#[get("/users/current/sessions")]
+pub async fn list_sessions(
+    pool: web::Data<Pool<Postgres>>,
+    token: Option<ReqData<Token<Access>>>,
+) -> Result<impl Responder, AppError> {
+    let token = token.ok_or(AppError::Forbidden)?;
+    let sessions = sessions::list(&pool, token.user_id, token.auth_kind)
+        .await?
+        .into_iter()
+        .map(|row| SessionInfo {
+            current: row.id == token.session_id,
+            id: row.id,
+            browser: row.browser,
+            platform: row.platform,
+            signed_in_at: row.created_at,
+            last_active_at: row.refreshed_at,
+        })
+        .collect::<Vec<_>>();
+    Ok(HttpResponse::Ok().json(sessions))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/users/current/sessions/{session_id}",
+    tag = "auth",
+    params(("session_id" = String, Path, description = "A session id from the sessions list")),
+    responses(
+        (status = 200, description = "The session ended. It stops at its next refresh, within 15 minutes; ending the current session also clears this browser's cookies"),
+        (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
+        (status = 403, description = "Missing or invalid CSRF token", body = crate::errors::ApiError),
+        (status = 404, description = "The account has no session with that id", body = crate::errors::ApiError),
+    ),
+    security(("access_token" = []), ("csrf_token" = [])),
+)]
+#[delete("/users/current/sessions/{session_id}")]
+pub async fn end_session(
+    pool: web::Data<Pool<Postgres>>,
+    token: Option<ReqData<Token<Access>>>,
+    path: web::Path<String>,
+) -> Result<impl Responder, AppError> {
+    let token = token.ok_or(AppError::Forbidden)?;
+    let session_id = path.into_inner();
+    if !sessions::end(&pool, &session_id, token.user_id, token.auth_kind).await? {
+        return Err(AppError::NotFound);
+    }
+
+    let mut resp = HttpResponse::Ok().finish();
+    if session_id == token.session_id {
+        clear_session_cookies(&mut resp)?;
+    }
     Ok(resp)
 }
 

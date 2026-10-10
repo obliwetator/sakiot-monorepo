@@ -926,10 +926,26 @@ export interface paths {
 			path?: never;
 			cookie?: never;
 		};
-		get?: never;
+		get: operations["list_sessions"];
 		put?: never;
 		post?: never;
 		delete: operations["end_all_sessions"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/users/current/sessions/{session_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		delete: operations["end_session"];
 		options?: never;
 		head?: never;
 		patch?: never;
@@ -1714,6 +1730,30 @@ export interface components {
 			remove_silence?: boolean | null;
 			/** Format: double */
 			start?: number | null;
+		};
+		/** @description One sign-in of the current account, for the signed-in devices list. */
+		SessionInfo: {
+			/**
+			 * @description The browser named by the User-Agent at sign-in, such as "Chrome" or
+			 *     "Firefox"; null when it was not recognized.
+			 */
+			browser?: string | null;
+			/** @description Whether this is the session making the request. */
+			current: boolean;
+			id: string;
+			/**
+			 * Format: date-time
+			 * @description When the session last refreshed its access token, which an active tab
+			 *     does at least every 15 minutes.
+			 */
+			last_active_at: string;
+			/**
+			 * @description The platform named at sign-in, such as "Windows", "Android" or
+			 *     "iPhone"; null when it was not recognized.
+			 */
+			platform?: string | null;
+			/** Format: date-time */
+			signed_in_at: string;
 		};
 		SessionManifestDto: {
 			channel_journey: string[];
@@ -5717,6 +5757,35 @@ export interface operations {
 			};
 		};
 	};
+	list_sessions: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Every session of the signed-in account, most recently active first */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["SessionInfo"][];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	end_all_sessions: {
 		parameters: {
 			query?: never;
@@ -5753,6 +5822,54 @@ export interface operations {
 			};
 			/** @description Server error; the sessions may still be valid */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	end_session: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description A session id from the sessions list */
+				session_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The session ended. It stops at its next refresh, within 15 minutes; ending the current session also clears this browser's cookies */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid CSRF token */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The account has no session with that id */
+			404: {
 				headers: {
 					[name: string]: unknown;
 				};

@@ -8,9 +8,10 @@ use sqlx::PgPool;
 use web_server::auth::cookies::{
     ACCESS_TOKEN_COOKIE, CSRF_COOKIE, LOGGED_IN_COOKIE, REFRESH_TOKEN_COOKIE,
 };
+use web_server::auth::device::Device;
 use web_server::auth::{
-    Access, AccessKeys, AuthKind, AuthMiddleware, Refresh, Token, end_all_sessions, logout,
-    refresh_jwt, sessions,
+    Access, AccessKeys, AuthKind, AuthMiddleware, Refresh, Token, end_all_sessions, end_session,
+    list_sessions, logout, refresh_jwt, sessions,
 };
 
 const CSRF: &str = "csrf-123";
@@ -57,7 +58,7 @@ async fn sign_in(
     user_id: i64,
     auth_kind: AuthKind,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let session_id = sessions::start(pool, user_id, auth_kind).await?;
+    let session_id = sessions::start(pool, user_id, auth_kind, Device::default()).await?;
     tokens(user_id, auth_kind, &session_id)
 }
 
@@ -72,7 +73,9 @@ macro_rules! app {
                         .wrap(AuthMiddleware)
                         .service(refresh_jwt)
                         .service(logout)
-                        .service(end_all_sessions),
+                        .service(list_sessions)
+                        .service(end_all_sessions)
+                        .service(end_session),
                 ),
         )
         .await
@@ -180,7 +183,7 @@ async fn refresh_needs_a_live_session(pool: PgPool) -> TestResult {
     );
 
     // The session belongs to another identity.
-    let session_id = sessions::start(&pool, 8, AuthKind::Discord).await?;
+    let session_id = sessions::start(&pool, 8, AuthKind::Discord, Device::default()).await?;
     for (user_id, auth_kind) in [(7, AuthKind::Discord), (8, AuthKind::Dev)] {
         let (_, forged) = tokens(user_id, auth_kind, &session_id)?;
         let response = test::call_service(&app, refresh_request(&forged).to_request()).await;
@@ -291,8 +294,8 @@ async fn signing_out_everywhere_ends_every_session_of_that_identity(pool: PgPool
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn sign_in_sweeps_sessions_that_can_no_longer_refresh(pool: PgPool) -> TestResult {
-    let stale = sessions::start(&pool, 7, AuthKind::Discord).await?;
-    let recent = sessions::start(&pool, 8, AuthKind::Discord).await?;
+    let stale = sessions::start(&pool, 7, AuthKind::Discord, Device::default()).await?;
+    let recent = sessions::start(&pool, 8, AuthKind::Discord, Device::default()).await?;
     sqlx::query!(
         "UPDATE auth_sessions SET refreshed_at = now() - interval '8 days' WHERE id = $1",
         stale,
@@ -306,7 +309,7 @@ async fn sign_in_sweeps_sessions_that_can_no_longer_refresh(pool: PgPool) -> Tes
     .execute(&pool)
     .await?;
 
-    let fresh = sessions::start(&pool, 9, AuthKind::Dev).await?;
+    let fresh = sessions::start(&pool, 9, AuthKind::Dev, Device::default()).await?;
 
     let mut remaining = sqlx::query_scalar!("SELECT id FROM auth_sessions")
         .fetch_all(&pool)
@@ -315,5 +318,128 @@ async fn sign_in_sweeps_sessions_that_can_no_longer_refresh(pool: PgPool) -> Tes
     let mut expected = vec![recent, fresh];
     expected.sort();
     assert_eq!(remaining, expected);
+    Ok(())
+}
+
+const CHROME_ON_WINDOWS: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+const CHROME_ON_ANDROID: &str = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36";
+
+/// Sign in as a browser with this User-Agent; returns the session id too.
+async fn sign_in_from(
+    pool: &PgPool,
+    user_id: i64,
+    user_agent: &str,
+) -> Result<(String, String, String), Box<dyn std::error::Error>> {
+    let session_id = sessions::start(
+        pool,
+        user_id,
+        AuthKind::Discord,
+        Device::from_user_agent(user_agent),
+    )
+    .await?;
+    let (access, refresh) = tokens(user_id, AuthKind::Discord, &session_id)?;
+    Ok((session_id, access, refresh))
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn the_devices_list_names_each_session_and_marks_this_one(pool: PgPool) -> TestResult {
+    let app = app!(pool);
+    let (desktop, access, _) = sign_in_from(&pool, 7, CHROME_ON_WINDOWS).await?;
+    let (phone, _, _) = sign_in_from(&pool, 7, CHROME_ON_ANDROID).await?;
+    // Another member's session and an unrecognized browser of this one's
+    // dev identity are not this account's.
+    sign_in_from(&pool, 8, CHROME_ON_WINDOWS).await?;
+    sessions::start(&pool, 7, AuthKind::Dev, Device::default()).await?;
+    sqlx::query!(
+        "UPDATE auth_sessions SET refreshed_at = now() - interval '1 hour' WHERE id = $1",
+        desktop,
+    )
+    .execute(&pool)
+    .await?;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/users/current/sessions")
+            .cookie(Cookie::new(ACCESS_TOKEN_COOKIE, access))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(response).await;
+    let listed = body.as_array().ok_or("expected a list")?;
+    assert_eq!(listed.len(), 2);
+
+    // Most recently active first.
+    assert_eq!(listed[0]["id"], phone.as_str());
+    assert_eq!(listed[0]["browser"], "Chrome");
+    assert_eq!(listed[0]["platform"], "Android");
+    assert_eq!(listed[0]["current"], false);
+    assert_eq!(listed[1]["id"], desktop.as_str());
+    assert_eq!(listed[1]["platform"], "Windows");
+    assert_eq!(listed[1]["current"], true);
+    assert!(listed[1]["signed_in_at"].is_string());
+    assert!(listed[1]["last_active_at"].is_string());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn ending_one_session_signs_out_only_that_device(pool: PgPool) -> TestResult {
+    let app = app!(pool);
+    let (_, access, this_refresh) = sign_in_from(&pool, 7, CHROME_ON_WINDOWS).await?;
+    let (phone, _, phone_refresh) = sign_in_from(&pool, 7, CHROME_ON_ANDROID).await?;
+    let (other_member, _, _) = sign_in_from(&pool, 8, CHROME_ON_WINDOWS).await?;
+    let end = |session_id: &str, csrf: bool| {
+        let mut request = test::TestRequest::delete()
+            .uri(&format!("/api/users/current/sessions/{session_id}"))
+            .cookie(Cookie::new(ACCESS_TOKEN_COOKIE, access.clone()));
+        if csrf {
+            request = request.insert_header(("X-CSRF-Token", CSRF));
+        }
+        request.to_request()
+    };
+
+    let response = test::call_service(&app, end(&phone, false)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // Another member's session is not this account's to end.
+    let response = test::call_service(&app, end(&other_member, true)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = test::call_service(&app, end(&phone, true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(cleared_cookies(&response).is_empty());
+    let response = test::call_service(&app, refresh_request(&phone_refresh).to_request()).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = test::call_service(&app, refresh_request(&this_refresh).to_request()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = test::call_service(&app, end(&phone, true)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn ending_this_session_from_the_list_clears_its_cookies(pool: PgPool) -> TestResult {
+    let app = app!(pool);
+    let (this_session, access, refresh) = sign_in_from(&pool, 7, CHROME_ON_WINDOWS).await?;
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!("/api/users/current/sessions/{this_session}"))
+            .cookie(Cookie::new(ACCESS_TOKEN_COOKIE, access))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        cleared_cookies(&response)
+            .iter()
+            .any(|name| name == REFRESH_TOKEN_COOKIE)
+    );
+    let response = test::call_service(&app, refresh_request(&refresh).to_request()).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     Ok(())
 }

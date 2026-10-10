@@ -203,7 +203,11 @@ Logout deletes the browser's own row, and "Log out everywhere"
 (`DELETE /api/users/current/sessions`) deletes every row of that identity (a
 dev login and a Discord login with the same id are different identities).
 Other browsers stop within 15 minutes, when their access token expires, which
-also closes their realtime socket.
+also closes their realtime socket. The account menu's "Signed-in devices"
+lists the sessions (`GET /api/users/current/sessions`) and logs one out
+(`DELETE .../sessions/{id}`). Each row names its browser and platform, parsed
+from the User-Agent at sign-in (`auth/device.rs`); the User-Agent string itself
+and IP addresses are never stored.
 
 Authorization reimplements Discord's permission model against the agent's role
 cache, so role and membership revocations take effect without a new login

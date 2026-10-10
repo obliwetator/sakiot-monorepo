@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE auth_sessions SET refreshed_at = now() - interval '1 hour' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "66da2f4ab985e1d8c63fd3a1459d370a3b9f76c7ab0959c5b5388a2a1f72c17e"
+}
