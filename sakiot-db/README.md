@@ -1,28 +1,22 @@
-# Sakiot DB
+# sakiot-db
 
-Canonical Postgres migrations for the Sakiot services.
-
-## Role
-
-`fbi-agent` and `web-server` share one Postgres schema. Migrations live here so
-schema changes have one owner instead of being split by service.
-
-## Commands
-
-Run from this directory, or pass an absolute path to
-`sakiot-monorepo/sakiot-db/migrations`.
+The single owner of the PostgreSQL schema that `fbi-agent` and `web-server`
+share. Neither service runs migrations at startup: `cargo dev` applies them
+locally and the deploy engine applies them on each deploy (after an encrypted
+backup on production; see [backups](ops/backup/README.md)).
 
 ```sh
+cd sakiot-db
 sqlx migrate info --source migrations
 sqlx migrate run --source migrations
+cd ..
+scripts/sqlx-prepare.sh   # refresh .sqlx against a disposable database
 ```
 
-The baseline migration is a schema-only dump of the existing live schema. It
-does not include application data and does not include SQLx migration metadata.
-
-## Policy
-
-- Add future schema changes only under `migrations/`.
-- Do not add service-local migrations under `fbi-agent` or `web-server`.
-- Data/filesystem one-off scripts should stay separate from schema migrations.
-- Services connect to the migrated schema; they do not run migrations on startup.
+- Add schema changes only under `migrations/`, and commit the refreshed `.sqlx`
+  with them; the pre-commit hook and CI check it.
+- Keep one-off data or filesystem scripts out of migrations.
+- Never edit a migration that has been applied anywhere; preview slots and
+  production fail on its checksum.
+- The baseline migration is a schema-only dump of the original live schema,
+  without data or SQLx metadata.

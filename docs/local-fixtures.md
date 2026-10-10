@@ -40,33 +40,24 @@ UI with real audio, waveforms, and metadata, pull a sample from a deployed
 instance over your personal SSH access. Source database export is read-only,
 but archive hydration can restore missing media on the VPS; a staging
 destination also writes imported rows and files. Nothing is committed to the
-repository. Set `SAKIOT_DEV_SSH` in the git-ignored `.env`
-to avoid entering the SSH target when the startup prompt requests recordings:
+repository. Set `SAKIOT_DEV_SSH=user@vps-host` in `.env` so no command has to
+ask for the SSH target:
 
 ```sh
-SAKIOT_DEV_SSH=user@vps-host
-# Or invoke the standalone command directly. It reports the server counts for
-# the live-test guild and asks how many newest recordings to download:
-SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync
-# Explicit counts are non-interactive and only select categories you name:
-SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --recordings 20
-SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --recordings 20 --clips 5 --stamps 5
-# Every eligible recording, clip, and stamp from the last seven days:
-SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --days 7
-# The default guild is 362257054829641758; override it only when intentional:
-SAKIOT_DEV_SSH=user@vps-host cargo dev fixtures sync --guild <id> --recordings 20
+cargo dev fixtures sync                              # interactive: shows counts, asks
+cargo dev fixtures sync --recordings 20              # newest 20 recordings only
+cargo dev fixtures sync --recordings 20 --clips 5 --stamps 5
+cargo dev fixtures sync --recordings all             # every recording
+cargo dev fixtures sync --days 7                     # every category from the last 7 days
+cargo dev fixtures sync --guild <id> --recordings 20 # another guild, on purpose
 ```
 
-The interactive sync prints how many finalized recordings, clips, and stamps the
-selected guild has on the server, then asks for a newest-first recording count
-(10 is the default), a clip sample, and a stamp sample. The clip and stamp
-prompts default to none, so pressing Enter imports recordings only, and they are
-skipped entirely when the server has none of that category. No category offers
-an implicit “all” choice: use `--recordings all`, `--clips all`, or
-`--stamps all` explicitly. Supplying any category flag skips the prompt for the
-categories you did not name and leaves them at none. `--days N` is the global
-time-window form: it copies every eligible recording, clip, and stamp whose
-source timestamp falls within the last N days:
+Bulk sync, including the one `cargo dev up` offers, only samples the live-test
+guild in `SAKIOT_DEV_FIXTURE_GUILD`; another guild needs an explicit
+`--guild`. The interactive form prints how many finalized recordings, clips
+and stamps the guild has, then asks for a newest-first recording count
+(default 10) and clip and stamp samples (default none, skipped when the server
+has none):
 
 ```
 [dev] staging guild 362257054829641758 has 509 finalized recording(s), 36 clip(s), and 123 stamp(s) on the server
@@ -75,19 +66,10 @@ source timestamp falls within the last N days:
 [dev] download stamp(s) (server has 123; enter a number or none) [none]:
 ```
 
-Bulk sync is scoped to guild `362257054829641758` by default, including startup
-fixture sync. A different guild requires an explicit `--guild` or
-`SAKIOT_DEV_FIXTURE_GUILD`; no command silently samples unrelated guilds.
-
-```sh
-cargo dev fixtures sync --recordings all             # every recording in the live-test guild
-cargo dev fixtures sync --recordings 20 --clips 5    # newest recordings + five clips, same guild
-cargo dev fixtures sync --days 7                     # every category from last 7 days
-cargo dev fixtures sync --guild 362257054829641758 --recordings 20
-```
-
-`--days` is mutually exclusive with the individual category count flags. For
-the global recent window, use `--days N` by itself.
+No prompt offers an implicit "all"; pass `all` explicitly. Naming any category
+flag skips the prompts and leaves the categories you did not name at none.
+`--days N` copies every eligible recording, clip and stamp from the last N days
+and cannot be combined with the count flags.
 
 A positive `--recordings` count replaces the previously managed fixture
 recordings and media; it does not touch unrelated local data. Explicit

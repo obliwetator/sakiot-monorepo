@@ -1,235 +1,188 @@
 # sakiot-dsp
 
-The shared Rust audio processor for the Sakiot clip editor, usable as native
-server code and WebAssembly in the browser.
+The clip editor's audio processor, compiled natively into `web-server` to
+render exports and to WebAssembly for the browser preview, so both run the
+same code. The core has no browser or server dependencies; the `wasm` feature
+only adds the `wasm-bindgen` boundary. Workspace builds, tests and Clippy cover
+the native side, and a dedicated CI job lints the `wasm` feature, builds the
+WASM and checks it against native.
 
-The crate is a root workspace member and a path dependency of the web server,
-so workspace builds, tests, and Clippy cover the native side. A dedicated CI job
-additionally lints the `wasm` feature, builds the WASM, and checks native/WASM
-parity.
+## Effects
 
-Implemented in the shared native/WASM core:
-
-- volume and three-band Tone-compatible EQ;
-- Tone-compatible waveshaper distortion;
-- delay and feedback delay, including Web Audio feedback-cycle timing;
-- Chromium/Tone-compatible look-ahead compression;
-- default sine-wave stereo chorus;
-- deterministic seeded stereo reverb with a direct-convolution head and
-  partitioned-FFT tail;
-- an offline clip renderer for independent rate and pitch, plus frame-safe
-  reverse before the streaming effects;
-- an explicit 0-30 second per-segment effect tail, appended after
-  reverse/pitch/rate and processed through the streaming effects.
-
-Tone's random reverb IR is intentionally replaced by a seeded IR: the same
-seed and parameters now identify the same sound in native and WASM builds.
-Length-changing rate/pitch work is exposed through the offline clip renderer
-rather than forced into the in-place AudioWorklet effect loop.
-
-## Tone.js coverage
-
-The shared core and product integration implement volume, three-band EQ,
-independent pitch and rate, reverse, distortion, feedback delay, compressor,
-chorus, and deterministic reverb.
-
-This is not the complete Tone.js 15.1.22 effect catalog. Still absent are
-AutoFilter, AutoPanner, AutoWah, BitCrusher, Chebyshev, FrequencyShifter,
-Freeverb, JCReverb, Phaser, PingPongDelay, StereoWidener, Tremolo, and Vibrato.
-The shared reverb and pitch shifter intentionally replace Tone's algorithms
-rather than reproduce them independently: native and WASM use one canonical
-implementation.
-
-Every implemented effect parameter is wired into the editor inspector, browser
-WASM renderer, saved composition JSON, and native server renderer.
-
-## Effect processing order
-
-The DSP owns one fixed signal chain:
+One fixed chain, whatever order the user adjusts the controls in:
 
 1. reverse;
-2. independent pitch/rate transform;
-3. append the configured silent effect tail;
-4. segment volume;
-5. bass, mid, then treble EQ;
-6. distortion;
+2. independent pitch and rate (phase vocoder and sinc resampler);
+3. the configured silent effect tail (0–30 s), added after rate so it is not
+   stretched;
+4. volume;
+5. bass, mid and treble EQ;
+6. waveshaper distortion;
 7. feedback delay;
-8. chorus;
-9. compressor;
-10. reverb.
+8. stereo chorus;
+9. look-ahead compressor;
+10. seeded stereo reverb (direct-convolution head, partitioned-FFT tail).
 
-The order in which a user adjusts inspector controls does not change this
-chain. Saved compositions store the current parameter values, not the editing
-chronology. Supporting rearrangeable effects would require a new, explicitly
-ordered effect-chain model, with compatible serialization and execution in
-both the browser WASM and native server renderers.
+Volume, EQ, distortion, delay and the compressor match Tone.js and Chromium's
+Web Audio behavior. The reverb uses a seeded impulse response
+instead of Tone's random one, so the same seed and parameters sound the same
+everywhere. The compressor's signal model is derived, with attribution, from
+Chromium's
+[BSD-licensed implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/platform/audio/dynamics_compressor.cc).
 
-## Product integration
+Saved compositions store parameter values, with advanced effects under
+`effects.advanced`. Every parameter is wired into the inspector, the browser
+renderer, the saved JSON and the server renderer. Rearrangeable effects would
+need a new, explicitly ordered chain model on both sides.
 
-- Browser previews split the fixed chain at its natural random-access boundary.
-  A dedicated Web Worker renders and caches reverse/pitch/rate/tail using a key
-  containing only those geometry parameters. The production AudioWorklet then
-  runs volume, EQ, distortion, delay, chorus, compressor, and reverb in 128-frame
-  blocks through the same Rust processor. Those downstream controls update
-  active playback immediately and no longer restart or await a complete segment
-  render. The worker independently runs the streaming suffix against a copy of
-  the cached geometry for the exact processed waveform. Geometry jobs have
-  priority, and obsolete queued waveform jobs are replaced by the newest edit.
-  No DSP executes synchronously on the main thread. Clip decoding is fixed at
-  the server's canonical 48 kHz rate; a limited native Web Audio fallback
-  remains for worker/worklet initialization failure.
-- The WASM boundary accepts one complete versioned effect object instead of a
-  positional parameter list. Schema version 2 includes `tailSeconds`; unknown
-  versions and incomplete configurations are rejected.
-- Live parameter changes use a deterministic 5 ms output-continuity ramp in
-  the shared core, so native and WASM updates de-click over the same number of
-  samples without interpolating unstable nonlinear/stateful coefficients.
-- Timeline segment waveforms are generated inside the DSP worker from exact
-  complete-chain PCM. The 2,500-point envelope
-  updates after the same 120 ms edit debounce and falls back to the source
-  waveform until the first render is available. Later edits retain the
-  preceding processed envelope until its replacement is ready; reverse changes
-  mirror it optimistically, preventing a flash of the raw-source waveform.
-- The Effect tail inspector control extends the timeline box by a fixed number
-  of seconds. That appended silence is part of the exact processed waveform,
-  cached preprocessing AudioBuffer, saved composition, and server output. Rate changes only
-  scale source content, not the tail. Splitting keeps the configured tail on
-  the final timeline piece so it is not duplicated.
-- A hidden effect-settings JSON editor opens with `Ctrl+Shift+O` (or
-  `Command+Shift+O`). It is prefilled from the first selected segment and
-  accepts a complete or partial camelCase `SegmentEffects` object, applying
-  supplied values to every selected segment. It rejects unknown keys, wrong
-  types, and out-of-range values; Markdown `json` fences are accepted for
-  convenient copy/paste from development conversations.
-- Server compositions decode each source window to stereo 48 kHz `f32`, call
-  the same Rust renderer, and leave placement, mixing, and Opus encoding to
-  FFmpeg.
-- Advanced effects are grouped under `effects.advanced` in composition JSON.
-  Every server segment uses the incremental shared DSP renderer, including
-  source windows longer than 60 seconds. Decoded and processed PCM use
-  temporary files; processing retains bounded blocks.
-- Browser preview has explicit PCM size limits; oversized compositions remain
-  exportable by the server. See [STREAMING.md](STREAMING.md) for these limits
-  and the server job time/disk budgets.
+## In the browser
 
-## Known gaps
+The preview splits the chain where random access ends. A Web Worker renders
+and caches reverse, pitch, rate and tail, keyed only by those parameters. The
+AudioWorklet (`sakiot-stage/src/features/clip-editor/sharedDspAudioWorklet.ts`)
+runs the rest in 128-frame blocks, so downstream controls change playback
+immediately without re-rendering. No DSP runs on the main thread.
 
-- Seeking into the middle of a segment starts the stateful effects (delay,
-  compressor, chorus, reverb) fresh at that offset instead of inheriting the
-  preceding history. Playback from a segment start matches the server exactly.
-- The browser still decodes whole sources and keeps complete output buffers;
-  see [browser limits](STREAMING.md#browser-limits).
-- A WASM load failure has no visible error or retry state. The native Web Audio
-  fallback covers volume, EQ, rate, and reverse, but not independent pitch.
-- The phase vocoder, sinc resampler, and reverb convolution are unprofiled;
-  optimizing them must keep native and WASM output identical.
-- The worker cannot interrupt a WASM render already in progress. It discards
-  obsolete queued requests instead.
+- The WASM boundary takes one complete, versioned effect object. Unknown
+  versions and incomplete objects are rejected.
+- Parameter changes ramp over 5 ms in the shared core, so native and WASM
+  de-click identically.
+- The worker also renders each segment's 2,500-point timeline waveform from the
+  exact processed PCM, 120 ms after the last edit, keeping the previous one
+  until the new one is ready.
+- Clips decode at 48 kHz, the server's rate. If the worker or worklet fails to
+  start, a native Web Audio fallback covers volume, EQ, rate and reverse, but
+  not independent pitch.
+- `Ctrl+Shift+O` (`Command+Shift+O`) opens a hidden JSON editor prefilled from
+  the first selected segment. It accepts a complete or partial camelCase
+  `SegmentEffects` object, applies it to every selected segment, rejects
+  unknown keys, wrong types and out-of-range values, and tolerates Markdown
+  `json` fences.
 
-## Native checks
+### Browser limits
+
+Preprocessing uses `WasmIncrementalRenderer` in 4096-frame blocks. Decoded
+sources share a 64 MiB LRU cache (fetched and decoded one at a time), and
+processed PCM, waveforms and Web Audio copies share another 64 MiB. Those
+budgets cover retained payloads, not the whole heap: `decodeAudioData` still
+decodes whole clips, and buffers held by the editor or playback sit outside
+them. Preview is disabled with a notice when an unmuted segment's source window
+or output exceeds 64 MiB of stereo PCM (about 175 s at 48 kHz), or total
+unmuted output exceeds 128 MiB; keyboard playback follows the same limit and
+export stays available. Removing that limit would take a windowed or seekable
+decoder and streamed playback.
+
+## On the server
+
+Exports use renderer version 2: FFmpeg decodes each source window to stereo
+48 kHz `f32` PCM, `IncrementalRenderer` processes it, and FFmpeg places, mixes
+and Opus-encodes the result. Placement concatenates generated silence rather
+than using `adelay`.
+
+`IncrementalRenderer::new(rate, channels, input_frames, effects)` declares the
+exact decoded length. `push(block, sink)` accepts aligned blocks of any size
+and emits at most 512 frames per sink call; `finish(sink)` drains the overlap
+and appends the tail once. Incomplete or excess input, misaligned samples and
+a second `finish` are errors, and a sink failure makes the renderer terminal.
+State (vocoder history and phases, resampler position, every effect) persists
+across calls, and memory depends on the FFT size (2048), hop (512), resampler
+radius (24) and the configured delay and reverb times, not on segment length.
+
+The renderer rejects `reverse: true`. The server instead reads its decoded PCM
+file backwards in 4096-frame blocks, reverses whole stereo frames, and renders
+forwards. Decoded and processed PCM live as files in the job's attempt
+directory, one segment at a time; processed segments stay until the final mix.
+The job limits in [web-server](../web-server/README.md#composition-exports)
+still bound time and disk, so very large or overlapping compositions can fail
+explicitly.
+
+The whole-buffer renderer remains the numerical reference. Both use `f64`
+source positions and the same pinned `libm` math, so long inputs and extreme
+stretches agree across platforms.
+
+## Verification
+
+`tests/incremental.rs` compares the incremental renderer with the reference
+across block sizes (down to one frame), short and empty input, fractional
+rate and pitch, the full stateful chain, reverse, tails and a 61-second stereo
+source. The tolerance is a maximum absolute error of 2e-6 and an RMS error of
+2e-7, and the same bound applies native against WASM (`web/verify-wasm.mjs`,
+which CI runs), including +4800 cents at 0.1x and -4800 cents at 10x. The
+compiled WASM is not byte-compared across hosts, because rustc can encode it
+differently with identical output.
+
+Release-build measurements on the development host (2026-09-06), stereo
+48 kHz, with distortion, delay, compressor, chorus, a 1.5 s seeded reverb and a
+0.5 s tail:
+
+| Source | Pitch / rate | Peak RSS | Wall time |
+| --- | --- | --- | --- |
+| 60 s | +700 cents / 1.35 | 8,140 KiB | 9.97 s |
+| 600 s | +700 cents / 1.35 | 8,016 KiB | 112.76 s |
+| 6 s | +4800 cents / 0.1 | 8,028 KiB | 31.02 s |
+| 60 s, maximum delay, chorus, reverb and tail | none | 123,384 KiB | 35.05 s |
+
+These cover the DSP alone, consuming output as it is produced. Memory stays
+flat with duration; CPU time and disk do not. Reproduce from the repository
+root:
 
 ```sh
-cargo test -p sakiot-dsp
+cargo test -p sakiot-dsp --locked --release
+cargo build -p sakiot-dsp --locked --release --example measure_incremental
+/usr/bin/time -v target/release/examples/measure_incremental 60 700 1.35
+/usr/bin/time -v target/release/examples/measure_incremental 600 700 1.35
+/usr/bin/time -v target/release/examples/measure_incremental 6 4800 0.1
+/usr/bin/time -v target/release/examples/measure_incremental 60 0 1 max-effects
+```
+
+`process_raw` and `render_clip_raw` run the streaming chain and the
+length-changing renderer over interleaved little-endian `f32` PCM:
+
+```sh
 cargo run -p sakiot-dsp --example process_raw -- \
   48000 2 -3 5 -4 2.5 0.7 1 0.125 0.4 1 true -24 30 12 0.003 0.25 \
   true 1.5 3.5 0.7 180 0 0.5 true 1.5 0.01 0.5 1396788041 \
   <input.f32 >output.f32
-```
-
-The raw utility reads and writes interleaved little-endian `f32` PCM.
-
-The length-changing offline boundary has a smaller diagnostic utility:
-
-```sh
 cargo run -p sakiot-dsp --example render_clip_raw -- \
   48000 2 700 1.35 true 2.0 <input.f32 >output.f32
 ```
 
-## WASM assets
+### Real-browser harness
 
-`pkg/` is build output and is not committed. `sakiot-stage`'s `dev`, `test`,
-`typecheck`, and `build:bundle` scripts run the repository build script first,
-so local development, CI, and the deploy engine on the VPS all compile the WASM
-from the DSP sources in the same checkout. The script enforces the pinned
-`wasm-bindgen` and `rolldown` versions and always builds from `sakiot-dsp`, so
-the output does not depend on the caller's working directory.
+`bun run browser:measure` (after `bun install` and
+`bunx playwright install chromium` in this directory) renders pinned Tone.js
+through a 48 kHz `OfflineAudioContext` and compares it with direct WASM and
+with a real-time Chromium AudioWorklet capture. Tone is only a comparison
+oracle here; the frontend does not ship it. Worklet captures of each effect
+and of the full chain are bit-identical to direct WASM when both reset at the
+same frame, which production guarantees by passing each worklet node an
+explicit start frame.
 
-Every machine that builds the frontend needs the WASM toolchain once. The
-`wasm32-unknown-unknown` target is listed in `rust-toolchain.toml`, so rustup
-installs it with the pinned compiler; add it by hand only if yours predates
-that. From the repository root:
+## Building the WASM
+
+`pkg/` is build output. `scripts/build-dsp.sh` is the only place that names the
+build steps; `bun run wasm:build` here, `bun run build:dsp` in `sakiot-stage`
+and CI all call it. It enforces the pinned `wasm-bindgen` and `rolldown`
+versions. Each machine that builds the frontend needs, once:
 
 ```sh
-rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked
 (cd sakiot-stage && bun install)
 scripts/build-dsp.sh
+node sakiot-dsp/web/verify-wasm.mjs   # optional native/WASM parity check
 ```
 
-`sakiot-stage` consumes the generated `pkg/sakiot_dsp.js`, WASM asset, and
-bundled `pkg/sakiot-dsp-worklet.bundle.js`. The worker owns random-access
-preprocessing and exact waveform rendering; the AudioWorklet is the production
-real-time boundary for the downstream chain.
+`rust-toolchain.toml` already installs the `wasm32-unknown-unknown` target.
+The frontend consumes `pkg/sakiot_dsp.js`, the WASM file and the bundled
+`pkg/sakiot-dsp-worklet.bundle.js`.
 
-The script is the only place that names the build steps: `bun run wasm:build`
-here and `bun run build:dsp` in `sakiot-stage` delegate to it, and the CI `dsp`
-job calls it directly.
+## Known gaps
 
-To verify the generated WASM processor against the native processor with the
-version-matched `wasm-bindgen` CLI and Node.js:
-
-```sh
-scripts/build-dsp.sh
-(cd sakiot-dsp && node web/verify-wasm.mjs)
-```
-
-CI builds the WASM and runs the parity verifier on it. The compiled module is
-not byte-compared across build hosts because rustc can produce different
-binary encodings with sample-identical behavior; its native parity is the
-release gate.
-
-## Real-browser parity harness
-
-The standalone harness serves the installed Tone.js 15.1.22 modules, renders
-Tone through a 48 kHz `OfflineAudioContext`, and compares it with both direct
-WASM and a real-time Chromium `AudioWorklet` capture.
-Tone is retained here only as a development comparison oracle; the production
-`sakiot-stage` package no longer depends on or bundles it. The harness pins and
-serves its own Tone dependency, so it does not rely on frontend packages.
-
-```sh
-cd sakiot-dsp
-bun install
-bunx playwright install chromium
-bun run browser:measure
-```
-
-On Linux, Chromium's normal system libraries must also be present. This
-environment lacked `libnspr4` and `libnss3`, so they were temporarily extracted
-and supplied through `SAKIOT_BROWSER_LIBRARY_PATH` rather than installed
-system-wide.
-
-Initial Chromium 151 results for the combined volume/EQ chain:
-
-- Tone versus WASM mixed fixture: approximately -96 dB relative residual.
-- Tone versus WASM sweep fixture: approximately -98 dB relative residual.
-- Captured AudioWorklet versus direct WASM: bit-identical for 8,192 frames.
-
-Later slices measured standalone distortion around -124 dB relative residual,
-integer delay/feedback below -300 dB, and compression around -82 to -84 dB.
-The compressor signal model is derived with attribution from Chromium's
-[BSD-licensed implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/platform/audio/dynamics_compressor.cc).
-
-The real-time worklet harness also runs basic EQ, distortion, feedback delay,
-compressor, chorus, reverb, and the complete active chain separately. All seven captured
-cases are bit-identical to direct WASM once both processors are reset at the
-same segment-time origin. The harness detects the first fixture signal only as
-a test convenience. Production passes an explicit absolute start frame to each
-worklet node and resets on that frame, including starts inside a render quantum.
-
-The Node verification also runs reverse with +700 cents at 1.35x through the
-offline WASM and native APIs. The initial prototype measured about -128 dB
-relative residual with identical output length; renderer version 2 measurements
-and native/WASM tolerances are recorded in [STREAMING.md](STREAMING.md).
-
-See [incremental composition rendering](STREAMING.md) for the block API, server resource measurements, renderer-version migration and remaining browser memory limits.
+- Seeking into the middle of a segment starts delay, compressor, chorus and
+  reverb fresh instead of with the preceding history. Playback from a segment
+  start matches the server exactly.
+- A WASM load failure shows no error or retry.
+- The worker cannot interrupt a render in progress; it drops obsolete queued
+  requests instead.
+- The phase vocoder, resampler and reverb convolution are unprofiled, and any
+  optimization must keep native and WASM identical.

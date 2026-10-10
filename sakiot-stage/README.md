@@ -1,95 +1,43 @@
-# Sakiot Stage
+# sakiot-stage
 
-Sakiot Stage is the React/Vite frontend for the Sakiot system. It provides the
-browser UI for logging in, browsing Discord guild-related content, viewing and
-playing recordings, working with live audio state, clips, stamps, waveforms, and
-admin-facing controls exposed by the backend.
-
-This project is functional, but it is not packaged as a supported application.
-No support is provided for running, deploying, configuring, or operating it. For
-now, you have to figure that out yourself from the code, scripts, generated API
-types, and local setup.
-
-## Role In The System
-
-Sakiot Stage is linked with the other projects in this directory to make the
-whole Sakiot application:
-
-- `web-server` provides the authenticated HTTP API and media endpoints this UI
-  consumes.
-- `fbi-agent` records the Discord voice data that eventually appears in the UI.
-- `sakiot-paths` defines shared path conventions used by the backend pieces that
-  serve the data shown here.
-- `sakiot-dsp` is compiled to WASM for the clip editor's effect preview. The
-  `dev`, `test`, `typecheck`, and `build:bundle` scripts build it first, which
-  needs the pinned `wasm-bindgen` CLI (see the root `README.md`).
-
-## What It Does
-
-- Runs a React 19 application through Vite.
-- Uses React Aria wrappers and Tailwind for the application shell and interface components.
-- Talks to the backend through generated OpenAPI types and authenticated fetch
-  helpers.
-- Provides protected routes behind the login/bootstrap flow.
-- Displays recording, live audio, waveform, clip, stamp, and guild-related
-  workflows.
-- Includes unit tests and mocked Playwright browser tests for desktop/mobile
-  flows, including the clip editor and accessibility.
-
-## Local development and checks
-
-Start the API, database, and frontend from the repository root with
-`cargo dev up --fixtures skip`. For frontend commands, run from this directory:
+The React 19 + Vite frontend. It talks only to `web-server`'s HTTP API and
+realtime socket, through generated OpenAPI types. `cargo dev up` from the
+repository root runs it with the API and database. From this directory:
 
 ```sh
 bun install
-bun run test
-bun run test:e2e:ci
-bun run build
+bun run test          # unit tests
+bun run test:e2e:ci   # Playwright, mocked API, desktop and mobile
+bun run build         # Biome, type checks, bundle
 ```
 
-Playwright needs Chromium installed (`bunx playwright install --with-deps chromium`).
-The browser harness starts its own local Vite server with mocked API routes.
-`test:e2e:ci` excludes `@visual` tests; run `bunx playwright test` when visual
-review is intended. See [AGENTS.md](AGENTS.md) for screenshot review rules.
-The build requires `VITE_API_URL` in the environment or root Vite env files.
+The `dev`, `test`, `typecheck` and `build:bundle` scripts first compile
+`sakiot-dsp` to WASM for the clip editor, which needs the pinned
+`wasm-bindgen` CLI (see the root README). Builds require `VITE_API_URL`, from
+the environment or the root Vite env files; there is no fallback origin.
 
-## API Types
+Playwright needs Chromium (`bunx playwright install --with-deps chromium`) and
+starts its own Vite server with mocked API routes. `test:e2e:ci` skips tests
+tagged `@visual`; run `bunx playwright test` for visual review, following the
+screenshot rules in [AGENTS.md](AGENTS.md).
 
-The checked-in API types come from `web-server`'s compile-time OpenAPI document.
-Neither command needs a running server or database:
+## API types
+
+`src/api/openapi.ts` is generated from `web-server`'s compile-time OpenAPI
+document; neither command needs a running server or database:
 
 ```sh
 bun run generate:api-types
-bun run check:api-types
+bun run check:api-types   # fails when the checked-in file is stale
 ```
 
-The check command generates into a temporary file and fails when
-`src/api/openapi.ts` is stale. Set `OPENAPI_URL` only to use another OpenAPI
-source intentionally.
+Set `OPENAPI_URL` only to generate from another source on purpose.
 
-The generator itself lives in `scripts/codegen`, which pins its own TypeScript 5
-alongside `openapi-typescript`. `openapi-typescript` emits its output through
-the TypeScript 5 compiler API (`ts.factory`), which the native TypeScript 7
-compiler used by the frontend no longer exposes. Both commands install that
-toolchain on first use, so no extra setup step is required.
-
-This split is temporary. Check upstream periodically:
-
-```sh
-npm view openapi-typescript peerDependencies
-```
-
-Checked on 2026-09-26: the [upstream package manifest](https://github.com/openapi-ts/openapi-typescript/blob/main/packages/openapi-typescript/package.json)
-still reports 7.13.0 and requires `typescript: ^5.x`. Keep the isolated
-toolchain until an upstream release supports the compiler API needed with
-TypeScript 7. When that compatibility is verified, delete
-`scripts/codegen`, move `openapi-typescript` back into `devDependencies`, and
-revert `scripts/generate-api-types.ts` to invoking it directly.
-`bun run check:api-types` must stay byte-identical against `src/api/openapi.ts`.
-
-## Status
-
-This is personal/project code, not a turnkey product. It expects the matching
-backend, generated API types, auth configuration, and deployment environment to
-already make sense.
+The generator lives in `scripts/codegen` with its own TypeScript 5, because
+`openapi-typescript` emits through the TypeScript 5 compiler API
+(`ts.factory`), which the TypeScript 7 compiler used here no longer exposes.
+Both commands install it on first use. Once `openapi-typescript` supports
+TypeScript 7 (`npm view openapi-typescript peerDependencies`), delete
+`scripts/codegen`, move the package back into `devDependencies`, and call it
+directly from `scripts/generate-api-types.ts`; `check:api-types` must stay
+byte-identical.

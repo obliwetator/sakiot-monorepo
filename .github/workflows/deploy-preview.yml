@@ -9,7 +9,8 @@ name: Deploy preview
 # bootstrapped once:
 # ops/update-deploy-engine.sh as root (installs the preview-up /
 # preview-remove forced-command verbs and the sudo rule), plus the shared
-# /etc/sakiot/preview.env with real credentials (see PREVIEW.md).
+# /etc/sakiot/preview.env with real credentials (see ops/README.md, Preview
+# slots).
 
 on:
   push:

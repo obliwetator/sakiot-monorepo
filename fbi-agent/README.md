@@ -1,63 +1,56 @@
-# FBI Agent
+# fbi-agent
 
-FBI Agent is the Discord bot part of the Sakiot system. It connects to Discord,
-joins voice channels, records voice activity, handles bot commands, writes
-recording metadata to Postgres, and exposes gRPC services used by the rest of
-the stack.
+The Discord bot: the only component that talks to Discord. It joins voice
+channels and records them, handles slash commands, keeps the guild cache and
+member/presence projections in PostgreSQL, and serves the `Jammer` and `Admin`
+gRPC services. How it fits with the other components is in
+[architecture](../docs/architecture.md).
 
-This project is functional, but it is not packaged as a supported application.
-No support is provided for running, deploying, configuring, or operating it. For
-now, you have to figure that out yourself from the code, environment variables,
-deployment scripts, local setup, and the shared database migrations in
-`../sakiot-db`.
+Recording is on by default. A member stops it for themselves in one server
+with `/recording opt-out` (or the web app's account menu) and resumes with
+`/recording opt-in`; open recordings close within a second and earlier ones are
+kept.
 
-## Role In The System
+## Configuration
 
-FBI Agent is linked with the other projects in this directory to make the whole
-Sakiot application:
+The build profile picks the Discord application (`src/config.rs`): a debug
+build reads `DISCORD_TOKEN_DEBUG` and `APPLICATION_ID_DEBUG`, a release build
+the `*_RELEASE` pair. That is why staging, a release build, puts the DEBUG
+bot's credentials in the `*_RELEASE` variables. The default gRPC address
+follows the profile too (`[::1]:50053` debug, `[::1]:50052` release);
+`GRPC_ADDR` overrides it. A release build refuses to start without
+`FBI_AGENT_REGISTRY_SECRET`.
 
-- `web-server` reads the recordings and metadata produced by this bot and
-  exposes them through HTTP APIs.
-- `sakiot-stage` is the web UI that talks to `web-server`.
-- `sakiot-paths` provides the shared recording path layout used by the bot and
-  server.
-- `sakiot-proto` provides the shared gRPC contract and generated Rust types used
-  by the bot and server.
-- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `web-server`.
+## Releases and draining
 
-## What It Does
+Each release runs as its own unit, `sakiot-fbi-agent@<release_id>.service`
+(`sakiot-staging-fbi-agent@...` on staging), from its own directory:
 
-- Connects to Discord using Serenity and Songbird.
-- Records Discord voice audio into the shared Sakiot recording layout.
-  Recording is on by default; a member can stop it for themselves in one
-  server with `/recording opt-out` (or the web app's account menu) and resume
-  it with `/recording opt-in`. Open recordings close within a second, and
-  earlier recordings are kept.
-- Stores guild, channel, user, recording, and runtime metadata in Postgres.
-- Provides gRPC APIs for administration and bot control.
-- Supports drain-aware release deployment through the root `../ops/` pipeline.
-- Emits telemetry and process metrics for observability.
-
-Runtime media uses `SAKIOT_DATA_DIR`; without it, the fallback is `../data`
-relative to the process working directory. `cargo dev` configures the
-repository data directory explicitly. Use an absolute path for manual runs or
-containers, such as `SAKIOT_DATA_DIR=/data`. Production paths and legacy-media
-migration procedures are documented in [operations](../ops/README.md).
-
-## Status
-
-This is personal/project code, not a turnkey product. It may require specific
-Discord application settings, shared database migrations, secrets, filesystem
-paths, systemd units, and matching versions of the sibling projects.
-
-## Database Migrations
-
-Database migrations are owned by the shared `../sakiot-db` project. This
-service does not keep service-local migrations and does not run migrations on
-startup.
-
-```sh
-cd ../sakiot-db
-sqlx migrate info --source migrations
-sqlx migrate run --source migrations
+```text
+/srv/sakiot/releases/<release_id>/fbi-agent/fbi_agent
+/srv/sakiot/releases/<release_id>/fbi-agent/service.env
 ```
+
+The deploy engine writes `service.env` with `BOT_ROLE`, `BOT_INSTANCE_ID`,
+`RELEASE_ID`, a unique loopback `GRPC_ADDR`, `SAKIOT_DATA_DIR`, and
+`DRAIN_TIMEOUT_SECONDS=0`, which makes a draining instance wait as long as its
+voice connections last.
+
+A deploy starts the new release, then drains the old one over the `Admin`
+service; the old instance exits once it has no voice connections. The units
+use `Restart=on-failure`, so a cleanly drained release stays stopped, and
+`TimeoutStopSec=infinity`, so systemd never kills an instance that is still
+recording. Only the newest active release is enabled on boot.
+
+During a handover:
+
+- Only the active release writes the guild cache (guilds, roles, channels,
+  overwrites, member roles, `guilds_present`). A draining release keeps
+  recording but skips those writes and the periodic resync. A drain is
+  cancelled only when a deploy rolls back; the instance then resumes writing
+  and resyncs at once.
+- The member and voice presence projections follow ownership instead: an
+  instance keeps writing the guilds it claimed in `guild_projection_state`,
+  even while draining, until the new release claims them from a complete
+  snapshot. A draining instance never claims, and a cancelled drain refreshes
+  and reclaims every guild (`src/projections.rs`).

@@ -1,156 +1,86 @@
-# Web Server
+# web-server
 
-Web Server is the Rust HTTP API for the Sakiot system. It serves authentication,
-Discord user and guild data, recording metadata, audio files, live playback
-state, waveform data, clips, stamps, admin controls, OpenAPI output, and runtime
-connections to FBI Agent instances.
-
-This project is functional, but it is not packaged as a supported application.
-No support is provided for running, deploying, configuring, or operating it. For
-now, you have to figure that out yourself from the code, environment variables,
-the shared database migrations in `../sakiot-db`, and local setup.
-
-## Local Debug
-
-For a quick local edit loop, `cargo dev up --fixtures skip` starts Postgres,
-runs migrations, seeds a dev account, starts the frontend, and runs this server
-under `cargo watch` with the `dev-login` cargo feature (Discord OAuth bypass via
-`GET /api/dev_login` and `DEV_LOGIN_SECRET`). See the root `README.md`.
-
-When running manually:
+The HTTP API, authentication, media rendering and serving, background jobs, and
+the gRPC client to `fbi-agent`. How it fits with the other components is in
+[architecture](../docs/architecture.md); `cargo dev up` from the repository root
+runs it locally. To run it by itself:
 
 ```sh
 cargo run -p web-server --bin web_server --features dev-login
 ```
 
-## Role In The System
+The `dev-login` feature adds `/api/dev_login` and the load-test harness
+(`src/loadtest/`). Local, staging and preview builds enable it; production
+builds never do.
 
-Web Server is linked with the other projects in this directory to make the whole
-Sakiot application:
+## OpenAPI
 
-- `fbi-agent` records Discord voice audio and writes the metadata this server
-  reads.
-- `sakiot-stage` is the frontend that consumes this server's API.
-- `sakiot-paths` provides the shared path layout used to find recordings,
-  waveform data, live streams, and clips.
-- `sakiot-proto` provides the shared gRPC contract and generated Rust types used
-  to talk to FBI Agent instances.
-- `sakiot-db` owns the shared Postgres schema and migrations used by this service and `fbi-agent`.
-
-## What It Does
-
-- Exposes the `/api` HTTP routes used by the frontend.
-- Handles Discord OAuth, JWT cookies, refresh, logout, and protected API access.
-- Serves recorded audio, live HLS playback, waveform data, no-silence output,
-  and downloadable recordings.
-- Manages clips, stamps, and cooldown admin settings.
-- Registers and queries FBI Agent gRPC endpoints.
-- Publishes OpenAPI documentation at `/api-doc/openapi.json` and Scalar at
-  `/scalar`.
-- Emits HTTP metrics and telemetry for observability.
-
-Every request's latency is split into named segments (`auth`, `perm`,
-`session`, `tree`, `plan`, and so on) that feed the
-`http_server_segment_duration` histogram. With
-`SAKIOT_SERVER_TIMING_HEADER=true`, which local, staging, and preview set and
-production must not, the same segments come back as a `Server-Timing` header
-and appear in the browser's DevTools under Network > Timing. A segment sums
-all its calls and notes the count, so a query repeated per row stands out.
-Segments may nest, so they do not add up to `total`. Wrap new work in
-`server_timing::measure("name", future)` to add a segment.
-
-Export the same OpenAPI document without starting the service or connecting to
-the database:
+The document is generated at compile time and served at
+`/api-doc/openapi.json`, with Scalar at `/scalar`. Export it without starting
+the service or connecting to a database:
 
 ```sh
 SQLX_OFFLINE=true cargo run --locked -p web-server --bin export_openapi
 ```
 
-Runtime media uses `SAKIOT_DATA_DIR`; without it, the fallback is `../data`
-relative to the process working directory. `cargo dev` configures the
-repository data directory explicitly. Use an absolute path for manual runs or
-containers, such as `SAKIOT_DATA_DIR=/data`. Production paths and legacy-media
-migration procedures are documented in [operations](../ops/README.md).
+## Request timing
 
-## Status
+Every request's latency is split into named segments (`auth`, `perm`,
+`session`, `tree`, `plan` and so on) that feed the
+`http_server_segment_duration` histogram. With
+`SAKIOT_SERVER_TIMING_HEADER=true`, which local, staging and preview set and
+production must not, the segments also come back as a `Server-Timing` header,
+shown in the browser's DevTools under Network > Timing. A segment sums all its
+calls and notes the count, so a query repeated per row stands out. Segments
+may nest, so they do not add up to `total`. Wrap new work in
+`server_timing::measure("name", future)` to add a segment.
 
-This is personal/project code, not a turnkey product. It assumes a matching
-database schema, Discord configuration, filesystem layout, secrets, and sibling
-project versions.
+## Composition exports
 
-## Database Migrations
+`POST /api/audio/clips/{guild_id}/compose` stores the export as a job in
+PostgreSQL before answering `202`. It accepts an optional `Idempotency-Key`
+header (1–128 ASCII letters, digits or hyphens): repeating the key with the
+same body for the same user and guild returns the existing job, and a
+different body returns `409`. The returned `id` is a job id, not the clip id.
 
-Database migrations are owned by the shared `../sakiot-db` project. This
-service does not keep service-local migrations and does not run migrations on
-startup.
+`GET /api/audio/clips/{guild_id}/compose/{job_id}` is owner-scoped and returns
+`queued`, `running`, `ready` or `failed`, with `stage`, `progress`, `error` and
+`result_clip_id`. Unknown, expired and other users' jobs return `404`. Results
+and keys are kept for 30 days. The editor remembers pending requests per user
+and guild, reconnects after a reload, and retries a lost submission with the
+original key. Closing the export dialog does not cancel the job.
 
-```sh
-cd ../sakiot-db
-sqlx migrate info --source migrations
-sqlx migrate run --source migrations
-```
+The server runs each job in a child of its own executable (the internal
+`compose-worker` command) in an isolated process group, with no extra service
+or broker. PostgreSQL serializes claims across overlapping releases. Limits:
 
-## Durable composition exports
-
-Composition exports are stored in PostgreSQL before the API returns `202`.
-`POST /api/audio/clips/{guild_id}/compose` accepts an optional `Idempotency-Key`
-header (1–128 ASCII letters, digits, or hyphens). Repeating the same key and body
-for the same user/guild returns the existing job; changing the body returns
-`409`. Send a new key for an intentionally new export. The returned `id` is a
-job ID, separate from the destination clip ID.
-
-`GET /api/audio/clips/{guild_id}/compose/{job_id}` is owner-scoped and read-only.
-It returns `queued`, `running`, `ready`, or `failed`, plus `stage`, `progress`,
-`error`, and `result_clip_id` (populated on success). Unknown, expired, and other
-users' jobs return `404`. Terminal results and request keys remain available for
-30 days. The editor stores pending requests per user/guild, reconnects after a
-refresh, and safely retries a lost submission response with the original key.
-Closing the export dialog does not cancel the job.
-
-The web server supervises its own executable in an isolated Linux process
-group (`compose-worker` is an internal command). No extra service or queue
-broker is needed. PostgreSQL serializes claims across overlapping web releases.
-Each accepted job runs with these conservative limits:
-
-- One running composition per database; at most 100 queued/running jobs total
+- One running composition per database; at most 100 queued or running jobs,
   and three per user.
-- A 60-second lease, renewed every 15 seconds. Attempts that lose their lease
-  cannot publish. A crash is retried from the beginning, up to three attempts;
-  ordinary transient failures wait 10 seconds times the attempt number.
-- A 30-minute attempt deadline and 2 GiB process address-space limit. FFmpeg
-  inherits the child limits. A watchdog also stops the group if its supervisor
-  disappears.
-- An 8 GiB per-file limit and a total attempt-workspace budget checked every
-  two seconds. Sources are pinned with hard links on the media filesystem.
-  Budget failures fail the export instead of publishing partial output.
+- A 60-second lease renewed every 15 seconds. An attempt that loses its lease
+  cannot publish. A crash retries from the beginning, up to three attempts;
+  transient failures wait 10 seconds times the attempt number.
+- A 30-minute attempt deadline and a 2 GiB address-space limit, inherited by
+  FFmpeg. A watchdog stops the group if its supervisor disappears.
+- An 8 GiB per-file limit and a total workspace budget checked every two
+  seconds. Sources are pinned with hard links. Exceeding a budget fails the
+  export instead of publishing partial output.
 
-Source authorization and metadata are checked before enqueueing; source
-hydration, unknown-duration probing, and rendering happen inside the bounded
-worker. Source access and immutable filenames are checked again on execution.
-Overwrite publication compares the destination's previous filename, so an
-intervening overwrite or deletion produces a conflict instead of replacing
-newer work. Output is flushed and renamed to an immutable filename before one
-transaction publishes the clip, its archive revision, and job completion.
-An ambiguous commit never causes immediate output deletion.
+Authorization and metadata are checked before enqueueing and again when the
+job runs. Output is flushed and renamed to an immutable file name before one
+transaction publishes the clip, its archive revision and the job result. An
+overwrite compares the destination's previous file name, so an intervening
+overwrite or deletion becomes a conflict instead of replacing newer work.
 
-Temporary attempts live under `clips/.composition-jobs/`; completed audio lives
-under `clips/compositions/`. The reconciler removes inactive attempt directories
-and unreferenced composition outputs after an hour. It also removes superseded
-local overwrite files after that grace period. It never deletes a filename
-still referenced by a clip, including a soft-deleted clip. Archive eviction and
-waveform caches use immutable file revisions, so stale work cannot target a
-replacement file. Waveforms remain regenerable caches and are generated on
-request after composition publication.
+Attempts work under `clips/.composition-jobs/` and finished audio lives under
+`clips/compositions/`. After an hour the reconciler removes inactive attempt
+directories, unreferenced outputs and superseded overwrite files, but never a
+file a clip still references, soft-deleted clips included.
 
-New jobs use renderer contract version 2. Before claiming work, the worker
-migrates queued version 1 jobs and expired version 1 attempts to version 2;
-active version 1 leases can finish unchanged. Terminal results and unknown
-versions are not rewritten. See [incremental rendering](../sakiot-dsp/STREAMING.md)
-for the shared DSP pipeline, resource limits, and version migration.
-A rollback to a release without the worker leaves accepted jobs queued until a
-compatible release runs again; do not drop the queue tables during rollback.
-
-Inspect the queue without modifying it:
+Jobs record the DSP renderer version they need (currently 2; see
+[sakiot-dsp](../sakiot-dsp/README.md)). Before claiming, the worker upgrades
+queued and expired version 1 jobs; a running version 1 attempt finishes as is.
+A rollback to a release without this worker leaves accepted jobs queued, so
+never drop the queue tables during a rollback.
 
 ```sql
 SELECT state, stage, count(*), min(created_at) AS oldest
@@ -160,24 +90,46 @@ SELECT id, state, attempts, lease_expires_at, error
 FROM composition_jobs WHERE state <> 'ready' ORDER BY created_at;
 ```
 
-Tests use SQLx disposable databases and temporary media roots. The integration
-suite runs the actual worker binary and FFmpeg, including process termination
-and recovery. No test should use the runtime database.
+The integration tests run the real worker binary and FFmpeg, including process
+termination and recovery, against disposable databases and media roots.
 
 ## Recording lifecycle
 
-Guild managers configure opt-in retention and voice-channel exclusions at
-`/api/admin/guilds/{guild_id}/recording-policy`. Retention is disabled by
-default. Any member can opt out of being recorded in a server, for themselves
-only, at `/api/users/current/guilds/{guild_id}/recording-opt-out` (the bot's
-`/recording` command writes the same table). Earlier recordings are kept. The manager-only
-`DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}`
-returns `202` and a durable, auditable status URL. By default it immediately
-soft-deletes: the session and related clips disappear from view, while their
-database records and media remain. Retention uses this same soft mode.
-Permanent purging requires both `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`
-and an explicit `?mode=permanent` request; the flag alone never upgrades old
-soft deletions. The current UI offers only soft deletion. See the
-[media archive runbook](../ops/B2_MEDIA_ARCHIVE.md#recording-lifecycle-deletion)
-for rollout order, paused legacy jobs, monitoring, and the legacy provenance
-limit. Apply both lifecycle migrations before starting this release.
+Guild managers set retention and excluded voice channels at
+`/api/admin/guilds/{guild_id}/recording-policy` (the Voice Settings page).
+Retention is 1–3650 days, or off, which is the default. Any member can opt out
+of being recorded in a server at
+`/api/users/current/guilds/{guild_id}/recording-opt-out`, the same table the
+bot's `/recording` command writes. Opting out keeps earlier recordings.
+
+Retention looks only at finalized sessions, by `ended_at`, and soft-deletes at
+most 25 expired sessions per minute.
+
+`DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}` needs a
+live Manage Guild grant and returns `202` with a stable, manager-only
+`status_url`. By default it soft-deletes at once: the session and its clips
+disappear from view while their rows and media stay, so the deletion is
+recoverable and does not free storage. Repeating it is idempotent. A
+`recording_deletion_jobs` row keeps the actor or retention reason, the mode,
+the stage and the outcome. Restoring a soft-deleted session has no UI yet.
+
+Permanent purging needs both `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`
+and an explicit manager request with `?mode=permanent`; the flag alone never
+upgrades earlier soft deletions. The fenced worker removes every B2 version and
+delete marker under each source prefix, the local originals and derivatives,
+then the database rows, and records who authorized it and when. It is
+irreversible and not offered in the UI. A failed or `paused` permanent job
+stays hidden until the same request requeues it after review. Database backups
+and other copies follow their own retention.
+
+Clip-editor overwrites are tracked in `clip_source_history`, but versions
+overwritten before the oldest retained composition job could not be linked
+when that ledger was backfilled. Before purging a guild with old overwrites,
+check those versions by hand rather than trusting the job's verification.
+
+```sql
+SELECT id, guild_id, recording_session_id, reason, requested_by,
+       permanent_requested_by, permanent_requested_at, mode, state, stage,
+       attempts, error, created_at, finished_at
+FROM recording_deletion_jobs ORDER BY created_at DESC LIMIT 50;
+```

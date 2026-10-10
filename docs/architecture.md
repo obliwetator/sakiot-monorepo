@@ -140,9 +140,9 @@ agree:
   (`web-server/src/clips.rs`).
 
 Every clip access check goes through a channel, so an upload should belong to
-a channel the uploader can access and follow that channel's permissions.
-Decided with the owner on 2026-09-30. The crate core deliberately has no browser or server
-dependencies; the `wasm` feature only adds a thin `wasm-bindgen` boundary.
+a channel the uploader can access and follow that channel's permissions. The crate core deliberately has no browser
+or server dependencies; the `wasm` feature only adds a thin `wasm-bindgen`
+boundary.
 
 `sakiot-dsp` is a member of the root Cargo workspace, so the workspace build,
 tests, and Clippy cover its native side. A dedicated CI job additionally lints
@@ -160,7 +160,7 @@ the `wasm` feature, builds the WASM artifact, and verifies it against native.
 - **`Admin`**, called by the deploy engine — drain, cancel drain, status,
   shutdown-when-empty, force shutdown. These support zero-downtime deploys: a
   new agent starts, the old one drains until its voice connections are empty,
-  then exits.
+  then exits ([`fbi-agent`](../fbi-agent/README.md#releases-and-draining)).
 
 Every call presents the environment's `FBI_AGENT_REGISTRY_SECRET` in the
 `x-fbi-agent-registry-secret` metadata (`sakiot_proto::INTERNAL_SECRET_HEADER`),
@@ -287,8 +287,8 @@ voice presence).
   `resync_required`. The message types are in the OpenAPI document, so the
   frontend's generated types cover them.
 - **Shutdown**: on SIGTERM the server closes every socket with 1012 at once,
-  then gives in-flight HTTP requests 5 s. actix's default handling waited the
-  full 30 s for open sockets.
+  then gives in-flight HTTP requests 5 s, so open sockets never hold up a
+  restart.
 - **Hosting**: every environment needs nginx to forward WebSocket upgrades
   on `/api/realtime` and the CSP to allow the socket; see
   [`ops/README.md`](../ops/README.md). Where the socket keeps failing,
@@ -428,8 +428,7 @@ not drift:
   databases, and test fixtures.
 - **Version → release.** `[workspace.package] version` is the only release
   trigger. Bumping it and merging tags `v<version>`, which deploys to
-  production. See [`ops/README.md`](../ops/README.md) and
-  [`STAGING.md`](../STAGING.md).
+  production. See [operations](../ops/README.md#release-flow).
 
 Because the services share `sakiot-paths`, `sakiot-proto` and one schema, a
 change that spans a contract is one atomic commit rather than a coordinated
@@ -440,5 +439,4 @@ rollout. That is the main reason this is a monorepo.
 Pushes to `main` deploy to staging; a version bump promotes to production after
 staging verifies; branch pushes can get a preview slot. Rollback is a workflow.
 The deploy engine is `ops/sakiot-deploy`, a typed Rust CLI rather than a shell
-script. Details in [`ops/README.md`](../ops/README.md),
-[`STAGING.md`](../STAGING.md) and [`PREVIEW.md`](../PREVIEW.md).
+script. Details in [operations](../ops/README.md).

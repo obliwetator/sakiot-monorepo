@@ -1,108 +1,14 @@
-# FBI Agent Deployment Notes
+# fbi-agent agent rules
 
-## Deployment Rule
+Never deploy, restart, stop, enable, disable or kill an `fbi-agent` systemd
+service, and never run `../ops/deploy`, `../ops/release`, `systemctl`,
+`grpcurl` or other service-management commands, unless the user explicitly
+asks for deployment or service control. A running agent is recording people.
 
-Do not deploy, restart, stop, enable, disable, or kill any `fbi-agent` systemd service unless the user explicitly asks for deployment or service control.
+For verification, use Cargo only (`cargo check`, `cargo build`,
+`cargo build --release`, `cargo test`). Database tests use `#[sqlx::test]` and
+must never run against the runtime `DATABASE_URL`: load the root `.env`, start
+PostgreSQL with `cargo dev db up`, and run them with
+`DATABASE_URL="$SAKIOT_TEST_DATABASE_URL"`.
 
-For verification during normal code work, only run Cargo commands such as:
-
-- `cargo check`
-- `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL" cargo test`
-- `cargo build`
-- `cargo build --release`
-
-Database tests use `#[sqlx::test]` and must never run with the runtime
-`DATABASE_URL`. Load the root `.env` first so `SAKIOT_TEST_DATABASE_URL` is set.
-
-Especially in local development, make sure the local PostgreSQL container is
-running before executing database-backed tests. Run `cargo dev up --fixtures skip`
-from the repository root for the full development environment, or `cargo dev db up`
-when only PostgreSQL, migrations, and seed data are needed. Then run SQLx tests
-with `DATABASE_URL="$SAKIOT_TEST_DATABASE_URL"` as shown above.
-
-Do not use `../ops/deploy`, `../ops/release`, `systemctl ...`, `grpcurl ...`, or service-management commands unless manually instructed.
-
-## Current Runtime Model
-
-Production bot releases run as system services (staging uses
-`sakiot-staging-fbi-agent@<release_id>.service`):
-
-```text
-sakiot-fbi-agent@<release_id>.service
-```
-
-The root deployment framework and systemd template live under `../ops/`.
-
-Each release has its own immutable-ish binary and env file:
-
-```text
-/srv/sakiot/releases/<release_id>/fbi-agent/fbi_agent
-/srv/sakiot/releases/<release_id>/fbi-agent/service.env
-```
-
-`service.env` contains:
-
-```env
-BOT_ROLE=active
-BOT_INSTANCE_ID=<host>-<release_id>
-RELEASE_ID=<release_id>
-GRPC_ADDR=<unique localhost port>
-DRAIN_TIMEOUT_SECONDS=0
-SAKIOT_DATA_DIR=<instance data dir>
-```
-
-`DRAIN_TIMEOUT_SECONDS=0` means a draining instance waits forever until voice is empty.
-
-## Deploy Flow
-
-Pushes to `main` deploy staging. Bumping the workspace version in the root
-`Cargo.toml` tags `vX.Y.Z` after staging verifies, which promotes to
-production; `../ops/release` is the manual fallback. Deployment implementation
-and rollback live under `../ops/`. See `../ops/README.md`.
-
-## Current Important Service Settings
-
-Release units use:
-
-```ini
-Restart=on-failure
-TimeoutStopSec=infinity
-```
-
-Reason:
-
-- `Restart=on-failure` prevents a cleanly drained old release from restarting.
-- `TimeoutStopSec=infinity` prevents systemd from killing a draining instance while it is still recording.
-
-## Proto Location
-
-The shared gRPC contract lives in the sibling `sakiot-proto` crate:
-
-```text
-../sakiot-proto/proto/fbi_agent.proto
-```
-
-Both `fbi-agent` and `web-server` depend on `sakiot-proto` for generated Rust
-types instead of using a repo-local proto symlink.
-
-## Current Expected State
-
-Normal post-deploy state can include:
-
-- one active release handling Discord Gateway/events/commands
-- zero or more old draining releases while they still have voice connections
-
-Only the active release writes the guild cache (guilds, roles, channels,
-overwrites, member roles, `guilds_present`). A draining release keeps recording
-but skips those writes, including the periodic resync. A drain is cancelled
-only when a deploy rolls back; the instance then resumes writing and runs a
-full resync straight away to catch up on what it skipped.
-
-The member and voice presence projections (`guild_members`, `voice_presence`)
-follow ownership instead of the drain state: an instance writes the guilds it
-claimed in `guild_projection_state`, and keeps writing them while draining
-until the new release claims them from a complete snapshot. A draining
-instance never claims; a cancelled drain refreshes every guild and reclaims
-them. See `src/projections.rs`.
-
-Only the newest active release should be enabled on boot.
+The release and drain model is described in [README.md](README.md).
