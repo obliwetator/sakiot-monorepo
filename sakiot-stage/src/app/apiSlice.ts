@@ -267,6 +267,13 @@ export const apiSlice = createApi({
 		logout: builder.mutation<void, void>({
 			query: () => ({ url: apiUrl(API_ROUTES.logout), method: "POST" }),
 		}),
+		/** Ends every session of the account; other browsers stop at their next refresh. */
+		logoutEverywhere: builder.mutation<void, void>({
+			query: () => ({
+				url: apiUrl(API_ROUTES.currentUserSessions),
+				method: "DELETE",
+			}),
+		}),
 		getCurrentGuildDirs: builder.query<
 			Channels[],
 			{ guild_id: string; as_role?: string }
@@ -834,6 +841,7 @@ export const {
 	useRemoveSilenceMutation,
 	useCheckSilenceFileQuery,
 	useRefreshMutation,
+	useLogoutEverywhereMutation,
 	useLogoutMutation,
 	useCreateClipMutation,
 	useGetLiveStateQuery,

@@ -4,6 +4,7 @@ import { problemFromError } from "../app/apiError";
 import {
 	type User,
 	useGetRecordingOptOutQuery,
+	useLogoutEverywhereMutation,
 	useLogoutMutation,
 	useSetRecordingOptOutMutation,
 } from "../app/apiSlice";
@@ -23,10 +24,13 @@ import {
 } from "../shared/ui";
 
 const RECORD_ME = "record-me";
+const LOG_OUT = "log-out";
+const LOG_OUT_EVERYWHERE = "log-out-everywhere";
 
 export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 	const { user, guild } = props;
 	const [logout] = useLogoutMutation();
+	const [logoutEverywhere] = useLogoutEverywhereMutation();
 	// Recording is per server and on by default; members opt out here or with
 	// `/recording opt-out` in Discord.
 	const { data: optOut, isError: optOutUnavailable } =
@@ -35,10 +39,11 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 	const [menuError, setMenuError] = useState<string | null>(null);
 
 	const handleAction = async (key: string) => {
-		if (key !== "Logout") return;
+		if (key !== LOG_OUT && key !== LOG_OUT_EVERYWHERE) return;
 		setMenuError(null);
 		try {
-			await logout().unwrap();
+			// Everywhere ends this browser's session too.
+			await (key === LOG_OUT ? logout() : logoutEverywhere()).unwrap();
 		} catch (error) {
 			// 401 means the session was already gone, which is a successful
 			// logout. Anything else (network, 5xx) may leave the server session
@@ -116,7 +121,8 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 							</MenuSection>
 						) : null}
 						<MenuSection aria-label="Account">
-							<MenuItem id="Logout">Log out</MenuItem>
+							<MenuItem id={LOG_OUT}>Log out</MenuItem>
+							<MenuItem id={LOG_OUT_EVERYWHERE}>Log out everywhere</MenuItem>
 						</MenuSection>
 					</Menu>
 				</Popover>

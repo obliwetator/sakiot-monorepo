@@ -256,6 +256,30 @@ async function openCooldowns(page: Page) {
 	await expect(page.getByLabel("Cooldown (seconds)").first()).toHaveValue("10");
 }
 
+test("logging out everywhere ends every session and leaves the app", async ({
+	page,
+}) => {
+	await mockApi(page);
+	// Registered after mockApi, so it answers first.
+	await page.route(
+		`${API_ORIGIN}${API_PREFIX}/users/current/sessions`,
+		async (route) => {
+			await route.fulfill({ status: 200, headers: corsHeaders });
+		},
+	);
+	await openCooldowns(page);
+	const ended = page.waitForRequest(
+		(request) =>
+			request.method() === "DELETE" &&
+			new URL(request.url()).pathname ===
+				`${API_PREFIX}/users/current/sessions`,
+	);
+	await page.getByRole("button", { name: "Open user menu" }).click();
+	await page.getByRole("menuitem", { name: "Log out everywhere" }).click();
+	await ended;
+	await expect(page).toHaveURL(/^http:\/\/[^/]+\/$/);
+});
+
 test("account menu and server picker support keyboard dismissal and restore focus", async ({
 	page,
 	isMobile,
@@ -275,7 +299,10 @@ test("account menu and server picker support keyboard dismissal and restore focu
 			name: "Record my voice in Test Guild",
 		}),
 	).toBeFocused();
-	await expect(page.getByRole("menuitem")).toHaveText(["Log out"]);
+	await expect(page.getByRole("menuitem")).toHaveText([
+		"Log out",
+		"Log out everywhere",
+	]);
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("menu")).toHaveCount(0);
 	await expect(trigger).toBeFocused();

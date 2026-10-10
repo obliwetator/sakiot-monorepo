@@ -71,6 +71,7 @@ export const API_ROUTES = {
 	guildMembers: "/api/admin/guilds/{guild_id}/members",
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
+	currentUserSessions: "/api/users/current/sessions",
 	recordingOptOut: "/api/users/current/guilds/{guild_id}/recording-opt-out",
 } satisfies Record<string, keyof paths & string>;
 
