@@ -223,6 +223,8 @@ interface MarqueeState {
 	currentX: number;
 	currentY: number;
 	track: number;
+	/** The rectangle's position inside the scrolled tracks container. */
+	offset: { left: number; top: number } | null;
 }
 
 export function Timeline(props: {
@@ -244,6 +246,7 @@ export function Timeline(props: {
 	audacityStyleInteraction?: boolean;
 }) {
 	const { editor } = props;
+	const { panView, setPasteTarget, zoomAt } = editor;
 	const viewportId = useId();
 	const audacityStyleInteraction = props.audacityStyleInteraction ?? false;
 	const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -254,6 +257,39 @@ export function Timeline(props: {
 	const rowElementsRef = useRef(new Map<number, HTMLElement>());
 	const [plotWidth, setPlotWidth] = useState(1);
 	const [preview, setPreview] = useState<DragPreviewState | null>(null);
+	const fraction = (sec: number) =>
+		((sec - editor.viewStartSec) / Math.max(1, editor.viewWidthSec)) * 100;
+
+	const pxPerSec = plotWidth / Math.max(1, editor.viewWidthSec);
+	const rows = Array.from({ length: editor.edit.tracks }, (_, track) => track);
+
+	/**
+	 * The row under the pointer, extrapolated past the last rendered row with
+	 * the real row pitch. Rects are viewport-relative, so this stays correct
+	 * no matter how much the track area is scrolled mid-drag.
+	 */
+	const trackAtClientY = (clientY: number): number => {
+		let nearest: { track: number; dist: number } | null = null;
+		let lastTop = 0;
+		let lastBottom = 0;
+		let lastTrack = 0;
+		for (const [track, element] of rowElementsRef.current) {
+			const rect = element.getBoundingClientRect();
+			lastTop = rect.top;
+			lastBottom = rect.bottom;
+			lastTrack = track;
+			const dist = Math.abs(clientY - (rect.top + rect.bottom) / 2);
+			if (!nearest || dist < nearest.dist) nearest = { track, dist };
+		}
+		if (!nearest) return 0;
+		if (nearest.dist <= TRACK_HEIGHT_PX / 2) return nearest.track;
+		// Beyond the last rendered row (e.g. the new-track area): extrapolate
+		// from the last row's pitch (row height plus its margin).
+		const pitch = lastBottom - lastTop + 4;
+		const beyond = Math.round((clientY - (lastTop + lastBottom) / 2) / pitch);
+		return Math.max(0, lastTrack + beyond);
+	};
+
 	const segmentDrag = usePointerDrag<SegmentDragState>({
 		compute: (ghost, event) => {
 			const container = tracksRef.current;
@@ -323,6 +359,23 @@ export function Timeline(props: {
 			.map((segment) => segment.id);
 	};
 
+	/** Measured in the pointer handlers: the DOM is not read during render. */
+	const marqueeOffset = (
+		state: Omit<MarqueeState, "offset">,
+	): MarqueeState["offset"] => {
+		const container = tracksRef.current;
+		if (!container) return null;
+		return marqueeOverlayOffset(
+			state.startX,
+			state.startY,
+			state.currentX,
+			state.currentY,
+			container.getBoundingClientRect(),
+			container.scrollLeft,
+			container.scrollTop,
+		);
+	};
+
 	const marquee = usePointerDrag<MarqueeState>({
 		compute: (ghost, event) => {
 			// Keep the rectangle inside the tracks container: dragging toward
@@ -333,11 +386,8 @@ export function Timeline(props: {
 			const point = rect
 				? clampPointToRect(event.clientX, event.clientY, rect)
 				: { x: event.clientX, y: event.clientY };
-			const next = {
-				...ghost,
-				currentX: point.x,
-				currentY: point.y,
-			};
+			const moved = { ...ghost, currentX: point.x, currentY: point.y };
+			const next = { ...moved, offset: marqueeOffset(moved) };
 			const ids = marqueeOverlapIds(next);
 			if (marqueeSelectionChanged(ids, lastMarqueeSelectionRef.current)) {
 				lastMarqueeSelectionRef.current = ids;
@@ -347,6 +397,7 @@ export function Timeline(props: {
 		},
 		onCommit: () => {},
 	});
+	const marqueeGhost = marquee.snapshot?.ghost ?? null;
 
 	// Escape aborts a live marquee so a stuck or unwanted box never lingers.
 	const marqueeRef = useRef(marquee);
@@ -384,14 +435,15 @@ export function Timeline(props: {
 		editor.selectTrack(track);
 		lastMarqueeSelectionRef.current = [];
 		editor.selectMany([]);
+		const origin = {
+			startX: event.clientX,
+			startY: event.clientY,
+			currentX: event.clientX,
+			currentY: event.clientY,
+			track,
+		};
 		marquee.begin(
-			{
-				startX: event.clientX,
-				startY: event.clientY,
-				currentX: event.clientX,
-				currentY: event.clientY,
-				track,
-			},
+			{ ...origin, offset: marqueeOffset(origin) },
 			event.clientX,
 			event.clientY,
 		);
@@ -416,12 +468,6 @@ export function Timeline(props: {
 		return () => observer.disconnect();
 	}, []);
 
-	const fraction = (sec: number) =>
-		((sec - editor.viewStartSec) / Math.max(1, editor.viewWidthSec)) * 100;
-
-	const pxPerSec = plotWidth / Math.max(1, editor.viewWidthSec);
-	const rows = Array.from({ length: editor.edit.tracks }, (_, track) => track);
-
 	const findTrackAtY = useCallback((clientY: number): number | null => {
 		let best: { track: number; dist: number } | null = null;
 		for (const [track, element] of rowElementsRef.current) {
@@ -433,33 +479,6 @@ export function Timeline(props: {
 		if (!best || best.dist > TRACK_HEIGHT_PX) return null;
 		return best.track;
 	}, []);
-
-	/**
-	 * The row under the pointer, extrapolated past the last rendered row with
-	 * the real row pitch. Rects are viewport-relative, so this stays correct
-	 * no matter how much the track area is scrolled mid-drag.
-	 */
-	const trackAtClientY = (clientY: number): number => {
-		let nearest: { track: number; dist: number } | null = null;
-		let lastTop = 0;
-		let lastBottom = 0;
-		let lastTrack = 0;
-		for (const [track, element] of rowElementsRef.current) {
-			const rect = element.getBoundingClientRect();
-			lastTop = rect.top;
-			lastBottom = rect.bottom;
-			lastTrack = track;
-			const dist = Math.abs(clientY - (rect.top + rect.bottom) / 2);
-			if (!nearest || dist < nearest.dist) nearest = { track, dist };
-		}
-		if (!nearest) return 0;
-		if (nearest.dist <= TRACK_HEIGHT_PX / 2) return nearest.track;
-		// Beyond the last rendered row (e.g. the new-track area): extrapolate
-		// from the last row's pitch (row height plus its margin).
-		const pitch = lastBottom - lastTop + 4;
-		const beyond = Math.round((clientY - (lastTop + lastBottom) / 2) / pitch);
-		return Math.max(0, lastTrack + beyond);
-	};
 
 	// Ghosts and segments render inside the plot area (after the label gutter),
 	// so cursor-to-time mapping must use a track row's rect, not the container.
@@ -486,12 +505,12 @@ export function Timeline(props: {
 				clientX < plotBounds.left ||
 				clientX > plotBounds.left + plotBounds.width
 			) {
-				editor.setPasteTarget(null);
+				setPasteTarget(null);
 				return;
 			}
 			const track = findTrackAtY(clientY);
 			if (track === null) {
-				editor.setPasteTarget(null);
+				setPasteTarget(null);
 				return;
 			}
 			const fractionOfWidth = fractionInRect(clientX, plotBounds);
@@ -505,12 +524,12 @@ export function Timeline(props: {
 					segment.timelineStart <= startSec &&
 					segmentEnd(segment) > startSec,
 			);
-			editor.setPasteTarget(overSegment ? null : { startSec, track });
+			setPasteTarget(overSegment ? null : { startSec, track });
 		},
 		[
 			currentPlotBounds,
 			editor.edit.segments,
-			editor.setPasteTarget,
+			setPasteTarget,
 			editor.viewStartSec,
 			editor.viewWidthSec,
 			findTrackAtY,
@@ -528,8 +547,8 @@ export function Timeline(props: {
 	);
 	const clearPasteTarget = useCallback(() => {
 		lastPointerRef.current = null;
-		editor.setPasteTarget(null);
-	}, [editor.setPasteTarget]);
+		setPasteTarget(null);
+	}, [setPasteTarget]);
 	const handleTracksScroll = useCallback(() => {
 		const point = lastPointerRef.current;
 		if (point) updatePasteTargetAtPoint(point.clientX, point.clientY);
@@ -546,7 +565,7 @@ export function Timeline(props: {
 				const fraction = fractionInRect(event.clientX, currentPlotBounds());
 				const anchorSec = editor.viewStartSec + fraction * editor.viewWidthSec;
 				const factor = event.deltaY > 0 ? 1.1 : 1 / 1.1;
-				editor.zoomAt(factor, anchorSec);
+				zoomAt(factor, anchorSec);
 				return;
 			}
 
@@ -558,16 +577,14 @@ export function Timeline(props: {
 					: event.deltaMode === 2
 						? rawDelta * Math.max(1, bounds.width)
 						: rawDelta;
-			editor.panView(
-				(deltaPixels / Math.max(1, bounds.width)) * editor.viewWidthSec,
-			);
+			panView((deltaPixels / Math.max(1, bounds.width)) * editor.viewWidthSec);
 		},
 		[
 			currentPlotBounds,
-			editor.panView,
+			panView,
 			editor.viewStartSec,
 			editor.viewWidthSec,
-			editor.zoomAt,
+			zoomAt,
 		],
 	);
 
@@ -792,34 +809,19 @@ export function Timeline(props: {
 					onDragLeave={handleDragLeave}
 					className="flex-1 min-h-0 overflow-y-auto flex flex-col relative"
 				>
-					{(() => {
-						const marqueeState = marquee.snapshot?.ghost;
-						const container = tracksRef.current;
-						if (!marqueeState || !container) return null;
-						const rect = container.getBoundingClientRect();
-						const offset = marqueeOverlayOffset(
-							marqueeState.startX,
-							marqueeState.startY,
-							marqueeState.currentX,
-							marqueeState.currentY,
-							rect,
-							container.scrollLeft,
-							container.scrollTop,
-						);
-						return (
-							<div
-								aria-hidden="true"
-								className="border border-dashed border-focus bg-info/8 pointer-events-none z-20"
-								style={{
-									position: "absolute",
-									left: offset.left,
-									top: offset.top,
-									width: Math.abs(marqueeState.currentX - marqueeState.startX),
-									height: Math.abs(marqueeState.currentY - marqueeState.startY),
-								}}
-							/>
-						);
-					})()}
+					{marqueeGhost?.offset && (
+						<div
+							aria-hidden="true"
+							className="border border-dashed border-focus bg-info/8 pointer-events-none z-20"
+							style={{
+								position: "absolute",
+								left: marqueeGhost.offset.left,
+								top: marqueeGhost.offset.top,
+								width: Math.abs(marqueeGhost.currentX - marqueeGhost.startX),
+								height: Math.abs(marqueeGhost.currentY - marqueeGhost.startY),
+							}}
+						/>
+					)}
 					{rows.map((track) => {
 						return (
 							<TrackRow

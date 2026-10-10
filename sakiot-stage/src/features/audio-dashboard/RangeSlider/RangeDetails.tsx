@@ -1,13 +1,14 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { AudioParams } from "../../../Constants";
 import { formatDuration } from "../../../utils/formatTime";
+import type { AudioHandle } from "./audioHandle";
 import { PlaybackSpeedSlider } from "./PlaybackSpeedSlider";
 import { TimeEditors } from "./TimeEditor";
 import type { StartEnd } from "./useRangeSliderState";
 import { VolumeSlider } from "./VolumeSlider";
 
 export function RangeDetails(props: {
-	audioRef: HTMLAudioElement;
+	audio: AudioHandle;
 	params: Readonly<Partial<Record<AudioParams, string>>>;
 	startEnd: StartEnd;
 	setStartEnd: Dispatch<SetStateAction<StartEnd>>;
@@ -24,10 +25,10 @@ export function RangeDetails(props: {
 		<>
 			<div className="flex items-center justify-around flex-row gap-2 min-[900px]:gap-16 my-4 min-w-0">
 				<div className="min-w-0 [flex:1_1_0%] min-[900px]:[flex:0_1_200px]">
-					<VolumeSlider audioRef={props.audioRef} />
+					<VolumeSlider audio={props.audio} />
 				</div>
 				<div className="min-w-0 [flex:1_1_0%] min-[900px]:[flex:0_1_200px]">
-					<PlaybackSpeedSlider audioRef={props.audioRef} />
+					<PlaybackSpeedSlider audio={props.audio} />
 				</div>
 			</div>
 			<div className="flex flex-col min-[900px]:flex-row gap-2">
@@ -56,7 +57,7 @@ export function RangeDetails(props: {
 					<TimeEditors
 						startEnd={props.startEnd}
 						setStartEnd={props.setStartEnd}
-						audioRef={props.audioRef}
+						audio={props.audio}
 						durationSec={props.durationSec}
 						onPinEnd={props.onPinEnd}
 					/>

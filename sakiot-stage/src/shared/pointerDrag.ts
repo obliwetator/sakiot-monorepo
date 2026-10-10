@@ -30,7 +30,9 @@ export function usePointerDrag<G>(options: PointerDragOptions<G>) {
 	const [snapshot, setSnapshot] = useState<PointerDragSnapshot<G> | null>(null);
 	const snapshotRef = useRef<PointerDragSnapshot<G> | null>(null);
 	const optionsRef = useRef(options);
-	optionsRef.current = options;
+	useEffect(() => {
+		optionsRef.current = options;
+	});
 
 	const begin = useCallback((origin: G, pointerX: number, pointerY: number) => {
 		const next = { origin, ghost: origin, pointerX, pointerY };

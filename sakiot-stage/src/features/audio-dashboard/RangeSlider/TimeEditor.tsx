@@ -1,6 +1,7 @@
 import type React from "react";
 import { useState } from "react";
 import { TextField } from "../../../shared/ui";
+import type { AudioHandle } from "./audioHandle";
 import type { StartEnd } from "./useRangeSliderState";
 
 type Edge = "start" | "end";
@@ -9,7 +10,7 @@ function TimeEditor(props: {
 	edge: Edge;
 	startEnd: StartEnd;
 	setStartEnd: React.Dispatch<React.SetStateAction<StartEnd>>;
-	audioRef: HTMLAudioElement;
+	audio: AudioHandle;
 	durationSec: number;
 	onPinEnd?: () => void;
 }) {
@@ -30,7 +31,7 @@ function TimeEditor(props: {
 				start = Math.max(0, validEnd - minDistance);
 		}
 		props.setStartEnd([start, validEnd]);
-		props.audioRef.currentTime = start;
+		props.audio.seek(start);
 	}
 
 	function setNewTime(
@@ -81,7 +82,7 @@ function TimeEditor(props: {
 						}
 						if (f.clampHour && nextValue * 3600 > props.durationSec) {
 							setIsError(true);
-							props.audioRef.currentTime = props.durationSec;
+							props.audio.seek(props.durationSec);
 							props.setStartEnd([
 								Math.max(0, props.durationSec - 1),
 								props.durationSec,
@@ -106,7 +107,7 @@ function TimeEditor(props: {
 export function TimeEditors(props: {
 	startEnd: StartEnd;
 	setStartEnd: React.Dispatch<React.SetStateAction<StartEnd>>;
-	audioRef: HTMLAudioElement;
+	audio: AudioHandle;
 	durationSec: number;
 	onPinEnd?: () => void;
 }) {

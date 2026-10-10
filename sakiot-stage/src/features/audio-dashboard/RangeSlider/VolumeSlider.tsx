@@ -1,14 +1,15 @@
 import { Volume1 as VolumeDown, VolumeX as VolumeMute } from "lucide-react";
 import { useState } from "react";
 import { Slider } from "../../../shared/ui";
+import type { AudioHandle } from "./audioHandle";
 
-export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
+export function VolumeSlider(props: { audio: AudioHandle }) {
 	const [volume, setVolume] = useState(0.5);
 	const [muted, setMuted] = useState(false);
 
 	const handleChangeVolume = (newValue: number) => {
 		setVolume(newValue);
-		props.audioRef.volume = newValue;
+		props.audio.setVolume(newValue);
 	};
 
 	return (
@@ -16,14 +17,14 @@ export function VolumeSlider(props: { audioRef: HTMLAudioElement }) {
 			{muted ? (
 				<VolumeMute
 					onClick={() => {
-						props.audioRef.muted = false;
+						props.audio.setMuted(false);
 						setMuted(false);
 					}}
 				/>
 			) : (
 				<VolumeDown
 					onClick={() => {
-						props.audioRef.muted = true;
+						props.audio.setMuted(true);
 						setMuted(true);
 					}}
 				/>

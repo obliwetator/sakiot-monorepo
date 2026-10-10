@@ -171,6 +171,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		playbackRate,
 		onLoopDisabled: () => loopDisableRef.current(),
 	});
+	// Destructured: passing `silence.audioRef` to `ref` would make the compiler
+	// treat every other field of `silence` as a ref.
+	const { audioRef: silenceAudioRef } = silence;
 	// At most one of the three players may be audible: starting one stops the
 	// others.
 	function stopMix() {
@@ -199,7 +202,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		loopDisableRef,
 		lastPlaybackRef,
 	});
-	selectionControllerRef.current = selectionController;
+	useEffect(() => {
+		selectionControllerRef.current = selectionController;
+	});
 
 	const {
 		selection,
@@ -315,7 +320,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				// biome-ignore lint/a11y/useMediaCaption: user voice recordings do not have a caption track
 				<audio
 					key={`${silenceFreeUrl}#${silenceRetryKey}`}
-					ref={silence.audioRef}
+					ref={silenceAudioRef}
 					crossOrigin="use-credentials"
 					preload="metadata"
 					src={silenceFreeUrl}

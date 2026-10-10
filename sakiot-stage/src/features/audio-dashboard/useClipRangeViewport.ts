@@ -269,15 +269,16 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 
 	useEffect(() => stopEdgeDrive, [stopEdgeDrive]);
 
+	const { onSeekPreview } = props;
 	const endViewDrag = useCallback(() => {
 		stopEdgeDrive();
 		if (viewDragRef.current?.kind === "detail") {
-			props.onSeekPreview?.(null);
+			onSeekPreview?.(null);
 			setDragFeedback(null);
 		}
 		viewDragRef.current = null;
 		setViewDragging(null);
-	}, [props.onSeekPreview, stopEdgeDrive]);
+	}, [onSeekPreview, stopEdgeDrive]);
 
 	// The precision zones use viewport coordinates captured when the drag starts.
 	// If any scroll container moves, finish the gesture so the guide cannot float
@@ -475,66 +476,69 @@ export function useClipRangeViewport(props: ClipRangeEditorProps) {
 		);
 	};
 
-	edgeDriveTickRef.current = (timestampMs) => {
-		edgeDriveFrameRef.current = null;
-		const drag = viewDragRef.current;
-		const fine = drag?.fine;
-		if (!drag || drag.kind !== "detail" || !fine || fine.multiplier <= 1) {
-			edgeDriveLastTimeRef.current = null;
-			return;
-		}
-		const strength = rollingEdgeStrength(
-			drag.pointerXPx,
-			drag.leftPx,
-			drag.widthPx,
-			ROLLING_EDGE_ZONE_PX,
-		);
-		if (strength === 0) {
-			edgeDriveLastTimeRef.current = null;
-			return;
-		}
-		const previousTimeMs = edgeDriveLastTimeRef.current ?? timestampMs;
-		const elapsedSeconds =
-			Math.min(50, Math.max(0, timestampMs - previousTimeMs)) / 1_000;
-		edgeDriveLastTimeRef.current = timestampMs;
-		const next = constrainFineDragToWindow(
-			{
-				...fine,
-				valueMs:
-					fine.valueMs +
-					(strength *
-						ROLLING_EDGE_MAX_PX_PER_SECOND *
-						drag.msPerPx *
-						elapsedSeconds) /
-						fine.multiplier,
-			},
-			drag.fineRange ?? drag.origin,
-		);
-		if (next.valueMs === fine.valueMs && elapsedSeconds > 0) {
-			edgeDriveLastTimeRef.current = null;
-			return;
-		}
-		drag.fine = next;
-		setDragFeedback({
-			kind: { type: "playhead" },
-			multiplier: next.multiplier,
-			valueMs: next.valueMs,
-			originMs: next.originMs,
-			lensAnchorMs: next.lensAnchorMs,
-			dyPx: drag.pointerYPx - drag.startYPx,
-			startYPx: drag.startYPx,
-			pointerXPx: drag.pointerXPx,
-			pointerYPx: drag.pointerYPx,
-			plotLeftPx: drag.leftPx,
-			plotWidthPx: drag.widthPx,
-			limitWindow: drag.fineRange,
-		});
-		if (props.onSeekPreview) props.onSeekPreview(next.valueMs);
-		else props.onSeek(next.valueMs);
-		edgeDriveFrameRef.current = requestAnimationFrame((nextTimestampMs) =>
-			edgeDriveTickRef.current(nextTimestampMs),
-		);
-	};
+	// The tick reads the latest props, so it is replaced after every render.
+	useEffect(() => {
+		edgeDriveTickRef.current = (timestampMs) => {
+			edgeDriveFrameRef.current = null;
+			const drag = viewDragRef.current;
+			const fine = drag?.fine;
+			if (!drag || drag.kind !== "detail" || !fine || fine.multiplier <= 1) {
+				edgeDriveLastTimeRef.current = null;
+				return;
+			}
+			const strength = rollingEdgeStrength(
+				drag.pointerXPx,
+				drag.leftPx,
+				drag.widthPx,
+				ROLLING_EDGE_ZONE_PX,
+			);
+			if (strength === 0) {
+				edgeDriveLastTimeRef.current = null;
+				return;
+			}
+			const previousTimeMs = edgeDriveLastTimeRef.current ?? timestampMs;
+			const elapsedSeconds =
+				Math.min(50, Math.max(0, timestampMs - previousTimeMs)) / 1_000;
+			edgeDriveLastTimeRef.current = timestampMs;
+			const next = constrainFineDragToWindow(
+				{
+					...fine,
+					valueMs:
+						fine.valueMs +
+						(strength *
+							ROLLING_EDGE_MAX_PX_PER_SECOND *
+							drag.msPerPx *
+							elapsedSeconds) /
+							fine.multiplier,
+				},
+				drag.fineRange ?? drag.origin,
+			);
+			if (next.valueMs === fine.valueMs && elapsedSeconds > 0) {
+				edgeDriveLastTimeRef.current = null;
+				return;
+			}
+			drag.fine = next;
+			setDragFeedback({
+				kind: { type: "playhead" },
+				multiplier: next.multiplier,
+				valueMs: next.valueMs,
+				originMs: next.originMs,
+				lensAnchorMs: next.lensAnchorMs,
+				dyPx: drag.pointerYPx - drag.startYPx,
+				startYPx: drag.startYPx,
+				pointerXPx: drag.pointerXPx,
+				pointerYPx: drag.pointerYPx,
+				plotLeftPx: drag.leftPx,
+				plotWidthPx: drag.widthPx,
+				limitWindow: drag.fineRange,
+			});
+			if (props.onSeekPreview) props.onSeekPreview(next.valueMs);
+			else props.onSeek(next.valueMs);
+			edgeDriveFrameRef.current = requestAnimationFrame((nextTimestampMs) =>
+				edgeDriveTickRef.current(nextTimestampMs),
+			);
+		};
+	});
 
 	const beginViewDrag = (
 		event: ReactPointerEvent<HTMLElement>,

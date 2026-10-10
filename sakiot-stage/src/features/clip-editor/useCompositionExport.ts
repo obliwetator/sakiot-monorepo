@@ -56,11 +56,11 @@ export function useCompositionExport(guildId: string) {
 	const [loadedKey, setLoadedKey] = useState<string | null>(null);
 	const attempted = useRef<string | null>(null);
 	const currentKey = useRef(storageKey);
-	currentKey.current = storageKey;
 	const dispatch = useAppDispatch();
 	const [compose, { isLoading: starting }] = useComposeClipMutation();
 
 	useEffect(() => {
+		currentKey.current = storageKey;
 		setPending(storageKey ? loadPending(storageKey) : null);
 		setLoadedKey(storageKey);
 		setError(null);

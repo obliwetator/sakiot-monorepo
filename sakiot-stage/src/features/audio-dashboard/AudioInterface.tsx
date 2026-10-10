@@ -15,6 +15,7 @@ import { setHasSilence } from "../../reducers/silence";
 import { attachHlsAudio } from "../../shared/attachHls";
 import { deepLinkSeekSeconds } from "./deepLinkSeek";
 import { RangeSlider } from "./RangeSlider";
+import { type AudioHandle, audioHandle } from "./RangeSlider/audioHandle";
 
 export function AudioInterface(props: {
 	isClip: boolean;
@@ -25,7 +26,7 @@ export function AudioInterface(props: {
 	const intervalRef = useRef<number | undefined>(undefined);
 	const params = useParams<AudioParams>();
 	const location = useLocation();
-	const [audioRef, setAudioRef] = useState<HTMLAudioElement | null>(null);
+	const [audio, setAudio] = useState<AudioHandle | null>(null);
 	const [readyToPlay, setReadyToPlay] = useState(false);
 	const [error, setError] = useState(false);
 	// `hls` path = streaming via HLS, `blob` path = full-file .ogg.
@@ -153,8 +154,11 @@ export function AudioInterface(props: {
 			stem: params.file_name ?? "",
 		});
 
-		const audio = new Audio();
-		audio.preload = "auto";
+		const element = new Audio();
+		element.preload = "auto";
+		// One handle per element: `canplay` fires again after seeks, and a new
+		// handle each time would re-render the slider and reset its listeners.
+		const handle = audioHandle(element);
 		let hls: Hls | null = null;
 		let isActive = true;
 		let didFallback = false;
@@ -170,24 +174,25 @@ export function AudioInterface(props: {
 
 		const onDurationChange = () => {
 			if (!isActive) return;
-			if (Number.isFinite(audio.duration)) setTrueDuration(audio.duration);
+			if (Number.isFinite(element.duration)) setTrueDuration(element.duration);
 		};
 		const onCanPlay = () => {
 			if (!isActive) return;
 			const seek = deepLinkSeekSeconds(location.search);
-			if (seek !== null && audio.currentTime === 0) audio.currentTime = seek;
+			if (seek !== null && element.currentTime === 0)
+				element.currentTime = seek;
 			setReadyToPlay(true);
-			setAudioRef(audio);
-			if (Number.isFinite(audio.duration)) setTrueDuration(audio.duration);
+			setAudio(handle);
+			if (Number.isFinite(element.duration)) setTrueDuration(element.duration);
 		};
-		audio.addEventListener("durationchange", onDurationChange);
-		audio.addEventListener("canplay", onCanPlay);
-		audio.addEventListener("error", () => fallback("audio element error"));
+		element.addEventListener("durationchange", onDurationChange);
+		element.addEventListener("canplay", onCanPlay);
+		element.addEventListener("error", () => fallback("audio element error"));
 
 		// Native-Safari vs hls.js selection, config, and the code-split
 		// import live in the shared helper.
 		void attachHlsAudio({
-			audio,
+			audio: element,
 			playlistUrl: hlsUrl,
 			isActive: () => isActive,
 			onFatal: fallback,
@@ -199,9 +204,9 @@ export function AudioInterface(props: {
 		return () => {
 			isActive = false;
 			hls?.destroy();
-			audio.pause();
-			audio.removeAttribute("src");
-			audio.load();
+			element.pause();
+			element.removeAttribute("src");
+			element.load();
 		};
 	}, [
 		mode,
@@ -222,7 +227,7 @@ export function AudioInterface(props: {
 		if (mode !== "blob") return;
 		if (!shouldStream) {
 			setReadyToPlay(false);
-			setAudioRef(null);
+			setAudio(null);
 			return;
 		}
 
@@ -234,6 +239,7 @@ export function AudioInterface(props: {
 		localAudioRef.crossOrigin = "use-credentials";
 		localAudioRef.preload = "auto";
 		localAudioRef.src = streamUrl;
+		const handle = audioHandle(localAudioRef);
 		let isActive = true;
 
 		localAudioRef.addEventListener("durationchange", () => {
@@ -252,7 +258,7 @@ export function AudioInterface(props: {
 			if (seek !== null && localAudioRef.currentTime === 0)
 				localAudioRef.currentTime = seek;
 			setReadyToPlay(true);
-			setAudioRef(localAudioRef);
+			setAudio(handle);
 			if (
 				localAudioRef.duration !== Infinity &&
 				Number.isFinite(localAudioRef.duration)
@@ -295,7 +301,7 @@ export function AudioInterface(props: {
 
 	return (
 		<div className="w-full">
-			{readyToPlay && audioRef ? (
+			{readyToPlay && audio ? (
 				<>
 					{mode === "hls" && isLive && (
 						<div className="mb-2 inline-block px-2 py-1 text-xs font-bold text-white bg-red-600 rounded">
@@ -303,7 +309,7 @@ export function AudioInterface(props: {
 						</div>
 					)}
 					<RangeSlider
-						audioRef={audioRef}
+						audio={audio}
 						intervalRef={intervalRef}
 						isClip={props.isClip}
 						userGuilds={props.userGuilds}

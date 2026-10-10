@@ -75,6 +75,9 @@ export function ChannelMixPlayer(props: {
 		playbackRate: props.playbackRate,
 		onLoopDisabled: () => {},
 	});
+	// Destructured: passing `generated.audioRef` to `ref` would make the
+	// compiler treat every other field of `generated` as a ref.
+	const { audioRef: generatedAudioRef } = generated;
 	const preview = useChannelMixPlayback({
 		tracks: props.mix.tracks,
 		durationMs: props.mix.duration_ms,
@@ -87,13 +90,16 @@ export function ChannelMixPlayer(props: {
 	const activeMixModeRef = useRef<"preview" | "generated">("preview");
 	const onBeforePlayRef = useRef(props.onBeforePlay);
 	const durationRef = useRef(props.mix.duration_ms);
-	previewRef.current = preview;
-	generatedRef.current = generated;
-	onBeforePlayRef.current = props.onBeforePlay;
-	durationRef.current = props.mix.duration_ms;
+	useEffect(() => {
+		previewRef.current = preview;
+		generatedRef.current = generated;
+		onBeforePlayRef.current = props.onBeforePlay;
+		durationRef.current = props.mix.duration_ms;
+	});
 	const shortcutTargetId = `channel-mix:${props.sessionId}`;
+	const { onPlaybackUse } = props;
 	const registerPlayback = useCallback(() => {
-		props.onPlaybackUse({
+		onPlaybackUse({
 			id: shortcutTargetId,
 			toggle: () => {
 				if (activeMixModeRef.current === "generated") {
@@ -128,7 +134,7 @@ export function ChannelMixPlayer(props: {
 					? generatedRef.current.positionMs
 					: previewRef.current.positionMs,
 		});
-	}, [props.onPlaybackUse, shortcutTargetId]);
+	}, [onPlaybackUse, shortcutTargetId]);
 
 	useEffect(
 		() => () => props.onPlaybackClear(shortcutTargetId),
@@ -393,7 +399,7 @@ export function ChannelMixPlayer(props: {
 					{/* biome-ignore lint/a11y/useMediaCaption: voice recordings have no caption track */}
 					<audio
 						key={`${generatedMediaUrl}#${generated.retryKey}`}
-						ref={generated.audioRef}
+						ref={generatedAudioRef}
 						crossOrigin="use-credentials"
 						preload="metadata"
 						src={generatedMediaUrl}

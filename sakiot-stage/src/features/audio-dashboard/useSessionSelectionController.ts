@@ -56,6 +56,7 @@ interface SelectionControllerOptions {
 export function useSessionSelectionController(
 	options: SelectionControllerOptions,
 ) {
+	const { clipEditorRef, loopDisableRef, lastPlaybackRef } = options;
 	const [selection, setSelection] = useState<SessionSelection>([0, 0]);
 	const [playbackTab, setPlaybackTab] = useState<"normal" | "silence">(
 		"normal",
@@ -72,8 +73,10 @@ export function useSessionSelectionController(
 	const appliedDeepLinkRef = useRef<string | null>(null);
 	const normalPlaybackRef = useRef(options.normal);
 	const silencePlaybackRef = useRef(options.silence);
-	normalPlaybackRef.current = options.normal;
-	silencePlaybackRef.current = options.silence;
+	useEffect(() => {
+		normalPlaybackRef.current = options.normal;
+		silencePlaybackRef.current = options.silence;
+	});
 
 	useEffect(() => {
 		selectionRef.current = selection;
@@ -91,7 +94,9 @@ export function useSessionSelectionController(
 		loopSelectionRef.current = false;
 		setLoopSelection(false);
 	}, []);
-	options.loopDisableRef.current = disableLoop;
+	useEffect(() => {
+		loopDisableRef.current = disableLoop;
+	}, [disableLoop, loopDisableRef]);
 
 	const storeActiveSelection = useCallback((next: SessionSelection) => {
 		selectionRef.current = next;
@@ -184,14 +189,14 @@ export function useSessionSelectionController(
 		selectionRef.current = next;
 		setSelection(next);
 		requestAnimationFrame(() => {
-			options.clipEditorRef.current?.scrollIntoView({
+			clipEditorRef.current?.scrollIntoView({
 				behavior: "smooth",
 				block: "center",
 			});
 		});
 	}, [
 		disableLoop,
-		options.clipEditorRef,
+		clipEditorRef,
 		options.deepLink,
 		options.manifest,
 		options.normal.clearBound,
@@ -242,9 +247,9 @@ export function useSessionSelectionController(
 
 	const rememberPlayback = useCallback(
 		(target: PlaybackShortcutTarget) => {
-			options.lastPlaybackRef.current = target;
+			lastPlaybackRef.current = target;
 		},
-		[options.lastPlaybackRef],
+		[lastPlaybackRef],
 	);
 
 	const rememberActivePlayback = useCallback(
@@ -340,7 +345,7 @@ export function useSessionSelectionController(
 	);
 
 	const toggleActivePlay = useCallback(() => {
-		const remembered = options.lastPlaybackRef.current;
+		const remembered = lastPlaybackRef.current;
 		if (remembered) {
 			remembered.toggle();
 			return;
@@ -348,7 +353,7 @@ export function useSessionSelectionController(
 		const target = playbackTargetFor(playbackTabRef.current);
 		rememberPlayback(target);
 		target.toggle();
-	}, [options.lastPlaybackRef, playbackTargetFor, rememberPlayback]);
+	}, [lastPlaybackRef, playbackTargetFor, rememberPlayback]);
 
 	const toggleActivePreview = useCallback(() => {
 		const active =
@@ -384,7 +389,7 @@ export function useSessionSelectionController(
 			// hidden, so Space and the arrow keys would keep driving a paused,
 			// invisible player. Forget it; the shortcuts fall back to the
 			// newly visible tab's player.
-			options.lastPlaybackRef.current = null;
+			lastPlaybackRef.current = null;
 			playbackTabRef.current = nextTab;
 			const next =
 				nextTab === "silence"
@@ -396,7 +401,7 @@ export function useSessionSelectionController(
 			setSelection(next);
 			setPlaybackTab(nextTab);
 		},
-		[disableLoop, options.lastPlaybackRef, options.normal, options.silence],
+		[disableLoop, lastPlaybackRef, options.normal, options.silence],
 	);
 
 	useEffect(() => {
@@ -436,7 +441,7 @@ export function useSessionSelectionController(
 			if (playbackShortcutTargetOwnsArrows(event.target)) return;
 			if (event.altKey) return;
 			event.preventDefault();
-			const remembered = options.lastPlaybackRef.current;
+			const remembered = lastPlaybackRef.current;
 			const stampMode =
 				!remembered && playbackTab === "normal" && options.deepLink?.fromStamp;
 			const distance = stampMode
@@ -465,7 +470,7 @@ export function useSessionSelectionController(
 	}, [
 		activePosition,
 		options.deepLink?.fromStamp,
-		options.lastPlaybackRef,
+		lastPlaybackRef,
 		playbackTab,
 		resetSelection,
 		seekActive,

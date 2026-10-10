@@ -4,6 +4,7 @@ import type { VoiceEvent } from "../../../app/apiSlice";
 import type { AudioParams, UserGuilds } from "../../../Constants";
 import { Button } from "../../../shared/ui";
 import WaveFormButton from "../Waveform";
+import type { AudioHandle } from "./audioHandle";
 import { ClipDialog } from "./ClipDialog";
 import { DoubleSlider } from "./DoubleSlider";
 import { DownloadButton } from "./DownloadButton";
@@ -12,7 +13,7 @@ import { SilenceButton } from "./SilenceButton";
 import { useRangeSliderState } from "./useRangeSliderState";
 
 export function RangeSlider(props: {
-	audioRef: HTMLAudioElement;
+	audio: AudioHandle;
 	intervalRef: React.MutableRefObject<number | undefined>;
 	isClip: boolean;
 	userGuilds: UserGuilds[] | null;
@@ -28,7 +29,7 @@ export function RangeSlider(props: {
 }) {
 	const params = useParams<AudioParams>();
 	const range = useRangeSliderState({
-		audioRef: props.audioRef,
+		audio: props.audio,
 		intervalRef: props.intervalRef,
 		trueDuration: props.trueDuration,
 		liveStartedAt: props.liveStartedAt,
@@ -48,7 +49,7 @@ export function RangeSlider(props: {
 				}
 			/>
 			<DoubleSlider
-				audioRef={props.audioRef}
+				audio={props.audio}
 				handleChange={range.handleChange}
 				setStartEnd={range.setStartEnd}
 				startEnd={range.startEnd}
@@ -57,7 +58,7 @@ export function RangeSlider(props: {
 				recordingStartedAtMs={props.recordingStartedAtMs}
 			/>
 			<RangeDetails
-				audioRef={props.audioRef}
+				audio={props.audio}
 				params={params}
 				startEnd={range.startEnd}
 				setStartEnd={range.setStartEnd}

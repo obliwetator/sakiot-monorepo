@@ -68,16 +68,19 @@ export function PlaybackActionsPanel(props: { children: ReactNode }) {
 	);
 }
 
-export function SessionClipEditorPanel(props: {
+export function SessionClipEditorPanel({
+	children,
+	panelRef,
+}: {
 	children: ReactNode;
 	panelRef: RefObject<HTMLDivElement | null>;
 }) {
 	return (
 		<div
-			ref={props.panelRef}
+			ref={panelRef}
 			className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-4 my-4"
 		>
-			{props.children}
+			{children}
 		</div>
 	);
 }

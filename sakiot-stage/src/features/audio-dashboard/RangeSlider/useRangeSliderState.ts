@@ -4,6 +4,7 @@ import {
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
 } from "../playbackShortcuts";
+import type { AudioHandle } from "./audioHandle";
 
 const ArrowKeySkip = 5;
 const CtrlArrowKeySkip = 30;
@@ -23,22 +24,23 @@ export interface RangeSliderState {
 }
 
 export function useRangeSliderState(args: {
-	audioRef: HTMLAudioElement;
+	audio: AudioHandle;
 	intervalRef: RefObject<number | undefined>;
 	trueDuration?: number | null;
 	liveStartedAt?: number | null;
 }): RangeSliderState {
+	const { audio, intervalRef } = args;
 	const initialDuration = args.liveStartedAt
 		? Math.max(0, (Date.now() - args.liveStartedAt) / 1000)
 		: args.trueDuration && Number.isFinite(args.trueDuration)
 			? args.trueDuration
-			: Number.isFinite(args.audioRef.duration)
-				? args.audioRef.duration
+			: Number.isFinite(audio.element.duration)
+				? audio.element.duration
 				: 0;
 	const [actualDuration, setActualDuration] = useState(initialDuration);
 	const [playing, setPlaying] = useState(false);
 	const [startEnd, setStartEnd] = useState<StartEnd>([
-		args.audioRef.currentTime || 0,
+		audio.element.currentTime || 0,
 		actualDuration,
 	]);
 	const [rightPinned, setRightPinned] = useState(false);
@@ -89,35 +91,35 @@ export function useRangeSliderState(args: {
 	}, [args.liveStartedAt, rightPinned]);
 
 	const stopPlayback = useCallback(() => {
-		clearInterval(args.intervalRef.current);
-		args.intervalRef.current = undefined;
-		args.audioRef.pause();
-	}, [args.audioRef, args.intervalRef]);
+		clearInterval(intervalRef.current);
+		intervalRef.current = undefined;
+		audio.element.pause();
+	}, [audio, intervalRef]);
 
 	const end = startEnd[1];
 	const advancePlayhead = useCallback(() => {
-		const time = args.audioRef.currentTime;
+		const time = audio.element.currentTime;
 		if (time >= end) stopPlayback();
 		const next =
 			time >= end
 				? Math.max(0, end - MinDistance)
 				: Math.min(time, actualDuration, end);
 		setStartEnd((previous) => [next, previous[1]]);
-	}, [actualDuration, args.audioRef, end, stopPlayback]);
+	}, [actualDuration, audio, end, stopPlayback]);
 
 	useEffect(() => {
-		const audio = args.audioRef;
+		const element = audio.element;
 		const onPlay = () => setPlaying(true);
 		const onPause = () => setPlaying(false);
-		audio.addEventListener("play", onPlay);
-		audio.addEventListener("pause", onPause);
-		audio.addEventListener("timeupdate", advancePlayhead);
+		element.addEventListener("play", onPlay);
+		element.addEventListener("pause", onPause);
+		element.addEventListener("timeupdate", advancePlayhead);
 		return () => {
-			audio.removeEventListener("play", onPlay);
-			audio.removeEventListener("pause", onPause);
-			audio.removeEventListener("timeupdate", advancePlayhead);
+			element.removeEventListener("play", onPlay);
+			element.removeEventListener("pause", onPause);
+			element.removeEventListener("timeupdate", advancePlayhead);
 		};
-	}, [args.audioRef, advancePlayhead]);
+	}, [audio, advancePlayhead]);
 
 	useEffect(() => {
 		const handleArrowKeys = (event: KeyboardEvent) => {
@@ -130,14 +132,14 @@ export function useRangeSliderState(args: {
 					0,
 					Math.min(startEnd[0] + skip, actualDuration, end - MinDistance),
 				);
-				args.audioRef.currentTime = next;
+				audio.seek(next);
 				setStartEnd([next, end]);
 			} else if (event.key === "ArrowLeft") {
 				event.preventDefault();
 				const skip =
 					event.ctrlKey || event.metaKey ? CtrlArrowKeySkip : ArrowKeySkip;
 				const next = Math.max(startEnd[0] - skip, 0);
-				args.audioRef.currentTime = next;
+				audio.seek(next);
 				setStartEnd([next, end]);
 			} else {
 				return;
@@ -145,13 +147,12 @@ export function useRangeSliderState(args: {
 		};
 		window.addEventListener("keydown", handleArrowKeys);
 		return () => window.removeEventListener("keydown", handleArrowKeys);
-	}, [actualDuration, args.audioRef, end, startEnd]);
+	}, [actualDuration, audio, end, startEnd]);
 
 	// The interval is parent-owned (AudioInterface), so nothing else clears it
 	// when this component unmounts mid-playback; without this cleanup it would
 	// keep firing forever on a detached audio element.
 	useEffect(() => {
-		const intervalRef = args.intervalRef;
 		if (playing) {
 			intervalRef.current = window.setInterval(advancePlayhead, 1000);
 		}
@@ -159,7 +160,7 @@ export function useRangeSliderState(args: {
 			clearInterval(intervalRef.current);
 			intervalRef.current = undefined;
 		};
-	}, [advancePlayhead, args.intervalRef, playing]);
+	}, [advancePlayhead, intervalRef, playing]);
 
 	const togglePlay = useCallback(() => {
 		// React may replay state updaters; media commands belong to the event.
@@ -169,8 +170,8 @@ export function useRangeSliderState(args: {
 			return;
 		}
 		setPlaying(true);
-		void args.audioRef.play().catch(() => setPlaying(false));
-	}, [args.audioRef, playing, stopPlayback]);
+		void audio.element.play().catch(() => setPlaying(false));
+	}, [audio, playing, stopPlayback]);
 
 	useEffect(() => {
 		const handleSpace = (event: KeyboardEvent) => {
@@ -192,7 +193,7 @@ export function useRangeSliderState(args: {
 				0,
 				Math.min(nextStart, startEnd[1] - MinDistance),
 			);
-			args.audioRef.currentTime = newStart;
+			audio.seek(newStart);
 			setStartEnd([newStart, startEnd[1]]);
 		} else {
 			const newEnd = Math.min(

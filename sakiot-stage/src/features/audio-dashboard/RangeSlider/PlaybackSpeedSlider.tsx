@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Slider } from "../../../shared/ui";
+import type { AudioHandle } from "./audioHandle";
 
-export function PlaybackSpeedSlider(props: { audioRef: HTMLAudioElement }) {
+export function PlaybackSpeedSlider(props: { audio: AudioHandle }) {
 	const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
 	const handleChangePlaybackSpeed = (newValue: number) => {
 		setPlaybackSpeed(newValue);
-		props.audioRef.playbackRate = newValue;
+		props.audio.setPlaybackRate(newValue);
 	};
 
 	return (
