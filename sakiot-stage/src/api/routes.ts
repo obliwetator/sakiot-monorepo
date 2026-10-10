@@ -72,6 +72,7 @@ export const API_ROUTES = {
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
 	currentUserSessions: "/api/users/current/sessions",
+	currentUserSession: "/api/users/current/sessions/{session_id}",
 	recordingOptOut: "/api/users/current/guilds/{guild_id}/recording-opt-out",
 } satisfies Record<string, keyof paths & string>;
 

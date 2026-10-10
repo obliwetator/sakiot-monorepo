@@ -22,8 +22,10 @@ import {
 	Notice,
 	Popover,
 } from "../shared/ui";
+import { SessionsDialog } from "./SessionsDialog";
 
 const RECORD_ME = "record-me";
+const DEVICES = "devices";
 const LOG_OUT = "log-out";
 const LOG_OUT_EVERYWHERE = "log-out-everywhere";
 
@@ -37,8 +39,13 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 		useGetRecordingOptOutQuery(guild?.id ?? "", { skip: !guild });
 	const [setOptOut] = useSetRecordingOptOutMutation();
 	const [menuError, setMenuError] = useState<string | null>(null);
+	const [devicesOpen, setDevicesOpen] = useState(false);
 
 	const handleAction = async (key: string) => {
+		if (key === DEVICES) {
+			setDevicesOpen(true);
+			return;
+		}
 		if (key !== LOG_OUT && key !== LOG_OUT_EVERYWHERE) return;
 		setMenuError(null);
 		try {
@@ -121,12 +128,14 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 							</MenuSection>
 						) : null}
 						<MenuSection aria-label="Account">
+							<MenuItem id={DEVICES}>Signed-in devices</MenuItem>
 							<MenuItem id={LOG_OUT}>Log out</MenuItem>
 							<MenuItem id={LOG_OUT_EVERYWHERE}>Log out everywhere</MenuItem>
 						</MenuSection>
 					</Menu>
 				</Popover>
 			</MenuTrigger>
+			{devicesOpen && <SessionsDialog onClose={() => setDevicesOpen(false)} />}
 			{menuError && (
 				<div className="fixed bottom-4 right-4 z-[70]">
 					<Notice tone={"error"} announce="alert">

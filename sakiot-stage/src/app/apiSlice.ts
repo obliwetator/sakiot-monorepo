@@ -38,6 +38,8 @@ export type CreateClipResponse = ApiSchema["CreateClipResponse"];
 
 export type PlayClipResponse = ApiSchema["PlayClipResponse"];
 
+export type SessionInfo = ApiSchema["SessionInfo"];
+
 const baseQuery = fetchBaseQuery({
 	baseUrl: BASE_API_URL,
 	fetchFn: async (input, init) => {
@@ -171,6 +173,7 @@ const JSON_HEADERS = {
 
 const TAG_TYPES = [
 	"Auth",
+	"Sessions",
 	"Clips",
 	"GuildCooldown",
 	"UserOverrides",
@@ -266,6 +269,18 @@ export const apiSlice = createApi({
 		}),
 		logout: builder.mutation<void, void>({
 			query: () => ({ url: apiUrl(API_ROUTES.logout), method: "POST" }),
+		}),
+		getSessions: builder.query<SessionInfo[], void>({
+			query: () => apiUrl(API_ROUTES.currentUserSessions),
+			providesTags: ["Sessions"],
+		}),
+		/** Ends one session; that browser stops at its next refresh. */
+		endSession: builder.mutation<void, string>({
+			query: (session_id) => ({
+				url: apiUrl(API_ROUTES.currentUserSession, { session_id }),
+				method: "DELETE",
+			}),
+			invalidatesTags: ["Sessions"],
 		}),
 		/** Ends every session of the account; other browsers stop at their next refresh. */
 		logoutEverywhere: builder.mutation<void, void>({
@@ -841,6 +856,8 @@ export const {
 	useRemoveSilenceMutation,
 	useCheckSilenceFileQuery,
 	useRefreshMutation,
+	useEndSessionMutation,
+	useGetSessionsQuery,
 	useLogoutEverywhereMutation,
 	useLogoutMutation,
 	useCreateClipMutation,

@@ -14,6 +14,7 @@ const SAMPLE: Record<string, string> = {
 	stem: "stem",
 	file: "file.ogg",
 	job_id: "job-1",
+	session_id: "session-1",
 };
 
 describe("apiUrl", () => {

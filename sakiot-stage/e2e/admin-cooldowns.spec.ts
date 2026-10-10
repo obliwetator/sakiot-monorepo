@@ -256,6 +256,76 @@ async function openCooldowns(page: Page) {
 	await expect(page.getByLabel("Cooldown (seconds)").first()).toHaveValue("10");
 }
 
+test("signed-in devices lists each session and logs one out", async ({
+	page,
+}) => {
+	await mockApi(page);
+	const now = Date.now();
+	let sessions = [
+		{
+			id: "this-browser",
+			browser: "Chrome",
+			platform: "Windows",
+			signed_in_at: new Date(now - 3 * 86_400_000).toISOString(),
+			last_active_at: new Date(now).toISOString(),
+			current: true,
+		},
+		{
+			id: "phone",
+			browser: "Chrome",
+			platform: "Android",
+			signed_in_at: new Date(now - 86_400_000).toISOString(),
+			last_active_at: new Date(now - 3 * 3_600_000).toISOString(),
+			current: false,
+		},
+	];
+	const ended: string[] = [];
+	// Registered after mockApi, so it answers first.
+	await page.route(
+		`${API_ORIGIN}${API_PREFIX}/users/current/sessions**`,
+		async (route) => {
+			const request = route.request();
+			if (request.method() === "OPTIONS") {
+				await route.fulfill({ status: 204, headers: corsHeaders });
+				return;
+			}
+			if (request.method() === "DELETE") {
+				const id = new URL(request.url()).pathname.split("/").pop() ?? "";
+				ended.push(id);
+				sessions = sessions.filter((session) => session.id !== id);
+				await route.fulfill({ status: 200, headers: corsHeaders });
+				return;
+			}
+			await route.fulfill({
+				status: 200,
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+				body: JSON.stringify(sessions),
+			});
+		},
+	);
+	await openCooldowns(page);
+	await page.getByRole("button", { name: "Open user menu" }).click();
+	await page.getByRole("menuitem", { name: "Signed-in devices" }).click();
+
+	const list = page.getByRole("list", { name: "Signed-in devices" });
+	await expect(list.getByRole("listitem")).toHaveCount(2);
+	const thisDevice = list.getByRole("listitem").filter({ hasText: "Windows" });
+	await expect(thisDevice).toContainText("Chrome on Windows");
+	await expect(thisDevice).toContainText("This device");
+	await expect(thisDevice.getByRole("button")).toHaveCount(0);
+	const phone = list.getByRole("listitem").filter({ hasText: "Android" });
+	await expect(phone).toContainText("Active 3 hours ago");
+
+	await phone
+		.getByRole("button", { name: "Log out Chrome on Android" })
+		.click();
+	await expect(list.getByRole("listitem")).toHaveCount(1);
+	expect(ended).toEqual(["phone"]);
+
+	await page.getByRole("button", { name: "Close" }).click();
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
 test("logging out everywhere ends every session and leaves the app", async ({
 	page,
 }) => {
@@ -300,6 +370,7 @@ test("account menu and server picker support keyboard dismissal and restore focu
 		}),
 	).toBeFocused();
 	await expect(page.getByRole("menuitem")).toHaveText([
+		"Signed-in devices",
 		"Log out",
 		"Log out everywhere",
 	]);
