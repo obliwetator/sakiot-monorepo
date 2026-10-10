@@ -8,7 +8,8 @@ import {
 } from "./clip-editor-fixture";
 import { expect, test } from "./fixtures";
 
-const SOURCE_SECONDS = 2.5;
+// Long enough that a slow pause click still lands well before the end.
+const SOURCE_SECONDS = 6.5;
 
 /** A mono 16-bit PCM WAV of silence, long enough to pause part-way. */
 function silence(seconds: number): Buffer {
@@ -56,21 +57,24 @@ test("pausing keeps the playhead, and playing to the end rewinds it", async ({
 
 	const play = page.getByRole("button", { name: "Play", exact: true });
 	const pause = page.getByRole("button", { name: "Pause", exact: true });
-	const playhead = page.getByText(/^\d\d:\d\d:\d\d \/ 00:00:02$/);
+	const playhead = page.getByText(/^\d\d:\d\d:\d\d \/ 00:00:06$/);
 
 	await play.click();
 	await expect(pause).toBeVisible();
 	await expect(playhead).toHaveText(/^00:00:01 /, { timeout: 5_000 });
 
-	// A frame already queued when pausing must not rewind the playhead.
+	// A frame already queued when pausing must not move the playhead.
 	await pause.click();
 	await expect(play).toBeVisible();
+	const pausedAt = (await playhead.textContent()) ?? "";
+	expect(pausedAt).not.toMatch(/^00:00:00 /);
 	await page.waitForTimeout(300);
-	await expect(playhead).toHaveText(/^00:00:01 /);
+	await expect(playhead).toHaveText(pausedAt);
 
-	// Resuming continues from there and reaches the end, which rewinds.
+	// Resuming plays to the end, which rewinds. The playhead was past the
+	// start, so seeing the start again means playback resumed and finished;
+	// waiting for Pause instead could miss it on a slow runner.
 	await play.click();
-	await expect(pause).toBeVisible();
-	await expect(play).toBeVisible({ timeout: 5_000 });
-	await expect(playhead).toHaveText(/^00:00:00 /);
+	await expect(playhead).toHaveText(/^00:00:00 /, { timeout: 10_000 });
+	await expect(play).toBeVisible();
 });
