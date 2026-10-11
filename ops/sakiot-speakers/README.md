@@ -7,8 +7,8 @@ with a simulated recorder; this covers the bot.
 
 Each token is its own Discord application. The run steps through how many bots
 talk at once (default 0, 1, 2, 4, 8, five minutes each), each looping the same
-audio. An Ogg Opus file at 48 kHz is passed through packet for packet, so the
-recorder receives what a Discord client sent.
+audio. Its Opus packets are passed through as they are, so the recorder
+receives what a Discord client would send.
 
 ## Once
 
@@ -21,9 +21,13 @@ recorder receives what a Discord client sent.
    The deploy engine builds staging that way once it has been refreshed with
    `sudo ops/update-deploy-engine.sh`.
 
-The audio should be speech without long pauses, from a real Discord
-recording, so the packets match a client's. Cut a minute out of one with a
-stream copy, which keeps the packets as they were:
+The audio is `speech.ogg`, made by `generate-speech.sh`: voice-band noise
+encoded as a Discord client encodes speech (mono Opus Hybrid at full band,
+about 156 bytes a packet). Each bot pauses it on the talk pattern the web
+server's load test uses, about 37% of the time; `--continuous` talks without
+pauses. `--audio` plays another Ogg Opus file at 48 kHz instead, such as a
+minute cut out of a real recording with a stream copy, which keeps the
+packets as they were:
 
 ```sh
 ffmpeg -ss 600 -t 60 -i <recording>.ogg -c copy speech.ogg

@@ -2,9 +2,9 @@
 //! recording costs the real bot.
 //!
 //! Each token is its own Discord application. Steps raise (or lower) how many
-//! bots talk at once; each talking bot plays the audio file on a loop. An Ogg
-//! Opus file at 48 kHz is passed through packet for packet, so what the
-//! recorder receives is what a Discord client sent when it was recorded.
+//! bots talk at once; each talking bot plays the audio file on a loop, paused
+//! on a talk pattern. An Ogg Opus file at 48 kHz is passed through packet for
+//! packet, so the recorder receives the file's packets as a client's.
 //!
 //! Only staging builds of the bot record bots (its `loadtest` feature), and the
 //! bot leaves a channel with no people in it, so a person stays in the call.
