@@ -14,6 +14,10 @@ UMask=0007
 # Priority over staging, previews and builds when the VPS is busy (see
 # sakiot.slice). If memory runs out, the kernel kills something else first.
 Slice=sakiot.slice
+# Within the slice, priority over the web server (default 100): voice is
+# received in real time and a starved tick is lost audio, while a waveform or
+# mix can wait. Weights cost nothing on an idle machine.
+CPUWeight=1000
 OOMScoreAdjust=-500
 WorkingDirectory=/var/lib/sakiot/data
 EnvironmentFile=/etc/sakiot/production.env
