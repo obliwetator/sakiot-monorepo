@@ -1,8 +1,9 @@
 [package]
 name = "sakiot-dsp"
 version.workspace = true
+license.workspace = true
+publish.workspace = true
 edition = "2024"
-publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

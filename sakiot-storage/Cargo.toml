@@ -1,6 +1,8 @@
 [package]
 name = "sakiot-storage"
 version.workspace = true
+license.workspace = true
+publish.workspace = true
 edition = "2024"
 
 [dependencies]
