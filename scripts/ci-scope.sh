@@ -35,7 +35,7 @@ while IFS= read -r path; do
     deny.toml)
       rust=true
       ;;
-    .sqlx/*|fbi-agent/*|sakiot-paths/*|sakiot-storage/*|\
+    .sqlx/*|fbi-agent/*|sakiot-paths/*|sakiot-peaks/*|sakiot-storage/*|\
     sakiot-db/migrations/*|scripts/sqlx-*)
       rust=true
       ;;

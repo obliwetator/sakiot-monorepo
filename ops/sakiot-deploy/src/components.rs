@@ -72,6 +72,7 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
             // Compiled natively into web-server and to WASM for the frontend.
             select(&[Component::Web, Component::Frontend]);
         } else if path.starts_with("sakiot-paths/")
+            || path.starts_with("sakiot-peaks/")
             || path.starts_with("sakiot-proto/")
             || path.starts_with(".sqlx/")
         {
@@ -181,6 +182,7 @@ mod tests {
     fn shared_rust_paths_map_to_bot_and_web() {
         for path in [
             "sakiot-paths/src/lib.rs",
+            "sakiot-peaks/src/decode.rs",
             "sakiot-proto/proto/fbi_agent.proto",
             ".sqlx/query-abc.json",
         ] {

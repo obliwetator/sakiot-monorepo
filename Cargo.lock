@@ -4802,6 +4802,15 @@ name = "sakiot-paths"
 version = "1.11.0"
 
 [[package]]
+name = "sakiot-peaks"
+version = "1.11.0"
+dependencies = [
+ "ogg",
+ "opus2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sakiot-proto"
 version = "1.11.0"
 dependencies = [

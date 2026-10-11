@@ -5,6 +5,7 @@ members = [
     "ops/sakiot-deploy",
     "sakiot-dsp",
     "sakiot-paths",
+    "sakiot-peaks",
     "sakiot-proto",
     "sakiot-storage",
     "web-server",
