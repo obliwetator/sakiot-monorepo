@@ -75,7 +75,7 @@ impl RecorderActor {
             return;
         };
 
-        if member.user.bot {
+        if member.user.bot && !super::super::RECORDS_BOTS {
             self.recordings.insert_bot(user_id, ssrc);
             return;
         }

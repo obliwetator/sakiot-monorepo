@@ -359,9 +359,13 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
             )?;
         } else {
             log("building FBI Agent");
+            let mut args = vec!["build", "--release", "--locked", "--bin", "fbi_agent"];
+            if matches!(target, Target::Staging | Target::Preview) {
+                args.extend(["--features", "loadtest"]);
+            }
             deps.runner.run(
                 &Cmd::new("cargo")
-                    .args(["build", "--release", "--locked", "--bin", "fbi_agent"])
+                    .args(args)
                     .cwd(worktree.path())
                     .env("SQLX_OFFLINE", "true")
                     .env("CARGO_TARGET_DIR", cargo_target.display().to_string()),

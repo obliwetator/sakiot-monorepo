@@ -602,7 +602,7 @@ impl RecorderActor {
             let Some(member) = self.resolve_member(user_id).await else {
                 continue;
             };
-            if member.user.bot {
+            if member.user.bot && !super::super::RECORDS_BOTS {
                 self.recordings.insert_bot(user_id, ssrc);
                 continue;
             }
@@ -748,7 +748,7 @@ impl RecorderActor {
                     .as_ref()
                     .map(|member| member.user.bot)
                     .or_else(|| guild.members.get(user_id).map(|member| member.user.bot));
-                (is_bot != Some(true)).then_some(user_id.get())
+                (is_bot != Some(true) || super::super::RECORDS_BOTS).then_some(user_id.get())
             })
             .collect()
     }

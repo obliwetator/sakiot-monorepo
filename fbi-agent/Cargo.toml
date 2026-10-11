@@ -88,6 +88,13 @@ thiserror = "2"
 [dev-dependencies]
 tempfile = "3"
 
+[features]
+default = []
+# Staging builds record bot accounts like people, so a load test can drive
+# the real recorder with bot speakers (ops/sakiot-speakers). Production
+# builds never enable it.
+loadtest = []
+
 
 [lints]
 workspace = true

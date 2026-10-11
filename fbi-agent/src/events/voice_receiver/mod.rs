@@ -21,6 +21,11 @@ mod state;
 
 pub use state::VoiceEventType;
 
+/// Whether bot speakers are recorded like people. Only `loadtest` builds
+/// (staging) do, so bot accounts can stand in for speakers in a load test;
+/// whether the bot stays in a channel still depends on people being there.
+const RECORDS_BOTS: bool = cfg!(feature = "loadtest");
+
 /// Channels songbird decodes received voice into. The decoded audio feeds
 /// only the waveform peaks, which average the channels anyway, and libopus
 /// decodes to mono for less: on a 3-hour recording, 58 of 561,268 frame
