@@ -49,7 +49,15 @@ tick_p99_ms() {
     query "1000 * histogram_quantile(0.99, sum by (le) (increase(voice_tick_seconds_bucket{${selector},stage=\"${stage}\"}[${seconds}s])))" "$at"
 }
 
-printf '%s\n' "speakers	cpu_cores	tokio_busy_cores	packets_s	rtp_kbit_s	disk_write_kib_s	write_calls_s	rss_mb	recordings	tick_p99_receive_ms	tick_p99_record_ms"
+# Mean time of one voice tick stage over the window, in milliseconds. The
+# record stage's p99 is the once-a-second policy check's database round trip;
+# the mean is the work every tick does.
+tick_mean_ms() {
+    local stage="$1" seconds="$2" at="$3"
+    query "1000 * sum(increase(voice_tick_seconds_sum{${selector},stage=\"${stage}\"}[${seconds}s])) / sum(increase(voice_tick_seconds_count{${selector},stage=\"${stage}\"}[${seconds}s]))" "$at"
+}
+
+printf '%s\n' "speakers	cpu_cores	tokio_busy_cores	packets_s	rtp_kbit_s	disk_write_kib_s	write_calls_s	rss_mb	recordings	tick_mean_receive_ms	tick_p99_receive_ms	tick_mean_record_ms	tick_p99_record_ms"
 grep '^window ' "$run_log" | while read -r _ speakers start end; do
     seconds=$((end - start))
     cpu="$(rate_of fbi_agent_process_cpu_seconds_total "" "$seconds" "$end")"
@@ -60,12 +68,14 @@ grep '^window ' "$run_log" | while read -r _ speakers start end; do
     writes="$(rate_of fbi_agent_process_io_syscalls_total ',op="write"' "$seconds" "$end")"
     rss="$(query "avg(avg_over_time(process_rss_bytes{${selector}}[${seconds}s]))" "$end")"
     recordings="$(query "avg(avg_over_time(active_recordings{${selector}}[${seconds}s]))" "$end")"
+    receive_mean="$(tick_mean_ms receive "$seconds" "$end")"
     receive="$(tick_p99_ms receive "$seconds" "$end")"
+    record_mean="$(tick_mean_ms record "$seconds" "$end")"
     record="$(tick_p99_ms record "$seconds" "$end")"
     # A series Prometheus doesn't have prints as "-", not as zero.
     awk -v s="$speakers" -v c="$cpu" -v t="$tokio" -v p="$packets" -v r="$rtp" \
         -v w="$written" -v k="$writes" -v m="$rss" -v a="$recordings" \
-        -v rv="$receive" -v rc="$record" '
+        -v rvm="$receive_mean" -v rv="$receive" -v rcm="$record_mean" -v rc="$record" '
         function show(value, scale, format) {
             if (value !~ /^-?[0-9.]+(e[-+]?[0-9]+)?$/) return "-"
             return sprintf(format, value * scale)
@@ -75,6 +85,7 @@ grep '^window ' "$run_log" | while read -r _ speakers start end; do
                 show(p, 1, "%.1f") "\t" show(r, 8 / 1000, "%.1f") "\t" \
                 show(w, 1 / 1024, "%.1f") "\t" show(k, 1, "%.1f") "\t" \
                 show(m, 1 / 1e6, "%.1f") "\t" show(a, 1, "%.1f") "\t" \
-                show(rv, 1, "%.3f") "\t" show(rc, 1, "%.3f")
+                show(rvm, 1, "%.3f") "\t" show(rv, 1, "%.3f") "\t" \
+                show(rcm, 1, "%.3f") "\t" show(rc, 1, "%.3f")
         }'
 done

@@ -49,16 +49,24 @@ ops/sakiot-speakers/measure.sh run.log
 `measure.sh` reads the window of each step from `run.log` and asks the VPS's
 Prometheus (over `SAKIOT_DEV_SSH`) what the staging bot spent in it: CPU and
 tokio busy time in cores, packets and RTP kbit/s received, disk writes, resident
-memory, recordings, and the p99 time of each 20 ms voice tick's receive and
-record stages. Differences between steps are the cost of one more speaker.
+memory, recordings, and the mean and p99 time of each 20 ms voice tick's
+receive and record stages. Differences between steps are the cost of one more
+speaker. The record stage's p99 is the once-a-second policy check's database
+round trip, whatever the speakers; its mean is the per-tick work.
 
-For where the CPU goes, profile the staging bot on the VPS during the top step:
+For where the CPU goes, add a second top step (`--steps 0,1,2,4,8,8`), so the
+profiler's own cost stays out of the first, and profile the staging bot on the
+VPS during it:
 
 ```sh
-pid="$(systemctl show -p MainPID --value 'sakiot-staging-fbi-agent@*' | grep -v '^0$' | head -n 1)"
-sudo perf record -F 199 -g -p "$pid" -- sleep 60
-sudo perf report --stdio --no-children | head -n 60
+unit="$(systemctl list-units --no-legend --plain 'sakiot-staging-fbi-agent@*' | awk '{print $1}' | head -n 1)"
+sudo perf record -F 999 -o /tmp/sakiot-perf.data -p "$(systemctl show -p MainPID --value "$unit")" -- sleep 30
+sudo perf report -i /tmp/sakiot-perf.data --stdio --no-children --sort dso,sym --percent-limit 0.2 | head -n 80
 ```
+
+The bot's release build has no frame pointers, so a flat profile is what
+`perf` can give; libopus shows up as plain C symbols (`silk_*`, `celt_*`,
+`ec_dec_*`).
 
 The bots' recordings are ordinary staging recordings; delete them from the
 dashboard afterwards.
