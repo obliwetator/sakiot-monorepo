@@ -75,9 +75,21 @@ impl BotHandoff {
 pub(super) struct ServiceRelease<'a> {
     pub(super) target: Target,
     pub(super) release_id: &'a str,
+    /// When the release was cut, the timestamp that ends `release_id`.
+    pub(super) timestamp: &'a str,
     pub(super) components: &'a [Component],
     pub(super) artifact_dir: &'a Path,
     pub(super) worktree_path: &'a Path,
+}
+
+/// `<host>-<timestamp>-<release id without its timestamp>`, for example
+/// `Netcup-20261011T184733Z-staging-ad38bd152c52`. The timestamp leads so the
+/// instances sort by when they were deployed, in Grafana and anywhere else.
+fn bot_instance_id(hostname: &str, release_id: &str, timestamp: &str) -> String {
+    let release = release_id
+        .strip_suffix(&format!("-{timestamp}"))
+        .unwrap_or(release_id);
+    format!("{hostname}-{timestamp}-{release}")
 }
 
 pub(super) fn deploy_services(
@@ -90,6 +102,7 @@ pub(super) fn deploy_services(
     let ServiceRelease {
         target,
         release_id,
+        timestamp,
         components,
         artifact_dir,
         worktree_path,
@@ -107,8 +120,8 @@ pub(super) fn deploy_services(
         fsx::write_line(
             &artifact_dir.join("fbi-agent/service.env"),
             &format!(
-                "BOT_ROLE=active\nBOT_INSTANCE_ID={hostname}-{release_id}\nRELEASE_ID={release_id}\nGRPC_ADDR={grpc}\nDRAIN_TIMEOUT_SECONDS=0\nSAKIOT_DATA_DIR={data_dir}",
-                hostname = deps.hostname,
+                "BOT_ROLE=active\nBOT_INSTANCE_ID={instance_id}\nRELEASE_ID={release_id}\nGRPC_ADDR={grpc}\nDRAIN_TIMEOUT_SECONDS=0\nSAKIOT_DATA_DIR={data_dir}",
+                instance_id = bot_instance_id(&deps.hostname, release_id, timestamp),
                 grpc = bot.new_bot_grpc,
                 data_dir = config.data_dir.display(),
             ),
@@ -352,4 +365,30 @@ pub(super) fn deploy_services(
     bot.new_bot_started = false;
     bot.old_bot_disabled = false;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bot_instance_id;
+    use crate::config::Mode;
+    use crate::release::release_id;
+
+    #[test]
+    fn bot_instance_ids_lead_with_the_timestamp() {
+        let stamp = "20261011T184733Z";
+        let sha = "ad38bd152c52aaaa";
+        let id = |mode, tag| bot_instance_id("Netcup", &release_id(mode, tag, sha, stamp), stamp);
+        assert_eq!(
+            id(Mode::Stage, ""),
+            "Netcup-20261011T184733Z-staging-ad38bd152c52"
+        );
+        assert_eq!(
+            id(Mode::Release, "v1.11.1"),
+            "Netcup-20261011T184733Z-v1.11.1-ad38bd152c52"
+        );
+        assert_eq!(
+            id(Mode::Rollback, "v1.11.0"),
+            "Netcup-20261011T184733Z-v1.11.0-ad38bd152c52-rollback"
+        );
+    }
 }

@@ -472,7 +472,9 @@ fn release_happy_path_first_deploy_all_components() {
     );
 
     let bot_env = fs::read_to_string(artifact.join("fbi-agent/service.env")).unwrap();
-    assert!(bot_env.contains(&format!("BOT_INSTANCE_ID=testhost-{release_id}")));
+    assert!(bot_env.contains(&format!(
+        "BOT_INSTANCE_ID=testhost-{STAMP}-v1.0.0-bbbbbbbbbbbb\n"
+    )));
     assert!(bot_env.contains(&format!("GRPC_ADDR=127.0.0.1:{PORT}")));
 
     // Web points at the freshly started bot.

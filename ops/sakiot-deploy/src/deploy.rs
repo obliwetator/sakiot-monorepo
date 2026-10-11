@@ -528,6 +528,7 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     let release = ServiceRelease {
         target,
         release_id: &release_id,
+        timestamp: &timestamp,
         components: &components,
         artifact_dir: &artifact_dir,
         worktree_path: worktree.path(),
