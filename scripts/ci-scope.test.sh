@@ -122,6 +122,11 @@ assert_scope \
   "clippy.toml"
 
 assert_scope \
+  "the dependency policy runs with the Rust checks" \
+  true false false false false \
+  "deny.toml"
+
+assert_scope \
   "Git hooks run the hook tests" \
   false false false false true \
   ".githooks/pre-commit" \

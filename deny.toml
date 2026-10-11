@@ -1,0 +1,74 @@
+# cargo-deny policy for the Rust workspace.
+#
+# CI runs `bans licenses sources` on every change, so a pull request that adds
+# a dependency with a disallowed license or source fails while it is being
+# made. Those checks depend only on Cargo.lock. `advisories` depends on the
+# RustSec database, which changes without any change here, so it runs on a
+# weekly schedule (.github/workflows/dependency-advisories.yml) and never
+# blocks a deploy.
+
+[graph]
+# The VPS and CI build for x86_64 Linux; sakiot-dsp also builds to WASM.
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+# Dev-dependencies (actix-test's client, test fixtures) never ship.
+exclude-dev = true
+
+[advisories]
+# Each entry is an advisory we cannot fix from here. Recheck them when the
+# named upstream crate releases, and delete the entry once it no longer
+# matches (cargo-deny warns about ignores that match nothing).
+ignore = [
+    # ringbuf 0.4: double free when an element's Drop panics. songbird (0.6.1,
+    # the latest, still requires ringbuf 0.4) only stores u8, which has no Drop.
+    { id = "RUSTSEC-2026-0293", reason = "songbird's ring buffers hold u8, whose Drop cannot panic" },
+    # rsa: Marvin timing attack on RSA decryption, with no fixed release.
+    # jsonwebtoken's pure-Rust backend always compiles rsa, but sessions use
+    # HS256 only (auth/jwt.rs pins it) and no RSA key exists.
+    { id = "RUSTSEC-2023-0071", reason = "only HS256 JWTs; no RSA key or RSA operation exists" },
+    # rustls-webpki 0.102: certificate revocation list and name-constraint
+    # bugs. serenity 0.12.5 (the latest) opens the Discord gateway through
+    # tokio-tungstenite 0.21 and rustls 0.22, which pin it. No CRLs are used.
+    { id = "RUSTSEC-2026-0049", reason = "pinned by serenity 0.12.5; no CRLs are used" },
+    { id = "RUSTSEC-2026-0098", reason = "pinned by serenity 0.12.5; only Discord's gateway certificate is validated" },
+    { id = "RUSTSEC-2026-0099", reason = "pinned by serenity 0.12.5; only Discord's gateway certificate is validated" },
+    { id = "RUSTSEC-2026-0104", reason = "pinned by serenity 0.12.5; no CRLs are parsed" },
+    # libcrux: davey 0.1.4 (the latest; Discord's voice end-to-end
+    # encryption, used by songbird) pins openmls_rust_crypto 0.5, which pins
+    # hpke-rs 0.6 and libcrux-sha3 0.0.8. Fixed in libcrux-sha3 0.0.10.
+    { id = "RUSTSEC-2026-0207", reason = "pinned by davey 0.1.4 via openmls_rust_crypto 0.5 and hpke-rs 0.6" },
+    { id = "RUSTSEC-2026-0208", reason = "pinned by davey 0.1.4 via openmls_rust_crypto 0.5 and hpke-rs 0.6" },
+    { id = "RUSTSEC-2026-0212", reason = "affects aarch64 only; the VPS is x86_64; pinned by davey 0.1.4" },
+    # Unmaintained, no known vulnerability.
+    { id = "RUSTSEC-2024-0388", reason = "derivative is a derive macro used by songbird 0.6.1, the latest" },
+    { id = "RUSTSEC-2024-0384", reason = "instant comes from openmls via davey 0.1.4, the latest" },
+]
+
+[licenses]
+# Permissive licenses, plus MPL-2.0, whose copyleft applies only to modified
+# files of those crates.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Duplicate versions are common in this ecosystem (serenity pins older TLS
+# crates), so they are not an error.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

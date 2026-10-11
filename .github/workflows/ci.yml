@@ -131,6 +131,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Install cargo-deny
+        run: scripts/install-cargo-deny.sh
+
+      # Licenses, sources and bans depend only on Cargo.lock, so they fail
+      # only when a change adds a dependency. Advisories change on their own;
+      # dependency-advisories.yml checks them weekly instead of gating deploys.
+      - name: Dependency policy
+        run: cargo deny check bans licenses sources
+
   rust-test:
     needs: scope
     if: needs.scope.outputs.rust == 'true'

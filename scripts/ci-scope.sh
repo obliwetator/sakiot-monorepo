@@ -31,6 +31,10 @@ while IFS= read -r path; do
       rust=true
       dsp=true
       ;;
+    # The dependency policy is checked in the Rust Clippy job.
+    deny.toml)
+      rust=true
+      ;;
     .sqlx/*|fbi-agent/*|sakiot-paths/*|sakiot-storage/*|\
     sakiot-db/migrations/*|scripts/sqlx-*)
       rust=true
