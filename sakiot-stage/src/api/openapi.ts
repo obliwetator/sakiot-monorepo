@@ -2858,7 +2858,7 @@ export interface operations {
 				};
 				content?: never;
 			};
-			/** @description Waveform is still being generated */
+			/** @description Waveform is being built from the audio */
 			202: {
 				headers: {
 					[name: string]: unknown;
@@ -4679,7 +4679,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Combined peaks; explicit gaps are zero-valued */
+			/** @description Combined peaks of the session's recordings, live ones included; explicit gaps are zero-valued */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -4738,7 +4738,7 @@ export interface operations {
 		};
 		requestBody?: never;
 		responses: {
-			/** @description Combined waveform rebuild started or already running */
+			/** @description Decoding of the ended recordings without peaks started or already running */
 			200: {
 				headers: {
 					[name: string]: unknown;
@@ -4790,8 +4790,6 @@ export interface operations {
 			query?: {
 				/** @description Serve the silence-free waveform when true */
 				silence?: boolean;
-				/** @description Build a live recording's waveform; one is never built without it */
-				build?: boolean;
 			};
 			header?: never;
 			path: {
@@ -4817,7 +4815,7 @@ export interface operations {
 				};
 				content?: never;
 			};
-			/** @description Waveform is still being generated */
+			/** @description Waveform is being built from the audio */
 			202: {
 				headers: {
 					[name: string]: unknown;

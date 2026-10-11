@@ -131,6 +131,36 @@ pub struct ClaimedMediaJob {
     pub token: String,
 }
 
+/// [`enqueue`] for work whose output is a cache. A job under `idempotency_key`
+/// that already finished means its output has since been evicted, so a new
+/// job starts under a fresh key instead of answering with the old one.
+pub async fn enqueue_rebuild(
+    pool: &Pool<Postgres>,
+    guild_id: Option<i64>,
+    requester: crate::permissions::Viewer,
+    idempotency_key: &str,
+    resource_key: &str,
+    request: &MediaJobRequest,
+) -> Result<MediaJobStatus, AppError> {
+    let status = enqueue(
+        pool,
+        guild_id,
+        requester,
+        idempotency_key,
+        resource_key,
+        request,
+    )
+    .await?;
+    if status.status != "ready" {
+        return Ok(status);
+    }
+    let key = format!(
+        "{idempotency_key}-{}",
+        chrono::Utc::now().timestamp_millis()
+    );
+    enqueue(pool, guild_id, requester, &key, resource_key, request).await
+}
+
 pub async fn enqueue(
     pool: &Pool<Postgres>,
     guild_id: Option<i64>,

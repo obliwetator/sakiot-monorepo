@@ -1,5 +1,13 @@
+use std::collections::HashMap;
+
+use sakiot_paths::DataRoots;
+use sakiot_peaks::{FRAME_MS, FramePeak};
+
 use super::*;
 use crate::media_jobs::JobAttempt;
+use crate::waveform::{
+    PeakDensity, decode_and_publish, frames_per_point, read_peaks, waveform_dat,
+};
 
 #[utoipa::path(
     get,
@@ -7,7 +15,7 @@ use crate::media_jobs::JobAttempt;
     tag = "audio",
     params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
     responses(
-        (status = 200, description = "Combined peaks; explicit gaps are zero-valued", body = SessionWaveformResponse),
+        (status = 200, description = "Combined peaks of the session's recordings, live ones included; explicit gaps are zero-valued", body = SessionWaveformResponse),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
         (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
         (status = 404, description = "Session not found", body = crate::errors::ApiError),
@@ -20,38 +28,144 @@ pub async fn get_session_waveform(
     path: web::Path<i64>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
-    progress: web::Data<WaveformProgressContainer>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
+    let viewer = crate::permissions::Viewer::of(&token);
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
-    let (cache_key, output) = session_waveform_cache(session_id, false);
+    let access = require_session_access(&pool, session_id, viewer).await?;
+    let resource = session_waveform_resource(session_id, false);
     if let Some(job) =
-        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &cache_key)
+        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &resource)
             .await?
     {
         return Ok(building_response(job));
     }
-    // A live session's waveform is built only when asked for, since each
-    // build reads the whole session so far. Once the session has finished,
-    // one that does not cover all of it is rebuilt without being asked.
-    if let Some(ended_at_ms) = finished_at_ms(&access)
-        && modified_ms(&output)
-            .await
-            .is_none_or(|built_from| built_from < ended_at_ms)
-    {
-        return build_finished_session_waveform(
-            &pool,
-            crate::permissions::Viewer::of(&token),
-            access.guild_id,
-            session_id,
-            false,
-            ended_at_ms,
-        )
-        .await;
+    let parts = timeline_layout(&pool, &access).await?;
+    let peaks = fragment_peaks(&parts).await?;
+    // An ended recording without peaks is decoded for them. A live one stays
+    // blank until it ends: decoding it would leave a snapshot that stops short.
+    if let Some(missing) = parts.iter().find_map(|part| match &part.kind {
+        PartKind::Audio {
+            audio_file_id,
+            file_name,
+            live: false,
+            ..
+        } if !peaks.contains_key(file_name) => Some(*audio_file_id),
+        _ => None,
+    }) {
+        return build_session_waveform(&pool, viewer, access.guild_id, session_id, false, missing)
+            .await;
     }
-    session_waveform_status(&cache_key, &output, &progress).await
+    let growing = finished_at_ms(&access).is_none();
+    let spans = spans(access.started_at_ms, &parts, &peaks, growing);
+    Ok(dat_response(session_dat(&spans, growing)))
+}
+
+/// The peaks of every recording in `parts` that has them, by stem.
+async fn fragment_peaks(
+    parts: &[TimelinePart],
+) -> Result<HashMap<String, Vec<FramePeak>>, AppError> {
+    let roots = DataRoots::from_env();
+    let mut peaks = HashMap::new();
+    for part in parts {
+        if let PartKind::Audio { file_name, .. } = &part.kind
+            && !peaks.contains_key(file_name)
+            && let Some(frames) = read_peaks(&roots.peaks_path(file_name)).await?
+        {
+            peaks.insert(file_name.clone(), frames);
+        }
+    }
+    Ok(peaks)
+}
+
+/// One stretch of a session's timeline: the recording's peaks heard there,
+/// then silence to `frames`.
+#[derive(Debug)]
+struct Span<'a> {
+    heard: &'a [FramePeak],
+    frames: usize,
+}
+
+/// The session's timeline as spans: each recording's peaks where it is
+/// heard, silence for gaps and for recordings without peaks. A growing
+/// session ends where its last recording's peaks end, as its audio does.
+fn spans<'a>(
+    started_at_ms: i64,
+    parts: &[TimelinePart],
+    peaks: &'a HashMap<String, Vec<FramePeak>>,
+    growing: bool,
+) -> Vec<Span<'a>> {
+    let frame_at =
+        |ms: i64| usize::try_from(ms.saturating_sub(started_at_ms) / FRAME_MS).unwrap_or(0);
+    let mut spans = Vec::with_capacity(parts.len());
+    let mut cursor = 0;
+    for (index, part) in parts.iter().enumerate() {
+        let start = frame_at(part.start_ms).max(cursor);
+        let end = frame_at(part.end_ms).max(start);
+        if start > cursor {
+            spans.push(Span {
+                heard: &[],
+                frames: start - cursor,
+            });
+        }
+        let heard = match &part.kind {
+            PartKind::Audio {
+                source_start_ms,
+                file_name,
+                ..
+            } => {
+                let offset =
+                    usize::try_from(part.start_ms.saturating_sub(*source_start_ms) / FRAME_MS)
+                        .unwrap_or(0);
+                let recording = peaks
+                    .get(file_name)
+                    .and_then(|recording| recording.get(offset..))
+                    .unwrap_or_default();
+                if growing && index + 1 == parts.len() {
+                    spans.push(Span {
+                        heard: recording,
+                        frames: recording.len(),
+                    });
+                    break;
+                }
+                recording.get(..end - start).unwrap_or(recording)
+            }
+            PartKind::Silence => &[],
+        };
+        spans.push(Span {
+            heard,
+            frames: end - start,
+        });
+        cursor = end;
+    }
+    spans
+}
+
+/// The session's waveform, condensed as its spans are walked, so a long gap
+/// (or a session left "active" for weeks) costs one step per point.
+fn session_dat(spans: &[Span<'_>], growing: bool) -> Vec<u8> {
+    let total = spans.iter().map(|span| span.frames).sum();
+    let per_point = frames_per_point(
+        total,
+        PeakDensity::PerSecond(SESSION_PEAKS_PER_SECOND),
+        growing,
+    );
+    let mut condenser = sakiot_peaks::Condenser::new(per_point);
+    for span in spans {
+        condenser.extend(span.heard);
+        condenser.push_silence(span.frames - span.heard.len());
+    }
+    sakiot_peaks::encode_dat(&condenser.finish(), per_point)
+}
+
+fn dat_response(dat: Vec<u8>) -> HttpResponse {
+    HttpResponse::Ok().json(SessionWaveformResponse {
+        progress: 100,
+        building: false,
+        data: Some(BASE64_STANDARD.encode(dat)),
+        job_id: None,
+        error: None,
+    })
 }
 
 #[utoipa::path(
@@ -60,7 +174,7 @@ pub async fn get_session_waveform(
     tag = "audio",
     params(("recording_session_id" = i64, Path, description = "Logical recording session id")),
     responses(
-        (status = 200, description = "Combined waveform rebuild started or already running", body = SessionWaveformResponse),
+        (status = 200, description = "Decoding of the ended recordings without peaks started or already running", body = SessionWaveformResponse),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
         (status = 403, description = "One or more audible channels inaccessible", body = crate::errors::ApiError),
         (status = 404, description = "Session not found", body = crate::errors::ApiError),
@@ -110,39 +224,43 @@ pub async fn get_session_silence_free_waveform(
     path: web::Path<i64>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
-    progress: web::Data<WaveformProgressContainer>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
+    let viewer = crate::permissions::Viewer::of(&token);
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, viewer).await?;
     let source = session_silence_free_path(&access)?;
     if !tokio::fs::try_exists(&source).await? {
         return Err(AppError::FileNotFound);
     }
-    let (cache_key, output) = session_waveform_cache(session_id, true);
-    if waveform_is_stale(&output, &source).await {
-        let _ = tokio::fs::remove_file(&output).await;
-    }
+    let resource = session_waveform_resource(session_id, true);
     if let Some(job) =
-        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &cache_key)
+        crate::media_jobs::active_for_resource(&pool, token.user_id, "session_waveform", &resource)
             .await?
     {
         return Ok(building_response(job));
     }
-    // Silence-free audio exists only once the session has finished.
-    if !tokio::fs::try_exists(&output).await.unwrap_or(false) {
-        return build_finished_session_waveform(
-            &pool,
-            crate::permissions::Viewer::of(&token),
-            access.guild_id,
-            session_id,
-            true,
-            modified_ms(&source).await.unwrap_or_default(),
-        )
-        .await;
+    // Silence-free audio exists only once the session has finished. Its
+    // peaks go stale when it is rendered again.
+    let peaks = silence_free_peaks_path(session_id);
+    if !waveform_is_stale(&peaks, &source).await
+        && let Some(frames) = read_peaks(&peaks).await?
+    {
+        return Ok(dat_response(waveform_dat(
+            &frames,
+            PeakDensity::PerSecond(SESSION_PEAKS_PER_SECOND),
+            false,
+        )));
     }
-    session_waveform_status(&cache_key, &output, &progress).await
+    build_session_waveform(
+        &pool,
+        viewer,
+        access.guild_id,
+        session_id,
+        true,
+        modified_ms(&source).await.unwrap_or_default(),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -194,7 +312,7 @@ async fn enqueue_session_waveform(
     session_id: i64,
     silence_free: bool,
 ) -> Result<HttpResponse, AppError> {
-    let (resource, _) = session_waveform_cache(session_id, silence_free);
+    let resource = session_waveform_resource(session_id, silence_free);
     let request = crate::media_jobs::MediaJobRequest::SessionWaveform {
         session_id,
         silence_free,
@@ -231,18 +349,18 @@ fn finished_at_ms(access: &SessionAccess) -> Option<i64> {
     (access.state == "finalized").then(|| access.ended_at_ms.unwrap_or(access.started_at_ms))
 }
 
-/// A file's modification time in Unix milliseconds. Session waveform jobs
-/// set it to when they started reading the session.
+/// A file's modification time in Unix milliseconds.
 async fn modified_ms(path: &Path) -> Option<i64> {
     let modified = tokio::fs::metadata(path).await.ok()?.modified().ok()?;
     let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
     i64::try_from(since_epoch.as_millis()).ok()
 }
 
-/// Starts a finished session's waveform without being asked. The job key
-/// names what the waveform covers, so repeated requests share one job and a
-/// failed build is reported instead of retried on every request.
-async fn build_finished_session_waveform(
+/// Starts building a session waveform's missing peaks without being asked.
+/// The job key names what it builds (`covers`), so repeated requests share
+/// one job and a failed build is reported instead of retried on every
+/// request.
+async fn build_session_waveform(
     pool: &web::Data<Pool<Postgres>>,
     requester: crate::permissions::Viewer,
     guild_id: i64,
@@ -250,22 +368,21 @@ async fn build_finished_session_waveform(
     silence_free: bool,
     covers: i64,
 ) -> Result<HttpResponse, AppError> {
-    let (resource, _) = session_waveform_cache(session_id, silence_free);
+    let resource = session_waveform_resource(session_id, silence_free);
     let request = crate::media_jobs::MediaJobRequest::SessionWaveform {
         session_id,
         silence_free,
     };
     let key = format!("{resource}-{covers}");
-    let mut job =
-        crate::media_jobs::enqueue(pool, Some(guild_id), requester, &key, &resource, &request)
-            .await?;
-    if job.status == "ready" {
-        // That build finished, but its waveform has since gone.
-        let key = format!("{key}-{}", chrono::Utc::now().timestamp_millis());
-        job =
-            crate::media_jobs::enqueue(pool, Some(guild_id), requester, &key, &resource, &request)
-                .await?;
-    }
+    let job = crate::media_jobs::enqueue_rebuild(
+        pool,
+        Some(guild_id),
+        requester,
+        &key,
+        &resource,
+        &request,
+    )
+    .await?;
     if job.status == "failed" {
         return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
             progress: 0,
@@ -281,153 +398,65 @@ async fn build_finished_session_waveform(
     Ok(building_response(job))
 }
 
+/// Decodes peaks for a session: its ended recordings that have none, or its
+/// silence-free render.
 pub(crate) async fn run_session_waveform_job(
     attempt: &JobAttempt<'_>,
     session_id: i64,
     silence_free: bool,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
-    let JobAttempt {
-        pool,
-        media,
-        requester,
-        id: job_id,
-        token: attempt_token,
-    } = *attempt;
-    let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, requester).await?;
-    let (cache_key, output) = session_waveform_cache(session_id, silence_free);
-    if let Some(parent) = output.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let attempt_output = output.with_extension(format!("{job_id}.{attempt_token}.tmp.dat"));
-    let progress = web::Data::new(WaveformProgressContainer(tokio::sync::RwLock::new(
-        std::collections::HashMap::new(),
-    )));
-    // Audio recorded after this is not in the waveform.
-    let read_from = std::time::SystemTime::now();
-    let input = if silence_free {
+    let pool = web::Data::new(attempt.pool.clone());
+    let access = require_session_access(&pool, session_id, attempt.requester).await?;
+    let sources = if silence_free {
         let source = session_silence_free_path(&access)?;
         if !tokio::fs::try_exists(&source).await? {
             return Err(AppError::FileNotFound);
         }
-        source
+        vec![(source, silence_free_peaks_path(session_id))]
     } else {
-        let composite =
-            PathBuf::from(waveform_path()).join(format!("{cache_key}-{attempt_token}.ogg"));
-        let composition_progress = CompositionProgress {
-            cache_key: cache_key.clone(),
-            progress: progress.clone(),
-            completed: 85,
-        };
-        if let Err(error) = crate::media_jobs::track_progress(
-            pool,
-            job_id,
-            attempt_token,
-            "composing",
-            &progress,
-            &cache_key,
-            compose_session_inner(
-                &pool_data,
-                &access,
-                CompositionRequest::default(),
-                &composite,
-                Some(composition_progress),
-                media,
-            ),
-        )
-        .await
-        {
-            let _ = tokio::fs::remove_file(&composite).await;
-            return Err(error);
+        let roots = DataRoots::from_env();
+        let mut sources = Vec::new();
+        for part in timeline_layout(&pool, &access).await? {
+            let PartKind::Audio {
+                path,
+                audio_file_id,
+                file_name,
+                live: false,
+                ..
+            } = part.kind
+            else {
+                continue;
+            };
+            let peaks = roots.peaks_path(&file_name);
+            if read_peaks(&peaks).await?.is_none() {
+                attempt
+                    .media
+                    .ensure_recording_local(attempt.pool, audio_file_id, &path)
+                    .await?;
+                sources.push((path, peaks));
+            }
         }
-        composite
+        sources
     };
-    let generation = crate::media_jobs::track_progress(
-        pool,
-        job_id,
-        attempt_token,
-        "waveform",
-        &progress,
-        &cache_key,
-        async {
-            crate::waveform::generate_peaks_background(
-                input.to_string_lossy().into_owned(),
-                attempt_output.to_string_lossy().into_owned(),
-                cache_key.clone(),
-                crate::waveform::PeakDensity::PerSecond(SESSION_PEAKS_PER_SECOND),
-                progress.clone(),
-                None,
-                Some((85, 99)),
-            )
-            .await
-            .map_err(|error| AppError::IoError(std::io::Error::other(error.to_string())))
-        },
-    )
-    .await;
-    if !silence_free {
-        let _ = tokio::fs::remove_file(&input).await;
-    }
-    generation?;
-    // Stamped with when reading started, so a waveform built while the
-    // session was live reads as older than its end and is rebuilt.
-    tokio::fs::File::options()
-        .write(true)
-        .open(&attempt_output)
-        .await?
-        .into_std()
-        .await
-        .set_modified(read_from)?;
-    let tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
-    tokio::fs::rename(&attempt_output, &output).await?;
     let route = if silence_free {
         format!("/api/audio/sessions/{session_id}/silence-free/waveform")
     } else {
         format!("/api/audio/sessions/{session_id}/waveform")
     };
-    crate::media_jobs::complete_publication(tx, job_id, attempt_token, &route, None).await?;
+    decode_and_publish(attempt, &sources, &route).await?;
     Ok((Some(route), None))
 }
 
-pub(super) async fn session_waveform_status(
-    cache_key: &str,
-    output: &Path,
-    progress: &web::Data<WaveformProgressContainer>,
-) -> Result<HttpResponse, AppError> {
-    {
-        let mut map = progress.0.write().await;
-        if let Some(value) = map.get(cache_key).copied() {
-            if value < 0 {
-                map.remove(cache_key);
-                return Err(AppError::InternalError);
-            }
-            return Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-                progress: value.min(99),
-                building: true,
-                data: None,
-                job_id: None,
-                error: None,
-            }));
-        }
-    }
-
-    if tokio::fs::try_exists(output).await.unwrap_or(false) {
-        return waveform_file_response(output).await;
-    }
-
-    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-        progress: 0,
-        building: false,
-        data: None,
-        job_id: None,
-        error: None,
-    }))
+/// The media-job resource of a session waveform.
+pub(super) fn session_waveform_resource(session_id: i64, silence_free: bool) -> String {
+    let suffix = if silence_free { "-silence-free" } else { "" };
+    format!("logical-session-{session_id}{suffix}")
 }
 
-pub(super) fn session_waveform_cache(session_id: i64, silence_free: bool) -> (String, PathBuf) {
-    let suffix = if silence_free { "-silence-free" } else { "" };
-    let cache_key = format!("logical-session-{session_id}{suffix}");
-    let output = PathBuf::from(waveform_path()).join(format!("{cache_key}.dat"));
-    (cache_key, output)
+/// Where a session's silence-free render keeps its peaks. Its normal waveform
+/// has no file: it is stitched from its recordings' peaks.
+pub(super) fn silence_free_peaks_path(session_id: i64) -> PathBuf {
+    DataRoots::from_env().peaks_path(&session_waveform_resource(session_id, true))
 }
 
 pub(super) async fn waveform_is_stale(waveform: &Path, source: &Path) -> bool {
@@ -446,13 +475,124 @@ pub(super) async fn waveform_is_stale(waveform: &Path, source: &Path) -> bool {
     waveform_modified < source_modified
 }
 
-pub(super) async fn waveform_file_response(path: &Path) -> Result<HttpResponse, AppError> {
-    let bytes = tokio::fs::read(path).await?;
-    Ok(HttpResponse::Ok().json(SessionWaveformResponse {
-        progress: 100,
-        building: false,
-        data: Some(BASE64_STANDARD.encode(bytes)),
-        job_id: None,
-        error: None,
-    }))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOUD: FramePeak = FramePeak { min: -50, max: 60 };
+
+    fn audio(start_ms: i64, end_ms: i64, source_start_ms: i64, file_name: &str) -> TimelinePart {
+        TimelinePart {
+            start_ms,
+            end_ms,
+            kind: PartKind::Audio {
+                path: PathBuf::new(),
+                source_start_ms,
+                audio_file_id: 1,
+                file_name: file_name.to_owned(),
+                live: false,
+            },
+        }
+    }
+
+    fn silence(start_ms: i64, end_ms: i64) -> TimelinePart {
+        TimelinePart {
+            start_ms,
+            end_ms,
+            kind: PartKind::Silence,
+        }
+    }
+
+    fn peaks(entries: &[(&str, Vec<FramePeak>)]) -> HashMap<String, Vec<FramePeak>> {
+        entries
+            .iter()
+            .map(|(name, frames)| ((*name).to_owned(), frames.clone()))
+            .collect()
+    }
+
+    /// The frames `spans` stand for, one by one.
+    fn stitch(
+        started_at_ms: i64,
+        parts: &[TimelinePart],
+        peaks: &HashMap<String, Vec<FramePeak>>,
+        growing: bool,
+    ) -> Vec<FramePeak> {
+        spans(started_at_ms, parts, peaks, growing)
+            .iter()
+            .flat_map(|span| {
+                span.heard.iter().copied().chain(std::iter::repeat_n(
+                    FramePeak::SILENT,
+                    span.frames - span.heard.len(),
+                ))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stitching_places_each_recording_on_the_session_timeline() {
+        // Session from 1,000 ms: 40 ms of silence, then recording "a" from
+        // 60 ms into its file, then a gap, then "b".
+        let a: Vec<FramePeak> = (0..10)
+            .map(|frame| FramePeak {
+                min: -frame,
+                max: frame,
+            })
+            .collect();
+        let parts = [
+            silence(1_000, 1_040),
+            audio(1_040, 1_100, 980, "a"),
+            silence(1_100, 1_140),
+            audio(1_140, 1_180, 1_140, "b"),
+        ];
+        let frames = stitch(
+            1_000,
+            &parts,
+            &peaks(&[("a", a.clone()), ("b", vec![LOUD; 5])]),
+            false,
+        );
+        let silent = FramePeak::SILENT;
+        assert_eq!(
+            frames,
+            [silent, silent, a[3], a[4], a[5], silent, silent, LOUD, LOUD]
+        );
+    }
+
+    #[test]
+    fn missing_or_short_peaks_are_silent_until_the_part_ends() {
+        let parts = [audio(0, 100, 0, "short"), audio(100, 160, 100, "gone")];
+        let frames = stitch(0, &parts, &peaks(&[("short", vec![LOUD; 2])]), false);
+        assert_eq!(frames.len(), 8);
+        assert_eq!(frames[..2], [LOUD; 2]);
+        assert!(frames[2..].iter().all(|frame| *frame == FramePeak::SILENT));
+    }
+
+    #[test]
+    fn a_growing_session_ends_where_its_last_recording_does() {
+        let parts = [silence(0, 40), audio(40, 400, 40, "live")];
+        let frames = stitch(0, &parts, &peaks(&[("live", vec![LOUD; 3])]), true);
+        assert_eq!(frames.len(), 5);
+        // An ended session is padded to its full length.
+        let frames = stitch(0, &parts, &peaks(&[("live", vec![LOUD; 3])]), false);
+        assert_eq!(frames.len(), 20);
+    }
+
+    #[test]
+    fn a_session_left_active_for_months_condenses_its_silence_cheaply() {
+        // 150 days of silence after a minute of audio.
+        let day_ms = 86_400_000;
+        let parts = [audio(0, 60_000, 0, "a"), silence(60_000, 150 * day_ms)];
+        let peaks = peaks(&[("a", vec![LOUD; 3_000])]);
+        let spans = spans(0, &parts, &peaks, true);
+        assert_eq!(
+            spans.iter().map(|span| span.frames).sum::<usize>(),
+            648_000_000
+        );
+        let dat = session_dat(&spans, true);
+        // Capped at 60,000 points, grouped by a power of two: 16,384 frames.
+        assert_eq!(&dat[12..16], &(16_384u32 * 960).to_le_bytes());
+        assert_eq!(
+            &dat[20..22],
+            &[LOUD.min.to_le_bytes()[0], LOUD.max.to_le_bytes()[0]]
+        );
+    }
 }

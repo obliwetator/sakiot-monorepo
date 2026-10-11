@@ -55,17 +55,15 @@ async fn deletion_tombstones_then_removes_sources_derivatives_and_audit_survives
     let key = RecordingKey::new(1, 10, 2026, 9, "lifecycle-recording");
     let original = key.recording_path(&roots.recordings_str());
     let no_silence = key.no_silence_path(&roots.no_silence_str());
-    let waveform = key.waveform_path(&roots.waveforms_str());
+    let peaks = roots.peaks_path("lifecycle-recording");
+    let silence_free_peaks = roots.peaks_path("_no_silence_lifecycle-recording");
     let silence_attempt = no_silence.with_extension("job.token.tmp.ogg");
-    let waveform_attempt = roots
+    let peaks_attempt = roots
         .waveforms
-        .join("lifecycle-recording.job.token.tmp.dat");
-    let session_waveform_attempt = roots
-        .waveforms
-        .join(format!("logical-session-{session_id}.job.token.tmp.dat"));
-    let session_composite_attempt = roots
-        .waveforms
-        .join(format!("logical-session-{session_id}-token.ogg"));
+        .join("lifecycle-recording.job.token.tmp.peaks");
+    let session_peaks_attempt = roots.waveforms.join(format!(
+        "logical-session-{session_id}-silence-free.job.token.tmp.peaks"
+    ));
     let clip = roots.clips.join("2026/09/lifecycle-source.ogg");
     let composed = roots.clips.join("compositions/lifecycle-compose.ogg");
     let render = roots
@@ -75,11 +73,11 @@ async fn deletion_tombstones_then_removes_sources_derivatives_and_audit_survives
     let paths = [
         &original,
         &no_silence,
-        &waveform,
+        &peaks,
+        &silence_free_peaks,
         &silence_attempt,
-        &waveform_attempt,
-        &session_waveform_attempt,
-        &session_composite_attempt,
+        &peaks_attempt,
+        &session_peaks_attempt,
         &clip,
         &composed,
         &download,

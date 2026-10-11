@@ -357,8 +357,7 @@ pub(crate) async fn run_session_silence_job(
     }
     let tx = crate::media_jobs::begin_publication(pool, job_id, attempt_token).await?;
     tokio::fs::rename(&temporary, &output).await?;
-    let (_, silence_waveform_output) = session_waveform_cache(session_id, true);
-    let _ = tokio::fs::remove_file(silence_waveform_output).await;
+    let _ = tokio::fs::remove_file(silence_free_peaks_path(session_id)).await;
     let url = format!("/api/audio/sessions/{session_id}/silence-free");
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))

@@ -48,6 +48,7 @@ pub(super) async fn compose_session_inner(
             PartKind::Audio {
                 path,
                 source_start_ms,
+                ..
             } => {
                 command
                     .args([
@@ -206,26 +207,48 @@ pub(super) async fn composition_plan(
     })
 }
 
+/// [`timeline_layout`] with every fragment's audio on local disk.
 pub(super) async fn timeline_parts(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
     media: &MediaArchive,
+) -> Result<Vec<TimelinePart>, AppError> {
+    let parts = timeline_layout(pool, access).await?;
+    for part in &parts {
+        if let PartKind::Audio {
+            path,
+            audio_file_id,
+            ..
+        } = &part.kind
+        {
+            media
+                .ensure_recording_local(pool.get_ref(), *audio_file_id, path)
+                .await?;
+        }
+    }
+    Ok(parts)
+}
+
+/// The session's timeline: its fragments, and silence between and around
+/// them, clipped to the session's extent. Archived audio stays archived.
+pub(super) async fn timeline_layout(
+    pool: &web::Data<Pool<Postgres>>,
+    access: &SessionAccess,
 ) -> Result<Vec<TimelinePart>, AppError> {
     let timeline_end = timeline_end_ms(access);
     let mut raw = Vec::new();
     for fragment in load_fragments(pool, access.session_id).await? {
         let end_ms = fragment.end_ms.unwrap_or(timeline_end).min(timeline_end);
         if end_ms > fragment.start_ms {
-            let path = fragment_path(&fragment);
-            media
-                .ensure_recording_local(pool.get_ref(), fragment.id, &path)
-                .await?;
             raw.push(TimelinePart {
                 start_ms: fragment.start_ms,
                 end_ms,
                 kind: PartKind::Audio {
-                    path,
+                    path: fragment_path(&fragment),
                     source_start_ms: fragment.start_ms,
+                    audio_file_id: fragment.id,
+                    file_name: fragment.file_name,
+                    live: fragment.live,
                 },
             });
         }

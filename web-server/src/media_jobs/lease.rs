@@ -107,7 +107,7 @@ pub async fn report_progress(
     .await?)
 }
 
-/// Mirror the existing FFmpeg/audiowaveform progress source into the durable
+/// Mirror the existing FFmpeg/peaks-decoder progress source into the durable
 /// row while the operation is running. Losing the lease stops the operation.
 pub async fn track_progress<T, F>(
     pool: &Pool<Postgres>,

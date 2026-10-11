@@ -14,7 +14,7 @@ use crate::errors::AppError;
 use crate::media_archive::{MediaArchive, RemoteDisposition};
 
 use super::live::LiveContainer;
-use super::paths::{clips_path, no_silence_recording_path, recording_path, waveform_path};
+use super::paths::{clips_path, no_silence_recording_path, recording_path};
 use super::types::{StartEnd, WaveformProgressContainer};
 
 /// Waveform points per second of session audio. Four keeps a 20 second clip
@@ -157,7 +157,14 @@ pub struct SilenceRemovalQuery {
 
 #[derive(Clone, Debug)]
 enum PartKind {
-    Audio { path: PathBuf, source_start_ms: i64 },
+    Audio {
+        path: PathBuf,
+        source_start_ms: i64,
+        audio_file_id: i64,
+        /// The recording's stem, which names its peaks file.
+        file_name: String,
+        live: bool,
+    },
     Silence,
 }
 

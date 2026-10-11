@@ -4,9 +4,9 @@
 //!
 //! - `web_server_process_cpu_seconds_total{mode}`: `user` and `system` for
 //!   this process, `children_user` and `children_system` for the child
-//!   processes it has waited for (ffmpeg, audiowaveform, composition
-//!   workers). A child's time is counted when it exits, so a long-running
-//!   live HLS mux shows up at its end.
+//!   processes it has waited for (ffmpeg, composition workers). A child's
+//!   time is counted when it exits, so a long-running live HLS mux shows up
+//!   at its end. Decoding audio for waveform peaks runs in this process.
 //! - `web_server_process_resident_memory_bytes`, `web_server_process_open_fds`,
 //!   `web_server_process_threads`.
 //!

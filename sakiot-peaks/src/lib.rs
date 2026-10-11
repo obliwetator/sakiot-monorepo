@@ -196,16 +196,65 @@ pub fn frames_per_point(frame_count: usize, target_points: usize, growing: bool)
 /// Merges every `frames_per_point` frames into one point. The last point may
 /// cover fewer.
 pub fn condense(frames: &[FramePeak], frames_per_point: usize) -> Vec<FramePeak> {
-    frames
-        .chunks(frames_per_point.max(1))
-        .map(|chunk| {
-            chunk
-                .iter()
-                .copied()
-                .reduce(FramePeak::merge)
-                .unwrap_or(FramePeak::SILENT)
-        })
-        .collect()
+    let mut condenser = Condenser::new(frames_per_point);
+    condenser.extend(frames);
+    condenser.finish()
+}
+
+/// [`condense`] for frames that arrive in pieces. A run of silence costs one
+/// step per point it spans, not per frame, so a long gap is cheap.
+#[derive(Debug)]
+pub struct Condenser {
+    frames_per_point: usize,
+    in_point: usize,
+    point: FramePeak,
+    points: Vec<FramePeak>,
+}
+
+impl Condenser {
+    pub fn new(frames_per_point: usize) -> Self {
+        Self {
+            frames_per_point: frames_per_point.max(1),
+            in_point: 0,
+            point: FramePeak::SILENT,
+            points: Vec::new(),
+        }
+    }
+
+    pub fn extend(&mut self, frames: &[FramePeak]) {
+        for &frame in frames {
+            self.add(frame, 1);
+        }
+    }
+
+    pub fn push_silence(&mut self, mut frames: usize) {
+        while frames > 0 {
+            let taken = frames.min(self.frames_per_point - self.in_point);
+            self.add(FramePeak::SILENT, taken);
+            frames -= taken;
+        }
+    }
+
+    /// `count` frames that all peak at `peak`, none past the current point.
+    fn add(&mut self, peak: FramePeak, count: usize) {
+        self.point = if self.in_point == 0 {
+            peak
+        } else {
+            self.point.merge(peak)
+        };
+        self.in_point += count;
+        if self.in_point == self.frames_per_point {
+            self.points.push(self.point);
+            self.in_point = 0;
+        }
+    }
+
+    pub fn finish(mut self) -> Vec<FramePeak> {
+        if self.in_point > 0 {
+            self.points.push(self.point);
+        }
+        self.points
+    }
 }
 
 /// `points`, each covering `frames_per_point` frames, as an 8-bit
@@ -337,6 +386,34 @@ mod tests {
             }
         }
         assert!(condense(&[], 4).is_empty());
+    }
+
+    #[test]
+    fn condensing_in_pieces_matches_condensing_at_once() {
+        let frames = frames(700);
+        for per_point in [1, 3, 64, 1_000] {
+            let mut condenser = Condenser::new(per_point);
+            let mut expected = Vec::new();
+            for (index, piece) in frames.chunks(37).enumerate() {
+                condenser.extend(piece);
+                expected.extend_from_slice(piece);
+                let silence = index * 11;
+                condenser.push_silence(silence);
+                expected.extend(std::iter::repeat_n(FramePeak::SILENT, silence));
+            }
+            assert_eq!(condenser.finish(), condense(&expected, per_point));
+        }
+    }
+
+    #[test]
+    fn a_long_silence_condenses_without_visiting_each_frame() {
+        // A year of 20 ms frames, as a session stuck "active" would span.
+        let mut condenser = Condenser::new(1 << 20);
+        condenser.push_silence(1_576_800_000);
+        condenser.extend(&[FramePeak { min: -1, max: 2 }]);
+        let points = condenser.finish();
+        assert_eq!(points.len(), 1_504);
+        assert_eq!(points[1_503], FramePeak { min: -1, max: 2 });
     }
 
     #[test]

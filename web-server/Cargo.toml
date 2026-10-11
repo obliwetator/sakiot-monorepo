@@ -59,6 +59,7 @@ bytes = "1.11.1"
 dotenvy = "0.15.7"
 uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sakiot-paths = { path = "../sakiot-paths" }
+sakiot-peaks = { path = "../sakiot-peaks" }
 sakiot-proto = { path = "../sakiot-proto" }
 sakiot-storage = { path = "../sakiot-storage" }
 sakiot-dsp = { path = "../sakiot-dsp" }
@@ -81,6 +82,7 @@ actix-codec = "0.5"
 actix-http = "3"
 actix-test = "0.1"
 awc = "3"
+ogg = "0.9"
 tempfile = "3"
 
 [features]

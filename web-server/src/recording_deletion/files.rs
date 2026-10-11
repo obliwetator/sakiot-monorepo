@@ -69,18 +69,10 @@ pub(super) async fn purge_fragment(
         )
         .await?;
     }
-    remove_file_if_exists(&key.waveform_path(&roots.waveforms_str())).await?;
-    remove_file_if_exists(&roots.waveforms.join(format!(
-        "{}{}.dat",
-        sakiot_paths::NO_SILENCE_PREFIX,
-        fragment.file_name
-    )))
-    .await?;
-    for prefix in [
-        format!("{}.", fragment.file_name),
-        format!("{}{}.", sakiot_paths::NO_SILENCE_PREFIX, fragment.file_name),
-    ] {
-        purge_cached_variants(&roots.waveforms, &prefix, &[".tmp.dat"]).await?;
+    let silence_free_stem = format!("{}{}", sakiot_paths::NO_SILENCE_PREFIX, fragment.file_name);
+    for stem in [fragment.file_name.as_str(), silence_free_stem.as_str()] {
+        remove_file_if_exists(&roots.peaks_path(stem)).await?;
+        purge_cached_variants(&roots.waveforms, &format!("{stem}."), &[".tmp.peaks"]).await?;
     }
     remove_dir_if_exists(&key.live_dir(&roots.recordings_str())).await?;
     Ok(())
@@ -110,24 +102,14 @@ pub(super) async fn purge_session_cache(
         )
         .await?;
     }
-    for suffix in ["", "-silence-free"] {
-        remove_file_if_exists(
-            &roots
-                .waveforms
-                .join(format!("logical-session-{id}{suffix}.dat")),
-        )
-        .await?;
-        purge_cached_variants(
-            &roots.waveforms,
-            &format!("logical-session-{id}{suffix}."),
-            &[".tmp.dat"],
-        )
-        .await?;
-    }
+    // Only the silence-free render has peaks of its own; the session's
+    // waveform is stitched from its recordings' peaks.
+    let silence_free = format!("logical-session-{id}-silence-free");
+    remove_file_if_exists(&roots.peaks_path(&silence_free)).await?;
     purge_cached_variants(
         &roots.waveforms,
-        &format!("logical-session-{id}-"),
-        &[".ogg"],
+        &format!("{silence_free}."),
+        &[".tmp.peaks"],
     )
     .await?;
     let mut directories = HashSet::new();
@@ -144,7 +126,7 @@ pub(super) async fn purge_session_cache(
 }
 
 pub(super) async fn purge_clip_waveforms(root: &Path, clip_id: &str) -> Result<(), AppError> {
-    purge_cached_variants(root, &format!("clip-{clip_id}-"), &[".dat"]).await
+    purge_cached_variants(root, &format!("clip-{clip_id}-"), &[".peaks"]).await
 }
 
 async fn purge_cached_variants(

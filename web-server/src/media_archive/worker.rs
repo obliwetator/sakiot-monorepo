@@ -555,6 +555,8 @@ async fn remove_cache_entry(entry: &CacheEntry) -> Result<bool, crate::errors::A
 /// alone by the cap eviction: a live pipeline rewrites its directory every few
 /// seconds while a player may be reading it, and deleting it mid-stream would
 /// corrupt the playback. The dedicated HLS reaper removes truly stale dirs.
+/// So are peaks files: the recorder appends a live recording's peaks every
+/// 500 ms, and an evicted one would leave it without a waveform until it ends.
 const CACHE_DIR_EVICTION_MIN_AGE_MS: i64 = 60 * 60 * 1000;
 
 async fn enforce_cache_cap(
@@ -569,13 +571,24 @@ async fn enforce_cache_cap(
         if total <= max_bytes {
             break;
         }
-        if entry.kind == CacheEntryKind::Directory {
-            // Re-read activity immediately before deletion. A pipeline or
-            // player may have refreshed the directory after collection.
-            let activity_ms = cache_directory_activity_ms(&entry.path, entry.order_ms).await;
-            if activity_ms.saturating_add(CACHE_DIR_EVICTION_MIN_AGE_MS) > now_ms {
-                continue;
+        // Re-read activity immediately before deletion. A pipeline, player
+        // or recorder may have refreshed the entry after collection.
+        let activity_ms = match entry.kind {
+            CacheEntryKind::Directory => {
+                Some(cache_directory_activity_ms(&entry.path, entry.order_ms).await)
             }
+            CacheEntryKind::File if is_peaks_file(&entry.path) => {
+                Some(match tokio::fs::metadata(&entry.path).await {
+                    Ok(metadata) => modified_ms(&metadata),
+                    Err(_) => entry.order_ms,
+                })
+            }
+            CacheEntryKind::File => None,
+        };
+        if activity_ms.is_some_and(|activity_ms| {
+            activity_ms.saturating_add(CACHE_DIR_EVICTION_MIN_AGE_MS) > now_ms
+        }) {
+            continue;
         }
         if remove_cache_entry(&entry).await? {
             total = total.saturating_sub(entry.bytes);
@@ -583,6 +596,11 @@ async fn enforce_cache_cap(
         }
     }
     Ok((removed, total))
+}
+
+fn is_peaks_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension == sakiot_paths::PEAKS_EXTENSION)
 }
 
 async fn remove_verified_file(path: &Path) -> Result<bool, crate::errors::AppError> {
@@ -649,6 +667,38 @@ mod tests {
         assert_eq!(enforce_cache_cap(entries, 9, 4).await?, (1, 4));
         assert!(!oldest.exists());
         assert!(newest.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cache_cap_skips_peaks_files_still_being_written()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs::FileTimes;
+
+        let directory = tempfile::tempdir()?;
+        let live = directory.path().join("live.peaks");
+        let ended = directory.path().join("ended.peaks");
+        tokio::fs::write(&live, b"123").await?;
+        tokio::fs::write(&ended, b"456").await?;
+        let old_time = std::time::SystemTime::now()
+            - std::time::Duration::from_millis((CACHE_DIR_EVICTION_MIN_AGE_MS + 1) as u64);
+        std::fs::File::options()
+            .write(true)
+            .open(&ended)?
+            .set_times(FileTimes::new().set_modified(old_time))?;
+        let entries = [&live, &ended]
+            .into_iter()
+            .map(|path| CacheEntry {
+                order_ms: 0,
+                path: path.clone(),
+                bytes: 3,
+                kind: CacheEntryKind::File,
+            })
+            .collect();
+
+        assert_eq!(enforce_cache_cap(entries, 6, 0).await?, (1, 3));
+        assert!(live.exists());
+        assert!(!ended.exists());
         Ok(())
     }
 

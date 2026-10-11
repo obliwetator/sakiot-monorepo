@@ -2937,61 +2937,82 @@ async fn media_job_count(pool: &PgPool, kind: &str) -> Result<i64, sqlx::Error> 
         .await
 }
 
-/// Each build of a live recording's waveform reads the whole recording so
-/// far, so viewing one never starts a build; only an explicit request does.
+/// Peaks frames for a recording or render, written where the server reads
+/// them. Callers remove the file afterwards.
+fn write_peaks(name: &str, frames: usize) -> Result<std::path::PathBuf, std::io::Error> {
+    let path = sakiot_paths::DataRoots::from_env().peaks_path(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let loud = sakiot_peaks::FramePeak { min: -40, max: 50 };
+    std::fs::write(&path, sakiot_peaks::encode(&vec![loud; frames]))?;
+    Ok(path)
+}
+
+/// The recorder writes a recording's peaks as it records, so a live one is
+/// served from them. One without peaks is decoded only once it has ended:
+/// decoding a live one would leave a snapshot that stops short.
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn live_recordings_build_a_waveform_only_when_asked(
+async fn recordings_are_served_from_their_peaks_and_decoded_only_once_ended(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
-    let stem = "waveform-live-only-when-asked";
-    sqlx::query(
-        "INSERT INTO audio_files (file_name, guild_id, channel_id, user_id, year, month, start_ts)
-         VALUES ($1, $2, $3, $4, 2026, 5, 1000)",
-    )
-    .bind(stem)
-    .bind(ALLOWED_GUILD_ID)
-    .bind(ALLOWED_CHANNEL_ID)
-    .bind(USER_ID)
-    .execute(&pool)
-    .await?;
+    let (live, with_peaks, ended) = (
+        "waveform-live-without-peaks",
+        "waveform-live-with-peaks",
+        "waveform-ended-without-peaks",
+    );
+    for (stem, end_ts) in [(live, None), (with_peaks, None), (ended, Some(2_000_i64))] {
+        sqlx::query(
+            "INSERT INTO audio_files (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts)
+             VALUES ($1, $2, $3, $4, 2026, 5, 1000, $5)",
+        )
+        .bind(stem)
+        .bind(ALLOWED_GUILD_ID)
+        .bind(ALLOWED_CHANNEL_ID)
+        .bind(USER_ID)
+        .bind(end_ts)
+        .execute(&pool)
+        .await?;
+    }
+    let peaks = write_peaks(with_peaks, 3_000)?;
     let app = waveform_app(&pool).await;
-    let uri = format!("/api/audio/waveform/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/2026/5/{stem}");
+    let uri = |stem: &str| {
+        format!("/api/audio/waveform/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/2026/5/{stem}")
+    };
 
-    let (status, body) = get_json(&app, &uri).await?;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({ "progress": 0, "built": false }));
-    assert_eq!(media_job_count(&pool, "recording_waveform").await?, 0);
+    let (live_status, live_body) = get_json(&app, &uri(live)).await?;
+    let (peaks_status, peaks_body) = get_json(&app, &uri(with_peaks)).await?;
+    let (ended_status, ended_body) = get_json(&app, &uri(ended)).await?;
+    let (_, ended_again) = get_json(&app, &uri(ended)).await?;
+    std::fs::remove_file(peaks)?;
 
-    let (status, requested) = get_json(&app, &format!("{uri}?build=true")).await?;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(live_status, StatusCode::OK);
+    assert_eq!(live_body, json!({ "progress": 0, "built": false }));
+    assert_eq!(peaks_status, StatusCode::OK);
+    assert_eq!(peaks_body["progress"], 100);
+    assert!(peaks_body["data"].is_string());
+    assert_eq!(ended_status, StatusCode::ACCEPTED);
+    assert_eq!(ended_again["id"], ended_body["id"]);
     assert_eq!(media_job_count(&pool, "recording_waveform").await?, 1);
-
-    // Viewing it again reports the build under way instead of nothing.
-    let (status, viewed) = get_json(&app, &uri).await?;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(viewed["id"], requested["id"]);
     Ok(())
 }
 
-/// A live session's waveform waits to be asked for. Once the session has
-/// finished, a missing waveform, or one built before the session ended,
-/// starts building without being asked.
+/// A session's waveform is stitched from its recordings' peaks, live or
+/// finished. An ended recording without peaks is decoded for them, once.
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn finished_sessions_build_their_waveform_and_live_ones_wait(
+async fn session_waveforms_are_stitched_from_their_recordings_peaks(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_authorization_data(&pool).await?;
-    // Ids no other test uses: their waveforms live in the shared data roots.
+    // Ids no other test uses: their peaks live in the shared data roots.
     const LIVE: i64 = 9_100_001;
     const FINISHED: i64 = 9_100_002;
-    const BUILT_WHILE_LIVE: i64 = 9_100_003;
-    const BUILT_AFTER_END: i64 = 9_100_004;
+    const MISSING: i64 = 9_100_003;
     for (session_id, state, ended_at) in [
         (LIVE, "active", None),
         (FINISHED, "finalized", Some("2026-05-01T01:00:00Z")),
-        (BUILT_WHILE_LIVE, "finalized", Some("2999-01-01T00:00:00Z")),
-        (BUILT_AFTER_END, "finalized", Some("2026-05-01T01:00:00Z")),
+        (MISSING, "finalized", Some("2026-05-01T01:00:00Z")),
     ] {
         sqlx::query(
             "INSERT INTO recording_sessions
@@ -3011,43 +3032,38 @@ async fn finished_sessions_build_their_waveform_and_live_ones_wait(
             "INSERT INTO audio_files
                 (file_name, guild_id, channel_id, user_id, year, month,
                  start_ts, end_ts, recording_session_id, segment_index)
-             VALUES ($1, $2, $3, $4, 2026, 5, 1000, 2000, $5, 0)",
+             VALUES ($1, $2, $3, $4, 2026, 5, $5, $5 + 1000, $6, 0)",
         )
         .bind(format!("session-waveform-{session_id}"))
         .bind(ALLOWED_GUILD_ID)
         .bind(ALLOWED_CHANNEL_ID)
         .bind(USER_ID)
+        // The session's own start, 2026-05-01T00:00:00Z.
+        .bind(1_777_593_600_000_i64)
         .bind(session_id)
         .execute(&pool)
         .await?;
     }
-    let waveforms = web_server::audio::waveform_path();
-    std::fs::create_dir_all(&waveforms)?;
-    let existing = [BUILT_WHILE_LIVE, BUILT_AFTER_END]
-        .map(|session_id| format!("{waveforms}logical-session-{session_id}.dat"));
-    for path in &existing {
-        std::fs::write(path, b"peaks")?;
-    }
+    let peaks = [LIVE, FINISHED]
+        .map(|session_id| write_peaks(&format!("session-waveform-{session_id}"), 50));
     let app = waveform_app(&pool).await;
     let waveform = |session_id: i64| format!("/api/audio/sessions/{session_id}/waveform");
 
     let (_, live) = get_json(&app, &waveform(LIVE)).await?;
     let (_, finished) = get_json(&app, &waveform(FINISHED)).await?;
-    let (_, finished_again) = get_json(&app, &waveform(FINISHED)).await?;
-    let (_, built_while_live) = get_json(&app, &waveform(BUILT_WHILE_LIVE)).await?;
-    let (_, built_after_end) = get_json(&app, &waveform(BUILT_AFTER_END)).await?;
-    for path in &existing {
-        std::fs::remove_file(path)?;
+    let (_, missing) = get_json(&app, &waveform(MISSING)).await?;
+    let (_, missing_again) = get_json(&app, &waveform(MISSING)).await?;
+    for path in peaks {
+        std::fs::remove_file(path?)?;
     }
 
-    assert_eq!(live["building"], false);
-    assert!(live["data"].is_null());
-    assert_eq!(finished["building"], true);
-    assert_eq!(finished_again["job_id"], finished["job_id"]);
-    assert_eq!(built_while_live["building"], true);
-    assert_eq!(built_after_end["building"], false);
-    assert!(built_after_end["data"].is_string());
-    // One build each for the finished session and the outdated waveform.
-    assert_eq!(media_job_count(&pool, "session_waveform").await?, 2);
+    for stitched in [&live, &finished] {
+        assert_eq!(stitched["building"], false);
+        assert!(stitched["data"].is_string());
+    }
+    assert_eq!(missing["building"], true);
+    assert_eq!(missing_again["job_id"], missing["job_id"]);
+    assert_eq!(media_job_count(&pool, "session_waveform").await?, 1);
+    assert_eq!(media_job_count(&pool, "recording_waveform").await?, 0);
     Ok(())
 }
