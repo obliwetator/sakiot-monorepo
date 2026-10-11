@@ -99,6 +99,8 @@ else
   echo "(deploys will fail until ops/update-deploy-engine.sh succeeds)" >&2
 fi
 
+install -m 0644 "${script_dir}/systemd/sakiot.slice" \
+  /etc/systemd/system/sakiot.slice
 install -m 0644 "${script_dir}/systemd/sakiot-fbi-agent@.service" \
   /etc/systemd/system/sakiot-fbi-agent@.service
 install -m 0644 "${script_dir}/systemd/sakiot-web.service" \

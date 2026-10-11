@@ -11,7 +11,9 @@ cargo run -p web-server --bin web_server --features dev-login
 
 The `dev-login` feature adds `/api/dev_login` and the load-test harness
 (`src/loadtest/`). Local, staging and preview builds enable it; production
-builds never do.
+builds never do. Staging and previews share production's VPS, so run load
+tests against them only off-peak, when nobody is using the bot (see
+[production priority](../ops/README.md#production-priority)).
 
 ## OpenAPI
 

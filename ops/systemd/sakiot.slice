@@ -1,0 +1,14 @@
+[Unit]
+Description=Sakiot production services
+Before=slices.target
+
+# Production's web server and bot run here, beside system.slice (staging and
+# preview units) and user.slice (deploy builds and anything run over SSH).
+# The kernel splits contended CPU between those by weight, default 100, so
+# while something else saturates the VPS production keeps about 1000/1200 of
+# it. Weights cost nothing on an idle machine.
+[Slice]
+CPUWeight=1000
+# Takes effect only with the BFQ I/O scheduler; with mq-deadline or none,
+# which most VPS disks use, the kernel ignores it.
+IOWeight=1000

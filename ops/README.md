@@ -29,6 +29,38 @@ and the SQLx test master database. The same `ops/sakiot-deploy` binary serves
 every target, driven by the env file plus `SAKIOT_WEB_UNIT` and
 `SAKIOT_BOT_UNIT_PREFIX`.
 
+### Production priority
+
+Nothing hard-limits one environment's share of the VPS, so run load tests
+and other heavy work (benchmarks, bulk fixture imports, manual builds)
+off-peak, when nobody is using the bot. Deploy builds are the exception and
+run whenever a push lands.
+
+As a safeguard, production's web server and bot run in `sakiot.slice`, with a
+CPU weight of 1000 against the default 100 of `system.slice` (staging and
+preview units) and `user.slice` (deploy builds and SSH sessions). While
+something saturates the CPU, production keeps about 1000/1200 of it; on an
+idle machine the weights change nothing. Their `OOMScoreAdjust=-500` makes the
+kernel kill something else first if memory runs out. The slice's `IOWeight`
+only works with the BFQ I/O scheduler
+(`cat /sys/block/<disk>/queue/scheduler`), so disk I/O has no priority on most
+VPS disks.
+
+Unit files reach `/etc/systemd/system` only through
+`ops/install-production.sh`, which is safe to re-run, or by hand:
+
+```sh
+install -m 0644 ops/systemd/sakiot.slice ops/systemd/sakiot-web.service \
+  'ops/systemd/sakiot-fbi-agent@.service' /etc/systemd/system/
+systemctl daemon-reload
+```
+
+A running service moves into the slice when it next starts: the web server on
+its next deploy or `systemctl restart sakiot-web`, the bot when a release
+starts a new instance. Check with
+`systemctl show sakiot-web.service -p Slice -p OOMScoreAdjust` and
+`systemd-cgls /sakiot.slice`.
+
 ## Release flow
 
 ```text
