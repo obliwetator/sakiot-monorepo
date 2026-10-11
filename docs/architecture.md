@@ -107,15 +107,23 @@ same paths from the same crate rather than reading them from the database.
 - **Live** — a recording still in progress, muxed to HLS while it grows
   (`audio/live.rs`).
 
-Waveform peaks are generated with `audiowaveform` and served alongside, so the
-client draws waveforms without downloading the audio. A finished recording or
-session builds its waveform the first time it is viewed. A live one builds only
-when someone asks, because each build reads everything recorded so far. A
-waveform built while live is rebuilt once the recording ends: per-recording
-waveforms through `waveform_end_ts`, session waveforms because each build
-stamps its file with when it started reading. The client places peaks by time,
-so a waveform built partway through a recording stops where its audio stops and
-the rest of the timeline stays blank.
+Waveforms are drawn from peaks files (`sakiot-peaks`), so the client draws a
+waveform without downloading the audio and the server serves one without
+decoding it. A peaks file holds the lowest and highest sample of every 20 ms
+frame. The recorder writes one beside each recording as it records, from the
+audio songbird has already decoded, in step with the Ogg file. So a live
+recording's waveform is current on every request, and the dashboard refreshes it
+while it records. A session's waveform is stitched from its recordings' peaks
+along the session timeline. The client places peaks by time, so a live waveform
+stops where its audio stops and the rest of the timeline stays blank.
+
+Audio without peaks is decoded in-process by a media job: silence-free renders,
+clips, and ended recordings whose peaks failed, were evicted, or predate the
+recorder writing them. A live recording is never decoded, because the snapshot
+would stop short of the audio. Peaks files are local cache in `waveform_data/`,
+never archived. They go when the reaper's seven-day sweep or the archive's cache
+cap removes them, and are then decoded again from the audio. The cap spares a
+peaks file written in the last hour, as it spares a live HLS directory.
 
 ## Clip editing and the DSP parity story
 

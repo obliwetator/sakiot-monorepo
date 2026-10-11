@@ -23,9 +23,8 @@ contracts CI enforces.
 ## Local development
 
 Requirements: Docker with Compose, Rust (the toolchain is pinned in
-`rust-toolchain.toml`), `cargo-watch`, Bun, FFmpeg with `ffprobe`,
-`audiowaveform`, `rsync` for fixtures, and the pinned `wasm-bindgen` CLI for the
-DSP build:
+`rust-toolchain.toml`), `cargo-watch`, Bun, FFmpeg with `ffprobe`, `rsync` for
+fixtures, and the pinned `wasm-bindgen` CLI for the DSP build:
 
 ```sh
 cargo install wasm-bindgen-cli --version "$(cat sakiot-dsp/wasm-bindgen-cli-version)" --locked

@@ -123,8 +123,8 @@ compatibility review.
 ## VPS bootstrap
 
 Install Git, Rust, Bun, `protoc`, OpenSSL development headers, FFmpeg,
-`audiowaveform`, PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rsync`,
-`sudo`, `flock`, `jq` and Python 3. `grpcurl` helps with manual bot
+PostgreSQL client tools, SQLx CLI, `age`, `rclone`, `rsync`, `sudo`, `flock`,
+`jq` and Python 3. `grpcurl` helps with manual bot
 diagnostics. The frontend build compiles `sakiot-dsp` to WASM, so the `sakiot`
 user also needs the pinned `wasm-bindgen` CLI. Re-run this whenever
 `sakiot-dsp/wasm-bindgen-cli-version` changes; `scripts/build-dsp.sh` fails on

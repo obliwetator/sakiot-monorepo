@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use sakiot_paths::RecordingKey;
+use sakiot_paths::{DataRoots, RecordingKey};
 use tempfile::TempDir;
 
 #[derive(Debug)]
@@ -82,7 +82,9 @@ pub fn build_media_lists(workspace: &FixtureWorkspace) -> Result<()> {
         files.insert(relative(
             &key.no_silence_path("no_silence_voice_recordings"),
         )?);
-        files.insert(relative(&key.waveform_path("waveform_data"))?);
+        // Peaks a recording made before the recorder wrote them, or whose
+        // peaks were evicted, does not have; the server decodes those.
+        files.insert(relative(&DataRoots::new("").peaks_path(&key.stem))?);
         recordings.insert(fields[0].to_string());
     }
 
@@ -182,7 +184,7 @@ mod tests {
             concat!(
                 "no_silence_voice_recordings/1/2/2026/07/_no_silence_1700000000000-42.ogg\n",
                 "voice_recordings/1/2/2026/07/1700000000000-42.ogg\n",
-                "waveform_data/1700000000000-42.dat\n"
+                "waveform_data/1700000000000-42.peaks\n"
             )
         );
     }

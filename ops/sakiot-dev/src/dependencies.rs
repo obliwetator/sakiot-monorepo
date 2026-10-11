@@ -33,10 +33,6 @@ pub fn check<R: CommandRunner + ?Sized>(
             check("bun", "install Bun from https://bun.sh");
             check("ffmpeg", "install FFmpeg");
             check("ffprobe", "install FFmpeg (ffprobe is normally included)");
-            check(
-                "audiowaveform",
-                "install audiowaveform from the Chris Needham package",
-            );
         }
         DependencySet::Fixtures => {
             check("rsync", "install rsync");

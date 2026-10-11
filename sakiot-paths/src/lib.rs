@@ -123,10 +123,6 @@ impl RecordingKey {
             .join(format!("{}{}.ogg", NO_SILENCE_PREFIX, self.stem))
     }
 
-    pub fn waveform_path(&self, root: &str) -> PathBuf {
-        PathBuf::from(trim(root)).join(format!("{}.dat", self.stem))
-    }
-
     /// Per-recording HLS cache: `{root}/{dir_suffix}/hls-{stem}/`.
     pub fn live_dir(&self, root: &str) -> PathBuf {
         self.recording_dir(root).join(format!("hls-{}", self.stem))
