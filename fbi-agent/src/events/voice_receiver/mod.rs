@@ -22,13 +22,15 @@ mod state;
 pub use state::VoiceEventType;
 
 /// Channels songbird decodes received voice into. The decoded audio feeds
-/// only the waveform peaks, which average the channels.
-const DECODED_CHANNELS: u8 = 2;
+/// only the waveform peaks, which average the channels anyway, and libopus
+/// decodes to mono for less: on a 3-hour recording, 58 of 561,268 frame
+/// peaks moved, by 1/128.
+const DECODED_CHANNELS: u8 = 1;
 
 /// Songbird decodes every received voice packet, so the recorder takes each
 /// frame's waveform peak from audio that is already decoded.
 pub fn decode_config() -> DecodeConfig {
-    DecodeConfig::new(Channels::Stereo, SampleRate::Hz48000)
+    DecodeConfig::new(Channels::Mono, SampleRate::Hz48000)
 }
 
 pub fn recording_file_path() -> std::path::PathBuf {
