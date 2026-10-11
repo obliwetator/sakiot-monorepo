@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 
-use crate::events::ogg_opus_writer::OggOpusWriter;
+use crate::events::recording_writer::RecordingWriter;
 
 #[repr(i32)]
 #[derive(Clone, Copy)]
@@ -43,7 +43,7 @@ impl RecordingFinalizeReason {
 /// One per-user recording: the streaming writer plus the metadata needed to
 /// finalize the audio_files row when the writer closes.
 pub(in crate::events) struct UserRecording {
-    pub(in crate::events) writer: OggOpusWriter<BufWriter<File>>,
+    pub(in crate::events) writer: RecordingWriter<BufWriter<File>>,
     pub(in crate::events) audio_file_id: i64,
     pub(in crate::events) recording_session_id: i64,
     pub(in crate::events) file_name: String,

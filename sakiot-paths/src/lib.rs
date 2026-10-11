@@ -15,6 +15,7 @@ pub const NO_SILENCE_DIR_NAME: &str = "no_silence_voice_recordings";
 pub const WAVEFORM_DIR_NAME: &str = "waveform_data";
 pub const CLIPS_DIR_NAME: &str = "clips";
 pub const NO_SILENCE_PREFIX: &str = "_no_silence_";
+pub const PEAKS_EXTENSION: &str = "peaks";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataRoots {
@@ -56,6 +57,12 @@ impl DataRoots {
 
     pub fn clips_str(&self) -> String {
         path_string(&self.clips)
+    }
+
+    /// Waveform peaks of the audio named `name`: a recording's stem, or a
+    /// cache key for audio the recorder did not write.
+    pub fn peaks_path(&self, name: &str) -> PathBuf {
+        self.waveforms.join(format!("{name}.{PEAKS_EXTENSION}"))
     }
 }
 
@@ -268,6 +275,14 @@ mod tests {
         );
         assert_eq!(roots.waveforms, PathBuf::from("../data/waveform_data"));
         assert_eq!(roots.clips, PathBuf::from("../data/clips"));
+    }
+
+    #[test]
+    fn peaks_live_flat_in_the_waveform_cache() {
+        assert_eq!(
+            DataRoots::new("/data").peaks_path("1700000000000-42"),
+            PathBuf::from("/data/waveform_data/1700000000000-42.peaks")
+        );
     }
 
     #[test]

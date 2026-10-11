@@ -4,6 +4,7 @@ pub mod guilds;
 pub mod interactions;
 pub mod messages;
 pub mod ogg_opus_writer;
+pub mod recording_writer;
 pub mod roles;
 pub mod voice;
 pub mod voice_receiver;

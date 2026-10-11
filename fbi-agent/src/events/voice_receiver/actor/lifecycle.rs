@@ -4,12 +4,14 @@
 
 use std::{collections::HashMap, fs::File, io::BufWriter, sync::atomic::Ordering};
 
+use sakiot_peaks::FramePeak;
 use serenity::model::{guild::Member, id::UserId};
 use tracing::{debug, error, info, warn};
 
 use super::{RecorderActor, VoicePacket, timestamp};
 use crate::cast::ToI64;
 use crate::events::ogg_opus_writer::OggOpusWriter;
+use crate::events::recording_writer::RecordingWriter;
 use crate::events::voice_receiver::{
     recordings::RemapOutcome,
     state::{RecordingFinalizeReason, UserRecording, VoiceEventType},
@@ -156,7 +158,7 @@ impl RecorderActor {
             }
         };
 
-        let mut writer = match OggOpusWriter::new(BufWriter::new(file), ssrc, 0) {
+        let audio = match OggOpusWriter::new(BufWriter::new(file), ssrc, 0) {
             Ok(writer) => writer,
             Err(err) => {
                 error!("Failed to init OggOpusWriter for ssrc {}: {}", ssrc, err);
@@ -170,6 +172,16 @@ impl RecorderActor {
                 return;
             }
         };
+
+        let peaks_path =
+            sakiot_paths::DataRoots::from_env().peaks_path(&recording_handle.file_name);
+        let peaks_file = peaks_path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| File::create(&peaks_path))
+            .map(BufWriter::new);
+        let mut writer = RecordingWriter::new(audio, peaks_path, peaks_file);
+        report_peaks_failure(&self.metrics, &mut writer, &recording_handle.file_name);
 
         let initial_silence_frames =
             super::super::pause::silence_frames_for_gap_ms(recording_handle.initial_silence_ms);
@@ -247,10 +259,10 @@ impl RecorderActor {
         if self.policy.is_suspended() {
             return;
         }
-        let packet_map: HashMap<u32, Vec<u8>> = packets
+        let packet_map: HashMap<u32, VoicePacket> = packets
             .into_iter()
             .filter(|packet| !packet.opus.is_empty())
-            .map(|packet| (packet.ssrc, packet.opus))
+            .map(|packet| (packet.ssrc, packet))
             .collect();
         let active_ssrcs = self.recordings.active_non_bot_ssrcs();
         let mut failed_ssrcs = Vec::new();
@@ -273,7 +285,7 @@ impl RecorderActor {
                     .track_audio_packet_received(&self.guild_metrics, &self.channel_metrics);
             }
             let mut result = Ok(());
-            for write in tick_writes(packet.map(Vec::as_slice), silence_ticks) {
+            for write in tick_writes(packet, silence_ticks) {
                 result = match write {
                     TickWrite::Silence(mut frames) => {
                         // Bound each synchronous write to five seconds of audio,
@@ -292,13 +304,14 @@ impl RecorderActor {
                         }
                         written
                     }
-                    TickWrite::Packet(bytes) => recording.writer.write_packet(bytes),
+                    TickWrite::Packet(bytes, peak) => recording.writer.write_packet(bytes, peak),
                 };
                 if result.is_err() {
                     break;
                 }
             }
 
+            report_peaks_failure(&self.metrics, &mut recording.writer, &recording.file_name);
             if let Err(err) = result {
                 error!("Writer error for ssrc {}: {}", ssrc, err);
                 failed_ssrcs.push(ssrc);
@@ -409,7 +422,9 @@ impl RecorderActor {
     ) {
         let finalize_started = std::time::Instant::now();
         let mut finalize_reason = finalize_reason(event_type);
-        if let Err(err) = recording.writer.finish() {
+        let finished = recording.writer.finish();
+        report_peaks_failure(&self.metrics, &mut recording.writer, &recording.file_name);
+        if let Err(err) = finished {
             error!("Failed to finalize writer for ssrc {}: {}", ssrc, err);
             finalize_reason = RecordingFinalizeReason::WriterError;
             self.metrics.track_recording_finalize_error();
@@ -567,25 +582,45 @@ fn finalize_reason(event_type: VoiceEventType) -> RecordingFinalizeReason {
     }
 }
 
+/// Logs and counts a recording that lost its peaks file. Its audio is
+/// unaffected, and the web server decodes it for a waveform once it ends.
+fn report_peaks_failure(
+    metrics: &crate::BotMetrics,
+    writer: &mut RecordingWriter<BufWriter<File>>,
+    file_name: &str,
+) {
+    if let Some(error) = writer.take_peaks_failure() {
+        warn!(
+            file_name,
+            "recording continues without waveform peaks: {error}"
+        );
+        metrics.track_waveform_peaks_failure();
+    }
+}
+
 /// One ordered write for a tick.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum TickWrite<'a> {
     Silence(u64),
-    Packet(&'a [u8]),
+    /// An Opus packet and the peak of its decoded audio.
+    Packet(&'a [u8], FramePeak),
 }
 
 /// The writes for one tick, in timeline order. A dropped tick occupied the
 /// frames BEFORE the delivered packet, so the compensating silence comes first;
 /// writing it afterwards would place the recovered packet early and every
 /// later frame would keep that offset.
-pub(super) fn tick_writes<'a>(packet: Option<&'a [u8]>, silence_ticks: u32) -> Vec<TickWrite<'a>> {
+pub(super) fn tick_writes<'a>(
+    packet: Option<&'a VoicePacket>,
+    silence_ticks: u32,
+) -> Vec<TickWrite<'a>> {
     match packet {
-        Some(bytes) => {
+        Some(packet) => {
             let mut writes = Vec::with_capacity(2);
             if silence_ticks > 0 {
                 writes.push(TickWrite::Silence(u64::from(silence_ticks)));
             }
-            writes.push(TickWrite::Packet(bytes));
+            writes.push(TickWrite::Packet(&packet.opus, packet.peak));
             writes
         }
         None => vec![TickWrite::Silence(1 + u64::from(silence_ticks))],
@@ -594,19 +629,25 @@ pub(super) fn tick_writes<'a>(packet: Option<&'a [u8]>, silence_ticks: u32) -> V
 
 #[cfg(test)]
 mod tests {
-    use super::{TickWrite, tick_writes};
+    use super::{TickWrite, VoicePacket, tick_writes};
+    use sakiot_peaks::FramePeak;
 
     #[test]
     fn compensation_silence_precedes_the_recovered_packet() {
-        let packet = [1u8, 2, 3];
+        let peak = FramePeak { min: -4, max: 5 };
+        let packet = VoicePacket {
+            ssrc: 1,
+            opus: vec![1, 2, 3],
+            peak,
+        };
         assert_eq!(
             tick_writes(Some(&packet), 3),
-            vec![TickWrite::Silence(3), TickWrite::Packet(&packet)],
+            vec![TickWrite::Silence(3), TickWrite::Packet(&[1, 2, 3], peak)],
         );
         // Without dropped ticks the packet is written on its own.
         assert_eq!(
             tick_writes(Some(&packet), 0),
-            vec![TickWrite::Packet(&packet)],
+            vec![TickWrite::Packet(&[1, 2, 3], peak)],
         );
     }
 

@@ -306,12 +306,18 @@ impl Recordings {
 mod tests {
     use super::*;
     use crate::events::ogg_opus_writer::OggOpusWriter;
+    use crate::events::recording_writer::RecordingWriter;
 
     fn dummy_recording(user_id: u64, ssrc: u32) -> UserRecording {
         let path = std::env::temp_dir().join(format!("fbi-rec-test-{user_id}-{ssrc}.ogg"));
         let file = std::fs::File::create(&path).unwrap();
-        let writer = OggOpusWriter::new(std::io::BufWriter::new(file), ssrc, 0).unwrap();
+        let audio = OggOpusWriter::new(std::io::BufWriter::new(file), ssrc, 0).unwrap();
         let _ = std::fs::remove_file(&path);
+        let writer = RecordingWriter::new(
+            audio,
+            path.with_extension("peaks"),
+            Err(std::io::Error::other("no peaks in this test")),
+        );
         UserRecording {
             writer,
             audio_file_id: ssrc.to_i64(),

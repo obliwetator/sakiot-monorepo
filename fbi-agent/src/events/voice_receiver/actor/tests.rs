@@ -21,6 +21,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 
 use super::{RecorderActor, RecorderCommand, RecorderEnv, RecorderHandle};
 use crate::events::ogg_opus_writer::OggOpusWriter;
+use crate::events::recording_writer::RecordingWriter;
 use crate::events::voice::coordinator::{VoiceCoordinatorRegistry, VoiceCoordinatorRegistryKey};
 use crate::events::voice_receiver::{
     RecordingCoordinatorRegistry, RecordingCoordinatorRegistryKey,
@@ -409,7 +410,7 @@ async fn a_failed_write_closes_the_writer_instead_of_retrying_every_tick() {
         .write(true)
         .open("/dev/full")
         .unwrap();
-    let writer = OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap();
+    let writer = without_peaks(OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap());
     actor.recordings.insert_active(
         USER,
         SSRC,
@@ -502,7 +503,7 @@ async fn opting_out_mid_session_closes_the_writer(pool: PgPool) {
         USER,
         SSRC,
         UserRecording {
-            writer: OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap(),
+            writer: without_peaks(OggOpusWriter::new(BufWriter::new(file), SSRC, 0).unwrap()),
             audio_file_id: handle.audio_file_id,
             recording_session_id: handle.recording_session_id,
             file_name: handle.file_name,
@@ -579,7 +580,7 @@ async fn open_tracked_recording(
         user,
         ssrc,
         UserRecording {
-            writer: OggOpusWriter::new(BufWriter::new(file), ssrc, 0).unwrap(),
+            writer: without_peaks(OggOpusWriter::new(BufWriter::new(file), ssrc, 0).unwrap()),
             audio_file_id: handle.audio_file_id,
             recording_session_id: handle.recording_session_id,
             file_name: handle.file_name.clone(),
@@ -679,4 +680,156 @@ async fn an_exiting_actor_ends_its_recorder_heartbeat(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+/// A writer with no peaks file, for tests about the audio alone.
+fn without_peaks(
+    audio: OggOpusWriter<BufWriter<std::fs::File>>,
+) -> RecordingWriter<BufWriter<std::fs::File>> {
+    RecordingWriter::new(
+        audio,
+        std::path::PathBuf::from("/nonexistent/unused.peaks"),
+        Err(std::io::Error::other("no peaks in this test")),
+    )
+}
+
+/// A recording whose audio and peaks go to `audio` and `peaks`.
+fn recording_writing_to(
+    audio: &std::path::Path,
+    peaks: &std::path::Path,
+    user: u64,
+    ssrc: u32,
+) -> UserRecording {
+    let audio = OggOpusWriter::new(
+        BufWriter::new(std::fs::File::create(audio).unwrap()),
+        ssrc,
+        0,
+    )
+    .unwrap();
+    UserRecording {
+        writer: RecordingWriter::new(
+            audio,
+            peaks.to_path_buf(),
+            std::fs::File::create(peaks).map(BufWriter::new),
+        ),
+        audio_file_id: 1,
+        recording_session_id: 1,
+        file_name: "peaks-test".to_string(),
+        start_time: chrono::Utc::now(),
+        user_id: user,
+        ssrc,
+    }
+}
+
+fn audio_packet_count(path: &std::path::Path) -> usize {
+    let mut reader = ogg::PacketReader::new(std::fs::File::open(path).unwrap());
+    let mut count = 0;
+    while let Some(packet) = reader.read_packet().unwrap() {
+        if !packet.data.is_empty()
+            && !packet.data.starts_with(b"OpusHead")
+            && !packet.data.starts_with(b"OpusTags")
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Every frame of audio, a packet or the silence of a quiet or dropped tick,
+/// has its peak at the same position in the peaks file.
+#[tokio::test]
+async fn peaks_stay_in_step_with_the_audio_through_packets_and_silence() {
+    const GUILD: u64 = GUILD_BASE + 15;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    let dir = tempfile::tempdir().unwrap();
+    let (audio, peaks) = (dir.path().join("a.ogg"), dir.path().join("a.peaks"));
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let mut actor = detached_actor(GUILD, Arc::clone(&metrics), closed_pool().await);
+    actor
+        .recordings
+        .insert_active(USER, SSRC, recording_writing_to(&audio, &peaks, USER, SSRC));
+    // Claim this second's policy check, which would fail closed against the
+    // closed pool. Every tick reuses the timestamp so none is due again.
+    let at_ms = chrono::Utc::now().timestamp_millis();
+    assert!(actor.policy.check_due(at_ms));
+
+    let loud = sakiot_peaks::FramePeak { min: -100, max: 90 };
+    let packet = || {
+        vec![super::VoicePacket {
+            ssrc: SSRC,
+            opus: vec![1, 2, 3],
+            peak: loud,
+        }]
+    };
+    actor.handle_voice_tick(at_ms, packet(), 0).await;
+    actor.handle_voice_tick(at_ms, Vec::new(), 0).await;
+    actor.handle_voice_tick(at_ms, packet(), 3).await;
+    let recording = actor.recordings.remove_active_by_ssrc(SSRC).unwrap();
+    actor
+        .finalize_recording(
+            SSRC,
+            recording,
+            VoiceEventType::WriterClose,
+            chrono::Utc::now(),
+        )
+        .await;
+
+    let silent = sakiot_peaks::FramePeak::SILENT;
+    assert_eq!(
+        sakiot_peaks::parse(&std::fs::read(&peaks).unwrap()).unwrap(),
+        [loud, silent, silent, silent, silent, loud]
+    );
+    assert_eq!(audio_packet_count(&audio), 6);
+    assert_eq!(metrics.waveform_peaks_failures.load(Ordering::Relaxed), 0);
+}
+
+/// A peaks file that fails costs the waveform, never the recording.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_recording_whose_peaks_failed_keeps_recording_audio() {
+    const GUILD: u64 = GUILD_BASE + 16;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    let dir = tempfile::tempdir().unwrap();
+    let audio = dir.path().join("a.ogg");
+    let metrics = Arc::new(crate::BotMetrics::default());
+    let mut actor = detached_actor(GUILD, Arc::clone(&metrics), closed_pool().await);
+    // /dev/full fails the peaks header with ENOSPC.
+    let mut recording = recording_writing_to(&audio, &dir.path().join("a.peaks"), USER, SSRC);
+    recording.writer = RecordingWriter::new(
+        OggOpusWriter::new(
+            BufWriter::new(std::fs::File::create(&audio).unwrap()),
+            SSRC,
+            0,
+        )
+        .unwrap(),
+        dir.path().join("a.peaks"),
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .map(BufWriter::new),
+    );
+    actor.recordings.insert_active(USER, SSRC, recording);
+    let at_ms = chrono::Utc::now().timestamp_millis();
+    assert!(actor.policy.check_due(at_ms));
+
+    for _ in 0..3 {
+        actor.handle_voice_tick(at_ms, Vec::new(), 0).await;
+    }
+
+    assert!(actor.recordings.has_active_ssrc(SSRC));
+    assert_eq!(metrics.waveform_peaks_failures.load(Ordering::Relaxed), 1);
+    assert!(!dir.path().join("a.peaks").exists());
+    let recording = actor.recordings.remove_active_by_ssrc(SSRC).unwrap();
+    actor
+        .finalize_recording(
+            SSRC,
+            recording,
+            VoiceEventType::WriterClose,
+            chrono::Utc::now(),
+        )
+        .await;
+    assert_eq!(audio_packet_count(&audio), 3);
+    assert_eq!(metrics.waveform_peaks_failures.load(Ordering::Relaxed), 1);
 }

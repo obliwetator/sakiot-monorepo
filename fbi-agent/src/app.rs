@@ -448,8 +448,9 @@ async fn build_discord_client(
     projections: Arc<crate::projections::Projections>,
 ) -> AppResult<Client> {
     let discord_config = crate::config::discord_config()?;
-    let songbird_config = Config::default()
-        .decode_mode(DecodeMode::Decode(songbird::driver::DecodeConfig::default()));
+    let songbird_config = Config::default().decode_mode(DecodeMode::Decode(
+        crate::events::voice_receiver::decode_config(),
+    ));
     let intents = GatewayIntents::all();
 
     Ok(Client::builder(discord_config.token, intents)

@@ -1,10 +1,12 @@
 use sakiot_paths::DataRoots;
+use sakiot_peaks::FramePeak;
 use serenity::{
     async_trait,
     client::Context,
     model::id::{ChannelId, GuildId},
     prelude::{RwLock, TypeMap},
 };
+use songbird::driver::{Channels, DecodeConfig, SampleRate};
 use songbird::{Event, EventContext, EventHandler as VoiceEventHandler};
 use sqlx::{Pool, Postgres};
 use std::{collections::HashMap, sync::Arc};
@@ -18,6 +20,16 @@ mod recordings;
 mod state;
 
 pub use state::VoiceEventType;
+
+/// Channels songbird decodes received voice into. The decoded audio feeds
+/// only the waveform peaks, which average the channels.
+const DECODED_CHANNELS: u8 = 2;
+
+/// Songbird decodes every received voice packet, so the recorder takes each
+/// frame's waveform peak from audio that is already decoded.
+pub fn decode_config() -> DecodeConfig {
+    DecodeConfig::new(Channels::Stereo, SampleRate::Hz48000)
+}
 
 pub fn recording_file_path() -> std::path::PathBuf {
     DataRoots::from_env().recordings
@@ -174,7 +186,16 @@ impl VoiceEventHandler for Receiver {
                     .iter()
                     .filter_map(|(ssrc, data)| {
                         actor::extract_opus_payload(data).and_then(|opus| {
-                            (!opus.is_empty()).then_some(actor::VoicePacket { ssrc: *ssrc, opus })
+                            (!opus.is_empty()).then(|| actor::VoicePacket {
+                                ssrc: *ssrc,
+                                opus,
+                                peak: data
+                                    .decoded_voice
+                                    .as_deref()
+                                    .map_or(FramePeak::SILENT, |pcm| {
+                                        FramePeak::of_interleaved(pcm, DECODED_CHANNELS)
+                                    }),
+                            })
                         })
                     })
                     .collect();
@@ -387,6 +408,23 @@ pub(crate) async fn user_voice_transition(
 #[cfg(test)]
 mod tests {
     use super::pause::silence_frames_for_gap_ms;
+    use super::{Channels, DECODED_CHANNELS, decode_config};
+
+    #[test]
+    fn peaks_read_decoded_voice_with_the_configured_channel_count() {
+        let configured = match decode_config().channels {
+            Channels::Mono => 1,
+            Channels::Stereo => 2,
+            _ => 0,
+        };
+        assert_eq!(configured, DECODED_CHANNELS);
+    }
+
+    #[test]
+    fn the_recorders_silence_frame_is_never_decoded_for_peaks() {
+        let frame = crate::events::ogg_opus_writer::silence_frame_bytes().unwrap();
+        assert!(sakiot_peaks::decode::is_silent_packet(&frame));
+    }
 
     #[test]
     fn gap_ms_rounds_up_to_20ms_silence_frames() {

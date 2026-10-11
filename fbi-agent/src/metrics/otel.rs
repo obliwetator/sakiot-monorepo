@@ -309,6 +309,11 @@ fn register_recording_counters(instruments: &Instruments) {
         "Total file writer setup failures",
         |m| u64::from(m.writer_setup_failures.load(Relaxed)),
     );
+    instruments.counter(
+        "waveform_peaks_failures",
+        "Total recordings that lost their waveform peaks file",
+        |m| m.waveform_peaks_failures.load(Relaxed),
+    );
     instruments.guild_counter(
         "guild_audio_packets_received",
         "Total audio packets received per guild",

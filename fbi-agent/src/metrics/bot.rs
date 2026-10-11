@@ -19,6 +19,8 @@ pub struct BotMetrics {
     pub recordings_finished: AtomicU64,
     pub recording_finalize_errors: AtomicU64,
     pub writer_setup_failures: AtomicU32,
+    /// Recordings that lost their waveform peaks file and kept only audio.
+    pub waveform_peaks_failures: AtomicU64,
     pub audio_packets_received: AtomicU64,
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
@@ -192,6 +194,11 @@ impl BotMetrics {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub fn track_waveform_peaks_failure(&self) {
+        self.waveform_peaks_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn track_writer_setup_failure(
         &self,
         guild_metrics: &GuildRecordingMetrics,
@@ -285,6 +292,7 @@ impl Default for BotMetrics {
             recordings_finished: AtomicU64::new(0),
             recording_finalize_errors: AtomicU64::new(0),
             writer_setup_failures: AtomicU32::new(0),
+            waveform_peaks_failures: AtomicU64::new(0),
             audio_packets_received: AtomicU64::new(0),
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),

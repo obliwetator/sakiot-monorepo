@@ -1906,6 +1906,7 @@ dependencies = [
  "opus2",
  "rustls 0.23.45",
  "sakiot-paths",
+ "sakiot-peaks",
  "sakiot-proto",
  "sakiot-storage",
  "serde",

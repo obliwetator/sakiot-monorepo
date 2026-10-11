@@ -205,6 +205,8 @@ impl RecorderHandle {
 pub(in crate::events::voice_receiver) struct VoicePacket {
     pub(in crate::events::voice_receiver) ssrc: u32,
     pub(in crate::events::voice_receiver) opus: Vec<u8>,
+    /// Peak of the audio songbird decoded from `opus`, for the waveform.
+    pub(in crate::events::voice_receiver) peak: sakiot_peaks::FramePeak,
 }
 
 #[derive(Debug)]
@@ -293,6 +295,7 @@ mod tests {
             vec![VoicePacket {
                 ssrc: 1,
                 opus: vec![42],
+                peak: sakiot_peaks::FramePeak::SILENT,
             }],
         );
         let RecorderCommand::VoiceTick {
@@ -307,10 +310,10 @@ mod tests {
         assert_eq!(silence_ticks, 300);
         assert_eq!(handle.dropped_ticks.load(Ordering::Relaxed), 0);
         assert_eq!(
-            super::super::lifecycle::tick_writes(Some(&packets[0].opus), silence_ticks),
+            super::super::lifecycle::tick_writes(Some(&packets[0]), silence_ticks),
             vec![
                 super::super::lifecycle::TickWrite::Silence(300),
-                super::super::lifecycle::TickWrite::Packet(&[42]),
+                super::super::lifecycle::TickWrite::Packet(&[42], sakiot_peaks::FramePeak::SILENT),
             ],
         );
     }
