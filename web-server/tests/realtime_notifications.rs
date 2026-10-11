@@ -123,11 +123,15 @@ async fn recordings_notify_displayed_changes_only(pool: PgPool) -> TestResult {
         "a new session and its first fragment"
     );
 
-    // The recording heartbeat (every 10 s) and session bookkeeping are silent.
-    sqlx::query("UPDATE audio_files SET recording_heartbeat_at = now() WHERE id = $1")
-        .bind(fragment)
-        .execute(&pool)
-        .await?;
+    // The recorder heartbeat (every 10 s) and session bookkeeping are silent.
+    sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ('recorder', 'bot', $1)
+         ON CONFLICT (recorder_id) DO UPDATE SET heartbeat_at = now()",
+    )
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
     sqlx::query(
         "UPDATE recording_sessions
             SET updated_at = now(), owner_instance_id = 'bot', pending_deadline_at = now()
@@ -521,25 +525,29 @@ async fn concurrent_recording_writes_all_commit_and_notify(pool: PgPool) -> Test
                 .bind(CHANNEL)
                 .fetch_one(&mut *transaction)
                 .await?;
-                let fragment: i64 = sqlx::query_scalar(
+                sqlx::query(
                     "INSERT INTO audio_files
                         (file_name, guild_id, channel_id, user_id, year, month, start_ts,
                          recording_session_id, segment_index)
-                     VALUES ($1, $2, $3, $4, 2026, 10, 1000, $5, 0)
-                     RETURNING id",
+                     VALUES ($1, $2, $3, $4, 2026, 10, 1000, $5, 0)",
                 )
                 .bind(format!("w{writer}-r{round}"))
                 .bind(GUILD)
                 .bind(CHANNEL)
                 .bind(USER)
                 .bind(session)
-                .fetch_one(&mut *transaction)
+                .execute(&mut *transaction)
                 .await?;
                 transaction.commit().await?;
-                sqlx::query("UPDATE audio_files SET recording_heartbeat_at = now() WHERE id = $1")
-                    .bind(fragment)
-                    .execute(&pool)
-                    .await?;
+                sqlx::query(
+                    "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+                     VALUES ($1, 'bot', $2)
+                     ON CONFLICT (recorder_id) DO UPDATE SET heartbeat_at = now()",
+                )
+                .bind(format!("recorder-{writer}"))
+                .bind(GUILD)
+                .execute(&pool)
+                .await?;
             }
             Ok::<_, sqlx::Error>(())
         }));

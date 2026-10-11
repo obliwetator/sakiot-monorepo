@@ -2185,11 +2185,18 @@ async fn seed_role_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ('preview-recorder', 'preview-bot', $1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts,
-             recording_owner_instance_id, recording_heartbeat_at)
-         VALUES ('live-public', $1, $2, $4, 2026, 5, 1000, 'preview-bot', now()),
-                ('live-private', $1, $3, $4, 2026, 5, 1000, 'preview-bot', now())",
+             recording_owner_instance_id, recorder_id)
+         VALUES ('live-public', $1, $2, $4, 2026, 5, 1000, 'preview-bot', 'preview-recorder'),
+                ('live-private', $1, $3, $4, 2026, 5, 1000, 'preview-bot', 'preview-recorder')",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)
@@ -2478,10 +2485,17 @@ async fn seed_stage_channel_data(pool: &PgPool) -> Result<i64, sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ('stage-recorder', 'stage-bot', $1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts,
-             recording_owner_instance_id, recording_heartbeat_at)
-         VALUES ('stage-live', $1, $2, $3, 2026, 5, 5000, 'stage-bot', now())",
+             recording_owner_instance_id, recorder_id)
+         VALUES ('stage-live', $1, $2, $3, 2026, 5, 5000, 'stage-bot', 'stage-recorder')",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(STAGE_CHANNEL_ID)

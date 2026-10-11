@@ -29,6 +29,27 @@ fn unique_id() -> i64 {
     9_000_000_000_000 + (millis % 1_000_000_000)
 }
 
+/// A recorder actor `<owner>-recorder` that heartbeats now, or went stale
+/// three minutes ago.
+async fn insert_recorder(
+    pool: &PgPool,
+    owner: &str,
+    guild_id: i64,
+    fresh: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id, heartbeat_at)
+         VALUES ($1 || '-recorder', $1, $2,
+                 CASE WHEN $3 THEN now() ELSE now() - interval '3 minutes' END)",
+    )
+    .bind(owner)
+    .bind(guild_id)
+    .bind(fresh)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn insert_test_instance(
     pool: &PgPool,
     owner: &str,
@@ -565,12 +586,13 @@ async fn startup_recovery_skips_active_sessions_of_overlapping_live_instance(
     .bind(&owner)
     .fetch_one(&pool)
     .await?;
+    insert_recorder(&pool, &owner, base, true).await?;
     sqlx::query(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-             recording_owner_instance_id, recording_heartbeat_at, recording_session_id,
+             recording_owner_instance_id, recorder_id, recording_session_id,
              segment_index)
-         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5, now(), $6, 0)",
+         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5, $5 || '-recorder', $6, 0)",
     )
     .bind(format!("{base}-live.ogg"))
     .bind(base)
@@ -597,7 +619,7 @@ async fn startup_recovery_skips_active_sessions_of_overlapping_live_instance(
 async fn startup_recovery_finalizes_own_active_session_after_recording_heartbeat_stales(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // A crashed process whose fragments stopped being heartbeat-written (but
+    // A crashed process whose recorder stopped heartbeating (but
     // whose bot_instances row is still fresh from the restart window) must be
     // reclaimed by the newcomer with the same instance id.
     let base = unique_id();
@@ -616,13 +638,13 @@ async fn startup_recovery_finalizes_own_active_session_after_recording_heartbeat
     .bind(&owner)
     .fetch_one(&pool)
     .await?;
+    insert_recorder(&pool, &owner, base, false).await?;
     sqlx::query(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-             recording_owner_instance_id, recording_heartbeat_at, recording_session_id,
+             recording_owner_instance_id, recorder_id, recording_session_id,
              segment_index)
-         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5,
-                 now() - interval '3 minutes', $6, 0)",
+         VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5, $5 || '-recorder', $6, 0)",
     )
     .bind(format!("{base}-stale.ogg"))
     .bind(base)
@@ -1654,41 +1676,6 @@ async fn a_restarted_process_does_not_keep_its_predecessors_recordings_live(
         logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
             .await?;
     assert_eq!(report.stale_active_finalized, 1);
-    Ok(())
-}
-
-/// Files written before recorder heartbeats existed keep their per-file
-/// heartbeat; one without a heartbeat is not live (and so is reaped), never
-/// "unknown".
-#[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn legacy_recordings_follow_their_own_heartbeat(
-    pool: PgPool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let base = unique_id();
-    let owner = format!("test-legacy-recording-{base}");
-    insert_test_instance(&pool, &owner).await?;
-    let mut ids = Vec::new();
-    for (suffix, heartbeat) in [("fresh", true), ("missing", false)] {
-        let id: i64 = sqlx::query_scalar(
-            "INSERT INTO audio_files
-                (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-                 recording_owner_instance_id, recording_heartbeat_at, segment_index)
-             VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5,
-                     CASE WHEN $6 THEN now() END, 0)
-             RETURNING id",
-        )
-        .bind(format!("{base}-{suffix}"))
-        .bind(base)
-        .bind(base + 1)
-        .bind(base + 2)
-        .bind(&owner)
-        .bind(heartbeat)
-        .fetch_one(&pool)
-        .await?;
-        ids.push(id);
-    }
-
-    assert_eq!(zombie_ids(&pool).await?, vec![ids[1]]);
     Ok(())
 }
 
