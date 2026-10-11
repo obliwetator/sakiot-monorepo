@@ -121,8 +121,8 @@ Audio without peaks is decoded in-process by a media job: silence-free renders,
 clips, and ended recordings whose peaks failed, were evicted, or predate the
 recorder writing them. A live recording is never decoded, because the snapshot
 would stop short of the audio. Peaks files are local cache in `waveform_data/`,
-never archived. They go when the reaper's seven-day sweep or the archive's cache
-cap removes them, and are then decoded again from the audio. The cap spares a
+never archived. They go when 30 days pass without a write, or when the archive's
+cache cap removes them, and are then decoded again from the audio. The cap spares a
 peaks file written in the last hour, as it spares a live HLS directory.
 
 ## Clip editing and the DSP parity story

@@ -16,6 +16,10 @@ use super::paths::{no_silence_recording_path, recording_path, waveform_path};
 
 /// Delete `hls-*` dirs whose mtime is older than this.
 const HLS_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// Waveform peaks outlive the other caches. They are small next to their audio
+/// (about 360 KB per recorded speaker-hour), and replacing one means restoring
+/// the recording from the archive and decoding it again.
+const PEAKS_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// How often the sweep runs.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -34,14 +38,14 @@ pub fn spawn_hls_reaper() {
                 Ok(_) => {}
                 Err(e) => error!("hls reaper sweep failed: {:?}", e),
             }
-            match sweep_files(&no_silence_root).await {
+            match sweep_files(&no_silence_root, |_| HLS_MAX_AGE).await {
                 Ok(removed) if removed > 0 => {
                     info!(removed, "silence-free cache reaper removed stale files");
                 }
                 Ok(_) => {}
                 Err(e) => error!("silence-free cache reaper sweep failed: {:?}", e),
             }
-            match sweep_files(&waveform_root).await {
+            match sweep_files(&waveform_root, max_waveform_cache_age).await {
                 Ok(removed) if removed > 0 => {
                     info!(removed, "waveform cache reaper removed stale files");
                 }
@@ -101,8 +105,21 @@ async fn sweep_hls(root: &str) -> std::io::Result<u32> {
     Ok(removed)
 }
 
-/// Recursively remove rebuildable cache files older than seven days.
-async fn sweep_files(root: &str) -> std::io::Result<u32> {
+/// How long a file in the waveform cache lives untouched: peaks files for
+/// [`PEAKS_MAX_AGE`], anything else (staged or abandoned files) for a week.
+fn max_waveform_cache_age(path: &Path) -> Duration {
+    if path
+        .extension()
+        .is_some_and(|extension| extension == sakiot_paths::PEAKS_EXTENSION)
+    {
+        PEAKS_MAX_AGE
+    } else {
+        HLS_MAX_AGE
+    }
+}
+
+/// Recursively remove rebuildable cache files older than `max_age` says.
+async fn sweep_files(root: &str, max_age: impl Fn(&Path) -> Duration) -> std::io::Result<u32> {
     let now = SystemTime::now();
     let mut stack = vec![PathBuf::from(root)];
     let mut removed = 0u32;
@@ -120,7 +137,7 @@ async fn sweep_files(root: &str) -> std::io::Result<u32> {
             };
             if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file() && is_older_than(&path, now, HLS_MAX_AGE).await {
+            } else if file_type.is_file() && is_older_than(&path, now, max_age(&path)).await {
                 match tokio::fs::remove_file(&path).await {
                     Ok(()) => removed = removed.saturating_add(1),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -170,15 +187,40 @@ mod tests {
     async fn rebuildable_file_cache_expires_after_seven_days()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let stale = root.path().join("stale.dat");
-        let fresh = root.path().join("fresh.dat");
+        let stale = root.path().join("stale.ogg");
+        let fresh = root.path().join("fresh.ogg");
         tokio::fs::write(&stale, b"stale").await?;
         tokio::fs::write(&fresh, b"fresh").await?;
         age(&stale, HLS_MAX_AGE + Duration::from_secs(1))?;
 
-        assert_eq!(sweep_files(&root.path().to_string_lossy()).await?, 1);
+        let removed = sweep_files(&root.path().to_string_lossy(), |_| HLS_MAX_AGE).await?;
+        assert_eq!(removed, 1);
         assert!(!stale.exists());
         assert!(fresh.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn waveform_peaks_outlive_the_rest_of_the_waveform_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let week_old = HLS_MAX_AGE + Duration::from_secs(1);
+        let peaks = root.path().join("1700000000000-42.peaks");
+        let expired_peaks = root.path().join("1600000000000-42.peaks");
+        let legacy = root.path().join("1700000000000-42.dat");
+        let composite = root.path().join("logical-session-5-token.ogg");
+        for path in [&peaks, &expired_peaks, &legacy, &composite] {
+            tokio::fs::write(path, b"cache").await?;
+            age(path, week_old)?;
+        }
+        age(&expired_peaks, PEAKS_MAX_AGE + Duration::from_secs(1))?;
+
+        let removed = sweep_files(&root.path().to_string_lossy(), max_waveform_cache_age).await?;
+        assert_eq!(removed, 3);
+        assert!(peaks.exists());
+        assert!(!expired_peaks.exists());
+        assert!(!legacy.exists());
+        assert!(!composite.exists());
         Ok(())
     }
 
