@@ -395,6 +395,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 									positionMs={displayedPositionMs}
 									durationMs={manifest.duration_ms}
 									onSeek={seek}
+									live={manifest.state !== "finalized"}
 								/>
 							}
 							positionMs={displayedPositionMs}

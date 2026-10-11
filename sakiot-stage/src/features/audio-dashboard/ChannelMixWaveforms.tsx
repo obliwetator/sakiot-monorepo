@@ -3,18 +3,17 @@ import type {
 	ChannelMixSourceSegment,
 	ChannelMixTrack,
 } from "../../app/apiSlice";
-import {
-	apiSlice,
-	useBuildWaveformByUrlMutation,
-	useGetWaveformByUrlQuery,
-} from "../../app/apiSlice";
+import { apiSlice, useGetWaveformByUrlQuery } from "../../app/apiSlice";
 import { useJobPolling } from "../../realtime/status";
 import { fractionInTarget } from "../../shared/geometry";
-import { Button } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
 import { layoutChannelMixSegment } from "./channelMixWaveform";
 import { WaveformCanvas } from "./WaveformCanvas";
-import { useDecodedPeaks, type WaveformEnvelope } from "./waveformPeaks";
+import {
+	LIVE_WAVEFORM_REFRESH_MS,
+	useDecodedPeaks,
+	type WaveformEnvelope,
+} from "./waveformPeaks";
 
 const TRACK_WAVEFORM_HEIGHT = 54;
 const SOURCE_WAVEFORM_HEIGHT = 42;
@@ -25,7 +24,8 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	building: boolean;
 	progress: number;
 	error: boolean;
-	build: () => void;
+	/** A live source without peaks: it gets them once it ends. */
+	notBuilt: boolean;
 } {
 	const cached = apiSlice.endpoints.getWaveformByUrl.useQueryState(
 		segment.waveform_url,
@@ -38,14 +38,18 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	);
 	const jobPolling = useJobPolling(1_000);
 	const query = useGetWaveformByUrlQuery(segment.waveform_url, {
-		// Polls only while a build is under way. RTK Query shares that request
-		// across every rendering of the same physical source. A live source is
-		// built only when asked for, and its waveform stays cached for this page.
-		pollingInterval: settled ? 0 : jobPolling,
+		// A live source refreshes as it records; any other polls only while a
+		// build is under way. RTK Query shares the request across every
+		// rendering of the same physical source.
+		pollingInterval: segment.live
+			? LIVE_WAVEFORM_REFRESH_MS
+			: settled
+				? 0
+				: jobPolling,
 	});
 	const { refetch } = query;
-	const [requestBuild, buildRequest] = useBuildWaveformByUrlMutation();
-	// A waveform built while the source was live is rebuilt once it ends.
+	// Once a live source ends, its points regroup, and a source without peaks
+	// starts building them.
 	const wasLive = useRef(segment.live);
 	useEffect(() => {
 		if (wasLive.current && !segment.live) void refetch();
@@ -55,22 +59,13 @@ function useChannelMixSourceWaveform(segment: ChannelMixSourceSegment): {
 	const peaks = useDecodedPeaks(encoded);
 	const hasData = Boolean(encoded);
 	const notBuilt = query.currentData?.built === false;
-	const error =
-		query.isError || Boolean(query.currentData?.error) || buildRequest.isError;
+	const error = query.isError || Boolean(query.currentData?.error);
 	const loading = query.isLoading && !hasData;
 	const building =
-		buildRequest.isLoading ||
-		(!hasData && !error && !notBuilt && Boolean(query.currentData));
+		!hasData && !error && !notBuilt && Boolean(query.currentData);
 	const progress = Math.max(0, Math.min(99, query.currentData?.progress ?? 0));
 
-	const build = () => {
-		void requestBuild(segment.waveform_url)
-			.unwrap()
-			.then(() => refetch())
-			.catch(() => {});
-	};
-
-	return { peaks, loading, building, progress, error, build };
+	return { peaks, loading, building, progress, error, notBuilt };
 }
 
 function PlacedSourceWaveform(props: {
@@ -106,20 +101,15 @@ function PlacedSourceWaveform(props: {
 					Loading waveform…
 				</span>
 			)}
-			{waveform.peaks.min.length === 0 && (
-				<Button
-					className="absolute right-1 top-1 z-1"
-					variant="outline"
-					size="sm"
-					isDisabled={waveform.loading || waveform.building}
-					onPress={() => {
-						waveform.build();
-					}}
-				>
-					{waveform.building
-						? `Building waveform (${waveform.progress}%)`
-						: "Build waveform"}
-				</Button>
+			{waveform.building && (
+				<span className="text-muted text-xs leading-5 px-2">
+					Building waveform ({waveform.progress}%)
+				</span>
+			)}
+			{waveform.notBuilt && waveform.peaks.min.length === 0 && (
+				<span className="text-muted text-xs leading-5 px-2">
+					Waveform once it ends
+				</span>
 			)}
 			{waveform.error && waveform.peaks.min.length === 0 && (
 				<span className="text-danger text-xs leading-5 px-2">

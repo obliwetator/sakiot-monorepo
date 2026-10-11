@@ -267,8 +267,8 @@ interface MockAudioOptions {
 	/** Serve a ready-to-preview channel mix with one decodable source. */
 	channelMixReady?: boolean;
 	/**
-	 * Serve the channel mix source as still recording: its waveform exists
-	 * only once a build is asked for.
+	 * Serve the channel mix source as still recording: its waveform grows by a
+	 * point with every request, as its recorder adds to its peaks.
 	 */
 	channelMixLive?: boolean;
 	/** Serve the session as still recording. */
@@ -306,7 +306,7 @@ declare global {
 }
 
 async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
-	let channelMixWaveformBuilt = false;
+	let channelMixWaveformRequests = 0;
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
@@ -545,14 +545,11 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 		}
 		if (options.channelMixReady && path === CHANNEL_MIX_WAVEFORM_PATH) {
 			if (options.channelMixLive) {
-				if (url.searchParams.get("build") === "true") {
-					channelMixWaveformBuilt = true;
-				}
-				await fulfillJson(
-					channelMixWaveformBuilt
-						? { data: waveformPayload(10), progress: 100 }
-						: { built: false, progress: 0 },
-				);
+				channelMixWaveformRequests += 1;
+				await fulfillJson({
+					data: waveformPayload(channelMixWaveformRequests),
+					progress: 100,
+				});
 				return;
 			}
 			await fulfillJson({ data: EMPTY_WAVEFORM_PAYLOAD, progress: 100 });
@@ -1036,7 +1033,7 @@ test("channel mix playback starts once and never re-seeks from canplay", async (
 	await expect.poll(isPlaying).toBe(true);
 });
 
-test("a live channel mix source builds its waveform only when asked", async ({
+test("a live channel mix source's waveform refreshes while it records", async ({
 	page,
 }) => {
 	await mockAudioApi(page, { channelMixReady: true, channelMixLive: true });
@@ -1053,18 +1050,35 @@ test("a live channel mix source builds its waveform only when asked", async ({
 		name: "Channel mix",
 		exact: true,
 	});
-	const build = mixPanel.getByRole("button", { name: "Build waveform" });
-	await expect(build).toBeVisible();
 
-	// Each build reads the whole recording so far, so viewing never polls.
-	const viewed = waveformQueries.length;
-	await page.waitForTimeout(2_500);
-	expect(waveformQueries).toHaveLength(viewed);
-	expect(waveformQueries).not.toContain("?build=true");
+	// Serving it reads the recorder's peaks, so it is never built on request.
+	await expect
+		.poll(() => waveformQueries.length, { timeout: 12_000 })
+		.toBeGreaterThanOrEqual(2);
+	expect(waveformQueries.every((search) => search === "")).toBe(true);
+	await expect(mixPanel.getByRole("button", { name: /waveform/i })).toHaveCount(
+		0,
+	);
+});
 
-	await build.click();
-	await expect(build).toHaveCount(0);
-	expect(waveformQueries).toContain("?build=true");
+test("a live session's waveform refreshes and offers no build", async ({
+	page,
+}) => {
+	await mockAudioApi(page, { stillRecording: true });
+	const sessionWaveformPath = `${API_PREFIX}/audio/sessions/${SESSION_ID}/waveform`;
+	let requests = 0;
+	page.on("request", (request) => {
+		if (new URL(request.url()).pathname === sessionWaveformPath) requests += 1;
+	});
+	await page.goto(`/dashboard/${GUILD_ID}/audio/session/${SESSION_ID}`);
+
+	// Stitched from the recordings' peaks on every request: nothing to build.
+	await expect
+		.poll(() => requests, { timeout: 12_000 })
+		.toBeGreaterThanOrEqual(2);
+	await expect(
+		page.getByRole("button", { name: /(Build|Rebuild|Retry) waveform/ }),
+	).toHaveCount(0);
 });
 
 test("the playhead glides over audio instead of stepping on timeupdate", async ({

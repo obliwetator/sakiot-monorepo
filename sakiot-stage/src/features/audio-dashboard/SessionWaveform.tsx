@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { problemFromQueryError } from "../../app/apiError";
 import {
 	useRebuildSessionWaveformMutation,
@@ -21,6 +21,8 @@ export function SessionWaveform(props: {
 	durationMs: number;
 	onSeek: (positionMs: number) => void;
 	silenceFree?: boolean;
+	/** Still recording: its waveform grows, so it refreshes. */
+	live?: boolean;
 }) {
 	const [rebuilding, setRebuilding] = useState(false);
 	/** When the current rebuild was requested; answers before it are stale. */
@@ -30,6 +32,7 @@ export function SessionWaveform(props: {
 	const { query, peaks } = useSessionWaveformPeaks(
 		props.sessionId,
 		props.silenceFree,
+		props.live,
 	);
 	const {
 		currentData: data,
@@ -46,6 +49,14 @@ export function SessionWaveform(props: {
 		? silenceFreeRebuildState
 		: normalRebuildState;
 	const waveformName = props.silenceFree ? "Silence-free" : "Logical session";
+
+	// Once the session ends its points regroup, and any recording that had no
+	// peaks starts building them.
+	const wasLive = useRef(props.live);
+	useEffect(() => {
+		if (wasLive.current && !props.live) void refetch();
+		wasLive.current = props.live;
+	}, [props.live, refetch]);
 
 	const pollRebuild = useCallback(async () => {
 		const result = await refetch();
@@ -144,15 +155,23 @@ export function SessionWaveform(props: {
 					" Channel Mix uses separate physical-source waveforms."
 				}
 			/>
-			<Button
-				className="absolute right-2 bottom-2 z-4"
-				variant="primary"
-				size="sm"
-				isDisabled={buildInProgress}
-				onPress={() => void startRebuild()}
-			>
-				{data?.data ? "Rebuild waveform" : "Build waveform"}
-			</Button>
+			{/* The normal waveform is stitched from its recordings' peaks on every
+			    request, so only a failed build has anything to redo. */}
+			{(props.silenceFree || waveformError) && (
+				<Button
+					className="absolute right-2 bottom-2 z-4"
+					variant="primary"
+					size="sm"
+					isDisabled={buildInProgress}
+					onPress={() => void startRebuild()}
+				>
+					{!props.silenceFree
+						? "Retry waveform"
+						: data?.data
+							? "Rebuild waveform"
+							: "Build waveform"}
+				</Button>
+			)}
 		</SessionWaveformDisplay>
 	);
 }

@@ -12,6 +12,12 @@ export interface WaveformEnvelope {
 
 export const EMPTY_WAVEFORM_ENVELOPE: WaveformEnvelope = { min: [], max: [] };
 
+/**
+ * How often a live recording's waveform refreshes. The recorder adds to its
+ * peaks as it records, and serving them decodes nothing.
+ */
+export const LIVE_WAVEFORM_REFRESH_MS = 5_000;
+
 const HEADER_BYTES = 20;
 const FLAG_EIGHT_BIT = 1;
 

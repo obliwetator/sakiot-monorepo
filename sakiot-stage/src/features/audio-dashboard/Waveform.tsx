@@ -66,8 +66,6 @@ function WaveFormButton(props: {
 			file_name: props.params.file_name ?? "",
 			timestamp,
 			silence: props.isSilence,
-			// Generated on request only, so a live recording is built too.
-			build: true,
 		},
 		{
 			skip: !shouldGenerate || isClip,
@@ -90,8 +88,14 @@ function WaveFormButton(props: {
 	const queryError = isClip ? clip.error : recording.error;
 
 	useEffect(() => {
-		// Stop generating (polling) if we hit 100% or an error
-		if (waveformData?.progress === 100 || waveformData?.error || queryError) {
+		// Stop generating (polling) at 100%, on an error, or for a live
+		// recording without peaks, which has none until it ends.
+		if (
+			waveformData?.progress === 100 ||
+			waveformData?.error ||
+			waveformData?.built === false ||
+			queryError
+		) {
 			setShouldGenerate(false);
 		}
 	}, [waveformData, queryError]);
@@ -187,6 +191,11 @@ function WaveFormButton(props: {
 				Be patient for big files
 			</p>
 			{error && <p className="text-danger p-2.5">{error}</p>}
+			{waveformData?.built === false && (
+				<p className="text-muted p-2.5">
+					This recording's waveform is available once it ends.
+				</p>
+			)}
 			<div style={{ marginTop: "10px", marginBottom: "10px" }}>
 				<label>
 					Zoom:{" "}

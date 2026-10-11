@@ -5,7 +5,11 @@ import {
 } from "../../app/apiSlice";
 import { fractionInTarget } from "../../shared/geometry";
 import { drawSessionWaveform } from "./sessionWaveformCanvas";
-import { useDecodedPeaks, type WaveformEnvelope } from "./waveformPeaks";
+import {
+	LIVE_WAVEFORM_REFRESH_MS,
+	useDecodedPeaks,
+	type WaveformEnvelope,
+} from "./waveformPeaks";
 
 /**
  * Decoded peaks for a session. The query is cached by RTK, so the overview and
@@ -14,9 +18,12 @@ import { useDecodedPeaks, type WaveformEnvelope } from "./waveformPeaks";
 export function useSessionWaveformPeaks(
 	sessionId: string,
 	silenceFree = false,
+	/** Still recording: its waveform grows, so it refreshes. */
+	live = false,
 ) {
 	const normalQuery = useGetSessionWaveformQuery(sessionId, {
 		skip: silenceFree,
+		pollingInterval: live && !silenceFree ? LIVE_WAVEFORM_REFRESH_MS : 0,
 	});
 	const silenceFreeQuery = useGetSilenceFreeSessionWaveformQuery(sessionId, {
 		skip: !silenceFree,
