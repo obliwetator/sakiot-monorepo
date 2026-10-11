@@ -60,6 +60,7 @@ dotenvy = "0.15.7"
 uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sakiot-paths = { path = "../sakiot-paths" }
 sakiot-peaks = { path = "../sakiot-peaks" }
+sakiot-process = { path = "../sakiot-process" }
 sakiot-proto = { path = "../sakiot-proto" }
 sakiot-storage = { path = "../sakiot-storage" }
 sakiot-dsp = { path = "../sakiot-dsp" }

@@ -161,7 +161,10 @@ impl RecorderActor {
                 packets,
                 silence_ticks,
             } => {
+                let started = std::time::Instant::now();
                 self.handle_voice_tick(at_ms, packets, silence_ticks).await;
+                self.metrics
+                    .track_voice_tick("record", started.elapsed().as_secs_f64());
             }
             RecorderCommand::ClientDisconnect { user_id, at_ms } => {
                 self.handle_client_disconnect(user_id, at_ms).await;

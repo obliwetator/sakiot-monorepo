@@ -179,6 +179,7 @@ impl BotMetrics {
         register_voice_presence_gauges(&instruments);
         register_deployment_gauges(&instruments);
         register_process_gauges(&instruments);
+        register_process_usage(&instruments);
         register_event_counters(&instruments);
         register_recording_counters(&instruments);
     }
@@ -216,6 +217,68 @@ fn register_process_gauges(instruments: &Instruments) {
         "channel_active_recordings",
         "Number of active recordings per channel",
         |c| u64::from(c.active_recordings.load(Relaxed)),
+    );
+}
+
+/// This process's CPU time, disk I/O and threads, read from `/proc/self` at
+/// export. With the voice counters they give what a recording costs: their
+/// rates over the same window, divided by the speakers (`audio_packets_received`
+/// / 50 a second) or by `active_recordings`.
+fn register_process_usage(instruments: &Instruments) {
+    let (_, runtime, release_id) = instruments.context();
+    instruments
+        .meter
+        .f64_observable_counter("fbi_agent_process_cpu_seconds")
+        .with_description("CPU time of this process, by mode")
+        .with_unit("s")
+        .with_callback(move |observer| {
+            let Some(cpu) = sakiot_process::cpu_seconds() else {
+                return;
+            };
+            for (mode, seconds) in [("user", cpu.user), ("system", cpu.system)] {
+                let mut labels = deployment_labels(&runtime, release_id.as_str());
+                labels.push(KeyValue::new("mode", mode));
+                observer.observe(seconds, &labels);
+            }
+        })
+        .build();
+    let (_, runtime, release_id) = instruments.context();
+    instruments
+        .meter
+        .u64_observable_counter("fbi_agent_process_io_bytes")
+        .with_description("Bytes this process read from and wrote to storage")
+        .with_unit("By")
+        .with_callback(move |observer| {
+            let Some(io) = sakiot_process::io_counters() else {
+                return;
+            };
+            for (op, bytes) in [("read", io.read_bytes), ("write", io.write_bytes)] {
+                let mut labels = deployment_labels(&runtime, release_id.as_str());
+                labels.push(KeyValue::new("op", op));
+                observer.observe(bytes, &labels);
+            }
+        })
+        .build();
+    let (_, runtime, release_id) = instruments.context();
+    instruments
+        .meter
+        .u64_observable_counter("fbi_agent_process_io_syscalls")
+        .with_description("Read and write system calls this process made")
+        .with_callback(move |observer| {
+            let Some(io) = sakiot_process::io_counters() else {
+                return;
+            };
+            for (op, calls) in [("read", io.read_syscalls), ("write", io.write_syscalls)] {
+                let mut labels = deployment_labels(&runtime, release_id.as_str());
+                labels.push(KeyValue::new("op", op));
+                observer.observe(calls, &labels);
+            }
+        })
+        .build();
+    instruments.gauge(
+        "fbi_agent_process_threads",
+        "Threads of this process",
+        |_| sakiot_process::status_value("Threads:").unwrap_or_default(),
     );
 }
 
@@ -298,6 +361,11 @@ fn register_recording_counters(instruments: &Instruments) {
         "audio_packets_received",
         "Total audio packets received",
         |m| m.audio_packets_received.load(Relaxed),
+    );
+    instruments.counter(
+        "voice_rtp_bytes_received",
+        "RTP bytes of received voice packets, without IP and UDP headers",
+        |m| m.voice_rtp_bytes_received.load(Relaxed),
     );
     instruments.counter(
         "audio_packets_dropped",

@@ -79,6 +79,7 @@ tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
 sakiot-peaks = { path = "../sakiot-peaks" }
+sakiot-process = { path = "../sakiot-process" }
 sakiot-storage = { path = "../sakiot-storage" }
 ogg = "0.9"
 opus2 = "0.4"

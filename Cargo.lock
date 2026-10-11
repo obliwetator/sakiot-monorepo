@@ -1907,6 +1907,7 @@ dependencies = [
  "rustls 0.23.45",
  "sakiot-paths",
  "sakiot-peaks",
+ "sakiot-process",
  "sakiot-proto",
  "sakiot-storage",
  "serde",
@@ -4812,6 +4813,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sakiot-process"
+version = "1.11.1"
+
+[[package]]
 name = "sakiot-proto"
 version = "1.11.1"
 dependencies = [
@@ -6799,6 +6804,7 @@ dependencies = [
  "sakiot-dsp",
  "sakiot-paths",
  "sakiot-peaks",
+ "sakiot-process",
  "sakiot-proto",
  "sakiot-storage",
  "serde",

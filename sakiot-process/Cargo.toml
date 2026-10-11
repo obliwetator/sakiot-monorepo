@@ -1,0 +1,11 @@
+[package]
+name = "sakiot-process"
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+edition = "2024"
+
+[dependencies]
+
+[lints]
+workspace = true

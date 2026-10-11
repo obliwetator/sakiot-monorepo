@@ -22,11 +22,17 @@ pub struct BotMetrics {
     /// Recordings that lost their waveform peaks file and kept only audio.
     pub waveform_peaks_failures: AtomicU64,
     pub audio_packets_received: AtomicU64,
+    /// RTP bytes of received voice packets: UDP payloads, without the IP and
+    /// UDP headers.
+    pub voice_rtp_bytes_received: AtomicU64,
     pub audio_packets_dropped: AtomicU64,
     pub last_voice_packet_time: AtomicI64,
     pub(super) recording_duration_seconds: Histogram<f64>,
     /// Time to close a recording: flushing its writer and updating its row.
     recording_finalize_seconds: Histogram<f64>,
+    /// Time each 20 ms voice tick took, by stage. A tick that takes longer
+    /// than its 20 ms falls behind real time.
+    voice_tick_seconds: Histogram<f64>,
     /// Actor-initiated teardowns after a recoverable disconnect timed out.
     pub recovery_teardowns: AtomicU64,
     /// Of those teardowns, the ones that found no Songbird manager.
@@ -185,6 +191,19 @@ impl BotMetrics {
             .remove(&VoiceUserKey { guild_id, user_id });
     }
 
+    /// One voice tick's work in `stage`: `receive` for the songbird event
+    /// handler (extracting payloads and their peaks), `record` for the
+    /// recorder actor (writing every active recording's frame).
+    pub fn track_voice_tick(&self, stage: &'static str, seconds: f64) {
+        self.voice_tick_seconds
+            .record(seconds, &[KeyValue::new("stage", stage)]);
+    }
+
+    pub fn track_voice_rtp_bytes(&self, bytes: u64) {
+        self.voice_rtp_bytes_received
+            .fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn track_recording_finalize_duration(&self, seconds: f64) {
         self.recording_finalize_seconds.record(seconds, &[]);
     }
@@ -272,6 +291,17 @@ impl BotMetrics {
             .build()
     }
 
+    fn voice_tick_histogram() -> Histogram<f64> {
+        opentelemetry::global::meter(crate::config::SERVICE_NAME)
+            .f64_histogram("voice_tick_seconds")
+            .with_description("Time one 20 ms voice tick took, by stage")
+            .with_unit("s")
+            .with_boundaries(vec![
+                0.000_05, 0.000_1, 0.000_25, 0.000_5, 0.001, 0.002_5, 0.005, 0.01, 0.02, 0.05, 0.1,
+            ])
+            .build()
+    }
+
     fn recording_duration_histogram() -> Histogram<f64> {
         opentelemetry::global::meter(crate::config::SERVICE_NAME)
             .f64_histogram("recording_duration_seconds")
@@ -294,10 +324,12 @@ impl Default for BotMetrics {
             writer_setup_failures: AtomicU32::new(0),
             waveform_peaks_failures: AtomicU64::new(0),
             audio_packets_received: AtomicU64::new(0),
+            voice_rtp_bytes_received: AtomicU64::new(0),
             audio_packets_dropped: AtomicU64::new(0),
             last_voice_packet_time: AtomicI64::new(0),
             recording_duration_seconds: Self::recording_duration_histogram(),
             recording_finalize_seconds: Self::recording_finalize_histogram(),
+            voice_tick_seconds: Self::voice_tick_histogram(),
             recovery_teardowns: AtomicU64::new(0),
             recovery_teardown_manager_missing: AtomicU64::new(0),
             recording_policy_suspensions: AtomicU64::new(0),

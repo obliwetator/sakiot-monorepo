@@ -154,6 +154,18 @@ impl RecorderHandle {
         }
     }
 
+    /// The songbird event handler's share of a voice tick, and the RTP bytes
+    /// it carried.
+    pub(in crate::events::voice_receiver) fn observe_tick_receive(
+        &self,
+        elapsed: std::time::Duration,
+        rtp_bytes: u64,
+    ) {
+        self.metrics
+            .track_voice_tick("receive", elapsed.as_secs_f64());
+        self.metrics.track_voice_rtp_bytes(rtp_bytes);
+    }
+
     pub(in crate::events::voice_receiver) fn try_send_tick(
         &self,
         at_ms: i64,

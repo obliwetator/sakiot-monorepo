@@ -183,10 +183,15 @@ impl VoiceEventHandler for Receiver {
                 // Raw RTP is unused; Opus payload is read from VoiceTick.
             }
             Ctx::VoiceTick(tick) => {
+                let started = std::time::Instant::now();
+                let mut rtp_bytes = 0u64;
                 let packets = tick
                     .speaking
                     .iter()
                     .filter_map(|(ssrc, data)| {
+                        if let Some(rtp) = &data.packet {
+                            rtp_bytes += rtp.packet.len() as u64;
+                        }
                         actor::extract_opus_payload(data).and_then(|opus| {
                             (!opus.is_empty()).then(|| actor::VoicePacket {
                                 ssrc: *ssrc,
@@ -202,6 +207,8 @@ impl VoiceEventHandler for Receiver {
                     })
                     .collect();
                 self.actor.try_send_tick(now_ms, packets);
+                self.actor
+                    .observe_tick_receive(started.elapsed(), rtp_bytes);
             }
             Ctx::RtcpPacket(_data) => {}
             Ctx::DriverDisconnect(data) => {
