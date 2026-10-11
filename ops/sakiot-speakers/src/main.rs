@@ -43,9 +43,13 @@ struct Args {
     /// Voice channel the bots talk in.
     #[arg(long)]
     channel: u64,
-    /// Audio every talking bot plays on a loop.
-    #[arg(long)]
+    /// Audio every talking bot plays on a loop. The default is
+    /// speech.ogg, made by generate-speech.sh.
+    #[arg(long, default_value = concat!(env!("CARGO_MANIFEST_DIR"), "/speech.ogg"))]
     audio: PathBuf,
+    /// Talk without pauses, the worst case, instead of about 37% of the time.
+    #[arg(long)]
+    continuous: bool,
     /// How many bots talk at each step.
     #[arg(long, value_delimiter = ',', default_value = "0,1,2,4,8")]
     steps: Vec<usize>,
@@ -55,6 +59,22 @@ struct Args {
     /// Seconds at the start of each step left out of its window.
     #[arg(long, default_value_t = 30)]
     settle_seconds: u64,
+}
+
+/// When a bot talks: the gates of web-server/src/loadtest/media.rs, so both
+/// load tests talk alike. Each talks while
+/// `sin(2πt/slow) + 0.6·sin(2πt/fast + phase) > 0.35`, about 37% of the
+/// time in spurts of 4–6 s on average, as real recordings do.
+const TALK_PATTERNS: [(f64, f64, f64); 3] = [(23.0, 7.0, 1.3), (31.0, 5.0, 0.4), (17.0, 11.0, 2.2)];
+
+/// Whether bot `index` talks `seconds` after it joined. Bots sharing a
+/// pattern start at different points of it, so they don't talk in lockstep.
+fn talks(index: usize, seconds: f64) -> bool {
+    let (slow, fast, phase) = TALK_PATTERNS[index % TALK_PATTERNS.len()];
+    let t = seconds + 11.0 * index as f64;
+    (2.0 * std::f64::consts::PI * t / slow).sin()
+        + 0.6 * (2.0 * std::f64::consts::PI * t / fast + phase).sin()
+        > 0.35
 }
 
 /// One bot account: its gateway connection and voice manager.
@@ -105,16 +125,19 @@ async fn main() -> anyhow::Result<()> {
     let channel = ChannelId::new(args.channel);
 
     let run = async {
-        let mut talking = 0;
+        let mut gates = Vec::new();
         for &target in &args.steps {
-            while talking < target {
-                talk(&speakers[talking], guild, channel, args.audio.clone()).await?;
-                talking += 1;
+            while gates.len() < target {
+                let index = gates.len();
+                let track = talk(&speakers[index], guild, channel, args.audio.clone()).await?;
+                gates.push(tokio::spawn(gate(track, index, args.continuous)));
                 tokio::time::sleep(JOIN_GAP).await;
             }
-            while talking > target {
-                talking -= 1;
-                speakers[talking].voice.remove(guild).await?;
+            while gates.len() > target {
+                if let Some(gate) = gates.pop() {
+                    gate.abort();
+                }
+                speakers[gates.len()].voice.remove(guild).await?;
             }
             say(&format!("# step: {target} talking"));
             tokio::time::sleep(Duration::from_secs(args.settle_seconds)).await;
@@ -179,6 +202,28 @@ async fn connect(token: &str) -> anyhow::Result<Speaker> {
     Ok(Speaker { voice, shards })
 }
 
+/// Pauses and resumes a bot's track on its talk pattern. A paused bot sends
+/// a few silent frames and then nothing, as a Discord client does.
+async fn gate(track: songbird::tracks::TrackHandle, index: usize, continuous: bool) {
+    if continuous {
+        return;
+    }
+    let joined = tokio::time::Instant::now();
+    let mut talking = true;
+    let mut frames = tokio::time::interval(Duration::from_millis(20));
+    loop {
+        frames.tick().await;
+        let wanted = talks(index, joined.elapsed().as_secs_f64());
+        if wanted != talking {
+            let changed = if wanted { track.play() } else { track.pause() };
+            if changed.is_err() {
+                return;
+            }
+            talking = wanted;
+        }
+    }
+}
+
 /// Joins the channel deafened (a speaker needs no audio back) and plays the
 /// audio on a loop.
 async fn talk(
@@ -186,7 +231,7 @@ async fn talk(
     guild: GuildId,
     channel: ChannelId,
     audio: PathBuf,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<songbird::tracks::TrackHandle> {
     let call = speaker
         .voice
         .join(guild, channel)
@@ -196,7 +241,7 @@ async fn talk(
     call.deafen(true).await.context("could not deafen")?;
     let track = call.play_input(songbird::input::File::new(audio).into());
     track.enable_loop().context("could not loop the audio")?;
-    Ok(())
+    Ok(track)
 }
 
 /// One line to stdout; a closed stdout is not worth failing the run over.
@@ -230,6 +275,27 @@ mod tests {
         }
         drop(writer);
         bytes
+    }
+
+    #[test]
+    fn bots_talk_about_37_percent_of_the_time_and_not_in_lockstep() {
+        for index in 0..8 {
+            let talking = (0..180_000)
+                .filter(|frame| super::talks(index, f64::from(*frame) * 0.02))
+                .count();
+            let share = talking as f64 / 180_000.0;
+            assert!((0.35..0.39).contains(&share), "bot {index}: {share}");
+        }
+        let same_pattern = (0..3_000)
+            .filter(|frame| {
+                let t = f64::from(*frame) * 0.02;
+                super::talks(0, t) != super::talks(3, t)
+            })
+            .count();
+        assert!(
+            same_pattern > 500,
+            "bots 0 and 3 share a pattern but not its timing"
+        );
     }
 
     /// Songbird passes a lone full-volume Opus track through without

@@ -38,7 +38,7 @@ channel yourself first and stay muted. Then:
 cargo run --release -p sakiot-speakers -- \
   --tokens ~/.config/sakiot/speaker-tokens \
   --guild <staging guild id> --channel <voice channel id> \
-  --audio speech.ogg | tee run.log
+  | tee run.log
 ops/sakiot-speakers/measure.sh run.log
 ```
 
