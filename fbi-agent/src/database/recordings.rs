@@ -1,6 +1,5 @@
 use sqlx::{Pool, Postgres};
 
-use crate::database::error::expect_rows;
 use crate::database::{DbError, DbResult};
 
 #[cfg(test)]
@@ -18,6 +17,14 @@ pub struct RecordingHandle {
     pub initial_silence_ms: i64,
 }
 
+/// Who writes a recording: the agent instance, and the recorder actor in it
+/// whose heartbeat keeps the file live.
+#[derive(Debug, Clone, Copy)]
+pub struct RecordingOwner<'a> {
+    pub instance_id: &'a str,
+    pub recorder_id: &'a str,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ZombieRecording {
     pub audio_file_id: i64,
@@ -33,15 +40,10 @@ pub async fn create_recording(
     channel_id: i64,
     user_id: i64,
     now: chrono::DateTime<chrono::Utc>,
-    owner_instance_id: &str,
+    owner: RecordingOwner<'_>,
 ) -> DbResult<RecordingHandle> {
     crate::database::logical_recordings::create_fragment(
-        pool,
-        guild_id,
-        channel_id,
-        user_id,
-        now,
-        owner_instance_id,
+        pool, guild_id, channel_id, user_id, now, owner,
     )
     .await
 }
@@ -53,7 +55,7 @@ pub async fn create_recording_for_test(
     channel_id: i64,
     user_id: i64,
     now: chrono::DateTime<chrono::Utc>,
-    owner_instance_id: &str,
+    owner: RecordingOwner<'_>,
     recording_root: &std::path::Path,
 ) -> DbResult<RecordingHandle> {
     crate::database::logical_recordings::create_fragment_in(
@@ -62,38 +64,56 @@ pub async fn create_recording_for_test(
         channel_id,
         user_id,
         now,
-        owner_instance_id,
+        owner,
         recording_root,
     )
     .await
 }
 
-pub async fn heartbeat_active_recordings(
+/// Marks a recorder actor alive. Every file it creates carries its id, so one
+/// row per actor keeps all of its files live (`live_audio_files`).
+pub async fn heartbeat_recorder(
     pool: &Pool<Postgres>,
-    audio_file_ids: &[i64],
+    recorder_id: &str,
     owner_instance_id: &str,
-) -> DbResult<u64> {
-    if audio_file_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let result = sqlx::query!(
-        "UPDATE audio_files
-            SET recording_heartbeat_at = now()
-          WHERE id = ANY($1)
-            AND recording_owner_instance_id = $2
-            AND end_ts IS NULL",
-        audio_file_ids,
-        owner_instance_id
+    guild_id: i64,
+) -> DbResult<()> {
+    sqlx::query!(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (recorder_id) DO UPDATE SET heartbeat_at = now()",
+        recorder_id,
+        owner_instance_id,
+        guild_id
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
 
-    expect_rows(
-        result,
-        audio_file_ids.len() as u64,
-        "heartbeat active recordings",
+/// A recorder actor exited: its files stop counting as live at once instead
+/// of after `STALE_AFTER_SECONDS`.
+pub async fn end_recorder(pool: &Pool<Postgres>, recorder_id: &str) -> DbResult<()> {
+    sqlx::query!(
+        "DELETE FROM recorder_heartbeats WHERE recorder_id = $1",
+        recorder_id
     )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Recorder rows that stopped heartbeating no longer keep anything live.
+pub async fn delete_stale_recorders(pool: &Pool<Postgres>) -> DbResult<u64> {
+    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
+    Ok(sqlx::query!(
+        "DELETE FROM recorder_heartbeats
+          WHERE heartbeat_at <= now() - ($1::double precision * interval '1 second')",
+        stale_after_seconds
+    )
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
 
 pub async fn mark_recording_setup_failed(
@@ -107,7 +127,6 @@ pub async fn mark_recording_setup_failed(
         "UPDATE audio_files
             SET end_ts = COALESCE(end_ts, start_ts),
                 reaped = TRUE,
-                recording_heartbeat_at = NULL,
                 finalize_reason_id = $3
           WHERE id = $1
             AND recording_owner_instance_id = $2
@@ -158,7 +177,6 @@ pub async fn finalize_recording(
     let row = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = audio_files.start_ts + $1,
-                recording_heartbeat_at = NULL,
                 finalize_reason_id = $4
           WHERE id = $2
             AND recording_owner_instance_id = $3
@@ -214,21 +232,12 @@ pub async fn last_reap_ts(pool: &Pool<Postgres>) -> DbResult<i64> {
 }
 
 pub async fn zombie_recordings(pool: &Pool<Postgres>) -> DbResult<Vec<ZombieRecording>> {
-    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let zombies = sqlx::query_as!(
         ZombieRecording,
         r#"SELECT id AS "audio_file_id!", file_name, guild_id, channel_id, start_ts
            FROM audio_files
           WHERE end_ts IS NULL
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM bot_instances bi
-                 WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')
-                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')
-                   AND bi.state <> 'stopped'
-            )"#,
-        stale_after_seconds
+            AND NOT EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = audio_files.id)"#
     )
     .fetch_all(pool)
     .await?;
@@ -237,19 +246,10 @@ pub async fn zombie_recordings(pool: &Pool<Postgres>) -> DbResult<Vec<ZombieReco
 }
 
 pub async fn delete_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<u64> {
-    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let result = sqlx::query!(
         "DELETE FROM audio_files
           WHERE end_ts IS NULL
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM bot_instances bi
-                 WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - ($1::double precision * interval '1 second')
-                   AND bi.heartbeat_at > now() - ($1::double precision * interval '1 second')
-                   AND bi.state <> 'stopped'
-            )",
-        stale_after_seconds
+            AND NOT EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = audio_files.id)"
     )
     .execute(pool)
     .await?;
@@ -258,24 +258,14 @@ pub async fn delete_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<u64> {
 }
 
 pub async fn mark_zombie_recordings_reaped(pool: &Pool<Postgres>) -> DbResult<u64> {
-    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let result = sqlx::query!(
         "UPDATE audio_files
             SET end_ts = start_ts,
                 reaped = TRUE,
-                recording_heartbeat_at = NULL,
                 finalize_reason_id = $1
           WHERE end_ts IS NULL
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM bot_instances bi
-                 WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                   AND audio_files.recording_heartbeat_at > now() - ($2::double precision * interval '1 second')
-                   AND bi.heartbeat_at > now() - ($2::double precision * interval '1 second')
-                   AND bi.state <> 'stopped'
-            )",
-        FINALIZE_REASON_ZOMBIE_REAPED,
-        stale_after_seconds
+            AND NOT EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = audio_files.id)",
+        FINALIZE_REASON_ZOMBIE_REAPED
     )
     .execute(pool)
     .await?;

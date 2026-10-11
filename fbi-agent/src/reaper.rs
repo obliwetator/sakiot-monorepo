@@ -102,11 +102,14 @@ pub async fn reap_zombie_recordings(pool: &Pool<Postgres>) -> DbResult<()> {
     };
 
     crate::database::recordings::bump_last_reap_ts(pool, now_ms).await?;
+    // After the reap, so it decides on the rows as they were.
+    let stale_recorders = crate::database::recordings::delete_stale_recorders(pool).await?;
 
     info!(
         purge,
         zombies = zombies.len(),
         rows_changed,
+        stale_recorders,
         deleted_files,
         missing_files,
         last_reap_ts,

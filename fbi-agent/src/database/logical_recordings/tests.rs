@@ -3,14 +3,21 @@ use super::{
     pause_session, pending_deadlines, resume_pending_user,
 };
 use crate::database::DbError;
+use crate::database::recordings::RecordingOwner;
 use sqlx::PgPool;
+
+const TEST_OWNER: RecordingOwner<'static> = RecordingOwner {
+    instance_id: "test",
+    recorder_id: "test-recorder",
+};
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn excluded_channel_cannot_create_recording(pool: PgPool) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids) VALUES (1,ARRAY[2::bigint])")
         .execute(&pool).await?;
     let root = tempfile::tempdir().unwrap();
-    let result = create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await;
+    let result =
+        create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), TEST_OWNER, root.path()).await;
     assert!(matches!(result, Err(DbError::RecordingExcluded)));
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM audio_files")
         .fetch_one(&pool)
@@ -33,10 +40,11 @@ async fn opted_out_user_cannot_create_recording(pool: PgPool) -> Result<(), DbEr
     assert!(crate::database::opt_outs::set_opted_out(&pool, 1, 3, true).await?);
     assert!(!crate::database::opt_outs::set_opted_out(&pool, 1, 3, true).await?);
 
-    let result = create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await;
+    let result =
+        create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), TEST_OWNER, root.path()).await;
     assert!(matches!(result, Err(DbError::RecordingOptedOut)));
-    create_fragment_in(&pool, 1, 2, 4, chrono::Utc::now(), "test", root.path()).await?;
-    create_fragment_in(&pool, 9, 2, 3, chrono::Utc::now(), "test", root.path()).await?;
+    create_fragment_in(&pool, 1, 2, 4, chrono::Utc::now(), TEST_OWNER, root.path()).await?;
+    create_fragment_in(&pool, 9, 2, 3, chrono::Utc::now(), TEST_OWNER, root.path()).await?;
     let recorded_users: Vec<(i64, i64)> =
         sqlx::query_as("SELECT guild_id, user_id FROM audio_files ORDER BY guild_id")
             .fetch_all(&pool)
@@ -44,7 +52,7 @@ async fn opted_out_user_cannot_create_recording(pool: PgPool) -> Result<(), DbEr
     assert_eq!(recorded_users, vec![(1, 4), (9, 3)]);
 
     assert!(crate::database::opt_outs::set_opted_out(&pool, 1, 3, false).await?);
-    create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), "test", root.path()).await?;
+    create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), TEST_OWNER, root.path()).await?;
     Ok(())
 }
 
@@ -63,9 +71,20 @@ async fn excluded_channel_cannot_resume_pending_session(pool: PgPool) -> Result<
     .execute(&pool)
     .await?;
     let root = tempfile::tempdir().unwrap();
-    let handle = create_fragment_in(&pool, 1, 2, 3, chrono::Utc::now(), owner, root.path())
-        .await
-        .expect("fragment");
+    let handle = create_fragment_in(
+        &pool,
+        1,
+        2,
+        3,
+        chrono::Utc::now(),
+        RecordingOwner {
+            instance_id: owner,
+            recorder_id: "test-recorder",
+        },
+        root.path(),
+    )
+    .await
+    .expect("fragment");
     let now_ms = chrono::Utc::now().timestamp_millis();
     pause_session(
         &pool,

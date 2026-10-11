@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM recorder_heartbeats WHERE owner_instance_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a1fa39f7cd3a88b48f72a9cf796f101be99b01188f6b509e888e19c323be6999"
+}

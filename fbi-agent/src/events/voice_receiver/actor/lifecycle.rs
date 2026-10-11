@@ -15,6 +15,14 @@ use crate::events::voice_receiver::{
     state::{RecordingFinalizeReason, UserRecording, VoiceEventType},
 };
 
+/// A recording row that failed to finalize, kept for a retry.
+pub(super) struct Unfinalized {
+    pub(super) audio_file_id: i64,
+    pub(super) file_name: String,
+    pub(super) duration_ms: i64,
+    pub(super) finalize_reason_id: i32,
+}
+
 impl RecorderActor {
     pub(super) async fn handle_speaking_state_update(&mut self, user_id: Option<u64>, ssrc: u32) {
         debug!(
@@ -314,21 +322,70 @@ impl RecorderActor {
         }
     }
 
-    pub(super) async fn heartbeat_active_recordings(&self) {
-        let audio_file_ids = self.recordings.tracked_audio_file_ids();
-        if audio_file_ids.is_empty() {
+    /// Keeps every file this actor writes live. Skipped while it writes none:
+    /// creating a file refreshes the row in the same transaction.
+    pub(super) async fn heartbeat_recorder(&self) {
+        if self.recordings.tracked_audio_file_ids().is_empty() {
             return;
         }
-
-        if let Err(err) = crate::database::recordings::heartbeat_active_recordings(
+        if let Err(err) = crate::database::recordings::heartbeat_recorder(
             &self.pool,
-            &audio_file_ids,
+            &self.recorder_id,
             &self.recording_owner_instance_id,
+            self.guild_id.to_i64(),
         )
         .await
         {
             warn!("recording heartbeat failed: {}", err);
             self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The actor is exiting with every recording finalized, so nothing it
+    /// wrote should count as live any more.
+    pub(super) async fn end_recorder(&self) {
+        if let Err(err) =
+            crate::database::recordings::end_recorder(&self.pool, &self.recorder_id).await
+        {
+            warn!("failed to end recorder heartbeat: {}", err);
+            self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(super) async fn retry_unfinalized(&mut self) {
+        for item in std::mem::take(&mut self.unfinalized) {
+            match crate::database::recordings::finalize_recording(
+                &self.pool,
+                item.audio_file_id,
+                &self.recording_owner_instance_id,
+                item.duration_ms,
+                item.finalize_reason_id,
+            )
+            .await
+            {
+                Ok(()) => info!(
+                    file_name = item.file_name,
+                    audio_file_id = item.audio_file_id,
+                    "finalized recording row on retry"
+                ),
+                // Someone else closed the row (a reaper, or this instance
+                // stopping); there is nothing left to finalize.
+                Err(crate::database::DbError::UnexpectedRows { .. }) => warn!(
+                    file_name = item.file_name,
+                    audio_file_id = item.audio_file_id,
+                    "recording row was already closed; dropping the retry"
+                ),
+                Err(err) => {
+                    warn!(
+                        file_name = item.file_name,
+                        audio_file_id = item.audio_file_id,
+                        "retrying recording finalize failed: {}",
+                        err
+                    );
+                    self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+                    self.unfinalized.push(item);
+                }
+            }
         }
     }
 
@@ -344,7 +401,7 @@ impl RecorderActor {
     }
 
     pub(super) async fn finalize_recording(
-        &self,
+        &mut self,
         ssrc: u32,
         mut recording: UserRecording,
         event_type: VoiceEventType,
@@ -395,6 +452,14 @@ impl RecorderActor {
                 audio_file_id, "failed to finalize recording row: {}", err
             );
             self.metrics.db_query_errors.fetch_add(1, Ordering::Relaxed);
+            if !matches!(err, crate::database::DbError::UnexpectedRows { .. }) {
+                self.unfinalized.push(Unfinalized {
+                    audio_file_id,
+                    file_name: file_name.clone(),
+                    duration_ms: time_elapsed,
+                    finalize_reason_id: finalize_reason.id(),
+                });
+            }
         }
         self.metrics
             .track_recording_finalize_duration(finalize_started.elapsed().as_secs_f64());
@@ -414,7 +479,10 @@ impl RecorderActor {
             self.channel_id.to_i64(),
             user_id.to_i64(),
             now,
-            &self.recording_owner_instance_id,
+            crate::database::recordings::RecordingOwner {
+                instance_id: &self.recording_owner_instance_id,
+                recorder_id: &self.recorder_id,
+            },
         )
         .await
         {

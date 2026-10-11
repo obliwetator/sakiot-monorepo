@@ -78,7 +78,14 @@ single owners of the layout and the schema.
    whose write fails is closed at once as a writer error.
 3. **Track.** The recorder actor (`events/voice_receiver/`) owns the writers and
    the session lifecycle: joins, moves, pauses, policy suspensions, recovery.
-   Session and event rows go to PostgreSQL as they happen.
+   Session and event rows go to PostgreSQL as they happen. Each actor
+   heartbeats one `recorder_heartbeats` row every 10 s, and every file it
+   creates carries that row's id. A recording is live while it is unfinished
+   and both its actor and its bot instance heartbeat; every liveness check
+   reads the `live_audio_files` view. A crashed actor's row goes stale, and a
+   restarted process gets new actor ids, so its predecessor's files stop
+   counting as live within 120 s and the next startup reaps them. A file whose
+   finalize fails is retried on every heartbeat, so it keeps its real length.
 4. **Group.** A *logical recording session* groups the per-user files that
    belong to one sitting in one channel. This is the unit the UI presents and
    the unit deletion and archival operate on.
@@ -269,8 +276,8 @@ voice presence).
 - **Triggers** (`sakiot-db/migrations/20261003010000_realtime_notifications.sql`)
   cover recordings, clips, stamps, opt-outs, guild settings and the permission
   cache. They fire for whichever binary writes, including a draining bot.
-  Update triggers compare displayed columns only, so heartbeats and no-op
-  writes are silent, and permission tables send one guild-wide payload per
+  Update triggers compare displayed columns only, so no-op writes are
+  silent, and permission tables send one guild-wide payload per
   transaction. Media jobs, clip exports and recording deletions notify when
   their state, stage, progress or error changes, never on a lease renewal
   (`20261006000000_realtime_job_notifications.sql`).
@@ -316,8 +323,8 @@ voice presence).
   the access token before expiry on a replacement socket. After repeated
   failures it falls back to polling the tree, live stems, clips and stamps
   every 30 s. Manifests (every 5 s until finalized) and a file's live state
-  (every 10 s) poll even while realtime is live: a growing recording changes
-  only its heartbeat, which notifies nothing, so no event announces new
+  (every 10 s) poll even while realtime is live: a growing recording writes
+  no row at all (only its actor's heartbeat), so no event announces new
   audio. A query still waiting on a job carries its `Job` tag (by job id), so
   a `jobs` event refetches exactly that query; while realtime is live such
   pages poll every 5 s instead of every second, which only covers an event

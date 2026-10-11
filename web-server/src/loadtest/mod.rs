@@ -48,8 +48,18 @@ pub struct LoadtestState {
     /// take connections the measured requests need.
     pool: Pool<Postgres>,
     agent_id: String,
+    /// This process's recorder actors are `<prefix>-<guild>`, one per guild,
+    /// as the agent runs one per guild; a restart gets a new prefix, so the
+    /// previous process's recordings stop counting as live.
+    recorder_prefix: String,
     seeding: parking_lot::Mutex<HashMap<u32, fixtures::SeedStatus>>,
     sims: live::Sims,
+}
+
+impl LoadtestState {
+    fn recorder_id(&self, guild_id: i64) -> String {
+        format!("{}-{guild_id}", self.recorder_prefix)
+    }
 }
 
 /// Build the harness state and start the synthetic agent. Called once at
@@ -59,9 +69,11 @@ pub fn init(cfg: &Config) -> Result<web::Data<LoadtestState>, sqlx::Error> {
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
         .connect_lazy(&cfg.database_url)?;
+    let agent_id = format!("loadtest-agent-{}", cfg.port);
     let state = Arc::new(LoadtestState {
         pool,
-        agent_id: format!("loadtest-agent-{}", cfg.port),
+        recorder_prefix: format!("{agent_id}-{}", uuid::Uuid::new_v4()),
+        agent_id,
         seeding: parking_lot::Mutex::new(HashMap::new()),
         sims: live::Sims::default(),
     });

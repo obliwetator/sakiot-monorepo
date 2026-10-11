@@ -238,14 +238,7 @@ async fn load_mix_candidates(
                 (
                     af.end_ts IS NULL
                     AND af.reaped IS FALSE
-                    AND EXISTS (
-                        SELECT 1
-                          FROM bot_instances bi
-                         WHERE bi.instance_id = af.recording_owner_instance_id
-                           AND af.recording_heartbeat_at > now() - interval '120 seconds'
-                           AND bi.heartbeat_at > now() - interval '120 seconds'
-                           AND bi.state <> 'stopped'
-                    )
+                    AND EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = af.id)
                 ) AS "live!",
                 COALESCE(rs.state,
                          CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END) AS "session_state!"

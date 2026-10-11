@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT af.id,\n                af.guild_id,\n                af.channel_id,\n                af.user_id,\n                af.recording_session_id,\n                af.file_name,\n                af.year,\n                af.month,\n                COALESCE(af.start_ts, 0) AS \"start_ms!\",\n                af.end_ts AS end_ms,\n                af.segment_index,\n                (\n                    af.end_ts IS NULL\n                    AND af.reaped IS FALSE\n                    AND EXISTS (\n                        SELECT 1\n                          FROM bot_instances bi\n                         WHERE bi.instance_id = af.recording_owner_instance_id\n                           AND af.recording_heartbeat_at > now() - interval '120 seconds'\n                           AND bi.heartbeat_at > now() - interval '120 seconds'\n                           AND bi.state <> 'stopped'\n                    )\n                ) AS \"live!\"\n           FROM audio_files af\n          WHERE af.recording_session_id = $1\n          ORDER BY af.segment_index NULLS LAST, af.start_ts, af.id",
+  "query": "SELECT af.id,\n                af.guild_id,\n                af.channel_id,\n                af.user_id,\n                af.recording_session_id,\n                af.file_name,\n                af.year,\n                af.month,\n                COALESCE(af.start_ts, 0) AS \"start_ms!\",\n                af.end_ts AS end_ms,\n                af.segment_index,\n                (\n                    af.end_ts IS NULL\n                    AND af.reaped IS FALSE\n                    AND EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = af.id)\n                ) AS \"live!\"\n           FROM audio_files af\n          WHERE af.recording_session_id = $1\n          ORDER BY af.segment_index NULLS LAST, af.start_ts, af.id",
   "describe": {
     "columns": [
       {
@@ -146,5 +146,5 @@
       null
     ]
   },
-  "hash": "9d98c17f4847a0cd3d446d1765a67efefe289c5a811382248874c860cf98a2c7"
+  "hash": "2547f2bc3c9c18003445fd17ea6df7d668e5ad598f89f2a1a14ca40cb1aea8ce"
 }

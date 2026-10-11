@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM recorder_heartbeats\n          WHERE heartbeat_at <= now() - ($1::double precision * interval '1 second')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8d4a7415cc5879201c980b816ffb9dd9e77634eba1c7b351390df85cd6b468dd"
+}

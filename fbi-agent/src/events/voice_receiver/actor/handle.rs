@@ -69,6 +69,8 @@ impl RecorderHandle {
             guild_metrics: guild_metrics.clone(),
             channel_metrics: channel_metrics.clone(),
             recording_owner_instance_id,
+            recorder_id: uuid::Uuid::new_v4().to_string(),
+            unfinalized: Vec::new(),
             stats: stats.clone(),
             recordings: Recordings::new(stats.clone()),
             link: super::Link::default(),

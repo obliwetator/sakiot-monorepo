@@ -81,7 +81,6 @@ pub async fn active_recording_for_stamp(
     channel_id: i64,
     stamp_ts: i64,
 ) -> DbResult<Option<ActiveStampRecording>> {
-    let stale_after_seconds = crate::heartbeat::STALE_AFTER_SECONDS as f64;
     let active_recording = sqlx::query_as!(
         ActiveStampRecording,
         r#"SELECT id AS "audio_file_id!",
@@ -92,21 +91,13 @@ pub async fn active_recording_for_stamp(
               AND channel_id = $3
               AND start_ts <= $4
               AND end_ts IS NULL
-              AND EXISTS (
-                  SELECT 1
-                    FROM bot_instances bi
-                   WHERE bi.instance_id = audio_files.recording_owner_instance_id
-                     AND audio_files.recording_heartbeat_at > now() - ($5::double precision * interval '1 second')
-                     AND bi.heartbeat_at > now() - ($5::double precision * interval '1 second')
-                     AND bi.state <> 'stopped'
-              )
+              AND EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = audio_files.id)
             ORDER BY start_ts DESC
             LIMIT 1"#,
         target_user_id,
         guild_id,
         channel_id,
-        stamp_ts,
-        stale_after_seconds
+        stamp_ts
     )
     .fetch_optional(pool)
     .await?;

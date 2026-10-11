@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT recorder_id FROM audio_files WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recorder_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "recorder_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "097e24e41765d4ef0737d95ff80b436f9320e294bfd464b1b48f76c2c3c9351f"
+}

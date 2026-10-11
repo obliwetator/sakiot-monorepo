@@ -205,6 +205,12 @@ pub async fn mark_instance_stopped(
     .execute(pool)
     .await?
     .rows_affected();
+    sqlx::query!(
+        "DELETE FROM recorder_heartbeats WHERE owner_instance_id = $1",
+        runtime.config().instance_id
+    )
+    .execute(pool)
+    .await?;
 
     // Close every recording this instance still owns. A stopped instance
     // never measured an end, so `COALESCE(end_ts, start_ts)` used to record a
@@ -237,7 +243,6 @@ pub async fn mark_instance_stopped(
             "UPDATE audio_files
                 SET end_ts = $2,
                     reaped = TRUE,
-                    recording_heartbeat_at = NULL,
                     finalize_reason_id = COALESCE(finalize_reason_id, 3)
               WHERE id = $1
                 AND end_ts IS NULL

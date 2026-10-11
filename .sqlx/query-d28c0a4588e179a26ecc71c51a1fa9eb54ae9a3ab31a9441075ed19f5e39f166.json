@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT af.start_ts,\n                af.end_ts,\n                (\n                    af.end_ts IS NULL\n                    AND af.reaped IS FALSE\n                    AND EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = af.id)\n                ) AS live\n           FROM audio_files af\n          WHERE af.file_name = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "start_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "end_ts",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "end_ts"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "live",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "d28c0a4588e179a26ecc71c51a1fa9eb54ae9a3ab31a9441075ed19f5e39f166"
+}

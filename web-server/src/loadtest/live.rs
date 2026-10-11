@@ -107,7 +107,22 @@ impl Sims {
         self.entries.lock().is_empty()
     }
 
-    /// Fragments being written right now, for the agent's heartbeat.
+    /// Guilds with a fragment being written, whose recorder the agent
+    /// heartbeats.
+    pub fn live_guilds(&self) -> Vec<i64> {
+        let mut guilds: Vec<i64> = self
+            .entries
+            .lock()
+            .values()
+            .filter(|entry| !entry.live_audio_ids.is_empty())
+            .map(|entry| entry.guild_id)
+            .collect();
+        guilds.sort_unstable();
+        guilds.dedup();
+        guilds
+    }
+
+    /// Fragments being written right now.
     pub fn audio_file_ids(&self) -> Vec<i64> {
         self.entries
             .lock()
@@ -603,12 +618,15 @@ async fn join(
     .bind(&state.agent_id)
     .fetch_one(&mut *tx)
     .await?;
+    let recorder_id = state.recorder_id(guild_id);
+    super::agent::heartbeat_recorders(&mut tx, &state.agent_id, &[(recorder_id.clone(), guild_id)])
+        .await?;
     let audio_file_id: i64 = sqlx::query_scalar(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-             recording_owner_instance_id, recording_heartbeat_at, recording_session_id,
+             recording_owner_instance_id, recorder_id, recording_session_id,
              segment_index)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, now(), $9, 0)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, 0)
          RETURNING id",
     )
     .bind(&stem)
@@ -619,6 +637,7 @@ async fn join(
     .bind(started.month() as i32)
     .bind(start_ms)
     .bind(&state.agent_id)
+    .bind(&recorder_id)
     .bind(session_id)
     .fetch_one(&mut *tx)
     .await?;
@@ -681,7 +700,7 @@ async fn leave(
     let mut tx = state.pool.begin().await?;
     sqlx::query(
         "UPDATE audio_files
-            SET end_ts = $2, recording_heartbeat_at = NULL, finalize_reason_id = $3
+            SET end_ts = $2, finalize_reason_id = $3
           WHERE id = $1 AND end_ts IS NULL",
     )
     .bind(writer.audio_file_id)
@@ -751,19 +770,22 @@ async fn insert_events(
     Ok(())
 }
 
-/// Close recordings a previous process left open: each ends at its last
-/// heartbeat, as the agent's reaper would close them.
+/// Close recordings a previous process left open: each ends at its
+/// recorder's last heartbeat, as the agent's reaper would close them.
 pub(super) async fn close_orphans(
     pool: &Pool<Postgres>,
     agent_id: &str,
+    recorder_prefix: &str,
     live: &[i64],
 ) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let closed = sqlx::query(
         "UPDATE audio_files
             SET end_ts = GREATEST(start_ts,
-                    (EXTRACT(EPOCH FROM COALESCE(recording_heartbeat_at, now())) * 1000)::bigint),
-                recording_heartbeat_at = NULL,
+                    (EXTRACT(EPOCH FROM COALESCE(
+                        (SELECT rh.heartbeat_at FROM recorder_heartbeats rh
+                          WHERE rh.recorder_id = audio_files.recorder_id),
+                        now())) * 1000)::bigint),
                 finalize_reason_id = $3
           WHERE recording_owner_instance_id = $1 AND end_ts IS NULL AND NOT (id = ANY($2))",
     )
@@ -773,6 +795,14 @@ pub(super) async fn close_orphans(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    sqlx::query(
+        "DELETE FROM recorder_heartbeats
+          WHERE owner_instance_id = $1 AND NOT starts_with(recorder_id, $2)",
+    )
+    .bind(agent_id)
+    .bind(recorder_prefix)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "UPDATE recording_sessions rs
             SET state = 'finalized',

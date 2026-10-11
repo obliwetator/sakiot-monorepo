@@ -330,7 +330,7 @@ async fn append_selection_transform(
         "UPDATE _imp_sessions SET owner_instance_id = NULL;
          UPDATE _imp_audio
             SET recording_owner_instance_id = NULL,
-                recording_heartbeat_at = NULL;
+                recorder_id = NULL;
          CREATE TEMP TABLE _session_map (
              old_id bigint PRIMARY KEY,
              new_id bigint NOT NULL,

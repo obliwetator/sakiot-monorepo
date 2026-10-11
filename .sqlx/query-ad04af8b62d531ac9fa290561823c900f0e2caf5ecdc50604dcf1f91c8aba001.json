@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE audio_files\n            SET end_ts = COALESCE(end_ts, start_ts),\n                reaped = TRUE,\n                recording_heartbeat_at = NULL,\n                finalize_reason_id = $3\n          WHERE id = $1\n            AND recording_owner_instance_id = $2\n            AND end_ts IS NULL\n         RETURNING recording_session_id, segment_index, channel_id, end_ts",
+  "query": "UPDATE audio_files\n            SET end_ts = audio_files.start_ts + $1,\n                finalize_reason_id = $4\n          WHERE id = $2\n            AND recording_owner_instance_id = $3\n            AND end_ts IS NULL\n         RETURNING recording_session_id, segment_index, channel_id, end_ts",
   "describe": {
     "columns": [
       {
@@ -51,6 +51,7 @@
     "parameters": {
       "Left": [
         "Int8",
+        "Int8",
         "Text",
         "Int4"
       ]
@@ -62,5 +63,5 @@
       true
     ]
   },
-  "hash": "af861a1deeff838a811df568899a3973fd9028f1456e871a8ab4bf950579ca03"
+  "hash": "ad04af8b62d531ac9fa290561823c900f0e2caf5ecdc50604dcf1f91c8aba001"
 }

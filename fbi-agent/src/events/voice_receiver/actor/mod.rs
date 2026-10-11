@@ -65,6 +65,15 @@ struct RecorderActor {
     guild_metrics: Arc<crate::GuildRecordingMetrics>,
     channel_metrics: Arc<crate::GuildRecordingMetrics>,
     recording_owner_instance_id: String,
+    /// This actor's row in `recorder_heartbeats`. Every file it creates
+    /// carries it, and a file is live only while this row is fresh, so a
+    /// restarted process (same instance id, new actors) never keeps the old
+    /// process's files alive.
+    recorder_id: String,
+    /// Recordings whose row failed to finalize. Retried on every heartbeat:
+    /// otherwise a recording stays live while this actor runs and is later
+    /// reaped without its length.
+    unfinalized: Vec<lifecycle::Unfinalized>,
     stats: Arc<RecorderStats>,
     recordings: Recordings,
     link: Link,
@@ -117,7 +126,8 @@ impl RecorderActor {
                     self.handle_command(command).await;
                 }
                 _ = heartbeat.tick() => {
-                    self.heartbeat_active_recordings().await;
+                    self.retry_unfinalized().await;
+                    self.heartbeat_recorder().await;
                 }
                 _ = reaper.tick() => {
                     self.reap_stale_users().await;
@@ -134,6 +144,8 @@ impl RecorderActor {
 
         self.finalize_all_active_recordings(VoiceEventType::WriterClose, chrono::Utc::now())
             .await;
+        self.retry_unfinalized().await;
+        self.end_recorder().await;
         self.recordings.clear();
         self.remove_from_registry().await;
         terminated_tx.send_replace(true);

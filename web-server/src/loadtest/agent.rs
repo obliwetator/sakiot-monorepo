@@ -1,9 +1,10 @@
 //! The synthetic bot instance behind the fixture guilds.
 //!
 //! Liveness and presence come from bot heartbeats: a recording is live only
-//! while its owner instance heartbeats, and presence is "available" only
-//! while a running instance owns the guild's projection. This task heartbeats
-//! as `loadtest-agent-<port>` the way the agent does (every 10 s), owns every
+//! while its owner instance and its guild's recorder heartbeat, and presence
+//! is "available" only while a running instance owns the guild's projection.
+//! This task heartbeats as `loadtest-agent-<port>` the way the agent does
+//! (every 10 s, one recorder row per guild in voice), owns every
 //! fixture guild's projection, and re-adds the fixtures to `guilds_present`,
 //! which a real agent resets to its own guild list when it starts.
 //!
@@ -78,22 +79,46 @@ async fn beat(state: &LoadtestState, recover: bool) -> Result<(), sqlx::Error> {
         // A previous process's simulations died with it; close what they
         // left open, ending each recording at its last heartbeat.
         let live = state.sims.audio_file_ids();
-        let closed = super::live::close_orphans(&state.pool, &state.agent_id, &live).await?;
+        let closed =
+            super::live::close_orphans(&state.pool, &state.agent_id, &state.recorder_prefix, &live)
+                .await?;
         if closed > 0 {
             tracing::info!(closed, "closed orphaned load-test recordings");
         }
     }
 
-    let live = state.sims.audio_file_ids();
-    if !live.is_empty() {
-        sqlx::query(
-            "UPDATE audio_files SET recording_heartbeat_at = now()
-              WHERE id = ANY($1) AND recording_owner_instance_id = $2 AND end_ts IS NULL",
-        )
-        .bind(&live)
-        .bind(&state.agent_id)
-        .execute(&state.pool)
-        .await?;
+    // One recorder per guild, as the agent heartbeats: the cost follows the
+    // guilds in voice, not the recordings in them.
+    let recorders: Vec<(String, i64)> = state
+        .sims
+        .live_guilds()
+        .into_iter()
+        .map(|guild_id| (state.recorder_id(guild_id), guild_id))
+        .collect();
+    if !recorders.is_empty() {
+        let mut tx = state.pool.begin().await?;
+        heartbeat_recorders(&mut tx, &state.agent_id, &recorders).await?;
+        tx.commit().await?;
     }
+    Ok(())
+}
+
+pub(super) async fn heartbeat_recorders(
+    tx: &mut Transaction<'_, Postgres>,
+    agent_id: &str,
+    recorders: &[(String, i64)],
+) -> Result<(), sqlx::Error> {
+    let (ids, guilds): (Vec<String>, Vec<i64>) = recorders.iter().cloned().unzip();
+    sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         SELECT recorder_id, $2, guild_id FROM UNNEST($1::text[], $3::bigint[])
+                AS r (recorder_id, guild_id)
+         ON CONFLICT (recorder_id) DO UPDATE SET heartbeat_at = now()",
+    )
+    .bind(&ids)
+    .bind(agent_id)
+    .bind(&guilds)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }

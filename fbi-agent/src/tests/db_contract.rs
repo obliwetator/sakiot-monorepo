@@ -75,16 +75,26 @@ async fn recording_create_heartbeat_finalize_uses_audio_file_id(
         channel_id,
         user_id,
         chrono::Utc::now(),
-        &owner,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &format!("{owner}-recorder"),
+        },
         temporary.path(),
     )
     .await?;
 
     assert!(handle.audio_file_id > 0);
     assert!(!handle.file_name.is_empty());
+    recordings::heartbeat_recorder(&pool, &format!("{owner}-recorder"), &owner, guild_id).await?;
+    let recorder_id = sqlx::query_scalar!(
+        "SELECT recorder_id FROM audio_files WHERE id = $1",
+        handle.audio_file_id
+    )
+    .fetch_one(&pool)
+    .await?;
     assert_eq!(
-        recordings::heartbeat_active_recordings(&pool, &[handle.audio_file_id], &owner).await?,
-        1
+        recorder_id.as_deref(),
+        Some(format!("{owner}-recorder").as_str())
     );
     recordings::finalize_recording(
         &pool,
@@ -145,7 +155,10 @@ async fn stamp_creation_persists_fragment_and_logical_session(
         channel_id,
         user_id,
         now,
-        &owner,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &format!("{owner}-recorder"),
+        },
         temporary.path(),
     )
     .await?;
@@ -209,7 +222,10 @@ async fn logical_recording_resumes_with_one_gap_and_next_fragment(
         base + 1,
         base + 2,
         chrono::Utc.timestamp_millis_opt(start_ms).single().unwrap(),
-        &owner,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &format!("{owner}-recorder"),
+        },
         temporary.path(),
     )
     .await?;
@@ -261,7 +277,10 @@ async fn logical_recording_resumes_with_one_gap_and_next_fragment(
             .timestamp_millis_opt(start_ms + 4_000)
             .single()
             .unwrap(),
-        &owner,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &format!("{owner}-recorder"),
+        },
         temporary.path(),
     )
     .await?;
@@ -326,7 +345,10 @@ async fn unavailable_grace_expiry_ends_at_departure_without_silence(
         base + 1,
         base + 2,
         chrono::Utc.timestamp_millis_opt(start_ms).single().unwrap(),
-        &owner,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &format!("{owner}-recorder"),
+        },
         temporary.path(),
     )
     .await?;
@@ -1524,5 +1546,164 @@ async fn sync_new_guild_populates_full_cache_and_presence(
             .fetch_one(&pool)
             .await?;
     assert_eq!(present, 1);
+    Ok(())
+}
+
+/// Ages one recorder heartbeat row past `STALE_AFTER_SECONDS`.
+async fn stale_recorder(pool: &PgPool, recorder_id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE recorder_heartbeats SET heartbeat_at = now() - interval '3 minutes'
+          WHERE recorder_id = $1",
+    )
+    .bind(recorder_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn zombie_ids(pool: &PgPool) -> Result<Vec<i64>, DbError> {
+    Ok(recordings::zombie_recordings(pool)
+        .await?
+        .into_iter()
+        .map(|zombie| zombie.audio_file_id)
+        .collect())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_recording_is_live_only_while_its_recorder_heartbeats(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let base = unique_id();
+    let owner = format!("test-recorder-liveness-{base}");
+    let recorder = format!("{owner}-recorder");
+    insert_test_instance(&pool, &owner).await?;
+    let now = chrono::Utc::now();
+    let handle = recordings::create_recording_for_test(
+        &pool,
+        base,
+        base + 1,
+        base + 2,
+        now,
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &recorder,
+        },
+        temporary.path(),
+    )
+    .await?;
+    let stamp_target = |pool: PgPool| async move {
+        stamps::active_recording_for_stamp(&pool, base + 2, base, base + 1, now.timestamp_millis())
+            .await
+    };
+
+    // Creating the file refreshed its recorder, so it is live at once.
+    assert!(stamp_target(pool.clone()).await?.is_some());
+    assert!(zombie_ids(&pool).await?.is_empty());
+
+    stale_recorder(&pool, &recorder).await?;
+    assert!(stamp_target(pool.clone()).await?.is_none());
+    assert_eq!(zombie_ids(&pool).await?, vec![handle.audio_file_id]);
+
+    recordings::heartbeat_recorder(&pool, &recorder, &owner, base).await?;
+    assert!(zombie_ids(&pool).await?.is_empty());
+
+    recordings::end_recorder(&pool, &recorder).await?;
+    assert_eq!(zombie_ids(&pool).await?, vec![handle.audio_file_id]);
+    Ok(())
+}
+
+/// After a crash, systemd restarts the release with the same instance id
+/// within seconds. The new process's actors have new ids, so the dead
+/// process's files stop counting as live even though the instance does, and
+/// startup recovery reclaims the session.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_restarted_process_does_not_keep_its_predecessors_recordings_live(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let base = unique_id();
+    let owner = format!("test-restarted-recorder-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let crashed = format!("{owner}-crashed");
+    let handle = recordings::create_recording_for_test(
+        &pool,
+        base,
+        base + 1,
+        base + 2,
+        chrono::Utc::now(),
+        recordings::RecordingOwner {
+            instance_id: &owner,
+            recorder_id: &crashed,
+        },
+        temporary.path(),
+    )
+    .await?;
+
+    // While the crashed actor's row is fresh, recovery leaves the session to
+    // whichever process may still be writing it.
+    let report =
+        logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
+            .await?;
+    assert_eq!(report.stale_active_finalized, 0);
+
+    stale_recorder(&pool, &crashed).await?;
+    recordings::heartbeat_recorder(&pool, &format!("{owner}-restarted"), &owner, base).await?;
+    assert_eq!(zombie_ids(&pool).await?, vec![handle.audio_file_id]);
+    let report =
+        logical_recordings::recover_stale_sessions(&pool, 1_700_300_020_000, 45, Some(&owner))
+            .await?;
+    assert_eq!(report.stale_active_finalized, 1);
+    Ok(())
+}
+
+/// Files written before recorder heartbeats existed keep their per-file
+/// heartbeat; one without a heartbeat is not live (and so is reaped), never
+/// "unknown".
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn legacy_recordings_follow_their_own_heartbeat(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let base = unique_id();
+    let owner = format!("test-legacy-recording-{base}");
+    insert_test_instance(&pool, &owner).await?;
+    let mut ids = Vec::new();
+    for (suffix, heartbeat) in [("fresh", true), ("missing", false)] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
+                 recording_owner_instance_id, recording_heartbeat_at, segment_index)
+             VALUES ($1, $2, $3, $4, 2026, 7, 1700300000000, NULL, $5,
+                     CASE WHEN $6 THEN now() END, 0)
+             RETURNING id",
+        )
+        .bind(format!("{base}-{suffix}"))
+        .bind(base)
+        .bind(base + 1)
+        .bind(base + 2)
+        .bind(&owner)
+        .bind(heartbeat)
+        .fetch_one(&pool)
+        .await?;
+        ids.push(id);
+    }
+
+    assert_eq!(zombie_ids(&pool).await?, vec![ids[1]]);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn startup_sweeps_only_stale_recorder_rows(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    recordings::heartbeat_recorder(&pool, "fresh", "test-instance", 1).await?;
+    recordings::heartbeat_recorder(&pool, "stale", "test-instance", 2).await?;
+    stale_recorder(&pool, "stale").await?;
+
+    assert_eq!(recordings::delete_stale_recorders(&pool).await?, 1);
+    let left: Vec<String> = sqlx::query_scalar("SELECT recorder_id FROM recorder_heartbeats")
+        .fetch_all(&pool)
+        .await?;
+    assert_eq!(left, vec!["fresh".to_string()]);
     Ok(())
 }

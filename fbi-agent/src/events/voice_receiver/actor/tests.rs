@@ -25,7 +25,7 @@ use crate::events::voice::coordinator::{VoiceCoordinatorRegistry, VoiceCoordinat
 use crate::events::voice_receiver::{
     RecordingCoordinatorRegistry, RecordingCoordinatorRegistryKey,
     recordings::{RecorderStats, Recordings},
-    state::UserRecording,
+    state::{UserRecording, VoiceEventType},
 };
 
 const GUILD_BASE: u64 = 9_000_000_000_000_000;
@@ -111,6 +111,8 @@ fn detached_actor(guild: u64, metrics: Arc<crate::BotMetrics>, pool: PgPool) -> 
         guild_metrics,
         channel_metrics,
         recording_owner_instance_id: "test-instance".to_string(),
+        recorder_id: "test-recorder".to_string(),
+        unfinalized: Vec::new(),
         stats: Arc::clone(&stats),
         recordings: Recordings::new(Arc::clone(&stats)),
         link: super::Link::default(),
@@ -487,7 +489,10 @@ async fn opting_out_mid_session_closes_the_writer(pool: PgPool) {
         1,
         USER as i64,
         chrono::Utc::now(),
-        "test-instance",
+        crate::database::recordings::RecordingOwner {
+            instance_id: "test-instance",
+            recorder_id: "test-recorder",
+        },
         root.path(),
     )
     .await
@@ -535,4 +540,143 @@ async fn opting_out_mid_session_closes_the_writer(pool: PgPool) {
         .unwrap();
     actor.refresh_recording_policy(at_ms + 1_000).await;
     assert!(actor.opted_out.user_ids().is_empty());
+}
+
+/// Opens a tracked recording for `user` in a real row and file, as
+/// `open_user_recording` would.
+async fn open_tracked_recording(
+    pool: &PgPool,
+    actor: &mut RecorderActor,
+    guild: u64,
+    user: u64,
+    ssrc: u32,
+    root: &std::path::Path,
+) -> crate::database::recordings::RecordingHandle {
+    sqlx::query(
+        "INSERT INTO bot_instances (instance_id, role, state, heartbeat_at, started_at)
+         VALUES ('test-instance', 'active', 'active', now(), now())
+         ON CONFLICT (instance_id) DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let handle = crate::database::recordings::create_recording_for_test(
+        pool,
+        guild as i64,
+        1,
+        user as i64,
+        chrono::Utc::now(),
+        crate::database::recordings::RecordingOwner {
+            instance_id: "test-instance",
+            recorder_id: "test-recorder",
+        },
+        root,
+    )
+    .await
+    .unwrap();
+    let file = std::fs::File::create(format!("{}.ogg", handle.path)).unwrap();
+    actor.recordings.insert_active(
+        user,
+        ssrc,
+        UserRecording {
+            writer: OggOpusWriter::new(BufWriter::new(file), ssrc, 0).unwrap(),
+            audio_file_id: handle.audio_file_id,
+            recording_session_id: handle.recording_session_id,
+            file_name: handle.file_name.clone(),
+            start_time: handle.start_time,
+            user_id: user,
+            ssrc,
+        },
+    );
+    handle
+}
+
+/// A recording whose row fails to finalize is retried, so it ends with its
+/// real length instead of staying live until a reaper closes it without one.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_failed_finalize_is_retried_with_the_recordings_length(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 12;
+    const SSRC: u32 = 7;
+    let root = tempfile::tempdir().unwrap();
+    let mut actor = detached_actor(GUILD, Arc::new(crate::BotMetrics::default()), pool.clone());
+    let handle = open_tracked_recording(&pool, &mut actor, GUILD, 42, SSRC, root.path()).await;
+    let recording = actor.recordings.remove_active_by_ssrc(SSRC).unwrap();
+    let close_time = handle.start_time + chrono::Duration::milliseconds(4_321);
+
+    actor.pool = closed_pool().await;
+    actor
+        .finalize_recording(SSRC, recording, VoiceEventType::WriterClose, close_time)
+        .await;
+    assert_eq!(actor.unfinalized.len(), 1, "the failed finalize is kept");
+    let open: bool = sqlx::query_scalar("SELECT end_ts IS NULL FROM audio_files WHERE id = $1")
+        .bind(handle.audio_file_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(open);
+
+    actor.pool = pool.clone();
+    actor.retry_unfinalized().await;
+    assert!(actor.unfinalized.is_empty());
+    let duration_ms: Option<i64> =
+        sqlx::query_scalar("SELECT end_ts - start_ts FROM audio_files WHERE id = $1")
+            .bind(handle.audio_file_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(duration_ms, Some(4_321));
+}
+
+/// A retry for a row someone else already closed (a reaper, or the instance
+/// stopping) is dropped instead of retried forever.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_finalize_retry_stops_once_the_row_is_closed(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 13;
+    const SSRC: u32 = 8;
+    let root = tempfile::tempdir().unwrap();
+    let mut actor = detached_actor(GUILD, Arc::new(crate::BotMetrics::default()), pool.clone());
+    let handle = open_tracked_recording(&pool, &mut actor, GUILD, 43, SSRC, root.path()).await;
+    let recording = actor.recordings.remove_active_by_ssrc(SSRC).unwrap();
+
+    actor.pool = closed_pool().await;
+    actor
+        .finalize_recording(
+            SSRC,
+            recording,
+            VoiceEventType::WriterClose,
+            chrono::Utc::now(),
+        )
+        .await;
+    assert_eq!(actor.unfinalized.len(), 1);
+
+    sqlx::query("UPDATE audio_files SET end_ts = start_ts, reaped = TRUE WHERE id = $1")
+        .bind(handle.audio_file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    actor.pool = pool.clone();
+    actor.retry_unfinalized().await;
+    assert!(actor.unfinalized.is_empty());
+}
+
+/// An exiting actor removes its heartbeat row, so nothing it wrote stays live.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn an_exiting_actor_ends_its_recorder_heartbeat(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 14;
+    let root = tempfile::tempdir().unwrap();
+    let mut actor = detached_actor(GUILD, Arc::new(crate::BotMetrics::default()), pool.clone());
+    open_tracked_recording(&pool, &mut actor, GUILD, 44, 9, root.path()).await;
+    actor.heartbeat_recorder().await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM recorder_heartbeats")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+
+    actor.end_recorder().await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM recorder_heartbeats")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
 }

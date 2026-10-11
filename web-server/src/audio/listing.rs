@@ -513,19 +513,9 @@ pub async fn get_live_stems(
     let rows = crate::server_timing::measure(
         "stems",
         sqlx::query!(
-            "SELECT af.file_name, af.channel_id
-           FROM audio_files af
+            r#"SELECT af.file_name AS "file_name!", af.channel_id AS "channel_id!"
+           FROM live_audio_files af
           WHERE af.guild_id = $1
-            AND af.end_ts IS NULL
-            AND af.reaped IS FALSE
-            AND EXISTS (
-                SELECT 1
-                  FROM bot_instances bi
-                 WHERE bi.instance_id = af.recording_owner_instance_id
-                   AND af.recording_heartbeat_at > now() - interval '120 seconds'
-                   AND bi.heartbeat_at > now() - interval '120 seconds'
-                   AND bi.state <> 'stopped'
-            )
             AND (
                 af.recording_session_id IS NULL
                 OR NOT EXISTS (
@@ -534,7 +524,7 @@ pub async fn get_live_stems(
                      WHERE sibling.recording_session_id = af.recording_session_id
                        AND NOT (sibling.channel_id = ANY($2))
                 )
-            )",
+            )"#,
             guild_id,
             &permitted_channels
         )

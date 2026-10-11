@@ -4,7 +4,7 @@ use chrono::{Datelike, TimeZone, Utc};
 use sakiot_paths::{DataRoots, RecordingKey};
 use sqlx::{Pool, Postgres, Transaction};
 
-use crate::database::recordings::RecordingHandle;
+use crate::database::recordings::{RecordingHandle, RecordingOwner};
 use crate::database::{DbError, DbResult};
 
 mod pending;
@@ -89,19 +89,10 @@ pub async fn create_fragment(
     channel_id: i64,
     user_id: i64,
     now: chrono::DateTime<Utc>,
-    owner_instance_id: &str,
+    owner: RecordingOwner<'_>,
 ) -> DbResult<RecordingHandle> {
     let root = DataRoots::from_env().recordings;
-    create_fragment_in(
-        pool,
-        guild_id,
-        channel_id,
-        user_id,
-        now,
-        owner_instance_id,
-        &root,
-    )
-    .await
+    create_fragment_in(pool, guild_id, channel_id, user_id, now, owner, &root).await
 }
 
 pub async fn create_fragment_in(
@@ -110,9 +101,13 @@ pub async fn create_fragment_in(
     channel_id: i64,
     user_id: i64,
     now: chrono::DateTime<Utc>,
-    owner_instance_id: &str,
+    owner: RecordingOwner<'_>,
     recording_root: &Path,
 ) -> DbResult<RecordingHandle> {
+    let RecordingOwner {
+        instance_id: owner_instance_id,
+        recorder_id,
+    } = owner;
     let now_ms = now.timestamp_millis();
     let mut tx = pool.begin().await?;
     sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
@@ -191,13 +186,25 @@ pub async fn create_fragment_in(
     std::fs::create_dir_all(&dir_path)?;
     let combined_path = dir_path.join(&file_name);
 
+    // The file is live while its actor's row is fresh: refresh it with the
+    // insert, so a recording is live from its first commit.
+    sqlx::query!(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (recorder_id) DO UPDATE SET heartbeat_at = now()",
+        recorder_id,
+        owner_instance_id,
+        guild_id
+    )
+    .execute(&mut *tx)
+    .await?;
     let audio_file_id = sqlx::query_scalar!(
         "INSERT INTO audio_files
             (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts,
-             recording_owner_instance_id, recording_heartbeat_at,
+             recording_owner_instance_id, recorder_id,
              recording_session_id, segment_index)
          VALUES
-            ($1, $2, $3, $4, $5, $6, $7, NULL, $8, now(), $9, $10)
+            ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11)
          RETURNING id",
         file_name,
         guild_id,
@@ -207,6 +214,7 @@ pub async fn create_fragment_in(
         fragment_start.month() as i32,
         fragment_start_ms,
         owner_instance_id,
+        recorder_id,
         session.id,
         segment_index
     )

@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id AS \"audio_file_id!\",\n                  recording_session_id\n             FROM audio_files\n            WHERE user_id = $1\n              AND guild_id = $2\n              AND channel_id = $3\n              AND start_ts <= $4\n              AND end_ts IS NULL\n              AND EXISTS (SELECT 1 FROM live_audio_files live WHERE live.id = audio_files.id)\n            ORDER BY start_ts DESC\n            LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "audio_file_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "recording_session_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "0305b074fe1af30e474d32c7e6ea46ebb8cf69078e281a8ab6e7458be348c26e"
+}
