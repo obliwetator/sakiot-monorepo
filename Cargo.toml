@@ -16,7 +16,7 @@ resolver = "3"
 # merging to main is what cuts a release: CI tags v<version> after the staging
 # deploy verifies, and the tag push triggers the production deploy.
 [workspace.package]
-version = "1.11.0"
+version = "1.11.1"
 license = "MIT"
 publish = false
 
