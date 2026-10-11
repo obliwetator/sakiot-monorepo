@@ -52,7 +52,7 @@ while IFS= read -r path; do
       dsp=true
       frontend=true
       ;;
-    ops/sakiot-dev/*|ops/sakiot-deploy/*)
+    ops/sakiot-dev/*|ops/sakiot-deploy/*|ops/sakiot-speakers/*)
       rust=true
       ops=true
       ;;

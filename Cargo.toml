@@ -3,6 +3,7 @@ members = [
     "fbi-agent",
     "ops/sakiot-dev",
     "ops/sakiot-deploy",
+    "ops/sakiot-speakers",
     "sakiot-dsp",
     "sakiot-paths",
     "sakiot-peaks",

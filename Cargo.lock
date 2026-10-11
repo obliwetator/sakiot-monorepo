@@ -4827,6 +4827,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sakiot-speakers"
+version = "1.11.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "ogg",
+ "serenity",
+ "songbird",
+ "symphonia",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "sakiot-storage"
 version = "1.11.1"
 dependencies = [
