@@ -27,8 +27,10 @@ trap 'ssh "${ssh_opts[@]}" -O exit "$SAKIOT_DEV_SSH" 2>/dev/null || true' EXIT
 # The value of one PromQL expression at Unix time $2, or "nan".
 query() {
     local expression="$1" at="$2"
+    # -n: the loop below feeds the run's windows on stdin, which ssh would
+    # otherwise swallow.
     # shellcheck disable=SC2029 # expanded locally on purpose
-    ssh "${ssh_opts[@]}" "$SAKIOT_DEV_SSH" \
+    ssh -n "${ssh_opts[@]}" "$SAKIOT_DEV_SSH" \
         "curl -sfG http://localhost:9090/api/v1/query \
             --data-urlencode $(printf %q "query=$expression") \
             --data-urlencode time=$at" |
