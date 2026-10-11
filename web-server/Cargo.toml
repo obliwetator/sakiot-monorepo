@@ -1,6 +1,8 @@
 [package]
 name = "web-server"
 version.workspace = true
+license.workspace = true
+publish.workspace = true
 edition = "2024"
 
 # The binary keeps its underscore name: release layouts, systemd units, and
@@ -13,7 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "signal", "sync", "time"] }
-actix-web = "4"
+# No HTTP/2 or response compression: nginx terminates both and talks HTTP/1.1
+# to the server, and leaving them out drops h2 and the compression codecs.
+actix-web = { version = "4", default-features = false, features = [
+	"cookies",
+	"macros",
+	"unicode",
+	"ws",
+] }
 actix-rt = "2.9.0"
 actix-cors = "0.7"
 actix-ws = "0.4"
