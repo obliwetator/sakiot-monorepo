@@ -84,6 +84,9 @@ actix-http = "3"
 actix-test = "0.1"
 awc = "3"
 ogg = "0.9"
+# Only the `std` feature: the permission harness drives proptest's value
+# trees from async tests, so its forking runner is unused.
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 tempfile = "3"
 
 [features]
