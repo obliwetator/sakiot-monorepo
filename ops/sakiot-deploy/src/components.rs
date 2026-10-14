@@ -73,6 +73,7 @@ pub fn components_for_paths<S: AsRef<str>>(paths: &[S]) -> Vec<Component> {
             select(&[Component::Web, Component::Frontend]);
         } else if path.starts_with("sakiot-paths/")
             || path.starts_with("sakiot-peaks/")
+            || path.starts_with("sakiot-permissions/")
             || path.starts_with("sakiot-process/")
             || path.starts_with("sakiot-proto/")
             || path.starts_with(".sqlx/")
@@ -184,6 +185,7 @@ mod tests {
         for path in [
             "sakiot-paths/src/lib.rs",
             "sakiot-peaks/src/decode.rs",
+            "sakiot-permissions/src/access.rs",
             "sakiot-process/src/lib.rs",
             "sakiot-proto/proto/fbi_agent.proto",
             ".sqlx/query-abc.json",

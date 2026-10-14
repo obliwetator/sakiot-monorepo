@@ -11,6 +11,7 @@ web application lets members browse, play, clip and edit the recordings.
 | `sakiot-dsp` | Clip-editor audio processing, native and WASM ([README](sakiot-dsp/README.md)) |
 | `sakiot-db` | PostgreSQL migrations and backup scripts ([README](sakiot-db/README.md)) |
 | `sakiot-paths` | Shared media file layout |
+| `sakiot-permissions` | Permission rules: who may do what in a guild |
 | `sakiot-proto` | Shared gRPC contract |
 | `sakiot-storage` | Shared Backblaze B2 client |
 | `ops/sakiot-dev` | `cargo dev`, the local environment |

@@ -72,6 +72,11 @@ assert_scope \
   "sakiot-peaks/src/lib.rs"
 
 assert_scope \
+  "shared permissions crate" \
+  true false false false false \
+  "sakiot-permissions/src/access.rs"
+
+assert_scope \
   "docs only" \
   false false false false false \
   "README.md" \

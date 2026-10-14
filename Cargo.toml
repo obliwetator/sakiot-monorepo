@@ -7,6 +7,7 @@ members = [
     "sakiot-dsp",
     "sakiot-paths",
     "sakiot-peaks",
+    "sakiot-permissions",
     "sakiot-process",
     "sakiot-proto",
     "sakiot-storage",

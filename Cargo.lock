@@ -4838,6 +4838,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sakiot-permissions"
+version = "1.11.2"
+dependencies = [
+ "bitflags 2.13.2",
+ "proptest",
+ "serenity",
+]
+
+[[package]]
 name = "sakiot-process"
 version = "1.11.2"
 
