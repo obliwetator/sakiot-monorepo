@@ -14,6 +14,7 @@ is the map that sits above them.
 | `sakiot-stage` | React SPA | The user interface. Talks only to `web-server`'s HTTP API. |
 | `sakiot-db` | Migrations | Sole owner of the PostgreSQL schema. Neither service migrates at startup. |
 | `sakiot-paths` | Rust crate | The filesystem and URL layout, shared so both services agree on where media lives. |
+| `sakiot-permissions` | Rust crate | The permission evaluator: guild facts in, capabilities out, with no I/O. Used by `web-server`. |
 | `sakiot-proto` | Rust crate | The gRPC contract (`fbi_agent.proto`) and its generated types. |
 | `sakiot-storage` | Rust crate | Backblaze B2 archive configuration and S3 client. |
 | `sakiot-dsp` | Rust crate → native + WASM | Audio effects, compiled both into `web-server` and to WASM for the browser. |
@@ -225,16 +226,19 @@ from the User-Agent at sign-in (`auth/device.rs`); the User-Agent string itself
 and IP addresses are never stored.
 
 Authorization reimplements Discord's permission model against the agent's role
-cache, so role and membership revocations take effect without a new login
-(`web-server/src/permissions.rs`). The agent writes that cache one guild per
-transaction and only where it differs from Discord
-(`fbi-agent/src/database/guild_cache.rs`), so a request never sees a guild's
-role assignments or overwrites half rewritten. It removes member role
-assignments only when its cached member list is complete. On the read side,
-each authorization result runs its queries in one `REPEATABLE READ, READ ONLY`
-transaction (`begin_snapshot`), so a cache write committing mid-check cannot
-mix old and new state. Membership comes from the agent's roster, not from the
-guild list Discord returned at login (`membership` in `permissions.rs`):
+cache, so role and membership revocations take effect without a new login. The
+rules live in `sakiot-permissions`, a pure evaluator: plain facts about a guild
+go in, and what a viewer may do comes out as Sakiot capabilities (listening,
+presence, management and so on), each defaulting to the Discord permissions
+it always meant. The agent writes the cache one guild per transaction and only
+where it differs from Discord (`fbi-agent/src/database/guild_cache.rs`), so a
+request never sees a guild's role assignments or overwrites half rewritten. It
+removes member role assignments only when its cached member list is complete.
+On the read side, `web-server` loads the facts a check needs in a single
+statement (`web-server/src/permissions/facts.rs`), which sees one consistent
+snapshot, so a cache write committing mid-check cannot mix old and new state.
+Membership comes from the agent's roster, not from the guild list Discord
+returned at login (`GuildFacts::membership`):
 
 - A Discord login owns a guild only per `guilds.owner_id`, and belongs to it
   only when listed on its complete roster (`guild_members` with

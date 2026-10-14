@@ -46,11 +46,11 @@ sqlx = { version = "0.9", features = [
 	"tls-rustls",
 	"postgres",
 	"chrono",
+	"json",
 ] }
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 time = "0.3.36"
 tonic = "0.14"
-bitflags = "2.0.2"
 thiserror = "2"
 tokio-util = "0.7.8"
 parking_lot = "0.12.1"
@@ -60,6 +60,7 @@ dotenvy = "0.15.7"
 uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sakiot-paths = { path = "../sakiot-paths" }
 sakiot-peaks = { path = "../sakiot-peaks" }
+sakiot-permissions = { path = "../sakiot-permissions" }
 sakiot-process = { path = "../sakiot-process" }
 sakiot-proto = { path = "../sakiot-proto" }
 sakiot-storage = { path = "../sakiot-storage" }
@@ -87,6 +88,7 @@ ogg = "0.9"
 # Only the `std` feature: the permission harness drives proptest's value
 # trees from async tests, so its forking runner is unused.
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+sakiot-permissions = { path = "../sakiot-permissions", features = ["testing"] }
 tempfile = "3"
 
 [features]

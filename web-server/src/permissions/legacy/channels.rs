@@ -3,17 +3,6 @@
 
 use super::*;
 
-pub async fn get_available_channels_for_user(
-    pool: &actix_web::web::Data<Pool<Postgres>>,
-    guild_id: i64,
-    viewer: Viewer,
-) -> Result<HashSet<i64>, AppError> {
-    let mut snapshot = begin_snapshot(pool).await?;
-    let channels = available_channels_for_user(&mut snapshot, guild_id, viewer).await?;
-    snapshot.commit().await?;
-    Ok(channels)
-}
-
 async fn available_channels_for_user(
     conn: &mut PgConnection,
     guild_id: i64,

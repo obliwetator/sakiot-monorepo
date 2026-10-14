@@ -1,17 +1,16 @@
-//! Random guilds through every public check in `web_server::permissions`.
+//! Random guilds through every public check in `web_server::permissions`,
+//! against the implementation they replaced (`permissions::legacy`).
 //!
-//! Each case generates a world (`guild_spec`), writes it into the permission
-//! cache tables, and records what every public check answers for every
-//! viewer, probed channel and role preview. These checks are about to be
-//! rebuilt on one pure evaluator, whose answers will be compared with these
-//! observations on the same worlds. Until then, the test pins the invariants
-//! the current checks keep and a small model of membership and guild-level
-//! permissions. It also fails if the generator stops reaching an interesting
-//! outcome, so that comparison cannot pass vacuously.
+//! Each case generates a world (`sakiot_permissions::testing`), writes it
+//! into the permission cache tables, and records what every public check
+//! answers for every viewer, probed channel and role preview, once through
+//! the evaluator and once through the old checks. The two must agree
+//! exactly, refusals included. The test also pins the invariants the checks
+//! keep and a small model of membership and guild-level permissions, and
+//! fails if the generator stops reaching an interesting outcome, so the
+//! comparison cannot pass vacuously.
 //!
 //! `PROPTEST_CASES` overrides the number of worlds.
-
-mod guild_spec;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Debug;
@@ -19,34 +18,34 @@ use std::fmt::Debug;
 use actix_web::test::TestRequest;
 use actix_web::{HttpMessage, HttpRequest, web};
 use futures_util::future::try_join_all;
-use guild_spec::{ADMINISTRATOR, MANAGE_GUILD, Roster, Target, UNKNOWN_GUILD_ID, World};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 use proptest::{prop_assert, prop_assert_eq};
+use sakiot_permissions::testing::{self, RosterState, Target, World};
 use sqlx::PgPool;
 use web_server::auth::{Access, AccessKeys, AuthKind, Token};
 use web_server::errors::AppError;
-use web_server::permissions::{
-    Permissions, SubscriptionAccess, Viewer, begin_snapshot, get_combined_perm_for_role,
-    get_combined_perm_for_user, listing_channels_for, presence_channels, require_channel_access,
-    require_guild_manager, require_guild_member, require_role_preview, role_access_for_preview,
-    subscription_access, visible_channels_for_user,
-};
+use web_server::permissions::{Permissions, SubscriptionAccess, Viewer, begin_snapshot};
+
+const ADMINISTRATOR: i64 = Permissions::ADMINISTRATOR.bits();
+const MANAGE_GUILD: i64 = Permissions::MANAGE_GUILD.bits();
 
 /// Each world costs a few hundred checks; this keeps the test to seconds.
 const DEFAULT_CASES: u32 = 48;
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn current_permission_checks_keep_their_invariants(pool: PgPool) {
+async fn permission_checks_match_the_old_ones_and_keep_their_invariants(pool: PgPool) {
     let pool = web::Data::new(pool);
     let mut coverage = Coverage::default();
-    let checked = check_worlds(guild_spec::world(), async |world: &World| {
+    let checked = check_worlds(testing::world(), async |world: &World| {
         store(&pool, world).await.map_err(fail)?;
         for guild in observed_guilds(world) {
-            let observed = observe(&pool, world, guild).await?;
-            check(world, guild, &observed, &mut coverage)
-                .map_err(within(format!("guild {}", guild_id(guild))))?;
+            let place = format!("guild {}", guild_id(guild));
+            let observed = current::observe(&pool, world, guild).await?;
+            let reference = legacy::observe(&pool, world, guild).await?;
+            compare(&observed, &reference).map_err(within(place.clone()))?;
+            check(world, guild, &observed, &mut coverage).map_err(within(place))?;
         }
         Ok(())
     })
@@ -54,6 +53,20 @@ async fn current_permission_checks_keep_their_invariants(pool: PgPool) {
     if let Err(failure) = checked.and_then(|()| coverage.require_every_outcome()) {
         panic!("{failure}");
     }
+}
+
+/// The evaluator's answers must be the old checks' answers.
+fn compare(observed: &GuildObservation, reference: &GuildObservation) -> Result<(), TestCaseError> {
+    prop_assert_eq!(&observed.role_bits, &reference.role_bits, "bits of roles");
+    prop_assert_eq!(observed.viewers.len(), reference.viewers.len());
+    for (new, old) in observed.viewers.iter().zip(&reference.viewers) {
+        prop_assert_eq!(
+            new,
+            old,
+            "the evaluator (left) against the old checks (right)"
+        );
+    }
+    Ok(())
 }
 
 /// Runs `check` on random worlds. When one fails, shrinks it with proptest's
@@ -196,19 +209,19 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
                 .await?;
             }
         }
-        if guild.roster != Roster::Missing {
+        if guild.roster != RosterState::Missing {
             sqlx::query(
                 "INSERT INTO guild_projection_state (guild_id, generation, roster_complete_at)
                  VALUES ($1, 1, CASE WHEN $2::boolean THEN now() END)",
             )
             .bind(guild_id)
-            .bind(guild.roster == Roster::Complete)
+            .bind(guild.roster == RosterState::Complete)
             .execute(&mut *tx)
             .await?;
         }
         for (u, member) in guild.members.iter().enumerate() {
             let user_id = World::user_id(u);
-            if member.listed && guild.roster != Roster::Missing {
+            if member.listed && guild.roster != RosterState::Missing {
                 sqlx::query(
                     "INSERT INTO guild_members (guild_id, user_id, username)
                      VALUES ($1, $2, 'member')",
@@ -248,7 +261,7 @@ fn observed_guilds(world: &World) -> Vec<Option<usize>> {
 }
 
 fn guild_id(guild: Option<usize>) -> i64 {
-    guild.map_or(UNKNOWN_GUILD_ID, World::guild_id)
+    World::guild_id_or_unknown(guild)
 }
 
 fn other_guild(world: &World, guild: Option<usize>) -> Option<usize> {
@@ -330,6 +343,7 @@ impl From<SubscriptionAccess> for Subscription {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 struct GuildObservation {
     /// `get_combined_perm_for_role`, which takes no viewer.
     role_bits: BTreeMap<i64, Outcome<i64>>,
@@ -337,7 +351,7 @@ struct GuildObservation {
 }
 
 /// One viewer's answers in one guild.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ViewerObservation {
     /// An index into the world's users.
     user: usize,
@@ -356,7 +370,7 @@ struct ViewerObservation {
 }
 
 /// One viewer's answers when previewing one role.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct PreviewObservation {
     /// `require_role_preview`.
     gate: Outcome<()>,
@@ -367,119 +381,142 @@ struct PreviewObservation {
     subscription: Outcome<Subscription>,
 }
 
-async fn observe(
-    pool: &web::Data<PgPool>,
-    world: &World,
-    guild: Option<usize>,
-) -> Result<GuildObservation, TestCaseError> {
-    let guild_id = guild_id(guild);
-    let channels = probed_channels(world, guild);
-    let roles = previewed_roles(world, guild);
-    let mut role_bits = BTreeMap::new();
-    for &role in &roles {
-        let bits = get_combined_perm_for_role(pool, guild_id, role).await;
-        role_bits.insert(role, outcome(bits, |bits| bits.bits())?);
-    }
-    let viewers = (0..world.users).flat_map(|user| {
-        [false, true].map(|dev| {
-            let viewer = Viewer {
-                user_id: World::user_id(user),
-                dev,
-            };
-            observe_viewer(pool, guild_id, user, viewer, &channels, &roles)
-        })
-    });
-    Ok(GuildObservation {
-        role_bits,
-        viewers: try_join_all(viewers).await?,
-    })
+/// The observation of one implementation of the checks: `current` is the
+/// evaluator, `legacy` the checks it replaced.
+macro_rules! observer {
+    ($name:ident, $($checks:ident)::+) => {
+        mod $name {
+            use super::*;
+            use $($checks)::+ as checks;
+
+            pub(super) async fn observe(
+                pool: &web::Data<PgPool>,
+                world: &World,
+                guild: Option<usize>,
+            ) -> Result<GuildObservation, TestCaseError> {
+                let guild_id = guild_id(guild);
+                let channels = probed_channels(world, guild);
+                let roles = previewed_roles(world, guild);
+                let mut role_bits = BTreeMap::new();
+                for &role in &roles {
+                    let bits = checks::get_combined_perm_for_role(pool, guild_id, role).await;
+                    role_bits.insert(role, outcome(bits, |bits| bits.bits())?);
+                }
+                let viewers = (0..world.users).flat_map(|user| {
+                    [false, true].map(|dev| {
+                        let viewer = Viewer {
+                            user_id: World::user_id(user),
+                            dev,
+                        };
+                        observe_viewer(pool, guild_id, user, viewer, &channels, &roles)
+                    })
+                });
+                Ok(GuildObservation {
+                    role_bits,
+                    viewers: try_join_all(viewers).await?,
+                })
+            }
+
+            async fn observe_viewer(
+                pool: &web::Data<PgPool>,
+                guild_id: i64,
+                user: usize,
+                viewer: Viewer,
+                channels: &[i64],
+                roles: &[i64],
+            ) -> Result<ViewerObservation, TestCaseError> {
+                let request = request_for(viewer).map_err(fail)?;
+                let mut channel_access = BTreeMap::new();
+                for &channel in channels {
+                    let access =
+                        checks::require_channel_access(pool, guild_id, channel, viewer).await;
+                    channel_access.insert(channel, outcome(access, |()| ())?);
+                }
+                let mut previews = BTreeMap::new();
+                for &role in roles {
+                    let preview = PreviewObservation {
+                        gate: outcome(
+                            checks::require_role_preview(&request, pool, guild_id, Some(role))
+                                .await,
+                            |()| (),
+                        )?,
+                        access: outcome(
+                            checks::role_access_for_preview(pool, guild_id, viewer, role).await,
+                            |access| {
+                                access
+                                    .into_values()
+                                    .map(|channel| {
+                                        let access = (channel.viewable, channel.joinable);
+                                        (channel.channel_id, access)
+                                    })
+                                    .collect()
+                            },
+                        )?,
+                        listing: outcome(
+                            checks::listing_channels_for(pool, guild_id, viewer, Some(role)).await,
+                            sorted,
+                        )?,
+                        presence: presence(pool, guild_id, viewer, Some(role)).await?,
+                        subscription: outcome(
+                            checks::subscription_access(pool, guild_id, viewer, Some(role)).await,
+                            Subscription::from,
+                        )?,
+                    };
+                    previews.insert(role, preview);
+                }
+                Ok(ViewerObservation {
+                    user,
+                    viewer,
+                    combined: outcome(
+                        checks::get_combined_perm_for_user(pool, guild_id, viewer).await,
+                        |bits| bits.bits(),
+                    )?,
+                    member: outcome(
+                        checks::require_guild_member(pool, guild_id, viewer).await,
+                        |()| (),
+                    )?,
+                    manager: outcome(
+                        checks::require_guild_manager(&request, pool, guild_id).await,
+                        |user_id| user_id,
+                    )?,
+                    visible: outcome(
+                        checks::visible_channels_for_user(pool, guild_id, viewer).await,
+                        sorted,
+                    )?,
+                    listing: outcome(
+                        checks::listing_channels_for(pool, guild_id, viewer, None).await,
+                        sorted,
+                    )?,
+                    presence: presence(pool, guild_id, viewer, None).await?,
+                    subscription: outcome(
+                        checks::subscription_access(pool, guild_id, viewer, None).await,
+                        Subscription::from,
+                    )?,
+                    channel_access,
+                    previews,
+                })
+            }
+
+            /// `presence_channels` reads on the caller's connection, as the presence
+            /// endpoint and the realtime hub call it.
+            async fn presence(
+                pool: &PgPool,
+                guild_id: i64,
+                viewer: Viewer,
+                as_role: Option<i64>,
+            ) -> Result<Outcome<BTreeSet<i64>>, TestCaseError> {
+                let mut snapshot = begin_snapshot(pool).await.map_err(fail)?;
+                let channels =
+                    checks::presence_channels(&mut snapshot, guild_id, viewer, as_role).await;
+                snapshot.commit().await.map_err(fail)?;
+                outcome(channels, sorted)
+            }
+        }
+    };
 }
 
-async fn observe_viewer(
-    pool: &web::Data<PgPool>,
-    guild_id: i64,
-    user: usize,
-    viewer: Viewer,
-    channels: &[i64],
-    roles: &[i64],
-) -> Result<ViewerObservation, TestCaseError> {
-    let request = request_for(viewer).map_err(fail)?;
-    let mut channel_access = BTreeMap::new();
-    for &channel in channels {
-        let access = require_channel_access(pool, guild_id, channel, viewer).await;
-        channel_access.insert(channel, outcome(access, |()| ())?);
-    }
-    let mut previews = BTreeMap::new();
-    for &role in roles {
-        let preview = PreviewObservation {
-            gate: outcome(
-                require_role_preview(&request, pool, guild_id, Some(role)).await,
-                |()| (),
-            )?,
-            access: outcome(
-                role_access_for_preview(pool, guild_id, viewer, role).await,
-                |access| {
-                    access
-                        .into_values()
-                        .map(|channel| (channel.channel_id, (channel.viewable, channel.joinable)))
-                        .collect()
-                },
-            )?,
-            listing: outcome(
-                listing_channels_for(pool, guild_id, viewer, Some(role)).await,
-                sorted,
-            )?,
-            presence: presence(pool, guild_id, viewer, Some(role)).await?,
-            subscription: outcome(
-                subscription_access(pool, guild_id, viewer, Some(role)).await,
-                Subscription::from,
-            )?,
-        };
-        previews.insert(role, preview);
-    }
-    Ok(ViewerObservation {
-        user,
-        viewer,
-        combined: outcome(
-            get_combined_perm_for_user(pool, guild_id, viewer).await,
-            |bits| bits.bits(),
-        )?,
-        member: outcome(require_guild_member(pool, guild_id, viewer).await, |()| ())?,
-        manager: outcome(
-            require_guild_manager(&request, pool, guild_id).await,
-            |user_id| user_id,
-        )?,
-        visible: outcome(
-            visible_channels_for_user(pool, guild_id, viewer).await,
-            sorted,
-        )?,
-        listing: outcome(
-            listing_channels_for(pool, guild_id, viewer, None).await,
-            sorted,
-        )?,
-        presence: presence(pool, guild_id, viewer, None).await?,
-        subscription: outcome(
-            subscription_access(pool, guild_id, viewer, None).await,
-            Subscription::from,
-        )?,
-        channel_access,
-        previews,
-    })
-}
-
-/// `presence_channels` reads on the caller's connection, as the presence
-/// endpoint and the realtime hub call it.
-async fn presence(
-    pool: &PgPool,
-    guild_id: i64,
-    viewer: Viewer,
-    as_role: Option<i64>,
-) -> Result<Outcome<BTreeSet<i64>>, TestCaseError> {
-    let mut snapshot = begin_snapshot(pool).await.map_err(fail)?;
-    let channels = presence_channels(&mut snapshot, guild_id, viewer, as_role).await;
-    snapshot.commit().await.map_err(fail)?;
-    outcome(channels, sorted)
-}
+observer!(current, web_server::permissions);
+observer!(legacy, web_server::permissions::legacy);
 
 /// A request carrying the viewer's access token, as the auth middleware
 /// leaves it, for the checks that read the viewer from the request.
@@ -534,10 +571,12 @@ fn membership(world: &World, guild: Option<usize>, user: usize, viewer: Viewer) 
         };
     }
     match guild.roster {
-        Roster::Complete if member.listed => Membership::Member,
-        Roster::Complete => Membership::Outsider,
-        Roster::Incomplete | Roster::Missing if guild.bot_present => Membership::Unavailable,
-        Roster::Incomplete | Roster::Missing => Membership::Outsider,
+        RosterState::Complete if member.listed => Membership::Member,
+        RosterState::Complete => Membership::Outsider,
+        RosterState::Incomplete | RosterState::Missing if guild.bot_present => {
+            Membership::Unavailable
+        }
+        RosterState::Incomplete | RosterState::Missing => Membership::Outsider,
     }
 }
 

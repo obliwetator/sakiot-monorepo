@@ -64,13 +64,6 @@ async fn apply_single_role_overwrites(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RoleChannelAccess {
-    pub channel_id: i64,
-    pub viewable: bool,
-    pub joinable: bool,
-}
-
 /// Per-channel access a member whose only role is `role_id` would have,
 /// mirroring the user path without member-specific overwrites. `viewable` is
 /// Discord's "see the channel" (VIEW_CHANNEL); `joinable` also requires
