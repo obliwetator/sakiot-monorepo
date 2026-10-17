@@ -10,7 +10,7 @@ use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::config::Config;
 use web_server::errors::AppError;
-use web_server::permissions::{GuildAccess, Permissions, Viewer};
+use web_server::permissions::{GuildAccess, Viewer};
 use web_server::user::get_current_user_guilds;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -192,9 +192,13 @@ fn config(dev_account_id: i64) -> Config {
 }
 
 fn cookie(user_id: i64) -> Result<String, Box<dyn std::error::Error>> {
+    cookie_of(user_id, AuthKind::Discord)
+}
+
+fn cookie_of(user_id: i64, kind: AuthKind) -> Result<String, Box<dyn std::error::Error>> {
     let token = Token::<Access>::encode(
         user_id,
-        AuthKind::Discord,
+        kind,
         "test-session".into(),
         CSRF.to_string(),
         &EncodingKey::from_secret(b"test_secret"),
@@ -230,25 +234,28 @@ async fn the_guild_picker_lists_the_guilds_the_bot_counts_you_in(pool: PgPool) -
             .to_request())
     };
 
-    // Live names and icons, ordered by name; permissions are calculated, not
-    // the login snapshot's. The owner owns both guilds without being listed
-    // on the second roster.
+    // Live names and icons, ordered by name; capabilities are calculated,
+    // not the login snapshot's. The owner owns both guilds without being
+    // listed on the second roster.
     let guilds: Value = test::call_and_read_body_json(&app, picker(OWNER)?).await;
-    let all = (Permissions::all().bits()).to_string();
+    let all = json!([
+        "manage_settings",
+        "manage_permissions",
+        "preview_roles",
+        "delete_recordings",
+        "moderate_clips",
+    ]);
     assert_eq!(
         guilds,
         json!([
-            {"id": "2", "name": "alpha", "icon": null, "owner": true, "permissions": all},
-            {"id": "1", "name": "Zeta", "icon": "zeta-icon", "owner": true, "permissions": all},
+            {"id": "2", "name": "alpha", "icon": null, "capabilities": all},
+            {"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": all},
         ])
     );
     let guilds: Value = test::call_and_read_body_json(&app, picker(MEMBER)?).await;
     assert_eq!(
         guilds,
-        json!([{
-            "id": "1", "name": "Zeta", "icon": "zeta-icon", "owner": false,
-            "permissions": (VIEW_CHANNEL | CONNECT).to_string(),
-        }])
+        json!([{"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": []}])
     );
     // A Discord login of the dev account is not the dev login: no roster
     // entry, no guilds.
@@ -271,5 +278,60 @@ async fn the_guild_picker_lists_the_guilds_the_bot_counts_you_in(pool: PgPool) -
     assert_eq!(guilds, json!([]));
     let guilds: Value = test::call_and_read_body_json(&app, picker(OWNER)?).await;
     assert_eq!(guilds[0]["name"], json!("2"));
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_dev_login_picks_from_the_guilds_it_is_seeded_in(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(config(DEV)))
+            .wrap(AuthMiddleware)
+            .service(get_current_user_guilds),
+    )
+    .await;
+    let picker = || -> Result<_, Box<dyn std::error::Error>> {
+        Ok(test::TestRequest::get()
+            .uri("/users/current/guilds")
+            .insert_header(("Cookie", cookie_of(DEV, AuthKind::Dev)?))
+            .to_request())
+    };
+
+    // Under the seeded name; the seed makes it a plain member.
+    let guilds: Value = test::call_and_read_body_json(&app, picker()?).await;
+    assert_eq!(
+        guilds,
+        json!([{"id": "1", "name": "login snapshot", "icon": null, "capabilities": []}])
+    );
+
+    // The seeded owner flag makes it an owner, with every management
+    // capability. Another account's seed lists nothing for it.
+    sqlx::query("UPDATE user_guilds SET owner = true WHERE user_id = $1")
+        .bind(DEV)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, owner, permissions, features)
+         VALUES ($1, $2, 'not mine', true, 0, ARRAY[]::text[])",
+    )
+    .bind(OTHER_GUILD)
+    .bind(MEMBER)
+    .execute(&pool)
+    .await?;
+    let guilds: Value = test::call_and_read_body_json(&app, picker()?).await;
+    assert_eq!(guilds.as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        guilds[0]["capabilities"],
+        json!([
+            "manage_settings",
+            "manage_permissions",
+            "preview_roles",
+            "delete_recordings",
+            "moderate_clips",
+        ])
+    );
     Ok(())
 }

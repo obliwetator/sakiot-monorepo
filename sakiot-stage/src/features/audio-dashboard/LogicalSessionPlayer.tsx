@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../../app/apiSlice";
-import { isGuildAdmin } from "../../shared/permissions";
+import { holds } from "../../shared/permissions";
 import {
 	Badge,
 	Notice,
@@ -309,9 +309,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
 	const clipSelectionIsValid = isValidClipSelection(selection);
-	const canDeleteRecording = isGuildAdmin(
-		authDetails?.guilds?.find((guild) => guild.id === manifest.guild_id) ??
-			null,
+	const canDeleteRecording = holds(
+		authDetails?.guilds?.find((guild) => guild.id === manifest.guild_id),
+		"delete_recordings",
 	);
 
 	return (

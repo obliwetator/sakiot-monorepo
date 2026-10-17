@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sakiot_permissions::{
-    Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, Permissions, RoleNotFound,
-    RolePreview, Viewer,
+    Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, RoleNotFound, RolePreview,
+    Viewer,
 };
 
 use super::facts;
@@ -13,7 +13,6 @@ use crate::errors::AppError;
 
 pub struct GuildAccess {
     facts: GuildFacts,
-    viewer: Viewer,
     /// The previewed role, for a manager's view-as-role.
     as_role: Option<i64>,
     access: Result<Access, MembershipUnavailable>,
@@ -54,7 +53,6 @@ impl GuildAccess {
         let access = facts.access(viewer);
         Self {
             facts,
-            viewer,
             as_role,
             access,
         }
@@ -128,22 +126,6 @@ impl GuildAccess {
         } else {
             Err(AppError::Forbidden)
         }
-    }
-
-    /// Discord's guild-level permissions: everything for the owner, nothing
-    /// for an outsider.
-    pub fn discord_permissions(&self) -> Result<Permissions, AppError> {
-        self.facts
-            .discord_permissions(self.viewer)
-            .map(|permissions| permissions.base)
-            .map_err(|MembershipUnavailable| AppError::MembershipUnavailable)
-    }
-
-    /// The Discord permissions a member whose only role is the previewed one
-    /// would hold at guild level.
-    pub fn previewed_role_permissions(&self) -> Option<Permissions> {
-        self.as_role
-            .map(|role_id| self.facts.role_permissions(role_id).base)
     }
 
     /// The previewed role's view, clipped to the viewer's own; `None` when

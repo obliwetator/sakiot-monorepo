@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { fulfillSharedRoutes } from "./fixtures";
+import { fulfillSharedRoutes, OWNER_CAPABILITIES } from "./fixtures";
 
 export const API_ORIGIN = "http://127.0.0.1:4174";
 const API_PREFIX = "/api";
@@ -139,8 +139,7 @@ export async function mockClipEditorApi(page: Page) {
 				{
 					id: GUILD_ID,
 					name: "Test Guild",
-					owner: true,
-					permissions: "8",
+					capabilities: OWNER_CAPABILITIES,
 				},
 			]);
 			return;

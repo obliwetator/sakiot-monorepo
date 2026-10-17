@@ -4,9 +4,15 @@ import type { User } from "../app/apiSlice";
 import { PATH_PREFIX_FOR_LOGGED_USERS, type UserGuilds } from "../Constants";
 import Login from "../login/login";
 import { GuildSelect } from "../shared/GuildSelect";
-import { isGuildAdmin } from "../shared/permissions";
+import { holds } from "../shared/permissions";
 import { Button, cn, Drawer, IconButton } from "../shared/ui";
-import { activePage, guildPagePaths, type PageName, pages } from "./constants";
+import {
+	activePage,
+	adminPages,
+	guildPagePaths,
+	type PageName,
+	pages,
+} from "./constants";
 import { MobileDrawer } from "./MobileDrawer";
 import { UserMenu } from "./UserMenu";
 
@@ -50,9 +56,12 @@ function ResponsiveAppBar(props: {
 		navigateTo(name);
 	};
 
-	const visiblePages: PageName[] = isGuildAdmin(props.guildSelected)
-		? [...pages, "Admin", "Voice Settings", "Members"]
-		: pages;
+	const visiblePages: PageName[] = [
+		...pages,
+		...adminPages
+			.filter(({ capability }) => holds(props.guildSelected, capability))
+			.map(({ page }) => page),
+	];
 
 	return (
 		<header className="w-full border-b border-ui-border bg-header text-fg shadow-sm static">

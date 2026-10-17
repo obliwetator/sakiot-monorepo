@@ -1,5 +1,10 @@
 import { API_ORIGIN, corsHeaders, GUILD_ID } from "./clip-editor-fixture";
-import { expect, fulfillSharedRoutes, test } from "./fixtures";
+import {
+	expect,
+	fulfillSharedRoutes,
+	OWNER_CAPABILITIES,
+	test,
+} from "./fixtures";
 
 const API_PREFIX = "/api";
 const CLIP_COUNT = 40;
@@ -43,7 +48,7 @@ async function mockManyClips(page: import("@playwright/test").Page) {
 		}
 		if (path === "/users/current/guilds") {
 			await fulfillJson([
-				{ id: GUILD_ID, name: "Test Guild", owner: true, permissions: "8" },
+				{ id: GUILD_ID, name: "Test Guild", capabilities: OWNER_CAPABILITIES },
 			]);
 			return;
 		}

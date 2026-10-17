@@ -9,9 +9,11 @@ use sqlx::{Pool, Postgres};
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
+mod capability;
 mod facts;
 mod guild_access;
 
+pub use capability::Capability;
 pub use guild_access::GuildAccess;
 pub use sakiot_permissions::{Permissions, Viewer};
 

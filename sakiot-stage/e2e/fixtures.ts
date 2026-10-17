@@ -7,6 +7,15 @@ interface ConsoleAudit {
 
 export { expect };
 
+/** Every guild-wide capability, as the guild list reports an owner's. */
+export const OWNER_CAPABILITIES = [
+	"manage_settings",
+	"manage_permissions",
+	"preview_roles",
+	"delete_recordings",
+	"moderate_clips",
+];
+
 /**
  * Redux Toolkit's development checks warn when they take more than 32 ms. On a
  * loaded CI runner that measures the machine, not the app, so no test fails on

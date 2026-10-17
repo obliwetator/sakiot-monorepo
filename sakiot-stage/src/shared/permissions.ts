@@ -1,24 +1,22 @@
+import type { components } from "../api/openapi";
 import type { UserGuilds } from "../Constants";
 
-const ADMIN_BIT = 0x8n;
-const MANAGE_GUILD_BIT = 0x20n;
+export type Capability = components["schemas"]["Capability"];
 
-export function isGuildAdmin(g: UserGuilds | null): boolean {
-	if (!g) return false;
-	if (g.owner) return true;
-	try {
-		const bits = BigInt(g.permissions);
-		return (bits & (ADMIN_BIT | MANAGE_GUILD_BIT)) !== 0n;
-	} catch {
-		return false;
-	}
+/** Whether the viewer holds `capability` across the guild. */
+export function holds(
+	guild: UserGuilds | null | undefined,
+	capability: Capability,
+): boolean {
+	return guild?.capabilities.includes(capability) ?? false;
 }
 
+/** Renaming or deleting a clip: its creator, or a clip moderator. */
 export function canDeleteClip(
 	guild: UserGuilds | null,
 	currentUserId: string | null | undefined,
 	clipOwnerId: string | null | undefined,
 ): boolean {
-	if (isGuildAdmin(guild)) return true;
+	if (holds(guild, "moderate_clips")) return true;
 	return Boolean(currentUserId && clipOwnerId && currentUserId === clipOwnerId);
 }

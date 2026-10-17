@@ -255,10 +255,12 @@ returned at login (`GuildFacts::membership`):
   dashboard repeats reads for about half a minute
   (`sakiot-stage/src/app/membershipRetry.ts`). The guild picker
   (`/api/users/current/guilds`) lists such a guild only once its roster is
-  complete, with the bot's live name, icon and the calculated permissions.
+  complete, with the bot's live name and icon and the viewer's guild-wide
+  capabilities, which decide the admin pages the dashboard shows.
 - A dev login (local, staging and preview builds) keeps the seeded
   `user_guilds` rows, including their owner flag, since staging's bot is in a
-  different server. Every check, realtime socket and background job carries
+  different server. Its guild picker lists the guilds it is seeded in, under
+  their seeded names. Every check, realtime socket and background job carries
   the login kind (`Viewer`; `requester_dev` on media and composition jobs).
 
 Discord sign-in asks only for the `identify` scope, so the app never learns

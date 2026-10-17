@@ -103,17 +103,15 @@ pub async fn get_current_user(
     Ok(HttpResponse::Ok().json(user_data))
 }
 
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GuildDataForFrontEnd {
     #[serde(with = "DisplayFromstr")]
     #[schema(value_type = String, example = "146638124288704513")]
     pub id: i64,
     pub name: String,
     pub icon: Option<String>,
-    pub owner: bool,
-    #[serde(with = "DisplayFromstr")]
-    #[schema(value_type = String, example = "268435456")]
-    pub permissions: i64,
+    /// What the viewer may do across the guild.
+    pub capabilities: Vec<crate::permissions::Capability>,
 }
 
 #[utoipa::path(
@@ -145,7 +143,7 @@ struct CandidateGuild {
 }
 
 /// The guilds the bot is in that the viewer belongs to, with their names and
-/// icons and the viewer's permissions there.
+/// icons and what the viewer may do there.
 ///
 /// The candidates are the guilds the viewer owns or is listed in, or for a
 /// dev login those it is seeded in, under their seeded names. Membership then
@@ -192,20 +190,19 @@ async fn member_guilds(
         let Some(access) = access.remove(&guild.id) else {
             continue;
         };
-        let membership = match access.access() {
-            Ok(access) => access.membership,
+        let access = match access.access() {
+            Ok(access) => access,
             Err(AppError::MembershipUnavailable) => continue,
             Err(error) => return Err(error),
         };
-        if membership == sakiot_permissions::Membership::Outsider {
+        if access.membership == sakiot_permissions::Membership::Outsider {
             continue;
         }
         guilds.push(GuildDataForFrontEnd {
             id: guild.id,
             name: guild.name,
             icon: guild.icon,
-            owner: membership == sakiot_permissions::Membership::Owner,
-            permissions: access.discord_permissions()?.bits(),
+            capabilities: crate::permissions::Capability::named(access.guild),
         });
     }
     Ok(guilds)

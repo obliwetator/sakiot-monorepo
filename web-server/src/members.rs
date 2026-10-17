@@ -202,10 +202,9 @@ pub struct RoleChannel {
 
 #[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct RoleView {
-    #[serde(with = "DisplayFromstr")]
-    #[schema(value_type = String, example = "1024")]
-    pub permission: i64,
-    pub can_manage_guild: bool,
+    /// What a member with only this role may do across the guild, within
+    /// what the manager may do.
+    pub capabilities: Vec<crate::permissions::Capability>,
     pub channels: Vec<RoleChannel>,
 }
 
@@ -244,9 +243,6 @@ pub async fn get_role_view(
     // and join themselves, including ones the role cannot see at all; a
     // preview never shows more than the manager's own view.
     let preview = access.role_preview()?.ok_or(AppError::InternalError)?;
-    let permission = access
-        .previewed_role_permissions()
-        .ok_or(AppError::InternalError)?;
     let all_ids: Vec<i64> = preview.listed.iter().copied().collect();
     let rows = sqlx::query!(
         "SELECT channel_id, name FROM channels WHERE channel_id = ANY($1)",
@@ -271,11 +267,7 @@ pub async fn get_role_view(
     channels.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(HttpResponse::Ok().json(RoleView {
-        permission: permission.bits(),
-        can_manage_guild: permission.intersects(
-            crate::permissions::Permissions::ADMINISTRATOR
-                | crate::permissions::Permissions::MANAGE_GUILD,
-        ),
+        capabilities: crate::permissions::Capability::named(preview.access.guild),
         channels,
     }))
 }

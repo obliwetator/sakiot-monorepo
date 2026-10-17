@@ -504,8 +504,7 @@ async fn role_view_lists_every_channel_with_access(
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = test::read_body_json(response).await;
-    assert_eq!(body["permission"], json!("1049600".to_string()));
-    assert_eq!(body["can_manage_guild"], false);
+    assert_eq!(body["capabilities"], json!([]));
     let channels = body["channels"].as_array().unwrap();
     assert_eq!(channels.len(), 3);
     let by_id = |id: i64| -> Value {
@@ -535,7 +534,16 @@ async fn role_view_lists_every_channel_with_access(
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = test::read_body_json(response).await;
-    assert_eq!(body["can_manage_guild"], true);
+    assert_eq!(
+        body["capabilities"],
+        json!([
+            "manage_settings",
+            "manage_permissions",
+            "preview_roles",
+            "delete_recordings",
+            "moderate_clips",
+        ])
+    );
     let channel_ids: Vec<String> = body["channels"]
         .as_array()
         .unwrap()

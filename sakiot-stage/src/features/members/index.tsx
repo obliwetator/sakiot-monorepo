@@ -87,7 +87,7 @@ function RolePreviewDialog(props: {
 					<div className="flex flex-col gap-3">
 						<div>
 							<h6 className="leading-6 mb-2">What this role can see</h6>
-							{roleView.can_manage_guild ? (
+							{roleView.capabilities.length > 0 ? (
 								<Badge tone={"warning"} size={"sm"}>
 									Can manage the guild (admin pages included)
 								</Badge>

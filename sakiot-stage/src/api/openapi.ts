@@ -1086,6 +1086,25 @@ export interface components {
 			 */
 			retry_after_seconds?: number | null;
 		};
+		/**
+		 * @description One of Sakiot's capabilities. Guild-wide ones: `manage_settings`
+		 *     (cooldowns, recording policy, voice settings), `manage_permissions`,
+		 *     `preview_roles` (role preview and the roles page), `delete_recordings`
+		 *     and `moderate_clips` (someone else's clip). Per channel: `view_presence`,
+		 *     `listen_others`, `create_clips`, `jam` and `stamp`.
+		 * @enum {string}
+		 */
+		Capability:
+			| "manage_settings"
+			| "manage_permissions"
+			| "preview_roles"
+			| "delete_recordings"
+			| "moderate_clips"
+			| "view_presence"
+			| "listen_others"
+			| "create_clips"
+			| "jam"
+			| "stamp";
 		ChannelMixGenerationSettings: {
 			participants: components["schemas"]["ChannelMixParticipantSettings"][];
 			source_fingerprint?: string | null;
@@ -1418,13 +1437,12 @@ export interface components {
 			cooldown_seconds: number;
 		};
 		GuildDataForFrontEnd: {
+			/** @description What the viewer may do across the guild. */
+			capabilities: components["schemas"]["Capability"][];
 			icon?: string | null;
 			/** @example 146638124288704513 */
 			id: string;
 			name: string;
-			owner: boolean;
-			/** @example 268435456 */
-			permissions: string;
 		};
 		GuildMember: {
 			is_bot: boolean;
@@ -1625,10 +1643,12 @@ export interface components {
 			user_id: string;
 		};
 		RoleView: {
-			can_manage_guild: boolean;
+			/**
+			 * @description What a member with only this role may do across the guild, within
+			 *     what the manager may do.
+			 */
+			capabilities: components["schemas"]["Capability"][];
 			channels: components["schemas"]["RoleChannel"][];
-			/** @example 1024 */
-			permission: string;
 		};
 		SegmentEffectsDto: {
 			/**

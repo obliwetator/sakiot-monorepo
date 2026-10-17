@@ -8,6 +8,7 @@ import {
 	Mic as SettingsVoiceIcon,
 } from "lucide-react";
 import type * as React from "react";
+import type { Capability } from "../shared/permissions";
 
 export type PageName =
 	| "Audio"
@@ -19,6 +20,13 @@ export type PageName =
 	| "Members";
 
 export const pages: PageName[] = ["Audio", "Clips", "Clip Editor", "Stamps"];
+
+/** The admin pages, each shown to holders of the capability it needs. */
+export const adminPages: { page: PageName; capability: Capability }[] = [
+	{ page: "Admin", capability: "manage_settings" },
+	{ page: "Voice Settings", capability: "manage_settings" },
+	{ page: "Members", capability: "preview_roles" },
+];
 
 export function activePage(pathname: string): PageName | null {
 	if (pathname.startsWith("/stamps")) return "Stamps";

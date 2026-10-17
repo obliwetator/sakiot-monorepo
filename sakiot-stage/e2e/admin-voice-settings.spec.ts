@@ -1,4 +1,9 @@
-import { expect, fulfillSharedRoutes, test } from "./fixtures";
+import {
+	expect,
+	fulfillSharedRoutes,
+	OWNER_CAPABILITIES,
+	test,
+} from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
 const GUILD_ID = "guild-123";
@@ -51,8 +56,7 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 				{
 					id: GUILD_ID,
 					name: "Test Guild",
-					owner: true,
-					permissions: "8",
+					capabilities: OWNER_CAPABILITIES,
 				},
 			]);
 			return;
@@ -165,7 +169,7 @@ test("server validation and permission failures are explained and input is kept"
 		}
 		if (path === "/api/users/current/guilds") {
 			await json([
-				{ id: GUILD_ID, name: "Test Guild", owner: true, permissions: "8" },
+				{ id: GUILD_ID, name: "Test Guild", capabilities: OWNER_CAPABILITIES },
 			]);
 			return;
 		}

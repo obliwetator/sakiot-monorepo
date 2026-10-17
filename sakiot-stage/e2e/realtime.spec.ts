@@ -1,5 +1,10 @@
 import type { Page, Route, WebSocketRoute } from "@playwright/test";
-import { expect, fulfillSharedRoutes, test } from "./fixtures";
+import {
+	expect,
+	fulfillSharedRoutes,
+	OWNER_CAPABILITIES,
+	test,
+} from "./fixtures";
 
 /**
  * `page.routeWebSocket` plays the `/api/realtime` side of the protocol.
@@ -51,7 +56,7 @@ async function mockApi(page: Page, handler: Handler) {
 		}
 		if (path === "/api/users/current/guilds") {
 			await json([
-				{ id: GUILD_ID, name: "Test Guild", owner: true, permissions: "8" },
+				{ id: GUILD_ID, name: "Test Guild", capabilities: OWNER_CAPABILITIES },
 			]);
 			return;
 		}
