@@ -341,6 +341,7 @@ async fn viewers_receive_only_what_they_may_list_body(pool: PgPool) -> TestResul
     assert_eq!(expect(&mut viewer).await?, changed("recordings", None));
 
     // Granting the viewer the role re-authorizes them before any later event.
+    // The insider's access did not change: they hear nothing about it.
     sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)")
         .bind(VIEWER)
         .bind(INSIDER_ROLE)
@@ -348,12 +349,46 @@ async fn viewers_receive_only_what_they_may_list_body(pool: PgPool) -> TestResul
         .await?;
     let access_changed = json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() });
     assert_eq!(expect(&mut viewer).await?, access_changed);
-    assert_eq!(expect(&mut insider).await?, access_changed);
     let now_visible = insert_session(&pool, PRIVATE, &[PRIVATE]).await?;
-    assert_eq!(
-        expect(&mut viewer).await?,
-        changed("recordings", Some(&[now_visible]))
-    );
+    for socket in [&mut viewer, &mut insider] {
+        assert_eq!(
+            expect(socket).await?,
+            changed("recordings", Some(&[now_visible]))
+        );
+    }
+
+    // Revoking it reaches only the viewer, too.
+    sqlx::query("DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2")
+        .bind(VIEWER)
+        .bind(INSIDER_ROLE)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut viewer).await?, access_changed);
+    let marker = insert_session(&pool, PUBLIC, &[]).await?;
+    for socket in [&mut viewer, &mut insider] {
+        assert_eq!(
+            expect(socket).await?,
+            changed("recordings", Some(&[marker]))
+        );
+    }
+
+    // A renamed channel refreshes where its name shows, for whoever sees the
+    // channel: presence and stamps. Neither of them manages the guild, so
+    // the recording policy page is not theirs.
+    sqlx::query("UPDATE channels SET name = 'secret' WHERE channel_id = $1")
+        .bind(PRIVATE)
+        .execute(&pool)
+        .await?;
+    assert_eq!(expect(&mut insider).await?, changed("stamps", None));
+    assert_eq!(expect(&mut insider).await?, changed("presence", None));
+    // A renamed guild refreshes every member's guild list.
+    sqlx::query("UPDATE guilds SET name = 'Renamed' WHERE id = $1")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    for socket in [&mut viewer, &mut insider] {
+        assert_eq!(expect(socket).await?, changed("guilds", None));
+    }
 
     // Shutdown: every socket is closed at once with 1012.
     hub.close_all(web_server::realtime::protocol::CLOSE_SERVICE_RESTART);
@@ -631,6 +666,15 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
     subscribe(&mut viewer).await?;
     wait_for_listener(&pool, &mut viewer).await?;
     assert_eq!(hub.connection_states(), states(1, 0, 0));
+    // Another member watching the guild, who must hear nothing about the
+    // viewer's comings and goings.
+    let mut insider = connect(&server, INSIDER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe(&mut insider).await?;
+    let warm_up = insert_session(&pool, PUBLIC, &[]).await?;
+    while expect(&mut insider).await? != changed("recordings", Some(&[warm_up])) {}
+    while expect(&mut viewer).await? != changed("recordings", Some(&[warm_up])) {}
 
     // Leaving the guild (a member-remove event) revokes access at once.
     support::leave_guild(&pool, GUILD, VIEWER).await?;
@@ -642,9 +686,14 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
         message,
         json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
     );
-    assert_eq!(hub.connection_states(), states(0, 1, 0));
-    // Nothing reaches a viewer who is out of the guild.
-    insert_session(&pool, PUBLIC, &[]).await?;
+    assert_eq!(hub.connection_states(), states(1, 1, 0));
+    // Nothing reaches a viewer who is out of the guild; the insider's next
+    // message is the session, not a word about the departure.
+    let unseen = insert_session(&pool, PUBLIC, &[]).await?;
+    assert_eq!(
+        expect(&mut insider).await?,
+        changed("recordings", Some(&[unseen]))
+    );
     assert!(
         tokio::time::timeout(Duration::from_millis(500), next(&mut viewer))
             .await
@@ -667,12 +716,14 @@ async fn leaving_and_joining_the_guild_follow_the_roster_body(pool: PgPool) -> T
         expect(&mut viewer).await?,
         json!({ "type": "access_changed", "v": 1, "guild_id": GUILD.to_string() })
     );
-    assert_eq!(hub.connection_states(), states(1, 0, 0));
+    assert_eq!(hub.connection_states(), states(2, 0, 0));
     let visible = insert_session(&pool, PUBLIC, &[]).await?;
-    assert_eq!(
-        expect(&mut viewer).await?,
-        changed("recordings", Some(&[visible]))
-    );
+    for socket in [&mut viewer, &mut insider] {
+        assert_eq!(
+            expect(socket).await?,
+            changed("recordings", Some(&[visible]))
+        );
+    }
     Ok(())
 }
 

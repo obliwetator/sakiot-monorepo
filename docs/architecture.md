@@ -296,8 +296,10 @@ voice presence).
   cover recordings, clips, stamps, opt-outs, guild settings and the permission
   cache. They fire for whichever binary writes, including a draining bot.
   Update triggers compare displayed columns only, so no-op writes are
-  silent, and permission tables send one guild-wide payload per
-  transaction. Media jobs, clip exports and recording deletions notify when
+  silent. Permission tables send one guild-wide `perm` payload per
+  transaction, and only for columns authorization reads; a renamed guild,
+  role or voice channel sends `names` instead, and a role assignment
+  `members` (`20261017010000_realtime_names.sql`). Media jobs, clip exports and recording deletions notify when
   their state, stage, progress or error changes, never on a lease renewal
   (`20261006000000_realtime_job_notifications.sql`).
 - **Listener** (`web-server/src/realtime/listener.rs`) holds a dedicated
@@ -307,15 +309,23 @@ voice presence).
   `pg_notification_queue_usage` is exported: a full queue fails every
   notifying commit.
 - **Authorization** (`web-server/src/realtime/hub.rs`) is cached per
-  subscription (viewer, guild, optional role preview) from one facts load
-  (`SubscriptionAccess`, `realtime/hub/access.rs`) and recomputed on every
-  permission event before other events in the batch are routed. Ids go only to
-  viewers the HTTP listing would show the item to. A viewer who may have seen
-  a session before a change hid it gets an identifier-free `changed` instead.
-  Opt-outs reach only their owner, settings only managers, and role previews
-  follow the role-preview rule above. Job ids reach only whoever may read the
-  job's status: a media job's viewers (`media_job_viewers`), an export's
-  owner, and the guild's managers for a deletion. A refused scope (not a member yet, or a
+  subscription (viewer, guild, optional role preview) as `SubscriptionAccess`
+  (`realtime/hub/access.rs`) and recomputed on every permission event before
+  other events in the batch are routed. One statement loads the facts of
+  every affected guild for all their subscribers; each scope is evaluated in
+  memory, and only a viewer whose access changed gets `access_changed`. A
+  member joining or a role changing hands sends nothing to anyone else.
+  Ids go only to viewers the HTTP listing would show the item to. A viewer
+  who may have seen a session before a change hid it gets an
+  identifier-free `changed` instead. Opt-outs reach only their owner;
+  settings reach holders of `manage_settings`, the roster and roles holders
+  of `preview_roles` or `manage_settings`, and role previews follow the
+  role-preview rule above. Renames refresh where the name shows: the guild
+  list (`guilds`), the members pages, and for a channel the presence and
+  stamps of viewers who see it and the recording policy. Job ids reach only
+  whoever may read the job's status: a media job's viewers
+  (`media_job_viewers`), an export's owner, and holders of
+  `delete_recordings` for a deletion. A refused scope (not a member yet, or a
   roster still loading) stays pending: the next permission event that grants
   it sends `subscribed`, then `access_changed` for the guild list.
 - **Socket** (`GET /api/realtime`, `web-server/src/realtime/socket.rs`)

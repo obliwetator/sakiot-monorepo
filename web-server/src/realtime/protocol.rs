@@ -34,19 +34,24 @@ pub enum Resource {
     Stamps,
     /// The viewer's own recording opt-out.
     RecordingOptOut,
-    /// Guild voice settings (managers only).
+    /// Guild voice settings (holders of `manage_settings` only).
     VoiceSettings,
-    /// Guild recording policy (managers only).
+    /// Guild recording policy, with the names of its channels (holders of
+    /// `manage_settings` only).
     RecordingPolicy,
-    /// Guild and per-user Jam cooldowns (managers only).
+    /// Guild and per-user Jam cooldowns (holders of `manage_settings` only).
     Cooldowns,
     /// Who is in which voice or stage channel. Never carries `ids`. Clients
     /// that set `presence_updates` get it only when a change cannot be sent
     /// as `presence` updates.
     Presence,
-    /// The guild's member roster: member search and role member counts
-    /// (managers only).
+    /// The guild's member roster and roles: member search, the role list
+    /// with names, colours and member counts (holders of `preview_roles` or
+    /// `manage_settings` only).
     Members,
+    /// The viewer's guild list: the guild's name, icon or the viewer's
+    /// capabilities there.
+    Guilds,
     /// Background jobs the viewer may be waiting on: media builds (waveforms,
     /// mixes, downloads), clip exports and recording deletions. `ids` are job
     /// ids, sent only to whoever may read that job's status.

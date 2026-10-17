@@ -1,5 +1,7 @@
+use sakiot_permissions::Capabilities;
+
 use super::*;
-use crate::realtime::events::PresenceChange;
+use crate::realtime::events::{PresenceChange, Renamed};
 
 const GUILD: i64 = 1;
 const PUBLIC: i64 = 100;
@@ -13,7 +15,11 @@ fn subscription(tree: &[i64], media: &[i64], manager: bool) -> Subscription {
             tree_channels: tree.iter().copied().collect(),
             media_channels: media.iter().copied().collect(),
             presence_channels: tree.iter().copied().collect(),
-            manager,
+            guild: if manager {
+                Capabilities::MANAGEMENT
+            } else {
+                Capabilities::empty()
+            },
         }),
         generation: 1,
         presence_updates: false,
@@ -213,6 +219,117 @@ fn members_reach_only_managers() {
         route(&changes, &manager, 9, Some(&HashMap::new())),
         Routed::from([(Resource::Members, None)])
     );
+}
+
+/// A member of the public channel holding exactly `guild` guild-wide.
+fn holding(guild: Capabilities) -> Subscription {
+    let mut subscription = subscription(&[PUBLIC], &[PUBLIC], false);
+    if let Some(access) = subscription.access.as_mut() {
+        access.guild = guild;
+    }
+    subscription
+}
+
+#[test]
+fn each_admin_event_follows_its_own_capability() {
+    let changes = [
+        Event::Settings {
+            guild_id: GUILD,
+            resource: Resource::VoiceSettings,
+        },
+        Event::Members { guild_id: GUILD },
+    ];
+    let deletion = [Event::Job {
+        guild_id: GUILD,
+        job_id: "deletion".into(),
+        audience: JobAudience::Managers,
+    }];
+    let routed = |subscription: &Subscription| {
+        let mut routed = route(&changes, subscription, 9, Some(&HashMap::new()));
+        route_jobs(&deletion, subscription, 9, &HashMap::new(), &mut routed);
+        routed
+    };
+    assert_eq!(
+        routed(&holding(Capabilities::MANAGE_SETTINGS)),
+        Routed::from([(Resource::VoiceSettings, None), (Resource::Members, None),])
+    );
+    assert_eq!(
+        routed(&holding(Capabilities::PREVIEW_ROLES)),
+        Routed::from([(Resource::Members, None)])
+    );
+    assert_eq!(
+        routed(&holding(Capabilities::DELETE_RECORDINGS)),
+        Routed::from([(Resource::Jobs, ids(&["deletion"]))])
+    );
+    assert!(routed(&holding(Capabilities::MODERATE_CLIPS)).is_empty());
+}
+
+#[test]
+fn renames_reach_whoever_shows_the_name() {
+    let changes = |renamed| {
+        [Event::Names {
+            guild_id: GUILD,
+            renamed,
+        }]
+    };
+    let viewer = subscription(&[PUBLIC], &[PUBLIC], false);
+    let manager = subscription(&[PUBLIC], &[PUBLIC], true);
+    let routed = |renamed, subscription: &Subscription| {
+        route(&changes(renamed), subscription, 9, Some(&HashMap::new()))
+    };
+
+    // Every member's guild list shows the guild.
+    for subscription in [&viewer, &manager] {
+        assert_eq!(
+            routed(Renamed::Guild, subscription),
+            Routed::from([(Resource::Guilds, None)])
+        );
+    }
+    // Roles show only on the members pages.
+    assert!(routed(Renamed::Roles, &viewer).is_empty());
+    assert_eq!(
+        routed(Renamed::Roles, &manager),
+        Routed::from([(Resource::Members, None)])
+    );
+    // A channel's name shows in presence and stamps where the viewer sees
+    // the channel, and on the recording policy page.
+    assert_eq!(
+        routed(Renamed::Channel(PUBLIC), &viewer),
+        Routed::from([(Resource::Stamps, None), (Resource::Presence, None)])
+    );
+    assert!(routed(Renamed::Channel(PRIVATE), &viewer).is_empty());
+    assert_eq!(
+        routed(Renamed::Channel(PRIVATE), &manager),
+        Routed::from([(Resource::RecordingPolicy, None)])
+    );
+    // Another guild's renames and refused scopes hear nothing.
+    let elsewhere = [Event::Names {
+        guild_id: 2,
+        renamed: Renamed::Guild,
+    }];
+    assert!(route(&elsewhere, &viewer, 9, Some(&HashMap::new())).is_empty());
+    let refused = Subscription {
+        access: None,
+        ..viewer
+    };
+    assert!(routed(Renamed::Guild, &refused).is_empty());
+}
+
+#[test]
+fn only_a_change_in_what_the_client_sees_is_reported() {
+    let before = subscription(&[PUBLIC], &[PUBLIC], false).access;
+    let same = subscription(&[PUBLIC], &[PUBLIC], false).access;
+    let more = subscription(&[PUBLIC, PRIVATE], &[PUBLIC, PRIVATE], false).access;
+    let manager = subscription(&[PUBLIC], &[PUBLIC], true).access;
+    let of = |before: &Option<SubscriptionAccess>, after: &Option<SubscriptionAccess>| {
+        Reauthorized::of(before.as_ref(), after.as_ref())
+    };
+    assert_eq!(of(&before, &same), Reauthorized::Unchanged);
+    assert_eq!(of(&before, &more), Reauthorized::Changed);
+    assert_eq!(of(&before, &manager), Reauthorized::Changed);
+    assert_eq!(of(&before, &None), Reauthorized::Revoked);
+    assert_eq!(of(&None, &before), Reauthorized::Granted);
+    assert_eq!(of(&None, &None), Reauthorized::Unchanged);
 }
 
 #[test]

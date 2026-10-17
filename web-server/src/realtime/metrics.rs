@@ -18,6 +18,8 @@ pub(super) struct Metrics {
     pub resyncs: Counter<u64>,
     pub queue_overflows: Counter<u64>,
     pub authorization_recomputes: Counter<u64>,
+    /// Re-authorized subscriptions, by what changed for them.
+    pub access_changes: Counter<u64>,
     /// `pg_notification_queue_usage()`: a full queue fails every notifying
     /// commit, so alert well before 1.
     pub notification_queue_usage: Gauge<f64>,
@@ -65,6 +67,10 @@ pub(super) fn metrics() -> &'static Metrics {
                 .u64_counter("realtime_authorization_recomputes")
                 .with_description("Subscription authorizations computed")
                 .build(),
+            access_changes: meter
+                .u64_counter("realtime_access_changes")
+                .with_description("Re-authorized subscriptions, by outcome")
+                .build(),
             notification_queue_usage: meter
                 .f64_gauge("pg_notification_queue_usage")
                 .with_description("Fraction of PostgreSQL's NOTIFY queue in use")
@@ -82,4 +88,12 @@ pub(super) fn resync(reason: super::protocol::ResyncReason, count: u64) {
     metrics()
         .resyncs
         .add(count, &[KeyValue::new("reason", reason)]);
+}
+
+/// One re-authorized subscription, by outcome: `granted`, `changed`,
+/// `revoked` or `unchanged`. Only the first three send anything.
+pub(super) fn access_change(outcome: &'static str) {
+    metrics()
+        .access_changes
+        .add(1, &[KeyValue::new("outcome", outcome)]);
 }

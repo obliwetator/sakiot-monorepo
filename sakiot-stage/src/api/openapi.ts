@@ -1624,6 +1624,7 @@ export interface components {
 			| "cooldowns"
 			| "presence"
 			| "members"
+			| "guilds"
 			| "jobs";
 		/**
 		 * @description Why the client must refetch everything it has subscribed to.

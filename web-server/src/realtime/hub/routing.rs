@@ -1,7 +1,10 @@
 //! Deciding which connections an event reaches, and with which ids, from
 //! each subscription's cached authorization.
 
+use sakiot_permissions::Capabilities;
+
 use super::*;
+use crate::realtime::events::Renamed;
 
 /// The channels a session touches, as the HTTP listings authorize it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,17 +190,47 @@ pub(super) fn route(
                 add_all(&mut routed, Resource::RecordingOptOut);
             }
             Event::Settings { guild_id, resource }
-                if *guild_id == subscription.guild_id && access.manager =>
+                if *guild_id == subscription.guild_id
+                    && access.holds(Capabilities::MANAGE_SETTINGS) =>
             {
                 add_all(&mut routed, *resource);
             }
-            Event::Members { guild_id } if *guild_id == subscription.guild_id && access.manager => {
+            Event::Members { guild_id }
+                if *guild_id == subscription.guild_id && access.sees_members() =>
+            {
                 add_all(&mut routed, Resource::Members);
+            }
+            Event::Names { guild_id, renamed } if *guild_id == subscription.guild_id => {
+                route_names(*renamed, access, &mut routed);
             }
             _ => {}
         }
     }
     routed
+}
+
+/// Refreshes whatever shows a renamed guild, role or channel, for viewers who
+/// see it there. Recordings show channel ids, not names.
+fn route_names(renamed: Renamed, access: &SubscriptionAccess, routed: &mut Routed) {
+    match renamed {
+        Renamed::Guild => add_all(routed, Resource::Guilds),
+        Renamed::Roles => {
+            if access.sees_members() {
+                add_all(routed, Resource::Members);
+            }
+        }
+        Renamed::Channel(channel_id) => {
+            if access.presence_channels.contains(&channel_id) {
+                add_all(routed, Resource::Presence);
+            }
+            if access.media_channels.contains(&channel_id) {
+                add_all(routed, Resource::Stamps);
+            }
+            if access.holds(Capabilities::MANAGE_SETTINGS) {
+                add_all(routed, Resource::RecordingPolicy);
+            }
+        }
+    }
 }
 
 /// Adds the batch's job events whose status this subscription's viewer may
@@ -230,7 +263,7 @@ pub(super) fn route_jobs(
                 .get(job_id)
                 .is_some_and(|viewers| viewers.contains(&user_id)),
             JobAudience::Owner(owner) => *owner == user_id,
-            JobAudience::Managers => access.manager,
+            JobAudience::Managers => access.holds(Capabilities::DELETE_RECORDINGS),
         };
         if allowed {
             add_id(routed, Resource::Jobs, job_id.clone());

@@ -170,8 +170,12 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 			invalidate(ctx, guildId, ["VoicePresence"]);
 			return;
 		case "members":
-			// Role pages count and list members from the roster.
+			// Role pages list roles and count their members from the roster.
 			invalidate(ctx, guildId, ["GuildMembers", "GuildRoles"]);
+			return;
+		case "guilds":
+			// The guild list: a name, an icon, or what the viewer may do.
+			ctx.dispatch(apiSlice.util.invalidateTags(["Auth"]));
 			return;
 		case "jobs":
 			// Only the queries still waiting on these jobs refetch.

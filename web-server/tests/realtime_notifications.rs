@@ -282,7 +282,12 @@ async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool)
     .execute(&mut *transaction)
     .await?;
     transaction.commit().await?;
-    assert_eq!(notifications.drain().await?, vec![guild_event.clone()]);
+    // The role list counts the new assignments.
+    let members = json!({ "v": 1, "k": "members", "g": GUILD.to_string() });
+    assert_eq!(
+        notifications.drain().await?,
+        vec![guild_event.clone(), members]
+    );
 
     // Re-login rewrites user_guilds without changing membership: silent.
     sqlx::query(
@@ -301,7 +306,8 @@ async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool)
     assert_eq!(notifications.drain().await?, Vec::<Value>::new());
 
     // Deleting a role cascades to its assignments, whose guild can no longer
-    // be resolved: a guild-less payload asks for a full resync.
+    // be resolved: a guild-less payload asks for a full resync. The role list
+    // loses the role.
     sqlx::query("DELETE FROM roles WHERE role_id = $1")
         .bind(ROLE)
         .execute(&pool)
@@ -312,6 +318,136 @@ async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool)
         received.contains(&json!({ "v": 1, "k": "perm" })),
         "{received:?}"
     );
+    assert!(
+        received.contains(&json!({ "v": 1, "k": "names", "g": GUILD.to_string(), "r": "roles" })),
+        "{received:?}"
+    );
+    Ok(())
+}
+
+/// Runs `sql` and checks what it notified, in any order: triggers on one
+/// row fire by name.
+async fn expect(
+    pool: &PgPool,
+    notifications: &mut Notifications,
+    sql: &'static str,
+    expected: Vec<Value>,
+) -> TestResult {
+    sqlx::query(sql).execute(pool).await?;
+    assert_eq!(
+        unordered(notifications.drain().await?),
+        unordered(expected),
+        "{sql}"
+    );
+    Ok(())
+}
+
+/// The same payloads in any order.
+fn unordered(mut payloads: Vec<Value>) -> Vec<String> {
+    let mut payloads: Vec<String> = payloads
+        .drain(..)
+        .map(|payload| payload.to_string())
+        .collect();
+    payloads.sort();
+    payloads
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn renames_send_names_and_only_authorization_sends_perm(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let perm = json!({ "v": 1, "k": "perm", "g": GUILD.to_string() });
+    let names = |table: &str| json!({ "v": 1, "k": "names", "g": GUILD.to_string(), "r": table });
+    let channel = |channel_id: i64| {
+        json!({
+            "v": 1, "k": "names", "g": GUILD.to_string(), "r": "channels",
+            "c": channel_id.to_string(),
+        })
+    };
+
+    // The guild: its name and icon show, its owner decides.
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE guilds SET name = 'Guild', icon = 'i'",
+        vec![names("guilds")],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE guilds SET owner_id = 21",
+        vec![perm.clone()],
+    )
+    .await?;
+
+    // Roles: names and colours show, and the role list shows every role;
+    // the permission bits decide.
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE roles SET name = 'Renamed' WHERE role_id = 1001",
+        vec![names("roles")],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE roles SET color = 5 WHERE role_id = 1001",
+        vec![names("roles")],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE roles SET permission = 8 WHERE role_id = 1001",
+        vec![perm.clone()],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "INSERT INTO roles (guild_id, role_id, permission, name) VALUES (1, 1002, 0, 'New')",
+        vec![perm.clone(), names("roles")],
+    )
+    .await?;
+
+    // Channels: only voice and stage channels count or show anywhere.
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE channels SET name = 'Renamed' WHERE channel_id = 100",
+        vec![channel(100)],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "INSERT INTO channels (channel_id, guild_id, type, name) VALUES (101, 1, 0, 'text')",
+        vec![perm.clone()],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE channels SET name = 'chat' WHERE channel_id = 101",
+        vec![],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "INSERT INTO channels (channel_id, guild_id, type, name) VALUES (102, 1, 2, 'voice 2')",
+        vec![perm.clone(), channel(102)],
+    )
+    .await?;
+    expect(
+        &pool,
+        &mut notifications,
+        "UPDATE channels SET type = 0 WHERE channel_id = 102",
+        vec![perm.clone(), channel(102)],
+    )
+    .await?;
     Ok(())
 }
 

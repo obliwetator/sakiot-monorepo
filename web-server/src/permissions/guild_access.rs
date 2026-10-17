@@ -2,6 +2,7 @@
 //! everything.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use sakiot_permissions::{
     Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, RoleNotFound, RolePreview,
@@ -11,8 +12,24 @@ use sakiot_permissions::{
 use super::facts;
 use crate::errors::AppError;
 
+/// The facts of each of `guilds` for every one of `users` and `roles`, in
+/// one statement, keyed by guild: enough to evaluate any of those users, or
+/// any of them previewing one of those roles, with `GuildAccess::new`.
+pub async fn load_facts<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    guilds: &[i64],
+    users: &[i64],
+    roles: &[i64],
+) -> Result<HashMap<i64, Arc<GuildFacts>>, AppError> {
+    Ok(facts::load_many(executor, guilds, users, roles)
+        .await?
+        .into_iter()
+        .map(|facts| (facts.guild_id, Arc::new(facts)))
+        .collect())
+}
+
 pub struct GuildAccess {
-    facts: GuildFacts,
+    facts: Arc<GuildFacts>,
     /// The previewed role, for a manager's view-as-role.
     as_role: Option<i64>,
     access: Result<Access, MembershipUnavailable>,
@@ -39,17 +56,17 @@ impl GuildAccess {
         guilds: &[i64],
         viewer: Viewer,
     ) -> Result<HashMap<i64, Self>, AppError> {
-        Ok(facts::load_many(executor, guilds, &[viewer.user_id], &[])
+        Ok(load_facts(executor, guilds, &[viewer.user_id], &[])
             .await?
             .into_iter()
-            .map(|facts| (facts.guild_id, Self::new(facts, viewer, None)))
+            .map(|(guild_id, facts)| (guild_id, Self::new(facts, viewer, None)))
             .collect())
     }
 
     /// The viewer's access as `facts` decide it. `facts` must hold the
-    /// viewer and `as_role`.
-    #[doc(hidden)]
-    pub fn new(facts: GuildFacts, viewer: Viewer, as_role: Option<i64>) -> Self {
+    /// viewer and `as_role` (`load_facts`).
+    pub fn new(facts: impl Into<Arc<GuildFacts>>, viewer: Viewer, as_role: Option<i64>) -> Self {
+        let facts = facts.into();
         let access = facts.access(viewer);
         Self {
             facts,

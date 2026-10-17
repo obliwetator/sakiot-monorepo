@@ -416,6 +416,40 @@ test("presence updates change who is in voice without refetching", async ({
 	expect(presenceLoads).toBe(loads);
 });
 
+test("a guilds event refreshes the guild picker", async ({ page }) => {
+	let guildName = "Test Guild";
+	await mockApi(page, async (path, _route, json) => {
+		if (path === "/api/users/current/guilds") {
+			await json([
+				{ id: GUILD_ID, name: guildName, capabilities: OWNER_CAPABILITIES },
+			]);
+			return true;
+		}
+		if (
+			path === `/api/current/${GUILD_ID}` ||
+			path === `/api/current/${GUILD_ID}/live-stems`
+		) {
+			await json([]);
+			return true;
+		}
+		return false;
+	});
+	let socket: WebSocketRoute | null = null;
+	await page.routeWebSocket(SOCKET_URL, (ws) => {
+		socket = ws;
+		serve(ws);
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/audio`);
+	const picker = page.getByRole("button", { name: /Server/ });
+	await expect(picker).toContainText("Test Guild");
+	await expect.poll(() => socket !== null).toBe(true);
+
+	guildName = "Renamed Guild";
+	(socket as unknown as WebSocketRoute).send(changed("guilds"));
+	await expect(picker).toContainText("Renamed Guild");
+});
+
 test("an unsupported protocol version asks for a reload", async ({ page }) => {
 	await mockApi(page, async (path, _route, json) => {
 		if (path === `/api/stamps/${GUILD_ID}`) {

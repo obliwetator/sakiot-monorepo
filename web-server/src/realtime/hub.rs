@@ -18,7 +18,7 @@ use super::metrics::{self, metrics};
 use super::protocol::{
     PROTOCOL_VERSION, PresenceSeat, PresenceUpdate, Resource, ResyncReason, ServerMessage,
 };
-use crate::permissions::Viewer;
+use crate::permissions::{GuildAccess, Viewer, load_facts};
 use crate::presence::Seat;
 
 mod access;
@@ -50,10 +50,32 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 enum Reauthorized {
     /// A refused scope is now allowed.
     Granted,
-    /// An allowed scope was recomputed; it may have lost access.
-    Recomputed,
-    /// A refused scope is still refused.
-    StillRefused,
+    /// An allowed scope still is, but what it may see changed.
+    Changed,
+    /// An allowed scope is now refused.
+    Revoked,
+    /// Nothing the client sees changed, or a refused scope still is.
+    Unchanged,
+}
+
+impl Reauthorized {
+    fn of(before: Option<&SubscriptionAccess>, after: Option<&SubscriptionAccess>) -> Self {
+        match (before, after) {
+            (None, Some(_)) => Self::Granted,
+            (Some(_), None) => Self::Revoked,
+            (Some(before), Some(after)) if before != after => Self::Changed,
+            _ => Self::Unchanged,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Granted => "granted",
+            Self::Changed => "changed",
+            Self::Revoked => "revoked",
+            Self::Unchanged => "unchanged",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -276,41 +298,80 @@ impl Hub {
     /// `None`). A subscription whose viewer lost access stops receiving
     /// events; a refused one whose viewer gained access starts. Returns each
     /// re-checked connection with its guild and what changed.
+    ///
+    /// One statement loads the facts of every affected guild for every
+    /// viewer and previewed role among the subscriptions, however many
+    /// sockets are open; each scope is then evaluated in memory, once.
     async fn reauthorize(
         &self,
         connections: &[Arc<Connection>],
         guilds: Option<&HashSet<i64>>,
     ) -> Vec<(Arc<Connection>, i64, Reauthorized)> {
+        let subscriptions: Vec<(&Arc<Connection>, Subscription)> = connections
+            .iter()
+            .filter_map(|connection| Some((connection, connection.subscription()?)))
+            .filter(|(_, subscription)| {
+                guilds.is_none_or(|guilds| guilds.contains(&subscription.guild_id))
+            })
+            .collect();
+        if subscriptions.is_empty() {
+            return Vec::new();
+        }
+        let ids = |id: fn(&(&Arc<Connection>, Subscription)) -> Option<i64>| {
+            subscriptions
+                .iter()
+                .filter_map(id)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let guild_ids = ids(|(_, subscription)| Some(subscription.guild_id));
+        let users = ids(|(connection, _)| Some(connection.viewer.user_id));
+        let roles = ids(|(_, subscription)| subscription.as_role);
+        let facts = load_facts(&self.pool, &guild_ids, &users, &roles)
+            .await
+            .inspect_err(|error| {
+                // Fail closed: every affected scope is refused until the
+                // next permission event, and its client refetches over HTTP.
+                tracing::warn!(%error, "realtime re-authorization failed");
+            })
+            .unwrap_or_default();
+
+        let mut evaluated: HashMap<(i64, Viewer, Option<i64>), Option<SubscriptionAccess>> =
+            HashMap::new();
         let mut checked = Vec::new();
-        for connection in connections {
-            let Some(subscription) = connection.subscription() else {
-                continue;
-            };
-            if guilds.is_some_and(|guilds| !guilds.contains(&subscription.guild_id)) {
-                continue;
-            }
-            metrics().authorization_recomputes.add(1, &[]);
-            let result = SubscriptionAccess::load(
-                &self.pool,
+        for (connection, subscription) in subscriptions {
+            let (guild_id, viewer, as_role) = (
                 subscription.guild_id,
                 connection.viewer,
                 subscription.as_role,
-            )
-            .await;
-            if connection.generation.load(Ordering::SeqCst) != subscription.generation {
-                continue; // The client changed scope meanwhile.
+            );
+            let access = evaluated
+                .entry((guild_id, viewer, as_role))
+                .or_insert_with(|| {
+                    metrics().authorization_recomputes.add(1, &[]);
+                    let facts = facts.get(&guild_id)?;
+                    SubscriptionAccess::of(&GuildAccess::new(Arc::clone(facts), viewer, as_role))
+                        .ok()
+                })
+                .clone();
+            let outcome = Reauthorized::of(subscription.access.as_ref(), access.as_ref());
+            {
+                let mut current = lock(&connection.subscription);
+                // The client changed scope meanwhile: its new scope was
+                // authorized on its own.
+                if current.as_ref().map(|current| current.generation)
+                    != Some(subscription.generation)
+                {
+                    continue;
+                }
+                *current = Some(Subscription {
+                    access,
+                    ..subscription
+                });
             }
-            let access = result.ok();
-            let outcome = match (subscription.access.is_some(), access.is_some()) {
-                (false, true) => Reauthorized::Granted,
-                (true, _) => Reauthorized::Recomputed,
-                (false, false) => Reauthorized::StillRefused,
-            };
-            *lock(&connection.subscription) = Some(Subscription {
-                access,
-                ..subscription.clone()
-            });
-            checked.push((Arc::clone(connection), subscription.guild_id, outcome));
+            metrics::access_change(outcome.label());
+            checked.push((Arc::clone(connection), guild_id, outcome));
         }
         checked
     }
@@ -332,7 +393,8 @@ impl Hub {
 
     /// Routes one coalesced batch of database events. Permission changes are
     /// applied first, so no event in the batch reaches a viewer on the
-    /// strength of access they just lost.
+    /// strength of access they just lost. Only a viewer whose access changed
+    /// is told so.
     pub async fn dispatch(&self, events: Vec<Event>) {
         let mut resync_everyone = false;
         let mut permission_guilds = HashSet::new();
@@ -376,11 +438,13 @@ impl Hub {
                             guild_id: guild_id.to_string(),
                         });
                     }
-                    Reauthorized::Recomputed => connection.push(ServerMessage::AccessChanged {
-                        v: PROTOCOL_VERSION,
-                        guild_id: guild_id.to_string(),
-                    }),
-                    Reauthorized::StillRefused => {}
+                    Reauthorized::Changed | Reauthorized::Revoked => {
+                        connection.push(ServerMessage::AccessChanged {
+                            v: PROTOCOL_VERSION,
+                            guild_id: guild_id.to_string(),
+                        });
+                    }
+                    Reauthorized::Unchanged => {}
                 }
             }
         }

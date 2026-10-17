@@ -47,10 +47,15 @@ pub enum Event {
     Permissions {
         guild_id: Option<i64>,
     },
-    /// The guild's member roster changed (managers' member lists and role
-    /// counts).
+    /// The guild's member roster or role membership changed (managers'
+    /// member lists and role counts).
     Members {
         guild_id: i64,
+    },
+    /// A displayed name changed, without changing who may see what.
+    Names {
+        guild_id: i64,
+        renamed: Renamed,
     },
     /// Someone joined, left or changed state in a voice or stage channel.
     /// `member` says who and where they were; without it (a rename of someone
@@ -80,6 +85,17 @@ pub struct PresenceChange {
     pub user_id: i64,
     /// The channel they were in before the change; `None` when they joined.
     pub left_channel_id: Option<i64>,
+}
+
+/// What a `names` payload renamed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Renamed {
+    /// The guild's name or icon.
+    Guild,
+    /// A role's name or colours, or the set of roles.
+    Roles,
+    /// A channel's name or type, or the channel was created or deleted.
+    Channel(i64),
 }
 
 /// Who may read a job's status, and so hears about its changes.
@@ -157,6 +173,15 @@ pub fn parse(payload: &str) -> Option<Event> {
         "perm" => Event::Permissions { guild_id },
         "members" => Event::Members {
             guild_id: guild_id?,
+        },
+        "names" => Event::Names {
+            guild_id: guild_id?,
+            renamed: match payload.r.as_deref()? {
+                "guilds" => Renamed::Guild,
+                "roles" => Renamed::Roles,
+                "channels" => Renamed::Channel(id(payload.c.as_ref())?),
+                _ => return None,
+            },
         },
         "presence" => Event::Presence {
             guild_id: guild_id?,
@@ -251,6 +276,27 @@ mod tests {
             Some(Event::Members { guild_id: 1 })
         );
         assert_eq!(
+            parse(r#"{"v":1,"k":"names","g":"1","r":"guilds"}"#),
+            Some(Event::Names {
+                guild_id: 1,
+                renamed: Renamed::Guild
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"names","g":"1","r":"roles"}"#),
+            Some(Event::Names {
+                guild_id: 1,
+                renamed: Renamed::Roles
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"names","g":"1","r":"channels","c":"3"}"#),
+            Some(Event::Names {
+                guild_id: 1,
+                renamed: Renamed::Channel(3)
+            })
+        );
+        assert_eq!(
             parse(r#"{"v":1,"k":"presence","g":"1"}"#),
             Some(Event::Presence {
                 guild_id: 1,
@@ -310,6 +356,9 @@ mod tests {
         assert_eq!(parse(r#"{"v":1,"k":"session","g":"x","s":"2"}"#), None);
         assert_eq!(parse("not json"), None);
         assert_eq!(parse(r#"{"v":1,"k":"presence"}"#), None);
+        // A renamed channel names the channel.
+        assert_eq!(parse(r#"{"v":1,"k":"names","g":"1","r":"channels"}"#), None);
+        assert_eq!(parse(r#"{"v":1,"k":"names","g":"1","r":"future"}"#), None);
         assert_eq!(parse(r#"{"v":1,"k":"presence","g":"1","u":"x"}"#), None);
         assert_eq!(
             parse(r#"{"v":1,"k":"presence","g":"1","u":"7","o":"x"}"#),
