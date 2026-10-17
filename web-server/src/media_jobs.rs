@@ -375,12 +375,7 @@ pub async fn get_media_job_result(
     let job_request: MediaJobRequest =
         serde_json::from_value(row.request).map_err(|_| AppError::InternalError)?;
     if let MediaJobRequest::SessionDownload { session_id, .. } = job_request {
-        crate::audio::sessions::require_session_access(
-            &pool,
-            session_id,
-            crate::permissions::Viewer::of(&token),
-        )
-        .await?;
+        crate::audio::sessions::require_session_access(&pool, session_id, token.viewer()).await?;
     } else {
         return Err(AppError::FileNotFound);
     }

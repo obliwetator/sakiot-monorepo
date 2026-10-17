@@ -74,7 +74,7 @@ pub async fn remove_silence(
         path.2,
         path.3,
         &path.4,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
     )
     .await?;
 
@@ -112,7 +112,7 @@ pub async fn remove_silence(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(path.0),
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         &idempotency_key,
         &fingerprint,
         &job_request,

@@ -39,7 +39,7 @@ pub async fn get_recording_opt_out(
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     let user_id = viewer.user_id;
     let guild_id = path.into_inner();
     // Only members may see or change their own recording preference.
@@ -76,7 +76,7 @@ pub async fn put_recording_opt_out(
     body: web::Json<RecordingOptOut>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     let user_id = viewer.user_id;
     let guild_id = path.into_inner();
     // Only members may see or change their own recording preference.

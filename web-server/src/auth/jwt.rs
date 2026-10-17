@@ -103,6 +103,14 @@ impl Token<Access> {
                 AppError::InvalidToken
             })
     }
+
+    /// Who this token speaks for, as authorization sees them.
+    pub fn viewer(&self) -> sakiot_permissions::Viewer {
+        sakiot_permissions::Viewer {
+            user_id: self.user_id,
+            dev: self.auth_kind == AuthKind::Dev,
+        }
+    }
 }
 
 impl Token<Refresh> {

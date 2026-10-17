@@ -225,7 +225,7 @@ pub async fn get_role_view(
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, role_id) = path.into_inner();
     require_guild_manager(&req, &pool, guild_id).await?;
-    let manager = crate::permissions::Viewer::of_request(&req)?;
+    let manager = crate::permissions::request_viewer(&req)?;
 
     // Lists the role's access for every voice channel the manager can view
     // and join themselves, including ones the role cannot see at all; a

@@ -67,7 +67,7 @@ pub async fn get_waveform_data(
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     super::sessions::require_recording_access(
         &pool, path.0, path.1, path.2, path.3, &path.4, viewer,
     )
@@ -268,21 +268,10 @@ pub async fn get_clip_waveform_data(
     .await?
     .ok_or(AppError::ClipNotFound)?;
     if let Some(session_id) = row.recording_session_id {
-        super::sessions::require_session_access(
-            &pool,
-            session_id,
-            crate::permissions::Viewer::of(&token),
-        )
-        .await?;
+        super::sessions::require_session_access(&pool, session_id, token.viewer()).await?;
     } else {
         let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
-        require_channel_access(
-            &pool,
-            guild_id,
-            channel_id,
-            crate::permissions::Viewer::of(&token),
-        )
-        .await?;
+        require_channel_access(&pool, guild_id, channel_id, token.viewer()).await?;
     }
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
@@ -302,7 +291,7 @@ pub async fn get_clip_waveform_data(
     let status = crate::media_jobs::enqueue_rebuild(
         pool.get_ref(),
         Some(guild_id),
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         &key,
         &cache_key,
         &request,

@@ -30,7 +30,7 @@ pub async fn get_session_waveform(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, viewer).await?;
     let resource = session_waveform_resource(session_id, false);
@@ -191,12 +191,11 @@ pub async fn rebuild_session_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     enqueue_session_waveform(
         &request,
         &pool,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         access.guild_id,
         session_id,
         false,
@@ -226,7 +225,7 @@ pub async fn get_session_silence_free_waveform(
     pool: web::Data<Pool<Postgres>>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     let session_id = path.into_inner();
     let access = require_session_access(&pool, session_id, viewer).await?;
     let source = session_silence_free_path(&access)?;
@@ -287,8 +286,7 @@ pub async fn rebuild_session_silence_free_waveform(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let source = session_silence_free_path(&access)?;
     if !tokio::fs::try_exists(&source).await? {
         return Err(AppError::FileNotFound);
@@ -296,7 +294,7 @@ pub async fn rebuild_session_silence_free_waveform(
     enqueue_session_waveform(
         &request,
         &pool,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         access.guild_id,
         session_id,
         true,

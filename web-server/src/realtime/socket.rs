@@ -74,7 +74,7 @@ pub async fn realtime_socket(
         .max_continuation_size(MAX_MESSAGE_BYTES);
 
     let hub = hub.into_inner();
-    let connection = hub.register(crate::permissions::Viewer::of(&token));
+    let connection = hub.register(token.viewer());
     actix_web::rt::spawn(run(hub, connection, token, session, stream));
     Ok(response)
 }

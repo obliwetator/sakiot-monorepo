@@ -307,7 +307,7 @@ async fn require_guild_permission(
 ) -> Result<i64, crate::errors::AppError> {
     // Dev logins (local, staging and preview builds) manage the guilds their
     // seeding granted them through `membership`'s owner rule.
-    let viewer = Viewer::of_request(req)?;
+    let viewer = crate::permissions::request_viewer(req)?;
     if get_combined_perm_for_user(pool, guild_id, viewer)
         .await?
         .intersects(required_mask)

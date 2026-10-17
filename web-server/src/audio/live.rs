@@ -351,7 +351,7 @@ pub async fn live_playlist(
         year,
         month_i32,
         &stem,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
     )
     .await?;
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
@@ -418,7 +418,7 @@ pub async fn live_state(
         year,
         month,
         &stem,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
     )
     .await?;
     let db = db_state(&pool, &stem).await?;
@@ -473,7 +473,7 @@ pub async fn live_segment(
         year,
         month_i32,
         &stem,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
     )
     .await?;
     if seg == "playlist.m3u8" || seg == "state" {

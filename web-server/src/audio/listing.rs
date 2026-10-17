@@ -501,13 +501,7 @@ pub async fn get_live_stems(
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
     require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(
-        &pool,
-        guild_id,
-        crate::permissions::Viewer::of(&token),
-        query.as_role,
-    )
-    .await?;
+    let permitted = listing_channels_for(&pool, guild_id, token.viewer(), query.as_role).await?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
     let rows = crate::server_timing::measure(
@@ -574,14 +568,8 @@ pub async fn get_current_month_permission(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    let (permission_hashset, channel_access) = tree_scope(
-        &req,
-        &pool,
-        guild_id_as_int,
-        crate::permissions::Viewer::of(&token),
-        query.as_role,
-    )
-    .await?;
+    let (permission_hashset, channel_access) =
+        tree_scope(&req, &pool, guild_id_as_int, token.viewer(), query.as_role).await?;
 
     let mut dirs_vec = crate::server_timing::measure(
         "tree",
@@ -678,14 +666,8 @@ pub async fn get_session_listing_entry(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("recording_session_id".into()))?;
 
-    let (permitted, channel_access) = tree_scope(
-        &req,
-        &pool,
-        guild_id,
-        crate::permissions::Viewer::of(&token),
-        query.as_role,
-    )
-    .await?;
+    let (permitted, channel_access) =
+        tree_scope(&req, &pool, guild_id, token.viewer(), query.as_role).await?;
     let entry = crate::server_timing::measure(
         "tree",
         get_session_entry(

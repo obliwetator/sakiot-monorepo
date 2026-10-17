@@ -157,7 +157,7 @@ pub async fn get_current_user_guilds(
         .fetch_all(pool.get_ref())
         .await?
     } else {
-        member_guilds(pool.get_ref(), crate::permissions::Viewer::of(&token_data)).await?
+        member_guilds(pool.get_ref(), token_data.viewer()).await?
     };
 
     Ok(HttpResponse::Ok().json(result))

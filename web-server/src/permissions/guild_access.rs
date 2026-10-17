@@ -12,7 +12,7 @@ use crate::errors::AppError;
 
 pub struct GuildAccess {
     facts: GuildFacts,
-    viewer: sakiot_permissions::Viewer,
+    viewer: Viewer,
     /// The previewed role, for a manager's view-as-role.
     as_role: Option<i64>,
     access: Result<Access, MembershipUnavailable>,
@@ -28,7 +28,6 @@ impl GuildAccess {
         viewer: Viewer,
         as_role: Option<i64>,
     ) -> Result<Self, AppError> {
-        let viewer = sakiot_permissions::Viewer::from(viewer);
         let facts = facts::load(executor, guild_id, &[viewer.user_id], as_role.as_slice()).await?;
         let access = facts.access(viewer);
         Ok(Self {

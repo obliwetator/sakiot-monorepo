@@ -238,6 +238,6 @@ pub async fn get_voice_presence(
     let token = token.ok_or(AppError::Unauthorized)?;
     let guild_id = path.into_inner();
     require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let presence = voice_presence(&pool, guild_id, Viewer::of(&token), query.as_role).await?;
+    let presence = voice_presence(&pool, guild_id, token.viewer(), query.as_role).await?;
     Ok(HttpResponse::Ok().json(presence))
 }

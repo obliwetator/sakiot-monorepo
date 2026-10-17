@@ -11,7 +11,7 @@ use actix_web::web;
 use sakiot_permissions::Capabilities;
 use sqlx::{PgConnection, Pool, Postgres};
 
-use crate::auth::{Access, AuthKind, Token};
+use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
 mod facts;
@@ -20,7 +20,7 @@ mod guild_access;
 pub mod legacy;
 
 pub use guild_access::GuildAccess;
-pub use sakiot_permissions::Permissions;
+pub use sakiot_permissions::{Permissions, Viewer};
 
 /// Begin a read-only transaction that sees one consistent snapshot. A
 /// permission check is a single statement and needs none of its own; callers
@@ -34,48 +34,13 @@ pub async fn begin_snapshot(
         .await?)
 }
 
-/// Who is asking. A dev login exists only in local, staging and preview
-/// builds (`dev-login` feature), where guilds are seeded rather than seen by
-/// the bot; membership follows different rules there.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Viewer {
-    pub user_id: i64,
-    pub dev: bool,
-}
-
-impl Viewer {
-    pub fn of(token: &Token<Access>) -> Self {
-        Self {
-            user_id: token.user_id,
-            dev: token.auth_kind == AuthKind::Dev,
-        }
-    }
-
-    /// A Discord login.
-    pub fn discord(user_id: i64) -> Self {
-        Self {
-            user_id,
-            dev: false,
-        }
-    }
-
-    /// The viewer of a request the auth middleware let through.
-    pub fn of_request(req: &actix_web::HttpRequest) -> Result<Self, AppError> {
-        use actix_web::HttpMessage;
-        req.extensions()
-            .get::<Token<Access>>()
-            .map(Self::of)
-            .ok_or(AppError::Unauthorized)
-    }
-}
-
-impl From<Viewer> for sakiot_permissions::Viewer {
-    fn from(viewer: Viewer) -> Self {
-        Self {
-            user_id: viewer.user_id,
-            dev: viewer.dev,
-        }
-    }
+/// The viewer of a request the auth middleware let through.
+pub fn request_viewer(req: &actix_web::HttpRequest) -> Result<Viewer, AppError> {
+    use actix_web::HttpMessage;
+    req.extensions()
+        .get::<Token<Access>>()
+        .map(Token::viewer)
+        .ok_or(AppError::Unauthorized)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -237,7 +202,7 @@ pub async fn require_guild_manager(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
 ) -> Result<i64, AppError> {
-    let viewer = Viewer::of_request(req)?;
+    let viewer = request_viewer(req)?;
     if GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
         .await?
         .manages()?

@@ -98,7 +98,7 @@ pub async fn get_clip(
         guild_id,
         row.channel_id,
         row.recording_session_id,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
     )
     .await?;
 
@@ -156,13 +156,7 @@ pub async fn get_clips(
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
     require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(
-        &pool,
-        guild_id,
-        crate::permissions::Viewer::of(&token),
-        query.as_role,
-    )
-    .await?;
+    let permitted = listing_channels_for(&pool, guild_id, token.viewer(), query.as_role).await?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<ClipInfo>::new()));
     }
@@ -289,7 +283,7 @@ pub async fn play_clip(
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, clip_id) = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    let viewer = crate::permissions::Viewer::of(&token);
+    let viewer = token.viewer();
     let user_id = viewer.user_id;
     let clip = sqlx::query!(
         "SELECT channel_id, recording_session_id
@@ -552,7 +546,7 @@ pub async fn create_clip(
     path: web::Path<(i64, i64, i32, i32, String)>,
     clip_duration: web::Json<StartEnd>,
 ) -> Result<HttpResponse, AppError> {
-    let viewer = crate::permissions::Viewer::of_request(&req)?;
+    let viewer = crate::permissions::request_viewer(&req)?;
     let user_id = viewer.user_id;
     let (guild_id, channel_id, year, month, file_name_from_url) = path.into_inner();
     if !is_valid_file_segment(&file_name_from_url) {

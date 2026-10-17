@@ -353,16 +353,10 @@ pub async fn get_session_channel_mix(
 ) -> Result<web::Json<ChannelMixResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let plan = measure(
         "plan",
-        build_mix_plan(
-            &pool,
-            &access,
-            crate::permissions::Viewer::of(&token),
-            query.scope(),
-        ),
+        build_mix_plan(&pool, &access, token.viewer(), query.scope()),
     )
     .await?;
     let mut response = measure("status", mix_response(&plan, &access, &container, true)).await?;
@@ -411,15 +405,8 @@ pub async fn generate_session_channel_mix(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
-    let base_plan = build_mix_plan(
-        &pool,
-        &access,
-        crate::permissions::Viewer::of(&token),
-        query.scope(),
-    )
-    .await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
+    let base_plan = build_mix_plan(&pool, &access, token.viewer(), query.scope()).await?;
     let settings = canonical_generation_settings(
         &base_plan,
         body.map(|body| body.into_inner().participants)
@@ -463,7 +450,7 @@ pub async fn generate_session_channel_mix(
     let job = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         &key,
         &resource,
         &job_request,
@@ -567,12 +554,11 @@ pub async fn get_session_channel_mix_media(
 ) -> Result<impl Responder, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let plan = build_mix_plan(
         &pool,
         &access,
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         query.scope.unwrap_or_default(),
     )
     .await?;

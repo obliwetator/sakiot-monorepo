@@ -31,8 +31,7 @@ pub async fn download_session(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let job_request = MediaJobRequest::SessionDownload {
         session_id,
         start: query.start,
@@ -60,7 +59,7 @@ pub async fn download_session(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         &idempotency_key,
         &resource_key,
         &job_request,
@@ -159,8 +158,7 @@ pub async fn get_session_silence_free(
 ) -> Result<NamedFile, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let output = session_silence_free_path(&access)?;
     let disposition = if query.download.unwrap_or(false) {
         actix_web::http::header::DispositionType::Attachment
@@ -204,8 +202,7 @@ pub async fn get_session_silence_removal_status(
 ) -> Result<web::Json<SilenceFreeSessionResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let output = session_silence_free_path(&access)?;
     let cache_key = silence_removal_progress_key(session_id);
 
@@ -272,8 +269,7 @@ pub async fn remove_session_silence(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access =
-        require_session_access(&pool, session_id, crate::permissions::Viewer::of(&token)).await?;
+    let access = require_session_access(&pool, session_id, token.viewer()).await?;
     let output = session_silence_free_path(&access)?;
     let cache_key = silence_removal_progress_key(session_id);
     let force = query.force.unwrap_or(false);
@@ -290,7 +286,7 @@ pub async fn remove_session_silence(
     let status = crate::media_jobs::enqueue(
         pool.get_ref(),
         Some(access.guild_id),
-        crate::permissions::Viewer::of(&token),
+        token.viewer(),
         &key,
         &cache_key,
         &job_request,
