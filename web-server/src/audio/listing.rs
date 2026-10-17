@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use actix_web::{HttpResponse, get, web};
 use chrono::Datelike;
+use sakiot_permissions::{Capabilities, RolePreview};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::{AsRoleQuery, listing_channels_for, require_role_preview};
+use crate::permissions::{AsRoleQuery, GuildAccess, Viewer};
 
 use super::types::{Channels, Directories, File};
 
@@ -220,20 +221,17 @@ struct SessionListing {
 }
 
 /// Role-preview access level for a session spanning `journey` channels:
-/// "can-listen" when every channel is joinable, "visible-only" when every
-/// channel is at least viewable, "hidden" when any is not even viewable.
-fn session_access_level(
-    journey: &HashSet<i64>,
-    channel_access: &std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>,
-) -> &'static str {
-    let all = |predicate: fn(&crate::permissions::RoleChannelAccess) -> bool| {
+/// "can-listen" when the role can listen in every channel, "visible-only"
+/// when it can at least see every channel, "hidden" otherwise.
+fn session_access_level(journey: &HashSet<i64>, preview: &RolePreview) -> &'static str {
+    let all = |capability| {
         journey
             .iter()
-            .all(|channel| channel_access.get(channel).is_some_and(predicate))
+            .all(|&channel| preview.access.allows(channel, capability))
     };
-    if all(|access| access.joinable) {
+    if all(Capabilities::LISTEN_OTHERS) {
         "can-listen"
-    } else if all(|access| access.viewable) {
+    } else if all(Capabilities::VIEW_PRESENCE) {
         "visible-only"
     } else {
         "hidden"
@@ -256,8 +254,7 @@ struct ListingRow {
 async fn get_session_tree(
     pool: &Pool<Postgres>,
     guild_id: i64,
-    permitted: &HashSet<i64>,
-    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
+    scope: &TreeScope,
 ) -> Result<Vec<Channels>, AppError> {
     let rows = sqlx::query_as!(
         ListingRow,
@@ -304,7 +301,7 @@ async fn get_session_tree(
     .fetch_all(pool)
     .await?;
 
-    Ok(assemble_tree(rows, permitted, channel_access))
+    Ok(assemble_tree(rows, scope))
 }
 
 /// The tree entry for one logical session, exactly as the full listing would
@@ -314,8 +311,7 @@ async fn get_session_entry(
     pool: &Pool<Postgres>,
     guild_id: i64,
     recording_session_id: i64,
-    permitted: &HashSet<i64>,
-    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
+    scope: &TreeScope,
 ) -> Result<Option<Channels>, AppError> {
     let rows = sqlx::query_as!(
         ListingRow,
@@ -337,19 +333,13 @@ async fn get_session_entry(
     .fetch_all(pool)
     .await?;
 
-    Ok(assemble_tree(rows, permitted, channel_access)
-        .into_iter()
-        .next())
+    Ok(assemble_tree(rows, scope).into_iter().next())
 }
 
 /// Group listing rows into the channel → year → month tree, keeping only
 /// what the viewer may see. Shared by the full listing and the one-session
 /// lookup so both apply the same journey authorization and annotations.
-fn assemble_tree(
-    rows: Vec<ListingRow>,
-    permitted: &HashSet<i64>,
-    channel_access: Option<&std::collections::HashMap<i64, crate::permissions::RoleChannelAccess>>,
-) -> Vec<Channels> {
+fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
     let mut listings: HashMap<i64, SessionListing> = HashMap::new();
     for row in rows {
         let listing_id = row.listing_id;
@@ -383,18 +373,21 @@ fn assemble_tree(
             listing.channel_journey.iter().copied().collect()
         };
         // Role previews annotate what the role could do with each session;
-        // normal listings hide whatever the viewer cannot fully hear. The
-        // preview map holds only the manager's own channels
-        // (`role_access_for_preview`), so a session touching any other
-        // channel disappears rather than showing up as `hidden`.
-        let access = match channel_access {
-            Some(map) => {
-                if !audible.iter().all(|channel| map.contains_key(channel)) {
+        // normal listings hide whatever the viewer cannot fully hear. A
+        // preview lists only the manager's own channels, so a session
+        // touching any other channel disappears rather than showing up as
+        // `hidden`.
+        let access = match scope {
+            TreeScope::Preview(preview) => {
+                if !audible
+                    .iter()
+                    .all(|channel| preview.listed.contains(channel))
+                {
                     continue;
                 }
-                Some(session_access_level(&audible, map).to_string())
+                Some(session_access_level(&audible, preview).to_string())
             }
-            None => {
+            TreeScope::Own(permitted) => {
                 if !audible.iter().all(|channel| permitted.contains(channel)) {
                     continue;
                 }
@@ -488,7 +481,6 @@ fn assemble_tree(
 )]
 #[get("/current/{guild_id}/live-stems")]
 pub async fn get_live_stems(
-    req: actix_web::HttpRequest,
     query: web::Query<AsRoleQuery>,
     path: web::Path<String>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -500,8 +492,9 @@ pub async fn get_live_stems(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(&pool, guild_id, token.viewer(), query.as_role).await?;
+    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+        .await?
+        .listing_channels(Capabilities::LISTEN_OTHERS)?;
 
     let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
     let rows = crate::server_timing::measure(
@@ -555,7 +548,6 @@ pub async fn get_live_stems(
 )]
 #[get("/current/{guild_id}")]
 pub async fn get_current_month_permission(
-    req: actix_web::HttpRequest,
     query: web::Query<AsRoleQuery>,
     path: web::Path<String>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -568,19 +560,11 @@ pub async fn get_current_month_permission(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    let (permission_hashset, channel_access) =
-        tree_scope(&req, &pool, guild_id_as_int, token.viewer(), query.as_role).await?;
+    let scope = tree_scope(&pool, guild_id_as_int, token.viewer(), query.as_role).await?;
 
-    let mut dirs_vec = crate::server_timing::measure(
-        "tree",
-        get_session_tree(
-            &pool,
-            guild_id_as_int,
-            &permission_hashset,
-            channel_access.as_ref(),
-        ),
-    )
-    .await?;
+    let mut dirs_vec =
+        crate::server_timing::measure("tree", get_session_tree(&pool, guild_id_as_int, &scope))
+            .await?;
 
     if let Err(e) = crate::server_timing::measure(
         "names",
@@ -594,35 +578,26 @@ pub async fn get_current_month_permission(
     Ok(HttpResponse::Ok().json(dirs_vec))
 }
 
-type RoleAccessMap = HashMap<i64, crate::permissions::RoleChannelAccess>;
+/// What a recording tree request may show.
+enum TreeScope {
+    /// The sessions the viewer can hear in full: those recorded only in
+    /// these channels.
+    Own(HashSet<i64>),
+    /// A manager's role preview: the sessions of the manager's own channels,
+    /// each annotated with what the role could do with it.
+    Preview(RolePreview),
+}
 
-/// What a recording tree request may show: the viewer's own channels, or for
-/// a manager's role preview the role's joinable channels plus the per-channel
-/// access map used for annotations (clipped to the manager's own view).
 async fn tree_scope(
-    req: &actix_web::HttpRequest,
-    pool: &web::Data<Pool<Postgres>>,
+    pool: &Pool<Postgres>,
     guild_id: i64,
-    viewer: crate::permissions::Viewer,
+    viewer: Viewer,
     as_role: Option<i64>,
-) -> Result<(HashSet<i64>, Option<RoleAccessMap>), AppError> {
-    require_role_preview(req, pool, guild_id, as_role).await?;
-    Ok(match as_role {
-        Some(role_id) => {
-            let access =
-                crate::permissions::role_access_for_preview(pool, guild_id, viewer, role_id)
-                    .await?;
-            let joinable = access
-                .iter()
-                .filter(|(_, a)| a.joinable)
-                .map(|(channel_id, _)| *channel_id)
-                .collect();
-            (joinable, Some(access))
-        }
-        None => (
-            crate::permissions::visible_channels_for_user(pool, guild_id, viewer).await?,
-            None,
-        ),
+) -> Result<TreeScope, AppError> {
+    let access = GuildAccess::load(pool, guild_id, viewer, as_role).await?;
+    Ok(match access.role_preview()? {
+        Some(preview) => TreeScope::Preview(preview),
+        None => TreeScope::Own(access.channels(Capabilities::LISTEN_OTHERS)?),
     })
 }
 
@@ -651,7 +626,6 @@ async fn tree_scope(
 )]
 #[get("/current/{guild_id}/sessions/{recording_session_id}")]
 pub async fn get_session_listing_entry(
-    req: actix_web::HttpRequest,
     query: web::Query<AsRoleQuery>,
     path: web::Path<(String, String)>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -666,17 +640,10 @@ pub async fn get_session_listing_entry(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("recording_session_id".into()))?;
 
-    let (permitted, channel_access) =
-        tree_scope(&req, &pool, guild_id, token.viewer(), query.as_role).await?;
+    let scope = tree_scope(&pool, guild_id, token.viewer(), query.as_role).await?;
     let entry = crate::server_timing::measure(
         "tree",
-        get_session_entry(
-            &pool,
-            guild_id,
-            session_id,
-            &permitted,
-            channel_access.as_ref(),
-        ),
+        get_session_entry(&pool, guild_id, session_id, &scope),
     )
     .await?;
     let Some(entry) = entry else {

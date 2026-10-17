@@ -1,9 +1,10 @@
 use actix_web::{HttpRequest, HttpResponse, delete, get, put, web};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
-use crate::permissions::require_guild_manager;
+use crate::permissions::require_capability;
 
 pub const DEFAULT_PENDING_CAP_SECONDS: i32 = 6 * 60 * 60;
 pub const MIN_PENDING_CAP_SECONDS: i32 = 60;
@@ -39,7 +40,7 @@ pub async fn get_voice_settings(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     let configured = sqlx::query_scalar!(
         "SELECT pending_cap_seconds FROM guild_voice_settings WHERE guild_id = $1",
         guild_id
@@ -75,7 +76,9 @@ pub async fn put_voice_settings(
     body: web::Json<GuildVoiceSettingsBody>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    let user_id = require_guild_manager(&req, &pool, guild_id).await?;
+    let user_id = require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS)
+        .await?
+        .user_id;
     if body.pending_cap_seconds < MIN_PENDING_CAP_SECONDS {
         return Err(AppError::BadRequest(format!(
             "The pending recording cap must be at least {MIN_PENDING_CAP_SECONDS} seconds."
@@ -123,7 +126,7 @@ pub async fn delete_voice_settings(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     sqlx::query!(
         "DELETE FROM guild_voice_settings WHERE guild_id = $1",
         guild_id

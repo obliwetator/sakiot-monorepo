@@ -1,9 +1,10 @@
 use actix_web::{HttpRequest, HttpResponse, delete, get, put, web};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
-use crate::permissions::require_guild_manager;
+use crate::permissions::require_capability;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct GuildCooldown {
@@ -57,7 +58,7 @@ pub async fn get_guild_cooldown(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
 
     let row = sqlx::query!(
         "SELECT cooldown_seconds FROM guild_jam_cooldowns WHERE guild_id = $1",
@@ -94,7 +95,7 @@ pub async fn set_guild_cooldown(
     body: web::Json<CooldownBody>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     validate_seconds(body.cooldown_seconds)?;
 
     sqlx::query!(
@@ -131,7 +132,7 @@ pub async fn list_user_overrides(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
 
     let rows = sqlx::query!(
         "SELECT user_id, cooldown_seconds, updated_at
@@ -181,7 +182,7 @@ pub async fn set_user_override(
     body: web::Json<CooldownBody>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, user_id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     validate_seconds(body.cooldown_seconds)?;
 
     sqlx::query!(
@@ -222,7 +223,7 @@ pub async fn delete_user_override(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, user_id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
 
     sqlx::query!(
         "DELETE FROM user_jam_cooldown_overrides WHERE guild_id = $1 AND user_id = $2",

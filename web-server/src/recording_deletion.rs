@@ -8,12 +8,13 @@ use std::time::Duration;
 use actix_web::{HttpRequest, HttpResponse, delete, get, web};
 use chrono::{DateTime, Datelike, Utc};
 use sakiot_paths::{DataRoots, RecordingKey, SessionKey};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::{AppError, ErrorKind, JobError};
 use crate::media_archive::MediaArchive;
-use crate::permissions::require_guild_manager;
+use crate::permissions::require_capability;
 
 mod files;
 mod process;
@@ -118,7 +119,9 @@ pub async fn delete_recording(
     policy: web::Data<DeletionPolicy>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, session_id) = path.into_inner();
-    let user_id = require_guild_manager(&req, &pool, guild_id).await?;
+    let user_id = require_capability(&req, &pool, guild_id, Capabilities::DELETE_RECORDINGS)
+        .await?
+        .user_id;
     let mode = match query.mode.as_deref() {
         None | Some("soft") => DeletionMode::Soft,
         Some("permanent") => DeletionMode::Permanent,
@@ -154,7 +157,7 @@ pub async fn get_recording_deletion(
     path: web::Path<(i64, String)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::DELETE_RECORDINGS).await?;
     Ok(HttpResponse::Ok().json(load_status(&pool, guild_id, &id).await?))
 }
 

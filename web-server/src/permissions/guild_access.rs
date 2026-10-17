@@ -1,13 +1,14 @@
-//! A viewer's access to one guild, loaded once and asked everything.
+//! A viewer's access to one guild, loaded once per request and asked
+//! everything.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use sakiot_permissions::{
     Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, Permissions, RoleNotFound,
-    RolePreview,
+    RolePreview, Viewer,
 };
 
-use super::{Viewer, facts};
+use super::facts;
 use crate::errors::AppError;
 
 pub struct GuildAccess {
@@ -29,13 +30,38 @@ impl GuildAccess {
         as_role: Option<i64>,
     ) -> Result<Self, AppError> {
         let facts = facts::load(executor, guild_id, &[viewer.user_id], as_role.as_slice()).await?;
+        Ok(Self::new(facts, viewer, as_role))
+    }
+
+    /// The viewer's access to each of `guilds`, in one statement, keyed by
+    /// guild.
+    pub async fn load_many<'e>(
+        executor: impl sqlx::PgExecutor<'e>,
+        guilds: &[i64],
+        viewer: Viewer,
+    ) -> Result<HashMap<i64, Self>, AppError> {
+        Ok(facts::load_many(executor, guilds, &[viewer.user_id], &[])
+            .await?
+            .into_iter()
+            .map(|facts| (facts.guild_id, Self::new(facts, viewer, None)))
+            .collect())
+    }
+
+    /// The viewer's access as `facts` decide it. `facts` must hold the
+    /// viewer and `as_role`.
+    #[doc(hidden)]
+    pub fn new(facts: GuildFacts, viewer: Viewer, as_role: Option<i64>) -> Self {
         let access = facts.access(viewer);
-        Ok(Self {
+        Self {
             facts,
             viewer,
             as_role,
             access,
-        })
+        }
+    }
+
+    pub fn guild_id(&self) -> i64 {
+        self.facts.guild_id
     }
 
     pub fn access(&self) -> Result<&Access, AppError> {
@@ -53,15 +79,55 @@ impl GuildAccess {
         Ok(access)
     }
 
-    /// Whether the viewer holds any management capability. An outsider
-    /// holds none.
-    pub fn manages(&self) -> Result<bool, AppError> {
-        Ok(self.access()?.guild.intersects(Capabilities::MANAGEMENT))
+    /// Whether the viewer holds every guild-wide capability in `capability`.
+    /// An outsider holds none.
+    pub fn holds(&self, capability: Capabilities) -> Result<bool, AppError> {
+        Ok(self.access()?.guild.contains(capability))
+    }
+
+    /// Fails unless the viewer holds the guild-wide `capability`.
+    pub fn require(&self, capability: Capabilities) -> Result<(), AppError> {
+        if self.holds(capability)? {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
     }
 
     /// The channels where the member holds `capability`.
     pub fn channels(&self, capability: Capabilities) -> Result<HashSet<i64>, AppError> {
         Ok(self.require_member()?.channels_with(capability).collect())
+    }
+
+    /// Fails unless the member holds `capability` in `channel_id`.
+    pub fn require_channel(
+        &self,
+        channel_id: i64,
+        capability: Capabilities,
+    ) -> Result<(), AppError> {
+        if self.require_member()?.allows(channel_id, capability) {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
+    }
+
+    /// Fails unless the member holds `capability` in every one of
+    /// `channels`.
+    pub fn require_channels(
+        &self,
+        channels: impl IntoIterator<Item = i64>,
+        capability: Capabilities,
+    ) -> Result<(), AppError> {
+        let access = self.require_member()?;
+        if channels
+            .into_iter()
+            .all(|channel_id| access.allows(channel_id, capability))
+        {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
     }
 
     /// Discord's guild-level permissions: everything for the owner, nothing
@@ -73,17 +139,34 @@ impl GuildAccess {
             .map_err(|MembershipUnavailable| AppError::MembershipUnavailable)
     }
 
-    /// The member's view as the previewed role, clipped to their own; `None`
-    /// when not previewing. A role that is not the guild's is reported
-    /// before membership is checked.
+    /// The Discord permissions a member whose only role is the previewed one
+    /// would hold at guild level.
+    pub fn previewed_role_permissions(&self) -> Option<Permissions> {
+        self.as_role
+            .map(|role_id| self.facts.role_permissions(role_id).base)
+    }
+
+    /// The previewed role's view, clipped to the viewer's own; `None` when
+    /// not previewing. Previewing takes `PREVIEW_ROLES`, checked before
+    /// whether the role is the guild's.
     pub fn role_preview(&self) -> Result<Option<RolePreview>, AppError> {
         let Some(role_id) = self.as_role else {
             return Ok(None);
         };
+        self.require(Capabilities::PREVIEW_ROLES)?;
         let role = self
             .facts
             .role_access(role_id)
             .map_err(|RoleNotFound| AppError::RoleNotFound)?;
         Ok(Some(RolePreview::new(self.require_member()?, &role)))
+    }
+
+    /// The channels a listing shows for `capability`: the viewer's own, or
+    /// the previewed role's.
+    pub fn listing_channels(&self, capability: Capabilities) -> Result<HashSet<i64>, AppError> {
+        match self.role_preview()? {
+            None => self.channels(capability),
+            Some(preview) => Ok(preview.access.channels_with(capability).collect()),
+        }
     }
 }

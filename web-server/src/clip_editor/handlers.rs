@@ -83,7 +83,7 @@ pub async fn compose_clip(
                 ));
             }
             if row.user_id != Some(user_id) {
-                require_guild_manager(&req, &pool, guild_id).await?;
+                require_capability(&req, &pool, guild_id, Capabilities::MODERATE_CLIPS).await?;
             }
             Some(ComposeOverwrite {
                 clip_id: target_id.to_string(),

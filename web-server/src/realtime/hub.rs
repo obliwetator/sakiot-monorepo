@@ -18,12 +18,14 @@ use super::metrics::{self, metrics};
 use super::protocol::{
     PROTOCOL_VERSION, PresenceSeat, PresenceUpdate, Resource, ResyncReason, ServerMessage,
 };
-use crate::permissions::{SubscriptionAccess, Viewer, subscription_access};
+use crate::permissions::Viewer;
 use crate::presence::Seat;
 
+mod access;
 mod presence;
 mod routing;
 
+use access::SubscriptionAccess;
 use presence::*;
 use routing::*;
 
@@ -233,7 +235,8 @@ impl Hub {
     ) {
         let generation = connection.generation.fetch_add(1, Ordering::SeqCst) + 1;
         metrics().authorization_recomputes.add(1, &[]);
-        let result = subscription_access(&self.pool, guild_id, connection.viewer, as_role).await;
+        let result =
+            SubscriptionAccess::load(&self.pool, guild_id, connection.viewer, as_role).await;
         if connection.generation.load(Ordering::SeqCst) != generation {
             return; // A newer set_scope superseded this one.
         }
@@ -287,7 +290,7 @@ impl Hub {
                 continue;
             }
             metrics().authorization_recomputes.add(1, &[]);
-            let result = subscription_access(
+            let result = SubscriptionAccess::load(
                 &self.pool,
                 subscription.guild_id,
                 connection.viewer,

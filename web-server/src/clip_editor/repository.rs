@@ -7,6 +7,8 @@ pub(super) async fn resolve_sources(
     viewer: crate::permissions::Viewer,
     segments: &[ComposeSegment],
 ) -> Result<Vec<ResolvedSource>, AppError> {
+    let guild =
+        crate::permissions::GuildAccess::load(pool.get_ref(), guild_id, viewer, None).await?;
     let mut resolved = Vec::with_capacity(segments.len());
     for (index, segment) in segments.iter().enumerate() {
         let row = sqlx::query!(
@@ -26,16 +28,12 @@ pub(super) async fn resolve_sources(
             )));
         }
         if let Some(recording_session_id) = row.recording_session_id {
-            crate::audio::sessions::require_session_access(pool, recording_session_id, viewer)
-                .await?;
+            crate::audio::sessions::require_session_in(pool, &guild, recording_session_id).await?;
         } else {
-            crate::permissions::require_channel_access(
-                pool,
-                guild_id,
+            guild.require_channel(
                 row.channel_id.ok_or(AppError::ClipNotFound)?,
-                viewer,
-            )
-            .await?;
+                sakiot_permissions::Capabilities::LISTEN_OTHERS,
+            )?;
         }
         let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
         let path = crate::media_archive::clip_local_path(&saved_file_name)?;

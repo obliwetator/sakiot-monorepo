@@ -1,8 +1,9 @@
 use actix_web::{HttpRequest, HttpResponse, get, put, web};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
-use crate::{errors::AppError, permissions::require_guild_manager};
+use crate::{errors::AppError, permissions::require_capability};
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct GuildRecordingPolicy {
@@ -94,7 +95,7 @@ pub async fn get_recording_policy(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     let channels = voice_channels(&pool, guild_id).await?;
     let row = sqlx::query!(
         "SELECT retention_days, excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
@@ -144,7 +145,9 @@ pub async fn put_recording_policy(
     body: web::Json<GuildRecordingPolicyBody>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    let user_id = require_guild_manager(&req, &pool, guild_id).await?;
+    let user_id = require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS)
+        .await?
+        .user_id;
     let ids = validate(&body)?;
     let mut tx = pool.begin().await?;
     // The bot takes the same lock before opening a recording fragment. A

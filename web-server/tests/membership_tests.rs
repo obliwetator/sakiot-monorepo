@@ -3,13 +3,14 @@
 
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use sakiot_permissions::Membership;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
 use web_server::config::Config;
 use web_server::errors::AppError;
-use web_server::permissions::{Permissions, Viewer, get_combined_perm_for_user};
+use web_server::permissions::{GuildAccess, Permissions, Viewer};
 use web_server::user::get_current_user_guilds;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -24,8 +25,11 @@ const VIEW_CHANNEL: i64 = 1 << 10;
 const CONNECT: i64 = 1 << 20;
 const CSRF: &str = "csrf-test-token";
 
-fn everyone() -> Permissions {
-    Permissions::from_bits_retain(VIEW_CHANNEL | CONNECT)
+async fn membership(pool: &PgPool, guild_id: i64, viewer: Viewer) -> Result<Membership, AppError> {
+    Ok(GuildAccess::load(pool, guild_id, viewer, None)
+        .await?
+        .access()?
+        .membership)
 }
 
 fn dev(user_id: i64) -> Viewer {
@@ -99,10 +103,7 @@ async fn seed(pool: &PgPool) -> sqlx::Result<()> {
 async fn a_complete_roster_stays_authoritative_after_the_bot_leaves(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     let member = Viewer::discord(MEMBER);
-    assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, member).await?,
-        everyone()
-    );
+    assert_eq!(membership(&pool, GUILD, member).await?, Membership::Member);
 
     // The bot was removed (or every instance stopped): the roster is no
     // longer kept current, but it is the last complete one and still decides.
@@ -112,13 +113,10 @@ async fn a_complete_roster_stays_authoritative_after_the_bot_leaves(pool: PgPool
     sqlx::query("UPDATE guild_projection_state SET owner_instance_id = NULL")
         .execute(&pool)
         .await?;
+    assert_eq!(membership(&pool, GUILD, member).await?, Membership::Member);
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, member).await?,
-        everyone()
-    );
-    assert_eq!(
-        get_combined_perm_for_user(&pool, OTHER_GUILD, member).await?,
-        Permissions::empty()
+        membership(&pool, OTHER_GUILD, member).await?,
+        Membership::Outsider
     );
 
     // A guild the bot never tracked has no members at all, only its owner.
@@ -126,12 +124,12 @@ async fn a_complete_roster_stays_authoritative_after_the_bot_leaves(pool: PgPool
         .execute(&pool)
         .await?;
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, member).await?,
-        Permissions::empty()
+        membership(&pool, GUILD, member).await?,
+        Membership::Outsider
     );
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, Viewer::discord(OWNER)).await?,
-        Permissions::all()
+        membership(&pool, GUILD, Viewer::discord(OWNER)).await?,
+        Membership::Owner
     );
     Ok(())
 }
@@ -142,16 +140,16 @@ async fn dev_logins_follow_the_seeded_guilds_without_a_roster(pool: PgPool) -> T
     // The dev account is not on the roster, and staging's bot is in a
     // different server anyway; the seeded row makes it a member.
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, dev(DEV)).await?,
-        everyone()
+        membership(&pool, GUILD, dev(DEV)).await?,
+        Membership::Member
     );
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, Viewer::discord(DEV)).await?,
-        Permissions::empty()
+        membership(&pool, GUILD, Viewer::discord(DEV)).await?,
+        Membership::Outsider
     );
     assert_eq!(
-        get_combined_perm_for_user(&pool, OTHER_GUILD, dev(DEV)).await?,
-        Permissions::empty()
+        membership(&pool, OTHER_GUILD, dev(DEV)).await?,
+        Membership::Outsider
     );
 
     // Without any roster the dev login is unaffected, while a Discord login
@@ -160,11 +158,11 @@ async fn dev_logins_follow_the_seeded_guilds_without_a_roster(pool: PgPool) -> T
         .execute(&pool)
         .await?;
     assert_eq!(
-        get_combined_perm_for_user(&pool, GUILD, dev(DEV)).await?,
-        everyone()
+        membership(&pool, GUILD, dev(DEV)).await?,
+        Membership::Member
     );
     assert!(matches!(
-        get_combined_perm_for_user(&pool, GUILD, Viewer::discord(MEMBER)).await,
+        membership(&pool, GUILD, Viewer::discord(MEMBER)).await,
         Err(AppError::MembershipUnavailable)
     ));
     Ok(())

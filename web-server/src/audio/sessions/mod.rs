@@ -29,7 +29,9 @@ mod manifest;
 mod mix;
 mod waveforms;
 
-pub(crate) use access::{require_recording_access, require_session_access};
+pub(crate) use access::{
+    authorize_session, require_recording_access, require_session_access, require_session_in,
+};
 pub use actions::*;
 pub use clips::*;
 pub use manifest::*;

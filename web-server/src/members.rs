@@ -1,14 +1,23 @@
 use actix_web::{HttpRequest, HttpResponse, get, web};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
 use crate::errors::AppError;
-use crate::permissions::{
-    begin_snapshot, get_combined_perm_for_role, require_guild_manager, role_access_for_preview,
-};
+use crate::permissions::{GuildAccess, request_viewer, require_capability};
 
 type DisplayFromstr = As<DisplayFromStr>;
+
+/// A read-only transaction that sees one consistent snapshot, for a page
+/// built from several reads.
+async fn begin_snapshot(
+    pool: &Pool<Postgres>,
+) -> Result<sqlx::Transaction<'static, Postgres>, AppError> {
+    Ok(pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .await?)
+}
 
 #[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct GuildRole {
@@ -58,7 +67,7 @@ pub async fn get_guild_roles(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::PREVIEW_ROLES).await?;
 
     let mut snapshot = begin_snapshot(&pool).await?;
     let rows = sqlx::query!(
@@ -125,7 +134,7 @@ pub async fn get_role_members(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, role_id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    require_capability(&req, &pool, guild_id, Capabilities::PREVIEW_ROLES).await?;
 
     let belongs_to_guild = sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM roles WHERE role_id = $1 AND guild_id = $2) AS "exists!""#,
@@ -224,15 +233,21 @@ pub async fn get_role_view(
     path: web::Path<(i64, i64)>,
 ) -> Result<HttpResponse, AppError> {
     let (guild_id, role_id) = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
-    let manager = crate::permissions::request_viewer(&req)?;
-
+    let access = GuildAccess::load(
+        pool.get_ref(),
+        guild_id,
+        request_viewer(&req)?,
+        Some(role_id),
+    )
+    .await?;
     // Lists the role's access for every voice channel the manager can view
     // and join themselves, including ones the role cannot see at all; a
     // preview never shows more than the manager's own view.
-    let access = role_access_for_preview(&pool, guild_id, manager, role_id).await?;
-    let permission = get_combined_perm_for_role(&pool, guild_id, role_id).await?;
-    let all_ids: Vec<i64> = access.keys().copied().collect();
+    let preview = access.role_preview()?.ok_or(AppError::InternalError)?;
+    let permission = access
+        .previewed_role_permissions()
+        .ok_or(AppError::InternalError)?;
+    let all_ids: Vec<i64> = preview.listed.iter().copied().collect();
     let rows = sqlx::query!(
         "SELECT channel_id, name FROM channels WHERE channel_id = ANY($1)",
         &all_ids
@@ -242,14 +257,15 @@ pub async fn get_role_view(
 
     let mut channels: Vec<RoleChannel> = rows
         .into_iter()
-        .filter_map(|r| {
-            let a = access.get(&r.channel_id)?;
-            Some(RoleChannel {
-                channel_id: r.channel_id,
-                name: r.name.unwrap_or_default(),
-                can_view: a.viewable,
-                can_join: a.joinable,
-            })
+        .map(|r| RoleChannel {
+            channel_id: r.channel_id,
+            name: r.name.unwrap_or_default(),
+            can_view: preview
+                .access
+                .allows(r.channel_id, Capabilities::VIEW_PRESENCE),
+            can_join: preview
+                .access
+                .allows(r.channel_id, Capabilities::LISTEN_OTHERS),
         })
         .collect();
     channels.sort_by(|a, b| a.name.cmp(&b.name));
@@ -351,7 +367,15 @@ pub async fn search_guild_members(
     query: web::Query<MemberSearchQuery>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    require_guild_manager(&req, &pool, guild_id).await?;
+    // The members page, and the cooldowns page's member picker.
+    let access = GuildAccess::load(pool.get_ref(), guild_id, request_viewer(&req)?, None).await?;
+    if !access
+        .access()?
+        .guild
+        .intersects(Capabilities::PREVIEW_ROLES | Capabilities::MANAGE_SETTINGS)
+    {
+        return Err(AppError::Forbidden);
+    }
 
     let limit = query.limit.unwrap_or(MEMBER_PAGE_DEFAULT);
     if !(1..=MEMBER_PAGE_MAX).contains(&limit) {

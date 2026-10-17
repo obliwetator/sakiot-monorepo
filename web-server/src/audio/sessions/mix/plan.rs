@@ -6,7 +6,7 @@ use super::*;
 pub(super) async fn build_mix_plan(
     pool: &web::Data<Pool<Postgres>>,
     access: &SessionAccess,
-    viewer: crate::permissions::Viewer,
+    guild: &crate::permissions::GuildAccess,
     scope: ChannelMixScope,
 ) -> Result<MixPlan, AppError> {
     let selected_timeline_end_ms = super::super::timeline_end_ms(access);
@@ -94,21 +94,22 @@ pub(super) async fn build_mix_plan(
     // Authorize every complete logical contributor before resolving display
     // names or returning the participant list. Legacy rows have no logical
     // parent; their channel permission is the only safe authorization scope.
-    let mut authorized_sessions = HashSet::new();
+    let journeys = measure(
+        "journeys",
+        load_contributor_journeys(pool, access, &inputs.candidates),
+    )
+    .await?;
     for candidate in &inputs.candidates {
-        if let Some(session_id) = candidate.fragment.recording_session_id {
-            if session_id == access.session_id || !authorized_sessions.insert(session_id) {
-                continue;
+        match candidate.fragment.recording_session_id {
+            Some(session_id) if session_id == access.session_id => {}
+            Some(session_id) => {
+                let journey = journeys.get(&session_id).ok_or(AppError::FileNotFound)?;
+                super::super::access::require_journey(guild, journey)?;
             }
-            require_session_access(pool, session_id, viewer).await?;
-        } else {
-            require_channel_access(
-                pool,
-                candidate.fragment.guild_id,
+            None => guild.require_channel(
                 candidate.fragment.channel_id,
-                viewer,
-            )
-            .await?;
+                sakiot_permissions::Capabilities::LISTEN_OTHERS,
+            )?,
         }
     }
 
@@ -207,6 +208,51 @@ pub(super) async fn build_mix_plan(
         fingerprint,
         settings,
     })
+}
+
+/// The journey of each contributing session other than the anchor, in one
+/// statement. A session that is deleted, or not of the anchor's guild, is
+/// missing.
+async fn load_contributor_journeys(
+    pool: &web::Data<Pool<Postgres>>,
+    access: &SessionAccess,
+    candidates: &[CandidateRow],
+) -> Result<HashMap<i64, HashSet<i64>>, AppError> {
+    let session_ids: Vec<i64> = candidates
+        .iter()
+        .filter_map(|candidate| candidate.fragment.recording_session_id)
+        .filter(|&session_id| session_id != access.session_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if session_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query!(
+        r#"SELECT rs.id,
+                  rs.starting_channel_id,
+                  ARRAY(SELECT DISTINCT channel_id
+                          FROM audio_files
+                         WHERE recording_session_id = rs.id) AS "channels!"
+             FROM recording_sessions rs
+            WHERE rs.id = ANY($1)
+              AND rs.guild_id = $2
+              AND rs.deletion_requested_at IS NULL"#,
+        &session_ids,
+        access.guild_id
+    )
+    .fetch_all(pool.get_ref())
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let mut journey: HashSet<i64> = row.channels.into_iter().collect();
+            if journey.is_empty() {
+                journey.insert(row.starting_channel_id);
+            }
+            (row.id, journey)
+        })
+        .collect())
 }
 
 async fn load_mix_candidates(

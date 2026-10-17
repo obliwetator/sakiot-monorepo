@@ -3,13 +3,14 @@ use std::process::Stdio;
 use std::{fs::File, io::BufWriter, io::Write};
 
 use actix_web::{HttpRequest, HttpResponse, get, post, web};
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_archive::MediaArchive;
-use crate::permissions::require_guild_manager;
+use crate::permissions::require_capability;
 
 use crate::audio::clips_path;
 use crate::audio::types::WaveformProgressContainer;

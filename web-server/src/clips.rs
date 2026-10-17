@@ -4,15 +4,13 @@ use actix_web::{
     post, put, route, web,
 };
 
+use sakiot_permissions::Capabilities;
 use serde::{Deserialize, Serialize};
 
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
-use crate::permissions::{
-    AsRoleQuery, listing_channels_for, require_channel_access, require_guild_manager,
-    require_role_preview,
-};
+use crate::permissions::{AsRoleQuery, GuildAccess, require_capability};
 use crate::proto::jammer::JamData;
 use crate::proto::jammer::jam_response::JamResponseEnum;
 use crate::{
@@ -147,7 +145,6 @@ pub async fn get_clip(
 )]
 #[get("/audio/clips/{guild_id}")]
 pub async fn get_clips(
-    req: HttpRequest,
     query: web::Query<AsRoleQuery>,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
@@ -155,8 +152,9 @@ pub async fn get_clips(
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(&pool, guild_id, token.viewer(), query.as_role).await?;
+    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+        .await?
+        .listing_channels(Capabilities::LISTEN_OTHERS)?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<ClipInfo>::new()));
     }
@@ -389,7 +387,7 @@ pub async fn play_clip(
 
 /// Rejects a caller who cannot hear the clip's source: every fragment of its
 /// session for a session clip, else its channel.
-async fn require_clip_source_access(
+pub(crate) async fn require_clip_source_access(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
     channel_id: Option<i64>,
@@ -400,13 +398,12 @@ async fn require_clip_source_access(
         crate::audio::sessions::require_session_access(pool, recording_session_id, viewer).await?;
         return Ok(());
     }
-    require_channel_access(
-        pool,
-        guild_id,
-        channel_id.ok_or(AppError::ClipNotFound)?,
-        viewer,
-    )
-    .await
+    GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
+        .await?
+        .require_channel(
+            channel_id.ok_or(AppError::ClipNotFound)?,
+            Capabilities::LISTEN_OTHERS,
+        )
 }
 
 use crate::audio::StartEnd;
@@ -730,7 +727,7 @@ pub async fn rename_clip(
     .await?
     .ok_or(AppError::ClipNotFound)?;
     if row.user_id != Some(user_id) {
-        require_guild_manager(&req, &pool, guild_id).await?;
+        require_capability(&req, &pool, guild_id, Capabilities::MODERATE_CLIPS).await?;
     }
 
     let result = sqlx::query!(
@@ -789,7 +786,7 @@ pub async fn delete(
     .await?
     .ok_or(AppError::ClipNotFound)?;
     if row.user_id != Some(user_id) {
-        require_guild_manager(&req, &pool, guild_id).await?;
+        require_capability(&req, &pool, guild_id, Capabilities::MODERATE_CLIPS).await?;
     }
 
     let result = sqlx::query!(

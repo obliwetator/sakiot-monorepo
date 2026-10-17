@@ -1,12 +1,13 @@
-use actix_web::{HttpRequest, HttpResponse, Responder, get, web};
+use actix_web::{HttpResponse, Responder, get, web};
 use sakiot_paths::RecordingKey;
+use sakiot_permissions::Capabilities;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::{AsRoleQuery, listing_channels_for, require_role_preview};
+use crate::permissions::{AsRoleQuery, GuildAccess};
 
 type DisplayFromstr = As<DisplayFromStr>;
 
@@ -64,7 +65,6 @@ pub struct StampInfo {
 )]
 #[get("/stamps/{guild_id}")]
 pub async fn get_stamps(
-    req: HttpRequest,
     query: web::Query<AsRoleQuery>,
     pool: web::Data<Pool<Postgres>>,
     path: web::Path<i64>,
@@ -72,8 +72,9 @@ pub async fn get_stamps(
 ) -> Result<impl Responder, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
-    let permitted = listing_channels_for(&pool, guild_id, token.viewer(), query.as_role).await?;
+    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+        .await?
+        .listing_channels(Capabilities::LISTEN_OTHERS)?;
     if permitted.is_empty() {
         return Ok(HttpResponse::Ok().json(Vec::<StampInfo>::new()));
     }

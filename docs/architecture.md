@@ -234,9 +234,14 @@ it always meant. The agent writes the cache one guild per transaction and only
 where it differs from Discord (`fbi-agent/src/database/guild_cache.rs`), so a
 request never sees a guild's role assignments or overwrites half rewritten. It
 removes member role assignments only when its cached member list is complete.
-On the read side, `web-server` loads the facts a check needs in a single
-statement (`web-server/src/permissions/facts.rs`), which sees one consistent
+On the read side, a request loads the viewer's access once
+(`GuildAccess`, `web-server/src/permissions/`) and asks it everything. It
+takes one statement (`permissions/facts.rs`), which sees one consistent
 snapshot, so a cache write committing mid-check cannot mix old and new state.
+Each guild-wide action needs its own capability: `manage_settings` for
+cooldowns, recording policy and voice settings; `preview_roles` for role
+preview and the roles page; `delete_recordings`; and `moderate_clips` for
+someone else's clip.
 Membership comes from the agent's roster, not from the guild list Discord
 returned at login (`GuildFacts::membership`):
 
@@ -266,12 +271,12 @@ VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the
 channels the agent records: voice (type 2) and stage (type 13). Stage channels
 need a Community server, so they are verified by fixture tests only.
 
-Managers (Administrator or MANAGE_GUILD) can preview a guild as one of its
-roles (`as_role` on the session tree, live stems, clips and stamps, and the
-role view under `/api/admin`). A preview never shows more than the manager's
-own view: `role_access_for_preview` keeps only the channels the manager can
-view and join, and a session touching any other channel is dropped rather
-than shown as hidden. Only Administrator bypasses channel overwrites in
+Managers with `preview_roles` (by default Administrator or MANAGE_GUILD) can
+preview a guild as one of its roles (`as_role` on the session tree, live
+stems, clips and stamps, and the role view under `/api/admin`). A preview
+never shows more than the manager's own view: `RolePreview` keeps only the
+channels the manager can view and join, and a session touching any other
+channel is dropped rather than shown as hidden. Only Administrator bypasses channel overwrites in
 Discord, so this matters for MANAGE_GUILD-only managers; owners and
 Administrators see unclipped previews.
 
@@ -300,8 +305,8 @@ voice presence).
   `pg_notification_queue_usage` is exported: a full queue fails every
   notifying commit.
 - **Authorization** (`web-server/src/realtime/hub.rs`) is cached per
-  subscription (viewer, guild, optional role preview) from one consistent
-  snapshot (`permissions::subscription_access`) and recomputed on every
+  subscription (viewer, guild, optional role preview) from one facts load
+  (`SubscriptionAccess`, `realtime/hub/access.rs`) and recomputed on every
   permission event before other events in the batch are routed. Ids go only to
   viewers the HTTP listing would show the item to. A viewer who may have seen
   a session before a change hid it gets an identifier-free `changed` instead.

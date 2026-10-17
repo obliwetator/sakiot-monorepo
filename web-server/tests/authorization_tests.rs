@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use sakiot_permissions::{Capabilities, Membership};
 use sakiot_proto::INTERNAL_SECRET_HEADER;
 use sakiot_proto::fbi_agent::jam_response::JamResponseEnum;
 use sakiot_proto::fbi_agent::jammer_server::{Jammer, JammerServer};
@@ -40,10 +41,7 @@ use web_server::clips::{
 };
 use web_server::fbi_agent_registry::AgentGrpcRegistry;
 use web_server::members::get_role_view;
-use web_server::permissions::{
-    Permissions, Viewer, begin_snapshot, get_combined_perm_for_user, visible_channels,
-    visible_channels_for_user,
-};
+use web_server::permissions::{GuildAccess, Permissions, Viewer};
 use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::stamps::get_stamps;
@@ -58,6 +56,28 @@ const CONNECT_PERMISSION: i64 = 1 << 20;
 const VIEW_CHANNEL_PERMISSION: i64 = 1 << 10;
 const BASE_VOICE_PERMISSIONS: i64 = CONNECT_PERMISSION | VIEW_CHANNEL_PERMISSION;
 const CSRF: &str = "csrf-test-token";
+
+/// The channels the viewer can listen in.
+async fn listening_channels(
+    pool: &PgPool,
+    guild_id: i64,
+    viewer: Viewer,
+) -> Result<std::collections::HashSet<i64>, web_server::errors::AppError> {
+    GuildAccess::load(pool, guild_id, viewer, None)
+        .await?
+        .channels(Capabilities::LISTEN_OTHERS)
+}
+
+async fn access(
+    pool: &PgPool,
+    guild_id: i64,
+    viewer: Viewer,
+) -> Result<sakiot_permissions::Access, web_server::errors::AppError> {
+    Ok(GuildAccess::load(pool, guild_id, viewer, None)
+        .await?
+        .access()?
+        .clone())
+}
 
 fn access_cookie_value() -> Result<String, Box<dyn std::error::Error>> {
     access_cookie_for(USER_ID)
@@ -985,8 +1005,7 @@ async fn view_channel_deny_hides_voice_channel_with_inherited_connect(
     .await?;
 
     let pool = web::Data::new(pool);
-    let visible =
-        visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
+    let visible = listening_channels(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
     assert!(visible.contains(&ALLOWED_CHANNEL_ID));
     assert!(!visible.contains(&hidden_channel_id));
 
@@ -1015,16 +1034,14 @@ async fn the_login_owner_flag_grants_owner_rights_only_to_dev_logins(
         user_id: USER_ID,
         dev: true,
     };
-    assert_eq!(
-        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, dev).await?,
-        Permissions::all()
-    );
+    let owner = access(&pool, ALLOWED_GUILD_ID, dev).await?;
+    assert_eq!(owner.membership, Membership::Owner);
+    assert_eq!(owner.guild, Capabilities::MANAGEMENT);
     // A Discord login's owner rights come from the bot (`guilds.owner_id`)
     // only; the login snapshot's flag counts for nothing.
-    assert_eq!(
-        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?,
-        Permissions::empty()
-    );
+    let member = access(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
+    assert_eq!(member.membership, Membership::Member);
+    assert_eq!(member.guild, Capabilities::empty());
 
     // Without the flag, the dev login is a plain member too.
     sqlx::query("UPDATE user_guilds SET owner = false WHERE id = $1 AND user_id = $2")
@@ -1032,10 +1049,9 @@ async fn the_login_owner_flag_grants_owner_rights_only_to_dev_logins(
         .bind(USER_ID)
         .execute(pool.get_ref())
         .await?;
-    assert_eq!(
-        get_combined_perm_for_user(&pool, ALLOWED_GUILD_ID, dev).await?,
-        Permissions::empty()
-    );
+    let member = access(&pool, ALLOWED_GUILD_ID, dev).await?;
+    assert_eq!(member.membership, Membership::Member);
+    assert_eq!(member.guild, Capabilities::empty());
     Ok(())
 }
 
@@ -2663,46 +2679,6 @@ async fn stage_channel_recordings_follow_view_and_connect(
 // ---- each authorization result reads one consistent snapshot ----
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn authorization_snapshot_ignores_commits_after_its_first_read(
-    pool: PgPool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    seed_authorization_data(&pool).await?;
-    let pool = web::Data::new(pool);
-
-    let mut snapshot = begin_snapshot(&pool).await?;
-    let first = visible_channels(&mut snapshot, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
-    assert!(first.contains(&ALLOWED_CHANNEL_ID));
-
-    // A cache write commits mid-check: the member loses CONNECT.
-    sqlx::query(
-        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
-         VALUES ($1, $2, 'user', 0, $3)",
-    )
-    .bind(ALLOWED_CHANNEL_ID)
-    .bind(USER_ID)
-    .bind(CONNECT_PERMISSION)
-    .execute(pool.get_ref())
-    .await?;
-
-    let second =
-        visible_channels(&mut snapshot, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
-    assert_eq!(
-        second, first,
-        "the snapshot keeps the state it started with"
-    );
-    let write = sqlx::query("DELETE FROM channel_permissions")
-        .execute(&mut *snapshot)
-        .await;
-    assert!(write.is_err(), "the snapshot is read-only");
-    drop(snapshot);
-
-    let fresh =
-        visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
-    assert!(!fresh.contains(&ALLOWED_CHANNEL_ID));
-    Ok(())
-}
-
-#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn authorization_never_mixes_two_committed_states(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2776,8 +2752,7 @@ async fn authorization_never_mixes_two_committed_states(
     let pool = web::Data::new(pool);
     let mut denied = 0;
     for _ in 0..400 {
-        let visible =
-            visible_channels_for_user(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
+        let visible = listening_channels(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID)).await?;
         if !visible.contains(&ALLOWED_CHANNEL_ID) {
             denied += 1;
         }

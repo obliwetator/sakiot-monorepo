@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id,\n                guild_id,\n                user_id,\n                starting_channel_id,\n                state,\n                (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS \"started_at_ms!\",\n                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS ended_at_ms,\n                (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_started_at_ms\n           FROM recording_sessions\n          WHERE id = $1 AND deletion_requested_at IS NULL",
+  "query": "SELECT id,\n                guild_id,\n                user_id,\n                starting_channel_id,\n                state,\n                (EXTRACT(EPOCH FROM started_at) * 1000)::bigint AS \"started_at_ms!\",\n                (EXTRACT(EPOCH FROM ended_at) * 1000)::bigint AS ended_at_ms,\n                (EXTRACT(EPOCH FROM pause_started_at) * 1000)::bigint AS pause_started_at_ms,\n                ARRAY(SELECT DISTINCT channel_id\n                        FROM audio_files\n                       WHERE recording_session_id = rs.id) AS \"channels!\"\n           FROM recording_sessions rs\n          WHERE id = $1 AND deletion_requested_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -75,6 +75,12 @@
         "name": "pause_started_at_ms",
         "type_info": "Int8",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "channels!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -90,8 +96,9 @@
       false,
       null,
       null,
+      null,
       null
     ]
   },
-  "hash": "0325dab4ab688f70fc67c52c049e14b982227aef7fc4ad13e5eac4f6091d2d42"
+  "hash": "4315f45405f3171d4380db986f41d83f1087ac00b4feeb38a3f3fe796e8b0b3b"
 }

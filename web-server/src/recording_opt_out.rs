@@ -43,7 +43,9 @@ pub async fn get_recording_opt_out(
     let user_id = viewer.user_id;
     let guild_id = path.into_inner();
     // Only members may see or change their own recording preference.
-    crate::permissions::require_guild_member(&pool, guild_id, viewer).await?;
+    crate::permissions::GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
+        .await?
+        .require_member()?;
     let opted_out = sqlx::query_scalar!(
         r#"SELECT EXISTS (
              SELECT 1 FROM recording_opt_outs WHERE guild_id = $1 AND user_id = $2
@@ -80,7 +82,9 @@ pub async fn put_recording_opt_out(
     let user_id = viewer.user_id;
     let guild_id = path.into_inner();
     // Only members may see or change their own recording preference.
-    crate::permissions::require_guild_member(&pool, guild_id, viewer).await?;
+    crate::permissions::GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
+        .await?
+        .require_member()?;
     let mut tx = pool.begin().await?;
     // The bot takes the same lock while it checks the opt-out and opens a
     // recording fragment, so none can open after this commits.

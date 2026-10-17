@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rs.id,\n                  rs.starting_channel_id,\n                  ARRAY(SELECT DISTINCT channel_id\n                          FROM audio_files\n                         WHERE recording_session_id = rs.id) AS \"channels!\"\n             FROM recording_sessions rs\n            WHERE rs.id = ANY($1)\n              AND rs.guild_id = $2\n              AND rs.deletion_requested_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "starting_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "starting_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "channels!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "a8fbcb1529a7e18244912f1cf07b58f5e2d807152756e44d385fbb427cb2712a"
+}

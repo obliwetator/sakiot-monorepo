@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_jobs::{JobAttempt, MediaJobRequest, MediaJobStatus};
-use crate::permissions::require_channel_access;
 use crate::waveform::{PeakDensity, decode_and_publish, read_peaks, waveform_dat};
 
 use super::paths::{NO_SILENCE_PREFIX, no_silence_recording_path, recording_path};
@@ -267,12 +266,14 @@ pub async fn get_clip_waveform_data(
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    if let Some(session_id) = row.recording_session_id {
-        super::sessions::require_session_access(&pool, session_id, token.viewer()).await?;
-    } else {
-        let channel_id = row.channel_id.ok_or(AppError::ClipNotFound)?;
-        require_channel_access(&pool, guild_id, channel_id, token.viewer()).await?;
-    }
+    crate::clips::require_clip_source_access(
+        &pool,
+        guild_id,
+        row.channel_id,
+        row.recording_session_id,
+        token.viewer(),
+    )
+    .await?;
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let input_path = crate::media_archive::clip_local_path(&saved_file_name)?;

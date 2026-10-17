@@ -196,8 +196,8 @@ It asks for confirmation first, and the copy is deliberately obvious afterwards:
   how many recordings, clips and stamps are about to cross.
 
 Importing the rows and files is not enough to make a recording *reachable*. The
-listing goes through `visible_channels_for_user`, which returns 403 unless the
-viewing account has a `user_guilds` row for that guild, and staging is reached
+listing's permission check returns 403 unless the viewing account has a
+`user_guilds` row for that guild, and staging is reached
 through `dev_login` — a token for `DEV_ACCOUNT_ID`, never a Discord identity, so
 nothing populates that table on its own. The import therefore reads
 `DEV_ACCOUNT_ID` out of `staging.env` and grants that account access to the

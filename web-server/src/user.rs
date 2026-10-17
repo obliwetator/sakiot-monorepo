@@ -131,81 +131,83 @@ pub struct GuildDataForFrontEnd {
 pub async fn get_current_user_guilds(
     _req: HttpRequest,
     pool: web::Data<Pool<Postgres>>,
-    cfg: web::Data<crate::config::Config>,
     token: Option<ReqData<Token<Access>>>,
 ) -> Result<impl Responder, AppError> {
     let token_data = token.ok_or_else(|| AppError::Forbidden)?;
-    let dev_account_id = cfg.dev_account_id;
-
-    let result = if token_data.user_id == dev_account_id
-        && dev_account_id != 0
-        && token_data.auth_kind == AuthKind::Dev
-    {
-        sqlx::query_as!(
-            GuildDataForFrontEnd,
-            "
-            SELECT DISTINCT ON (guilds_present.guild_id)
-            user_guilds.id as \"id!\",
-            user_guilds.name as \"name!\",
-            user_guilds.icon as \"icon\",
-            true as \"owner!\",
-            user_guilds.permissions as \"permissions!\"
-            FROM guilds_present
-            JOIN user_guilds ON user_guilds.id = guilds_present.guild_id;
-            "
-        )
-        .fetch_all(pool.get_ref())
-        .await?
-    } else {
-        member_guilds(pool.get_ref(), token_data.viewer()).await?
-    };
-
-    Ok(HttpResponse::Ok().json(result))
+    let guilds = member_guilds(pool.get_ref(), token_data.viewer()).await?;
+    Ok(HttpResponse::Ok().json(guilds))
 }
 
-/// The guilds a Discord login belongs to, as the bot sees them: guilds it is
-/// in where the viewer owns the guild or is on a complete roster, with live
-/// names and icons and the viewer's calculated permissions. A guild whose
-/// roster is not complete yet is left out until it is.
+struct CandidateGuild {
+    id: i64,
+    name: String,
+    icon: Option<String>,
+}
+
+/// The guilds the bot is in that the viewer belongs to, with their names and
+/// icons and the viewer's permissions there.
+///
+/// The candidates are the guilds the viewer owns or is listed in, or for a
+/// dev login those it is seeded in, under their seeded names. Membership then
+/// decides, as for every other check: a guild whose roster is not complete
+/// yet is left out until it is.
 async fn member_guilds(
     pool: &Pool<Postgres>,
     viewer: crate::permissions::Viewer,
 ) -> Result<Vec<GuildDataForFrontEnd>, AppError> {
-    let mut snapshot = crate::permissions::begin_snapshot(pool).await?;
-    let rows = sqlx::query!(
-        r#"SELECT g.id,
-                  COALESCE(g.name, g.id::text) AS "name!",
-                  g.icon,
-                  g.owner_id = $1 AS "owner!"
-             FROM guilds_present gp
-             JOIN guilds g ON g.id = gp.guild_id
-            WHERE g.owner_id = $1
-               OR EXISTS (
-                      SELECT 1
-                        FROM guild_projection_state s
-                        JOIN guild_members m ON m.guild_id = s.guild_id
-                       WHERE s.guild_id = g.id
-                         AND s.roster_complete_at IS NOT NULL
-                         AND m.user_id = $1
-                  )
-            ORDER BY lower(COALESCE(g.name, '')), g.id"#,
-        viewer.user_id
-    )
-    .fetch_all(&mut *snapshot)
-    .await?;
-    let mut guilds = Vec::with_capacity(rows.len());
-    for row in rows {
-        let permissions =
-            crate::permissions::combined_perm_for_user(&mut snapshot, row.id, viewer).await?;
+    let candidates = if viewer.dev {
+        sqlx::query_as!(
+            CandidateGuild,
+            r#"SELECT ug.id, ug.name, ug.icon
+                 FROM guilds_present gp
+                 JOIN user_guilds ug ON ug.id = gp.guild_id
+                WHERE ug.user_id = $1
+                ORDER BY lower(ug.name), ug.id"#,
+            viewer.user_id
+        )
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as!(
+            CandidateGuild,
+            r#"SELECT g.id,
+                      COALESCE(g.name, g.id::text) AS "name!",
+                      g.icon
+                 FROM guilds_present gp
+                 JOIN guilds g ON g.id = gp.guild_id
+                WHERE g.owner_id = $1
+                   OR EXISTS (SELECT 1
+                                FROM guild_members m
+                               WHERE m.guild_id = g.id AND m.user_id = $1)
+                ORDER BY lower(COALESCE(g.name, '')), g.id"#,
+            viewer.user_id
+        )
+        .fetch_all(pool)
+        .await?
+    };
+    let ids: Vec<i64> = candidates.iter().map(|guild| guild.id).collect();
+    let mut access = crate::permissions::GuildAccess::load_many(pool, &ids, viewer).await?;
+    let mut guilds = Vec::with_capacity(candidates.len());
+    for guild in candidates {
+        let Some(access) = access.remove(&guild.id) else {
+            continue;
+        };
+        let membership = match access.access() {
+            Ok(access) => access.membership,
+            Err(AppError::MembershipUnavailable) => continue,
+            Err(error) => return Err(error),
+        };
+        if membership == sakiot_permissions::Membership::Outsider {
+            continue;
+        }
         guilds.push(GuildDataForFrontEnd {
-            id: row.id,
-            name: row.name,
-            icon: row.icon,
-            owner: row.owner,
-            permissions: permissions.bits(),
+            id: guild.id,
+            name: guild.name,
+            icon: guild.icon,
+            owner: membership == sakiot_permissions::Membership::Owner,
+            permissions: access.discord_permissions()?.bits(),
         });
     }
-    snapshot.commit().await?;
     Ok(guilds)
 }
 

@@ -20,11 +20,10 @@ use tokio::sync::{Mutex, RwLock};
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::media_jobs::JobAttempt;
-use crate::permissions::require_channel_access;
 use crate::server_timing::measure;
 
 use super::super::live::mark_cache_access;
-use super::{AudioFragment, SessionAccess, fragment_path, load_fragments, require_session_access};
+use super::{AudioFragment, SessionAccess, authorize_session, fragment_path, load_fragments};
 
 mod cache;
 mod occupancy;
@@ -353,10 +352,10 @@ pub async fn get_session_channel_mix(
 ) -> Result<web::Json<ChannelMixResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.viewer()).await?;
+    let (access, guild) = authorize_session(&pool, session_id, token.viewer()).await?;
     let plan = measure(
         "plan",
-        build_mix_plan(&pool, &access, token.viewer(), query.scope()),
+        build_mix_plan(&pool, &access, &guild, query.scope()),
     )
     .await?;
     let mut response = measure("status", mix_response(&plan, &access, &container, true)).await?;
@@ -405,8 +404,8 @@ pub async fn generate_session_channel_mix(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.viewer()).await?;
-    let base_plan = build_mix_plan(&pool, &access, token.viewer(), query.scope()).await?;
+    let (access, guild) = authorize_session(&pool, session_id, token.viewer()).await?;
+    let base_plan = build_mix_plan(&pool, &access, &guild, query.scope()).await?;
     let settings = canonical_generation_settings(
         &base_plan,
         body.map(|body| body.into_inner().participants)
@@ -480,8 +479,8 @@ pub(crate) async fn run_session_mix_job(
         _ => return Err(AppError::BadRequest("Unknown channel mix scope".into())),
     };
     let pool_data = web::Data::new(pool.clone());
-    let access = require_session_access(&pool_data, session_id, requester).await?;
-    let base = build_mix_plan(&pool_data, &access, requester, scope).await?;
+    let (access, guild) = authorize_session(&pool_data, session_id, requester).await?;
+    let base = build_mix_plan(&pool_data, &access, &guild, scope).await?;
     let requested: Vec<ChannelMixParticipantSettings> = serde_json::from_value(participants)
         .map_err(|_| AppError::BadRequest("Invalid channel mix settings".into()))?;
     let settings = canonical_generation_settings(&base, requested)?;
@@ -554,14 +553,8 @@ pub async fn get_session_channel_mix_media(
 ) -> Result<impl Responder, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.viewer()).await?;
-    let plan = build_mix_plan(
-        &pool,
-        &access,
-        token.viewer(),
-        query.scope.unwrap_or_default(),
-    )
-    .await?;
+    let (access, guild) = authorize_session(&pool, session_id, token.viewer()).await?;
+    let plan = build_mix_plan(&pool, &access, &guild, query.scope.unwrap_or_default()).await?;
     let cache_file = plan.cache_dir.join(MIX_OUTPUT);
     if !cache_has_current_source(&plan).await {
         return Err(AppError::FileNotFound);

@@ -4,15 +4,14 @@
 use std::collections::HashMap;
 
 use actix_web::{HttpResponse, get, web};
+use sakiot_permissions::Capabilities;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
-use crate::permissions::{
-    AsRoleQuery, Viewer, begin_snapshot, presence_channels, require_role_preview,
-};
+use crate::permissions::{AsRoleQuery, GuildAccess, Viewer};
 
 type DisplayFromstr = As<DisplayFromStr>;
 
@@ -117,17 +116,18 @@ pub async fn seats(
         .collect())
 }
 
-/// Presence for the channels the viewer (or the previewed role) can view,
-/// read in one snapshot with that visibility.
+/// Presence for the channels the viewer (or the previewed role) can view.
+/// As in Discord's channel list, VIEW_CHANNEL is enough: seeing who is in a
+/// channel does not need CONNECT.
 pub async fn voice_presence(
     pool: &Pool<Postgres>,
     guild_id: i64,
     viewer: Viewer,
     as_role: Option<i64>,
 ) -> Result<VoicePresence, AppError> {
-    let mut snapshot = begin_snapshot(pool).await?;
-    let channels: Vec<i64> = presence_channels(&mut snapshot, guild_id, viewer, as_role)
+    let channels: Vec<i64> = GuildAccess::load(pool, guild_id, viewer, as_role)
         .await?
+        .listing_channels(Capabilities::VIEW_PRESENCE)?
         .into_iter()
         .collect();
 
@@ -145,10 +145,9 @@ pub async fn voice_presence(
            ) AS "available!""#,
         guild_id
     )
-    .fetch_one(&mut *snapshot)
+    .fetch_one(pool)
     .await?;
     if !available {
-        snapshot.commit().await?;
         return Ok(VoicePresence {
             available,
             channels: Vec::new(),
@@ -178,9 +177,8 @@ pub async fn voice_presence(
         guild_id,
         &channels
     )
-    .fetch_all(&mut *snapshot)
+    .fetch_all(pool)
     .await?;
-    snapshot.commit().await?;
 
     let mut channels: Vec<PresenceChannel> = Vec::new();
     for row in rows {
@@ -229,7 +227,6 @@ pub async fn voice_presence(
 )]
 #[get("/current/{guild_id}/voice-presence")]
 pub async fn get_voice_presence(
-    req: actix_web::HttpRequest,
     query: web::Query<AsRoleQuery>,
     path: web::Path<i64>,
     token: Option<web::ReqData<Token<Access>>>,
@@ -237,7 +234,6 @@ pub async fn get_voice_presence(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let guild_id = path.into_inner();
-    require_role_preview(&req, &pool, guild_id, query.as_role).await?;
     let presence = voice_presence(&pool, guild_id, token.viewer(), query.as_role).await?;
     Ok(HttpResponse::Ok().json(presence))
 }
