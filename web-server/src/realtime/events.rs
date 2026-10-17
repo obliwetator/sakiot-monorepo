@@ -22,11 +22,13 @@ pub enum Event {
     Recording {
         guild_id: i64,
     },
+    /// A clip changed. `channels` are the channels its audio came from;
+    /// a change of channels arrives once with the old ones and once with
+    /// the new.
     Clip {
         guild_id: i64,
         clip_id: String,
-        channel_id: Option<i64>,
-        session_id: Option<i64>,
+        channels: Vec<i64>,
     },
     Stamp {
         guild_id: i64,
@@ -117,6 +119,7 @@ struct Payload {
     g: Option<String>,
     s: Option<String>,
     c: Option<String>,
+    cs: Option<Vec<String>>,
     id: Option<String>,
     u: Option<String>,
     r: Option<String>,
@@ -148,8 +151,11 @@ pub fn parse(payload: &str) -> Option<Event> {
         "clip" => Event::Clip {
             guild_id: guild_id?,
             clip_id: payload.id?,
-            channel_id: id(payload.c.as_ref()),
-            session_id: id(payload.s.as_ref()),
+            channels: payload
+                .cs?
+                .iter()
+                .map(|channel| channel.parse().ok())
+                .collect::<Option<_>>()?,
         },
         "stamp" => Event::Stamp {
             guild_id: guild_id?,
@@ -232,12 +238,11 @@ mod tests {
             Some(Event::Recording { guild_id: 1 })
         );
         assert_eq!(
-            parse(r#"{"v":1,"k":"clip","g":"1","id":"abc","c":"3"}"#),
+            parse(r#"{"v":1,"k":"clip","g":"1","id":"abc","cs":["3","4"]}"#),
             Some(Event::Clip {
                 guild_id: 1,
                 clip_id: "abc".into(),
-                channel_id: Some(3),
-                session_id: None,
+                channels: vec![3, 4],
             })
         );
         assert_eq!(

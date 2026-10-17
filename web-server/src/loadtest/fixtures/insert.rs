@@ -368,10 +368,11 @@ async fn insert_history(
         }
         sqlx::query(
             "INSERT INTO clips
-                (clip_id, length, size, channel_id, guild_id, user_id, original_file_name,
-                 saved_file_name, created_at, name, start_time, recording_session_id)
-             SELECT clip_id, length, size, channel_id, $1, user_id, original, saved,
-                    to_timestamp(created_ms / 1000.0), name, start_time, session_id
+                (clip_id, length, size, channel_id, channel_ids, guild_id, user_id,
+                 original_file_name, saved_file_name, created_at, name, start_time,
+                 recording_session_id)
+             SELECT clip_id, length, size, channel_id, ARRAY[channel_id], $1, user_id, original,
+                    saved, to_timestamp(created_ms / 1000.0), name, start_time, session_id
                FROM UNNEST($2::text[], $3::real[], $4::bigint[], $5::bigint[], $6::bigint[],
                            $7::text[], $8::text[], $9::bigint[], $10::text[], $11::real[],
                            $12::bigint[])

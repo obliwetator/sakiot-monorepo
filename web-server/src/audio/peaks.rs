@@ -257,7 +257,7 @@ pub async fn get_clip_waveform_data(
     let token = token.ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name, channel_id, recording_session_id
+        "SELECT saved_file_name, channel_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -266,14 +266,11 @@ pub async fn get_clip_waveform_data(
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    crate::clips::require_clip_source_access(
-        &pool,
-        guild_id,
-        row.channel_id,
-        row.recording_session_id,
-        token.viewer(),
-    )
-    .await?;
+    crate::clips::require_clip(
+        &crate::permissions::GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), None)
+            .await?,
+        &row.channel_ids,
+    )?;
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let input_path = crate::media_archive::clip_local_path(&saved_file_name)?;

@@ -29,11 +29,22 @@ pub(super) async fn compose_session_inner(
         end_seconds,
         remove_silence,
     } = request;
+    let plan = composition_plan(pool, access, start_seconds, end_seconds, media).await?;
+    render_composition(plan, remove_silence, output, progress).await
+}
+
+/// Renders a planned range of a session to `output`.
+pub(super) async fn render_composition(
+    plan: SessionCompositionPlan,
+    remove_silence: bool,
+    output: &Path,
+    progress: Option<CompositionProgress>,
+) -> Result<(), AppError> {
     let SessionCompositionPlan {
         selected_start_ms: selected_start,
         selected_end_ms: selected_end,
         parts: selected,
-    } = composition_plan(pool, access, start_seconds, end_seconds, media).await?;
+    } = plan;
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -247,6 +258,7 @@ pub(super) async fn timeline_layout(
                     path: fragment_path(&fragment),
                     source_start_ms: fragment.start_ms,
                     audio_file_id: fragment.id,
+                    channel_id: fragment.channel_id,
                     file_name: fragment.file_name,
                     live: fragment.live,
                 },

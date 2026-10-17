@@ -36,6 +36,7 @@ use web_server::audio::{
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
+use web_server::clip_editor::compose_clip;
 use web_server::clips::{
     create_clip, delete as delete_clip, get_clip, get_clips, play_clip, rename_clip,
 };
@@ -895,6 +896,175 @@ async fn clip_playback_reports_an_unreachable_bot(
     Ok(())
 }
 
+/// A clip needs only the channels its own audio came from. Here a session
+/// went through a channel the viewer may listen in and then one they may
+/// not: a clip cut from the first part is theirs to hear, while a clip
+/// that reaches into the second part, or lies wholly in it, is not, even
+/// though every clip of the session names its starting channel.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_clip_needs_only_the_channels_its_audio_came_from(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let denied_channel_id = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'denied-in-session')",
+    )
+    .bind(denied_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(denied_channel_id)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(&pool)
+    .await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $4, 'finalized',
+                 to_timestamp(1), to_timestamp(3), 'test', 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(denied_channel_id)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('first-part', $1, $2, $4, 1970, 1, 1000, 2000, $5, 0),
+                ('second-part', $1, $3, $4, 1970, 1, 2000, 3000, $5, 1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(denied_channel_id)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name,
+             start_time, recording_session_id)
+         VALUES ('first-part-clip', $1, $2, ARRAY[$2::bigint], $4,
+                 'channels-test/first.ogg', 0, $5),
+                ('second-part-clip', $1, $2, ARRAY[$3::bigint], $4,
+                 'channels-test/second.ogg', 1, $5),
+                ('both-parts-clip', $1, $2, ARRAY[$2::bigint, $3::bigint], $4,
+                 'channels-test/both.ogg', 0.5, $5)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(denied_channel_id)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let bot = ScriptedBot::default();
+    bot.responses.lock().unwrap().push_back(JamResponse {
+        resp: JamResponseEnum::Ok.into(),
+        cooldown_remaining_seconds: 0,
+    });
+    let address = serve_bot(bot.clone()).await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .app_data(web::Data::new(AgentGrpcRegistry::new(&address, None)))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_clips)
+                    .service(get_clip)
+                    .service(play_clip)
+                    .service(compose_clip),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_value()?;
+
+    let request = test::TestRequest::get()
+        .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}"))
+        .insert_header(("Cookie", cookie.clone()))
+        .to_request();
+    let listed: Vec<serde_json::Value> = test::call_and_read_body_json(&app, request).await;
+    let mut listed: Vec<&str> = listed
+        .iter()
+        .filter_map(|clip| clip["clip_id"].as_str())
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(listed, ["first-part-clip", "own-clip"]);
+
+    // Allowed: the request gets past authorization to the missing file.
+    for (clip_id, expected) in [
+        ("first-part-clip", StatusCode::NOT_FOUND),
+        ("second-part-clip", StatusCode::FORBIDDEN),
+        ("both-parts-clip", StatusCode::FORBIDDEN),
+    ] {
+        let request = test::TestRequest::get()
+            .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}/{clip_id}"))
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), expected, "get {clip_id}");
+    }
+
+    for (clip_id, expected) in [
+        ("second-part-clip", StatusCode::FORBIDDEN),
+        ("both-parts-clip", StatusCode::FORBIDDEN),
+        ("first-part-clip", StatusCode::OK),
+    ] {
+        let uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}/{clip_id}/play");
+        let response = test::call_service(&app, play_request(&uri)?.to_request()).await;
+        assert_eq!(response.status(), expected, "play {clip_id}");
+    }
+    let played: Vec<String> = bot
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request.clip_name.clone())
+        .collect();
+    assert_eq!(played, ["first-part-clip"]);
+
+    // The clip editor takes a source on the same terms.
+    for (clip_id, expected) in [
+        ("first-part-clip", StatusCode::ACCEPTED),
+        ("second-part-clip", StatusCode::FORBIDDEN),
+        ("both-parts-clip", StatusCode::FORBIDDEN),
+    ] {
+        let request = test::TestRequest::post()
+            .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}/compose"))
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .insert_header(("Idempotency-Key", format!("compose-{clip_id}")))
+            .set_json(json!({"master_volume_db": 0, "segments": [{
+                "source": "clip", "source_id": clip_id, "source_in": 0, "source_out": 1,
+                "timeline_start": 0, "track": 0,
+                "effects": {"volume_db": 0, "pitch_cents": 0, "rate": 1,
+                            "bass_db": 0, "mid_db": 0, "treble_db": 0}
+            }]}))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), expected, "compose from {clip_id}");
+    }
+    Ok(())
+}
+
 fn access_keys() -> AccessKeys {
     AccessKeys {
         access_encode: EncodingKey::from_secret(b"test_secret"),
@@ -954,10 +1124,10 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query!(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time)
+            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time)
          VALUES
-            ('forbidden-clip', $1, $2, $3, '2026/05/forbidden.ogg', 0),
-            ('own-clip', $4, $5, $6, '2026/05/own.ogg', 0)",
+            ('forbidden-clip', $1, $2, ARRAY[$2::bigint], $3, '2026/05/forbidden.ogg', 0),
+            ('own-clip', $4, $5, ARRAY[$5::bigint], $6, '2026/05/own.ogg', 0)",
         FORBIDDEN_GUILD_ID,
         FORBIDDEN_CHANNEL_ID,
         OTHER_USER_ID,
@@ -1374,12 +1544,12 @@ async fn clip_list_is_ordered_by_name_case_insensitively(
     // null name, which must sort last.
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time, name)
+            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time, name)
          VALUES
-            ('clip-zeta', $1, $2, $3, '2026/05/zeta.ogg', 0, 'zeta'),
-            ('clip-alpha', $1, $2, $3, '2026/05/alpha.ogg', 0, 'Alpha'),
-            ('clip-beta', $1, $2, $3, '2026/05/beta.ogg', 0, 'beta'),
-            ('clip-alpha-two', $1, $2, $3, '2026/05/alpha2.ogg', 0, 'alpha 2')",
+            ('clip-zeta', $1, $2, ARRAY[$2::bigint], $3, '2026/05/zeta.ogg', 0, 'zeta'),
+            ('clip-alpha', $1, $2, ARRAY[$2::bigint], $3, '2026/05/alpha.ogg', 0, 'Alpha'),
+            ('clip-beta', $1, $2, ARRAY[$2::bigint], $3, '2026/05/beta.ogg', 0, 'beta'),
+            ('clip-alpha-two', $1, $2, ARRAY[$2::bigint], $3, '2026/05/alpha2.ogg', 0, 'alpha 2')",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)
@@ -1736,6 +1906,132 @@ async fn create_clip_stores_a_real_clip_for_a_valid_range(
         "rendered clip is {rendered}s, expected the requested 1s"
     );
     std::fs::remove_file(&clip_path)?;
+    Ok(())
+}
+
+/// A clip cut from a session records the channels of the recordings its
+/// range covers, which is what hearing it then takes.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_session_clip_records_the_channels_its_range_covers(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !media_tool_available("ffmpeg") || !media_tool_available("ffprobe") {
+        return Ok(());
+    }
+    seed_authorization_data(&pool).await?;
+    let second_channel_id = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name)
+         VALUES ($1, $2, 2, 'second')",
+    )
+    .bind(second_channel_id)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $4, 'finalized',
+                 to_timestamp(1), to_timestamp(3), 'test', 1)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(OTHER_USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(second_channel_id)
+    .fetch_one(&pool)
+    .await?;
+    let mut fixtures = Vec::new();
+    for (index, channel_id) in [ALLOWED_CHANNEL_ID, second_channel_id]
+        .into_iter()
+        .enumerate()
+    {
+        let stem = format!("channels-test-part-{index}");
+        let dir = web_server::audio::util::get_file_path_root(
+            &web_server::audio::recording_path(),
+            &(ALLOWED_GUILD_ID, channel_id, 1970, 1, stem.clone()),
+        );
+        std::fs::create_dir_all(&dir)?;
+        let path = format!("{dir}/{stem}.ogg");
+        let generated = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-c:a", "libopus"])
+            .arg(&path)
+            .status()?;
+        assert!(generated.success(), "ffmpeg must generate the fixture");
+        fixtures.push(path);
+        let start_ts = 1000 * (index as i64 + 1);
+        sqlx::query(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month,
+                 start_ts, end_ts, recording_session_id, segment_index)
+             VALUES ($1, $2, $3, $4, 1970, 1, $5, $6, $7, $8)",
+        )
+        .bind(&stem)
+        .bind(ALLOWED_GUILD_ID)
+        .bind(channel_id)
+        .bind(OTHER_USER_ID)
+        .bind(start_ts)
+        .bind(start_ts + 1000)
+        .bind(session_id)
+        .bind(index as i32)
+        .execute(&pool)
+        .await?;
+    }
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(create_session_clip),
+            ),
+    )
+    .await;
+    let mut created = Vec::new();
+    let mut outcomes = Vec::new();
+    for (start, end) in [(0.0, 1.0), (1.0, 2.0), (0.5, 1.5)] {
+        let request = test::TestRequest::post()
+            .uri(&format!("/api/audio/sessions/{session_id}/clips"))
+            .insert_header(("Cookie", access_cookie_for(OTHER_USER_ID)?))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({"start": start, "end": end}))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        let status = response.status();
+        let body: serde_json::Value = test::read_body_json(response).await;
+        assert_eq!(status, StatusCode::OK, "{start}..{end}: {body}");
+        let clip_id = body["id"].as_str().expect("clip id").to_owned();
+        let channels: Vec<i64> =
+            sqlx::query_scalar("SELECT channel_ids FROM clips WHERE clip_id = $1")
+                .bind(&clip_id)
+                .fetch_one(&pool)
+                .await?;
+        outcomes.push(channels);
+        created.push(format!(
+            "{}{}",
+            web_server::audio::clips_path(),
+            body["file"].as_str().expect("saved file")
+        ));
+    }
+    for path in fixtures.iter().chain(&created) {
+        std::fs::remove_file(path)?;
+    }
+    assert_eq!(
+        outcomes,
+        [
+            vec![ALLOWED_CHANNEL_ID],
+            vec![second_channel_id],
+            vec![ALLOWED_CHANNEL_ID, second_channel_id],
+        ]
+    );
     Ok(())
 }
 
@@ -2222,9 +2518,9 @@ async fn seed_role_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, user_id, saved_file_name, start_time)
-         VALUES ('public-clip', $1, $2, $4, '2026/05/public.ogg', 0),
-                ('private-clip', $1, $3, $4, '2026/05/private.ogg', 0)",
+            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time)
+         VALUES ('public-clip', $1, $2, ARRAY[$2::bigint], $4, '2026/05/public.ogg', 0),
+                ('private-clip', $1, $3, ARRAY[$3::bigint], $4, '2026/05/private.ogg', 0)",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)

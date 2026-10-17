@@ -12,8 +12,8 @@ pub(super) struct Journey {
     pub(super) starting_channel_id: i64,
     /// The recording tree's rule: the starting channel plus every fragment's.
     pub(super) tree: HashSet<i64>,
-    /// The clip and stamp rule: every fragment's channel, or the starting
-    /// channel while there are no fragments.
+    /// The stamp rule: every fragment's channel, or the starting channel
+    /// while there are no fragments.
     pub(super) media: HashSet<i64>,
 }
 
@@ -101,7 +101,16 @@ pub(super) fn add_all(routed: &mut Routed, resource: Resource) {
     routed.insert(resource, None);
 }
 
-/// Whether a clip or stamp is listed for the subscription, or `None` when its
+/// Whether a clip whose audio came from `channels` is listed for the
+/// subscription: every one of them must be a media channel.
+fn hears_clip(access: &SubscriptionAccess, channels: &[i64]) -> bool {
+    !channels.is_empty()
+        && channels
+            .iter()
+            .all(|channel| access.media_channels.contains(channel))
+}
+
+/// Whether a stamp is listed for the subscription, or `None` when its
 /// session is gone and that can no longer be decided.
 fn media_visible(
     access: &SubscriptionAccess,
@@ -156,15 +165,10 @@ pub(super) fn route(
             Event::Clip {
                 guild_id,
                 clip_id,
-                channel_id,
-                session_id,
+                channels,
             } if *guild_id == subscription.guild_id => {
-                match journeys
-                    .map(|journeys| media_visible(access, *channel_id, *session_id, journeys))
-                {
-                    Some(Some(true)) => add_id(&mut routed, Resource::Clips, clip_id.clone()),
-                    Some(Some(false)) => {}
-                    _ => add_all(&mut routed, Resource::Clips),
+                if hears_clip(access, channels) {
+                    add_id(&mut routed, Resource::Clips, clip_id.clone());
                 }
             }
             Event::Stamp {

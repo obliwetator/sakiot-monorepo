@@ -37,7 +37,7 @@ async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn clip_lookups_require_every_source_channel(
+async fn clip_lookups_require_every_channel_of_the_clips_audio(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let guild_id = 42_i64;
@@ -73,14 +73,18 @@ async fn clip_lookups_require_every_source_channel(
     .bind(session_id)
     .execute(&pool)
     .await?;
+    // Every clip of the session names its starting channel; what its audio
+    // came from is `channel_ids`.
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, recording_session_id, user_id,
+            (clip_id, guild_id, channel_id, channel_ids, recording_session_id, user_id,
              saved_file_name, start_time, name)
          VALUES
-            ('allowed-clip', $1, $2, NULL, $4, 'allowed.ogg', 0, 'Allowed'),
-            ('denied-clip', $1, $3, NULL, $4, 'denied.ogg', 0, 'Denied'),
-            ('mixed-clip', $1, $2, $5, $4, 'mixed.ogg', 0, 'Mixed')",
+            ('allowed-clip', $1, $2, ARRAY[$2::bigint], NULL, $4, 'allowed.ogg', 0, 'Allowed'),
+            ('denied-clip', $1, $3, ARRAY[$3::bigint], NULL, $4, 'denied.ogg', 0, 'Denied'),
+            ('mixed-clip', $1, $2, ARRAY[$2::bigint, $3::bigint], $5, $4, 'mixed.ogg', 0, 'Mixed'),
+            ('allowed-part-clip', $1, $2, ARRAY[$2::bigint], $5, $4, 'part.ogg', 0, 'Allowed part'),
+            ('denied-part-clip', $1, $2, ARRAY[$3::bigint], $5, $4, 'other.ogg', 1, 'Denied part')",
     )
     .bind(guild_id)
     .bind(allowed_channel_id)
@@ -102,7 +106,27 @@ async fn clip_lookups_require_every_source_channel(
             .into_iter()
             .map(|choice| choice.clip_id)
             .collect::<Vec<_>>(),
-        vec!["allowed-clip"]
+        vec!["allowed-clip", "allowed-part-clip"]
+    );
+    assert!(
+        crate::database::clips::playable_clip(
+            &pool,
+            guild_id,
+            "allowed-part-clip",
+            &[allowed_channel_id]
+        )
+        .await?
+        .is_some()
+    );
+    assert!(
+        crate::database::clips::playable_clip(
+            &pool,
+            guild_id,
+            "denied-part-clip",
+            &[allowed_channel_id]
+        )
+        .await?
+        .is_none()
     );
     assert!(
         crate::database::clips::playable_clip(

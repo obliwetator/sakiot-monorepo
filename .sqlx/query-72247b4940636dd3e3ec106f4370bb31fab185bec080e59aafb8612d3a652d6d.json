@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT clips.name, clips.clip_id\n           FROM clips\n          WHERE clips.guild_id = $1\n            AND clips.name ILIKE $2\n            AND clips.deleted_at IS NULL\n            AND cardinality(clips.channel_ids) > 0\n            AND clips.channel_ids <@ $3::bigint[]\n          ORDER BY clips.name, clips.clip_id\n          LIMIT 25",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "clip_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "72247b4940636dd3e3ec106f4370bb31fab185bec080e59aafb8612d3a652d6d"
+}

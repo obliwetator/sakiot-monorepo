@@ -12,8 +12,7 @@ pub(super) async fn resolve_sources(
     let mut resolved = Vec::with_capacity(segments.len());
     for (index, segment) in segments.iter().enumerate() {
         let row = sqlx::query!(
-            "SELECT saved_file_name, channel_id, recording_session_id, length,
-                    original_file_name
+            "SELECT saved_file_name, channel_id, channel_ids, length, original_file_name
                FROM clips
               WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
             guild_id,
@@ -27,14 +26,7 @@ pub(super) async fn resolve_sources(
                 "Segment {index}: composed clips cannot be used as sources"
             )));
         }
-        if let Some(recording_session_id) = row.recording_session_id {
-            crate::audio::sessions::require_session_in(pool, &guild, recording_session_id).await?;
-        } else {
-            guild.require_channel(
-                row.channel_id.ok_or(AppError::ClipNotFound)?,
-                sakiot_permissions::Capabilities::LISTEN_OTHERS,
-            )?;
-        }
+        crate::clips::require_clip(&guild, &row.channel_ids)?;
         let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
         let path = crate::media_archive::clip_local_path(&saved_file_name)?;
         if let Some(media) = media {
@@ -53,6 +45,7 @@ pub(super) async fn resolve_sources(
         resolved.push(ResolvedSource {
             path,
             channel_id,
+            channel_ids: row.channel_ids,
             length,
             saved_file_name,
         });

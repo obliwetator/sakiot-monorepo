@@ -82,7 +82,7 @@ pub async fn get_clip(
     let token = token.ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name, channel_id, recording_session_id
+        "SELECT saved_file_name, channel_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -91,14 +91,10 @@ pub async fn get_clip(
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    require_clip_source_access(
-        &pool,
-        guild_id,
-        row.channel_id,
-        row.recording_session_id,
-        token.viewer(),
-    )
-    .await?;
+    require_clip(
+        &GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), None).await?,
+        &row.channel_ids,
+    )?;
 
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = crate::media_archive::clip_local_path(&saved_file_name)?;
@@ -178,39 +174,9 @@ pub async fn get_clips(
         FROM clips
         WHERE guild_id = $1
           AND deleted_at IS NULL
-          AND channel_id IS NOT NULL
-          AND (
-              (recording_session_id IS NULL AND channel_id = ANY($2))
-              OR (
-                  recording_session_id IS NOT NULL
-                  AND EXISTS (
-                      SELECT 1
-                        FROM recording_sessions rs
-                       WHERE rs.id = clips.recording_session_id
-                         AND (
-                             (
-                                 EXISTS (
-                                     SELECT 1 FROM audio_files audible
-                                      WHERE audible.recording_session_id = rs.id
-                                 )
-                                 AND NOT EXISTS (
-                                     SELECT 1
-                                       FROM audio_files forbidden
-                                      WHERE forbidden.recording_session_id = rs.id
-                                        AND NOT (forbidden.channel_id = ANY($2))
-                                 )
-                             )
-                             OR (
-                                 NOT EXISTS (
-                                     SELECT 1 FROM audio_files audible
-                                      WHERE audible.recording_session_id = rs.id
-                                 )
-                                 AND rs.starting_channel_id = ANY($2)
-                             )
-                         )
-                  )
-              )
-          )
+          -- Hearing a clip takes every channel its audio came from.
+          AND cardinality(channel_ids) > 0
+          AND channel_ids <@ $2
         -- Heap order is not stable across imports or VACUUM FULL, so the list
         -- must be ordered explicitly. Sort the way the names read rather than
         -- the way the bytes compare, because this database collates
@@ -284,7 +250,7 @@ pub async fn play_clip(
     let viewer = token.viewer();
     let user_id = viewer.user_id;
     let clip = sqlx::query!(
-        "SELECT channel_id, recording_session_id
+        "SELECT channel_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -293,14 +259,10 @@ pub async fn play_clip(
     .fetch_optional(pool.get_ref())
     .await?
     .ok_or(AppError::ClipNotFound)?;
-    require_clip_source_access(
-        &pool,
-        guild_id,
-        clip.channel_id,
-        clip.recording_session_id,
-        viewer,
-    )
-    .await?;
+    require_clip(
+        &GuildAccess::load(pool.get_ref(), guild_id, viewer, None).await?,
+        &clip.channel_ids,
+    )?;
 
     let request = grpc_client::jam_request(
         JamData {
@@ -385,25 +347,15 @@ pub async fn play_clip(
     }
 }
 
-/// Rejects a caller who cannot hear the clip's source: every fragment of its
-/// session for a session clip, else its channel.
-pub(crate) async fn require_clip_source_access(
-    pool: &web::Data<Pool<Postgres>>,
-    guild_id: i64,
-    channel_id: Option<i64>,
-    recording_session_id: Option<i64>,
-    viewer: crate::permissions::Viewer,
-) -> Result<(), AppError> {
-    if let Some(recording_session_id) = recording_session_id {
-        crate::audio::sessions::require_session_access(pool, recording_session_id, viewer).await?;
-        return Ok(());
+/// Rejects a viewer who may not hear a clip: that takes `LISTEN_OTHERS` in
+/// every channel its audio came from (`clips.channel_ids`), not in every
+/// channel of the session it was cut from. A clip with no channels is no
+/// one's to hear.
+pub(crate) fn require_clip(guild: &GuildAccess, channel_ids: &[i64]) -> Result<(), AppError> {
+    if channel_ids.is_empty() {
+        return Err(AppError::ClipNotFound);
     }
-    GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
-        .await?
-        .require_channel(
-            channel_id.ok_or(AppError::ClipNotFound)?,
-            Capabilities::LISTEN_OTHERS,
-        )
+    guild.require_channels(channel_ids.iter().copied(), Capabilities::LISTEN_OTHERS)
 }
 
 use crate::audio::StartEnd;
@@ -649,7 +601,7 @@ pub async fn create_clip(
     let size = size as i64;
 
     let insert = sqlx::query!(
-        "INSERT INTO clips (clip_id, length, size, channel_id, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        "INSERT INTO clips (clip_id, length, size, channel_id, channel_ids, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, ARRAY[$4::bigint], $5, $6, $7, $8, $9, $10)",
         clip_id,
         length as f32,
         size,

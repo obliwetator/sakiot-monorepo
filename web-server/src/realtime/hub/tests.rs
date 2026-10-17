@@ -147,33 +147,44 @@ fn deleted_sessions_and_failed_lookups_never_send_ids() {
 }
 
 #[test]
-fn clips_and_stamps_follow_the_media_rule() {
-    let journeys = HashMap::from([(5, journey(PUBLIC, &[PRIVATE]))]);
+fn clips_follow_their_own_channels_and_stamps_the_media_rule() {
+    let journeys = HashMap::from([
+        (5, journey(PUBLIC, &[PRIVATE])),
+        (6, journey(PUBLIC, &[PUBLIC])),
+    ]);
+    let clip = |clip_id: &str, channels: &[i64]| Event::Clip {
+        guild_id: GUILD,
+        clip_id: clip_id.into(),
+        channels: channels.to_vec(),
+    };
+    let stamp = |stamp_id, session_id| Event::Stamp {
+        guild_id: GUILD,
+        stamp_id,
+        channel_id: Some(PUBLIC),
+        session_id: Some(session_id),
+    };
     let changes = [
-        Event::Clip {
-            guild_id: GUILD,
-            clip_id: "loose".into(),
-            channel_id: Some(PUBLIC),
-            session_id: None,
-        },
-        Event::Clip {
-            guild_id: GUILD,
-            clip_id: "hidden".into(),
-            channel_id: Some(PUBLIC),
-            session_id: Some(5),
-        },
-        Event::Stamp {
-            guild_id: GUILD,
-            stamp_id: 3,
-            channel_id: Some(PRIVATE),
-            session_id: None,
-        },
+        // Cut from the public part of a session that also went through the
+        // private channel: only its own channel counts.
+        clip("public part", &[PUBLIC]),
+        clip("both parts", &[PUBLIC, PRIVATE]),
+        clip("no one's", &[]),
+        stamp(3, 5),
+        stamp(4, 6),
     ];
     // A role preview whose role can join only the public channel.
     let preview = subscription(&[PUBLIC, PRIVATE], &[PUBLIC], true);
     assert_eq!(
         route(&changes, &preview, 9, Some(&journeys)),
-        Routed::from([(Resource::Clips, ids(&["loose"]))])
+        Routed::from([
+            (Resource::Clips, ids(&["public part"])),
+            (Resource::Stamps, ids(&["4"])),
+        ])
+    );
+    // A clip needs no session lookup, so a failed one still sends its id.
+    assert_eq!(
+        route(&changes[..3], &preview, 9, None),
+        Routed::from([(Resource::Clips, ids(&["public part"]))])
     );
 }
 

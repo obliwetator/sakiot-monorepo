@@ -269,7 +269,12 @@ which other servers someone is in. `user_guilds` holds only the dev seeds
 `ops/sql/membership-parity.sql` lists who a deploy of this rule would cut
 off. Channel visibility applies `@everyone`, role and member overwrites in
 Discord's order. A member can list and play a recording only when they have
-VIEW_CHANNEL and CONNECT in every channel it touched. Visibility covers the
+VIEW_CHANNEL and CONNECT in every channel it touched. A clip needs only the
+channels its own audio came from (`clips.channel_ids`, recorded when the clip
+is made): a clip cut from the part of a session recorded in one channel needs
+that channel alone, a clip of a session's silence-free copy every channel of
+the session, and a composed clip every channel of its sources. The web server
+and the bot's `/jam` apply the same rule. Visibility covers the
 channels the agent records: voice (type 2) and stage (type 13). Stage channels
 need a Community server, so they are verified by fixture tests only.
 
@@ -315,7 +320,9 @@ voice presence).
   every affected guild for all their subscribers; each scope is evaluated in
   memory, and only a viewer whose access changed gets `access_changed`. A
   member joining or a role changing hands sends nothing to anyone else.
-  Ids go only to viewers the HTTP listing would show the item to. A viewer
+  Ids go only to viewers the HTTP listing would show the item to; a clip
+  payload carries the clip's channels for that, and a change of channels
+  (an overwritten composition) is sent with the old ones too. A viewer
   who may have seen a session before a change hid it gets an
   identifier-free `changed` instead. Opt-outs reach only their owner;
   settings reach holders of `manage_settings`, the roster and roles holders

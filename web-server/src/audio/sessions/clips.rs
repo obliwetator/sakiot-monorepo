@@ -25,7 +25,7 @@ pub async fn create_session_clip(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let access = require_session_access(&pool, session_id, token.viewer()).await?;
+    let (access, journey) = authorize_session_journey(&pool, session_id, token.viewer()).await?;
     let start = f64::from(range.start.unwrap_or(0.0));
     let end = f64::from(range.end.unwrap_or(0.0));
     let silence_free = range.silence_free.unwrap_or(false);
@@ -46,24 +46,24 @@ pub async fn create_session_clip(
         .join(format!("{:02}", now.month()));
     tokio::fs::create_dir_all(&target_dir).await?;
     let full_path = target_dir.join(format!("{clip_id}.ogg"));
-    if silence_free {
+    // Who may hear the clip: whoever may listen in every channel its audio
+    // came from. The silence-free copy's times no longer match the
+    // recordings, so a clip of it takes every channel of the session.
+    let channels: Vec<i64> = if silence_free {
         let source = session_silence_free_path(&access)?;
         crop_silence_free_session(&source, start, end, &full_path).await?;
+        journey.into_iter().collect()
     } else {
-        compose_session_inner(
-            &pool,
-            &access,
-            CompositionRequest {
-                start_seconds: Some(start),
-                end_seconds: Some(end),
-                remove_silence: false,
-            },
-            &full_path,
-            None,
-            media.get_ref(),
-        )
-        .await?;
-    }
+        let plan =
+            composition_plan(&pool, &access, Some(start), Some(end), media.get_ref()).await?;
+        let heard = plan.channels();
+        render_composition(plan, false, &full_path, None).await?;
+        if heard.is_empty() {
+            journey.into_iter().collect()
+        } else {
+            heard.into_iter().collect()
+        }
+    };
     let size = tokio::fs::metadata(&full_path).await?.len() as i64;
     let saved_file_name = format!("{}/{:02}/{clip_id}.ogg", now.year(), now.month());
     let name = range
@@ -78,14 +78,15 @@ pub async fn create_session_clip(
     };
     let insert = sqlx::query!(
         "INSERT INTO clips
-            (clip_id, length, size, channel_id, guild_id, user_id,
+            (clip_id, length, size, channel_id, channel_ids, guild_id, user_id,
              original_file_name, saved_file_name, name, start_time,
              recording_session_id, silence_free)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         clip_id,
         (end - start) as f32,
         size as i64,
         access.starting_channel_id,
+        &channels,
         access.guild_id,
         token.user_id,
         original_file_name,

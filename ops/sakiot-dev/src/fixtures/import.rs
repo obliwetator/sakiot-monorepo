@@ -294,6 +294,14 @@ async fn append_table_copy<P: ColumnProvider + ?Sized>(
         let statement = if source_columns == columns.len() {
             format!("COPY {temp} FROM STDIN")
         } else {
+            // Columns added after the export are left unset here; the
+            // transform fills those it must before the rows reach the table.
+            for column in &columns[source_columns..] {
+                batch.setup.push_str(&format!(
+                    "ALTER TABLE {temp} ALTER COLUMN {} DROP NOT NULL;\n",
+                    quote_identifier(column)?
+                ));
+            }
             let prefix = columns
                 .iter()
                 .take(source_columns)
@@ -408,6 +416,22 @@ async fn append_selection_transform(
             SET recording_session_id =
                 (SELECT m.new_id FROM _session_map m WHERE m.old_id = c.recording_session_id)
           WHERE c.recording_session_id IS NOT NULL;
+         -- Exported before clips recorded their channels: such a clip took
+         -- every channel of its session, or its own channel.
+         UPDATE _imp_clips c
+            SET channel_ids = CASE
+                WHEN c.recording_session_id IS NOT NULL THEN COALESCE(
+                    (SELECT array_agg(DISTINCT af.channel_id ORDER BY af.channel_id)
+                       FROM audio_files af
+                      WHERE af.recording_session_id = c.recording_session_id),
+                    (SELECT ARRAY[rs.starting_channel_id]
+                       FROM recording_sessions rs
+                      WHERE rs.id = c.recording_session_id),
+                    '{}')
+                WHEN c.channel_id IS NOT NULL THEN ARRAY[c.channel_id]
+                ELSE '{}'
+            END
+          WHERE c.channel_ids IS NULL;
          DELETE FROM _imp_clips c USING clips existing WHERE existing.clip_id = c.clip_id;
          INSERT INTO clips SELECT * FROM _imp_clips;
          DELETE FROM _imp_stamps s USING stamps existing
@@ -503,6 +527,45 @@ mod tests {
             sql_literal("{\"source\":\"production\"}"),
             "'{\"source\":\"production\"}'"
         );
+    }
+
+    /// The columns of a destination that has grown `channel_ids` since
+    /// the export.
+    struct GrownColumns;
+
+    #[async_trait]
+    impl ColumnProvider for GrownColumns {
+        async fn table_columns(&self, table: &str) -> Result<Vec<String>> {
+            Ok(match table {
+                "clips" => vec!["clip_id".into(), "channel_ids".into()],
+                _ => vec!["id".into()],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn an_export_without_a_newer_column_still_loads() {
+        let workspace = FixtureWorkspace::new().unwrap();
+        workspace.write("clips.tsv", "clip-1\n").unwrap();
+
+        let batch = build_import_batch(&GrownColumns, &workspace, None)
+            .await
+            .unwrap();
+        let rendered = String::from_utf8(batch.render_psql()).unwrap();
+
+        let relaxed = rendered
+            .find("ALTER TABLE _imp_clips ALTER COLUMN \"channel_ids\" DROP NOT NULL;")
+            .expect("the missing column may be loaded empty");
+        let copied = rendered
+            .find("COPY _imp_clips (\"clip_id\") FROM STDIN")
+            .expect("only the exported columns are copied");
+        let filled = rendered
+            .find("UPDATE _imp_clips c\n            SET channel_ids")
+            .expect("the transform fills the clips' channels");
+        let inserted = rendered
+            .find("INSERT INTO clips SELECT * FROM _imp_clips")
+            .unwrap();
+        assert!(relaxed < copied && copied < filled && filled < inserted);
     }
 
     #[tokio::test]

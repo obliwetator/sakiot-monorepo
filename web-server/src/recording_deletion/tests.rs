@@ -19,9 +19,9 @@ async fn deletion_tombstones_then_removes_sources_derivatives_and_audit_survives
     let roots = DataRoots::new(temp.path());
     let (session_id, audio_id) = seed_session(&pool, "lifecycle-recording").await?;
     let (_, unrelated_id) = seed_session(&pool, "unrelated-recording").await?;
-    sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,user_id,start_time,original_file_name,saved_file_name,recording_session_id) VALUES ('lifecycle-source',1,10,100,0,'session:1','2026/09/lifecycle-source.ogg',$1)")
+    sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,channel_ids,user_id,start_time,original_file_name,saved_file_name,recording_session_id) VALUES ('lifecycle-source',1,10,'{10}',100,0,'session:1','2026/09/lifecycle-source.ogg',$1)")
         .bind(session_id).execute(&pool).await?;
-    sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,user_id,start_time,original_file_name,saved_file_name,composition) VALUES ('lifecycle-compose',1,10,100,0,'compose','compositions/lifecycle-compose.ogg',$1)")
+    sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,channel_ids,user_id,start_time,original_file_name,saved_file_name,composition) VALUES ('lifecycle-compose',1,10,'{10}',100,0,'compose','compositions/lifecycle-compose.ogg',$1)")
         .bind(serde_json::json!({"segments":[{"source_id":"lifecycle-source"}]})).execute(&pool).await?;
     sqlx::query("INSERT INTO media_objects (audio_file_id) VALUES ($1),($2)")
         .bind(audio_id)
@@ -244,7 +244,7 @@ async fn tombstone_rejects_late_clip_publication(pool: PgPool) -> TestResult {
         DeletionMode::Soft,
     )
     .await?;
-    let insert = sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,user_id,start_time,original_file_name,recording_session_id) VALUES ('late-clip',1,10,100,0,'session',$1)")
+    let insert = sqlx::query("INSERT INTO clips (clip_id,guild_id,channel_id,channel_ids,user_id,start_time,original_file_name,recording_session_id) VALUES ('late-clip',1,10,'{10}',100,0,'session',$1)")
         .bind(session_id).execute(&pool).await;
     assert!(insert.is_err());
     Ok(())

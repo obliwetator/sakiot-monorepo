@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use actix_files::NamedFile;
@@ -29,9 +29,8 @@ mod manifest;
 mod mix;
 mod waveforms;
 
-pub(crate) use access::{
-    authorize_session, require_recording_access, require_session_access, require_session_in,
-};
+use access::authorize_session_journey;
+pub(crate) use access::{authorize_session, require_recording_access, require_session_access};
 pub use actions::*;
 pub use clips::*;
 pub use manifest::*;
@@ -163,6 +162,8 @@ enum PartKind {
         path: PathBuf,
         source_start_ms: i64,
         audio_file_id: i64,
+        /// The channel the recording was made in.
+        channel_id: i64,
         /// The recording's stem, which names its peaks file.
         file_name: String,
         live: bool,
@@ -181,6 +182,20 @@ struct SessionCompositionPlan {
     selected_start_ms: i64,
     selected_end_ms: i64,
     parts: Vec<TimelinePart>,
+}
+
+impl SessionCompositionPlan {
+    /// The channels of the recordings the range plays; empty when it is
+    /// silence only.
+    fn channels(&self) -> BTreeSet<i64> {
+        self.parts
+            .iter()
+            .filter_map(|part| match part.kind {
+                PartKind::Audio { channel_id, .. } => Some(channel_id),
+                PartKind::Silence => None,
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

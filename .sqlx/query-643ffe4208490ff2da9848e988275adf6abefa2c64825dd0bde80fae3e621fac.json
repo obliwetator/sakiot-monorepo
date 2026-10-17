@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT saved_file_name, channel_id, recording_session_id, length,\n                    original_file_name\n               FROM clips\n              WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+  "query": "SELECT saved_file_name, channel_id, channel_ids, length, original_file_name\n               FROM clips\n              WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       },
       {
         "ordinal": 2,
-        "name": "recording_session_id",
-        "type_info": "Int8",
+        "name": "channel_ids",
+        "type_info": "Int8Array",
         "origin": {
           "Table": {
             "table": "clips",
-            "name": "recording_session_id"
+            "name": "channel_ids"
           }
         }
       },
@@ -68,10 +68,10 @@
     "nullable": [
       true,
       true,
-      true,
+      false,
       true,
       true
     ]
   },
-  "hash": "73906a0844e4a3f3e18154b93090db8b33a04e5cf88ec804bdf7ef77f7bf2b72"
+  "hash": "643ffe4208490ff2da9848e988275adf6abefa2c64825dd0bde80fae3e621fac"
 }

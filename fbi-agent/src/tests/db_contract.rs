@@ -20,6 +20,7 @@ static FULL_MIGRATOR: Migrator = sqlx::migrate!("../sakiot-db/migrations");
 const MEDIA_ARCHIVE_MIGRATION: i64 = 20_260_716_000_000;
 const LOGICAL_RECORDINGS_MIGRATION: i64 = 20_260_712_000_000;
 const STAMP_RECORDING_SESSIONS_MIGRATION: i64 = 20_260_731_000_000;
+const CLIP_CHANNELS_MIGRATION: i64 = 20_261_017_020_000;
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -756,6 +757,107 @@ async fn logical_recording_migration_backfills_one_session_per_file(
     .await?;
     assert!(!fk_validated);
     assert!(index_exists);
+    Ok(())
+}
+
+/// Each clip learns the channels its audio came from: a clip of a session
+/// only the recordings its range covers, unless that cannot be told.
+#[sqlx::test(migrations = false)]
+async fn clip_channels_migration_backfills_each_kind_of_clip(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prior = Migrator::with_migrations(
+        FULL_MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < CLIP_CHANNELS_MIGRATION)
+            .cloned()
+            .collect(),
+    );
+    prior.run(&pool).await?;
+    // Ten seconds in channel 10, then ten in channel 11.
+    let session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES (1, 100, 10, 11, 'finalized', to_timestamp(1), to_timestamp(21), 'test', 1)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('first', 1, 10, 100, 1970, 1, 1000, 11000, $1, 0),
+                ('second', 1, 11, 100, 1970, 1, 11000, 21000, $1, 1)",
+    )
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    let silent_session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES (1, 100, 13, 13, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, user_id, start_time, length,
+             recording_session_id, silence_free, original_file_name, composition)
+         VALUES
+            ('recording', 1, 12, 100, 0, 1, NULL, false, 'stem', NULL),
+            ('no-channel', 1, NULL, 100, 0, 1, NULL, false, 'stem', NULL),
+            ('first-part', 1, 10, 100, 2, 3, $1, false, 'session', NULL),
+            ('both-parts', 1, 10, 100, 8, 4, $1, false, 'session', NULL),
+            ('second-part', 1, 10, 100, 12, 5, $1, false, 'session', NULL),
+            ('silence-free', 1, 10, 100, 0, 2, $1, true, 'session', NULL),
+            ('no-audio', 1, 13, 100, 0, 1, $2, false, 'session', NULL),
+            ('composed', 1, 10, 100, 0, 3, NULL, false, 'compose',
+             '{\"segments\": [{\"source_id\": \"first-part\"}, {\"source_id\": \"second-part\"}]}'),
+            ('composed-gone-source', 1, 12, 100, 0, 3, NULL, false, 'compose',
+             '{\"segments\": [{\"source_id\": \"first-part\"}, {\"source_id\": \"gone\"}]}'),
+            ('composed-legacy', 1, 10, 100, 0, 3, NULL, false, 'compose', NULL)",
+    )
+    .bind(session_id)
+    .bind(silent_session_id)
+    .execute(&pool)
+    .await?;
+
+    FULL_MIGRATOR.run(&pool).await?;
+
+    let rows: Vec<(String, Vec<i64>)> =
+        sqlx::query_as("SELECT clip_id, channel_ids FROM clips ORDER BY clip_id")
+            .fetch_all(&pool)
+            .await?;
+    let expected: Vec<(String, Vec<i64>)> = [
+        ("both-parts", vec![10, 11]),
+        ("composed", vec![10, 11]),
+        ("composed-gone-source", vec![10, 12]),
+        ("composed-legacy", vec![10]),
+        ("first-part", vec![10]),
+        ("no-audio", vec![13]),
+        ("no-channel", vec![]),
+        ("recording", vec![12]),
+        ("second-part", vec![11]),
+        ("silence-free", vec![10, 11]),
+    ]
+    .into_iter()
+    .map(|(clip_id, channels)| (clip_id.to_owned(), channels))
+    .collect();
+    assert_eq!(rows, expected);
+
+    let missing = sqlx::query(
+        "INSERT INTO clips (clip_id, guild_id, channel_id, start_time) VALUES ('new', 1, 10, 0)",
+    )
+    .execute(&pool)
+    .await;
+    assert!(
+        missing.is_err(),
+        "a new clip must say where its audio came from"
+    );
     Ok(())
 }
 

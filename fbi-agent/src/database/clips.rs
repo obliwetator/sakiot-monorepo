@@ -15,44 +15,27 @@ pub struct ClipChoice {
     pub clip_id: String,
 }
 
+/// The clip `clip_id` (an id, or else a name) of the guild, if
+/// `listening_channel_ids` holds every channel its audio came from.
 pub async fn playable_clip(
     pool: &Pool<Postgres>,
     guild_id: i64,
     clip_id: &str,
-    visible_channel_ids: &[i64],
+    listening_channel_ids: &[i64],
 ) -> DbResult<Option<PlayableClip>> {
     let row = sqlx::query!(
         "SELECT clips.clip_id, clips.saved_file_name, clips.name
            FROM clips
-          CROSS JOIN LATERAL (
-              SELECT CASE
-                  WHEN clips.recording_session_id IS NOT NULL THEN COALESCE(
-                      (
-                          SELECT array_agg(DISTINCT audio_files.channel_id ORDER BY audio_files.channel_id)
-                            FROM audio_files
-                           WHERE audio_files.recording_session_id = clips.recording_session_id
-                      ),
-                      (
-                          SELECT ARRAY[recording_sessions.starting_channel_id]::bigint[]
-                            FROM recording_sessions
-                           WHERE recording_sessions.id = clips.recording_session_id
-                      ),
-                      ARRAY[]::bigint[]
-                  )
-                  WHEN clips.channel_id IS NOT NULL THEN ARRAY[clips.channel_id]::bigint[]
-                  ELSE ARRAY[]::bigint[]
-              END AS channel_ids
-          ) source
           WHERE clips.guild_id = $1
             AND (clips.clip_id = $2 OR clips.name = $2)
             AND clips.deleted_at IS NULL
-            AND cardinality(source.channel_ids) > 0
-            AND source.channel_ids <@ $3::bigint[]
+            AND cardinality(clips.channel_ids) > 0
+            AND clips.channel_ids <@ $3::bigint[]
           ORDER BY (clips.clip_id = $2) DESC, clips.created_at, clips.clip_id
           LIMIT 1",
         guild_id,
         clip_id,
-        visible_channel_ids
+        listening_channel_ids
     )
     .fetch_optional(pool)
     .await?;
@@ -116,46 +99,29 @@ pub async fn resolve_jam_cooldown(
     Ok(row.cooldown_seconds)
 }
 
+/// Up to 25 of the guild's clips named like `query` whose every channel is
+/// in `listening_channel_ids`.
 pub async fn autocomplete_clip_choices(
     pool: &Pool<Postgres>,
     guild_id: i64,
     query: &str,
-    visible_channel_ids: &[i64],
+    listening_channel_ids: &[i64],
 ) -> DbResult<Vec<ClipChoice>> {
     let query_wildcard = format!("%{}%", query);
 
     let rows = sqlx::query!(
         "SELECT clips.name, clips.clip_id
            FROM clips
-          CROSS JOIN LATERAL (
-              SELECT CASE
-                  WHEN clips.recording_session_id IS NOT NULL THEN COALESCE(
-                      (
-                          SELECT array_agg(DISTINCT audio_files.channel_id ORDER BY audio_files.channel_id)
-                            FROM audio_files
-                           WHERE audio_files.recording_session_id = clips.recording_session_id
-                      ),
-                      (
-                          SELECT ARRAY[recording_sessions.starting_channel_id]::bigint[]
-                            FROM recording_sessions
-                           WHERE recording_sessions.id = clips.recording_session_id
-                      ),
-                      ARRAY[]::bigint[]
-                  )
-                  WHEN clips.channel_id IS NOT NULL THEN ARRAY[clips.channel_id]::bigint[]
-                  ELSE ARRAY[]::bigint[]
-              END AS channel_ids
-          ) source
           WHERE clips.guild_id = $1
             AND clips.name ILIKE $2
             AND clips.deleted_at IS NULL
-            AND cardinality(source.channel_ids) > 0
-            AND source.channel_ids <@ $3::bigint[]
+            AND cardinality(clips.channel_ids) > 0
+            AND clips.channel_ids <@ $3::bigint[]
           ORDER BY clips.name, clips.clip_id
           LIMIT 25",
         guild_id,
         query_wildcard,
-        visible_channel_ids
+        listening_channel_ids
     )
     .fetch_all(pool)
     .await?;

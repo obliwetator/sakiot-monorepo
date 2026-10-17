@@ -282,6 +282,15 @@ async fn execute(
         validate_composition(job.snapshot.body.clone())?,
     )
     .await?;
+    // The export holds every source's audio, so hearing it takes every
+    // source's channels.
+    let channel_ids: Vec<i64> = resolved
+        .sources
+        .iter()
+        .flat_map(|source| source.channel_ids.iter().copied())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let directory = attempt_dir(&job.id, &job.token);
     tokio::fs::create_dir_all(&directory).await?;
     let mut segments = Vec::new();
@@ -344,7 +353,7 @@ async fn execute(
     tokio::fs::File::open(&output).await?.sync_all().await?;
     tokio::fs::rename(&output, &final_path).await?;
     tokio::fs::File::open(parent).await?.sync_all().await?;
-    publish(pool, job, &saved, duration, size).await
+    publish(pool, job, &saved, &channel_ids, duration, size).await
 }
 
 async fn workspace_bytes(path: &Path) -> Result<u64, AppError> {

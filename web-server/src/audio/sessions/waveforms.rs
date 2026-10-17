@@ -487,6 +487,7 @@ mod tests {
                 path: PathBuf::new(),
                 source_start_ms,
                 audio_file_id: 1,
+                channel_id: 1,
                 file_name: file_name.to_owned(),
                 live: false,
             },

@@ -10,45 +10,51 @@ pub(crate) async fn require_session_access(
     recording_session_id: i64,
     viewer: Viewer,
 ) -> Result<SessionAccess, AppError> {
-    Ok(authorize_session(pool, recording_session_id, viewer)
+    Ok(authorize(pool, recording_session_id, viewer)
         .await?
-        .0)
+        .0
+        .access)
 }
 
 /// `require_session_access`, also returning the viewer's access to the
 /// session's guild for the request's further checks.
-///
-/// Two statements, the session and then the viewer's access, rather than one
-/// snapshot. A journey only grows, and whatever a handler reads after any
-/// check can be newer than the check, so a snapshot would not narrow what
-/// the request can see.
 pub(crate) async fn authorize_session(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
     viewer: Viewer,
 ) -> Result<(SessionAccess, GuildAccess), AppError> {
+    let (session, guild) = authorize(pool, recording_session_id, viewer).await?;
+    Ok((session.access, guild))
+}
+
+/// `require_session_access`, also returning the session's journey: every
+/// channel it was recorded in.
+pub(super) async fn authorize_session_journey(
+    pool: &web::Data<Pool<Postgres>>,
+    recording_session_id: i64,
+    viewer: Viewer,
+) -> Result<(SessionAccess, HashSet<i64>), AppError> {
+    let (session, _) = authorize(pool, recording_session_id, viewer).await?;
+    Ok((session.access, session.journey))
+}
+
+/// Two statements, the session and then the viewer's access, rather than one
+/// snapshot. A journey only grows, and whatever a handler reads after any
+/// check can be newer than the check, so a snapshot would not narrow what
+/// the request can see.
+async fn authorize(
+    pool: &web::Data<Pool<Postgres>>,
+    recording_session_id: i64,
+    viewer: Viewer,
+) -> Result<(LoadedSession, GuildAccess), AppError> {
     crate::server_timing::measure("session", async {
         let session = load_session(pool.get_ref(), recording_session_id).await?;
         let guild =
             GuildAccess::load(pool.get_ref(), session.access.guild_id, viewer, None).await?;
         require_journey(&guild, &session.journey)?;
-        Ok((session.access, guild))
+        Ok((session, guild))
     })
     .await
-}
-
-/// A session of `guild`'s guild, which its viewer may hear in full.
-pub(crate) async fn require_session_in(
-    pool: &web::Data<Pool<Postgres>>,
-    guild: &GuildAccess,
-    recording_session_id: i64,
-) -> Result<SessionAccess, AppError> {
-    let session = load_session(pool.get_ref(), recording_session_id).await?;
-    if session.access.guild_id != guild.guild_id() {
-        return Err(AppError::Forbidden);
-    }
-    require_journey(guild, &session.journey)?;
-    Ok(session.access)
 }
 
 /// Fails unless the viewer may listen in every channel of a session's
