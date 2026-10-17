@@ -14,7 +14,7 @@ is the map that sits above them.
 | `sakiot-stage` | React SPA | The user interface. Talks only to `web-server`'s HTTP API. |
 | `sakiot-db` | Migrations | Sole owner of the PostgreSQL schema. Neither service migrates at startup. |
 | `sakiot-paths` | Rust crate | The filesystem and URL layout, shared so both services agree on where media lives. |
-| `sakiot-permissions` | Rust crate | The permission evaluator: guild facts in, capabilities out, with no I/O. Used by `web-server`. |
+| `sakiot-permissions` | Rust crate | The permission evaluator: guild facts in, capabilities out, with no I/O. Used by `web-server` and `fbi-agent`. |
 | `sakiot-proto` | Rust crate | The gRPC contract (`fbi_agent.proto`) and its generated types. |
 | `sakiot-storage` | Rust crate | Backblaze B2 archive configuration and S3 client. |
 | `sakiot-dsp` | Rust crate → native + WASM | Audio effects, compiled both into `web-server` and to WASM for the browser. |
@@ -238,6 +238,10 @@ On the read side, a request loads the viewer's access once
 (`GuildAccess`, `web-server/src/permissions/`) and asks it everything. It
 takes one statement (`permissions/facts.rs`), which sees one consistent
 snapshot, so a cache write committing mid-check cannot mix old and new state.
+The agent asks the same evaluator for `/jam` and its autocomplete, with facts
+built from its gateway cache (`fbi-agent/src/permissions.rs`), where the
+cached member list is the roster; a test checks its answers against
+serenity's own permission rules on random guilds.
 Each guild-wide action needs its own capability: `manage_settings` for
 cooldowns, recording policy and voice settings; `preview_roles` for role
 preview and the roles page; `delete_recordings`; and `moderate_clips` for

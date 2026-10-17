@@ -10,6 +10,21 @@ bitflags = "2.0.2"
 proptest = { version = "1.12.0", default-features = false, features = [
 	"std",
 ], optional = true }
+# The generated guilds as the bot's cache holds them (`testing::gateway`),
+# for the bot's tests only. The features match fbi-agent's, so the
+# workspace builds serenity once.
+serenity = { version = "0.12", default-features = false, features = [
+	"builder",
+	"voice",
+	"client",
+	"gateway",
+	"cache",
+	"http",
+	"model",
+	"utils",
+	"rustls_backend",
+	"unstable_discord_api",
+], optional = true }
 
 [dev-dependencies]
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
@@ -33,6 +48,9 @@ serenity = { version = "0.12", default-features = false, features = [
 # The random guild generator (`testing`), for the web server's permission
 # harness. This crate's own tests always have it.
 testing = ["dep:proptest"]
+# The generator's guilds as serenity values (`testing::gateway`), for the
+# bot's permission tests. This crate's own tests always have it.
+serenity = ["testing", "dep:serenity"]
 
 [lints]
 workspace = true

@@ -16,6 +16,9 @@ use proptest::prelude::*;
 use crate::discord::Permissions;
 use crate::facts::{ChannelFacts, GuildFacts, MemberFacts};
 
+#[cfg(any(test, feature = "serenity"))]
+pub mod gateway;
+
 const ADMINISTRATOR: i64 = Permissions::ADMINISTRATOR.bits();
 const MANAGE_GUILD: i64 = Permissions::MANAGE_GUILD.bits();
 const VIEW_CHANNEL: i64 = Permissions::VIEW_CHANNEL.bits();

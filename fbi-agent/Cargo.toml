@@ -79,6 +79,7 @@ tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2.4"
 sakiot-paths = { path = "../sakiot-paths" }
 sakiot-peaks = { path = "../sakiot-peaks" }
+sakiot-permissions = { path = "../sakiot-permissions" }
 sakiot-process = { path = "../sakiot-process" }
 sakiot-storage = { path = "../sakiot-storage" }
 ogg = "0.9"
@@ -87,6 +88,8 @@ thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+sakiot-permissions = { path = "../sakiot-permissions", features = ["serenity"] }
 
 [features]
 default = []

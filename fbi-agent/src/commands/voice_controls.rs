@@ -2,7 +2,7 @@ use crate::cast::ToI64;
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::client::{Cache, Context};
 use serenity::model::id::{ChannelId, UserId};
-use serenity::model::prelude::{ChannelType, CommandOptionType, Permissions};
+use serenity::model::prelude::CommandOptionType;
 
 use crate::cooldown::{CheckResult, JamCooldown};
 use crate::database::DbError;
@@ -81,12 +81,13 @@ pub async fn play_clip(
         .ok()
         .filter(|user_id| *user_id != 0)
         .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
-    let visible_channel_ids = visible_voice_channel_ids(cache, guild_id, UserId::new(requester));
+    let listening_channel_ids =
+        crate::permissions::listening_channels(cache, guild_id, UserId::new(requester));
     let clip = crate::database::clips::playable_clip(
         pool,
         guild_id.to_i64(),
         clip_id,
-        &visible_channel_ids,
+        &listening_channel_ids,
     )
     .await
     .map_err(PlayClipError::Db)?
@@ -116,31 +117,6 @@ pub async fn play_clip(
     let _ = track.set_volume(0.5);
 
     Ok(format!("Now jamming: {}", clip.display_name))
-}
-
-pub(crate) fn visible_voice_channel_ids(
-    cache: &Cache,
-    guild_id: GuildId,
-    user_id: UserId,
-) -> Vec<i64> {
-    let Some(guild) = cache.guild(guild_id) else {
-        return Vec::new();
-    };
-    let Some(member) = guild.members.get(&user_id) else {
-        return Vec::new();
-    };
-
-    guild
-        .channels
-        .values()
-        .filter(|channel| matches!(channel.kind, ChannelType::Voice | ChannelType::Stage))
-        .filter(|channel| {
-            guild
-                .user_permissions_in(channel, member)
-                .contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT)
-        })
-        .map(|channel| channel.id.to_i64())
-        .collect()
 }
 
 pub fn register_jam() -> CreateCommand {
