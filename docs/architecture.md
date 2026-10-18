@@ -104,7 +104,11 @@ same paths from the same crate rather than reading them from the database.
 - **Mixed sessions** — every participant mixed into one timeline
   (`audio/sessions/mix/`), rendered on demand and cached. `occupancy.rs`
   reconstructs who the bot had in the channel across the timeline, so the mix
-  and the UI agree on which participants exist when.
+  and the UI agree on which participants exist when. Each viewer's mix holds
+  only the tracks they may hear (their own voice, and anyone else's recorded
+  in a channel they may listen in); the rest are left out, and such a mix is
+  cached apart, keyed by the recordings it leaves out. Removed sessions never
+  contribute.
 - **Live** — a recording still in progress, muxed to HLS while it grows
   (`audio/live.rs`).
 

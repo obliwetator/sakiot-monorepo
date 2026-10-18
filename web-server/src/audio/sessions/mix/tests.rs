@@ -629,8 +629,8 @@ fn selected_session_mix_cache_is_separate_from_all_recordings() {
     // other's output and fingerprint and every scope switch regenerated the
     // mix. AllRecordings keeps the legacy path for existing cached mixes.
     let access = session_access("finalized");
-    let all = mix_cache_dir(&access, &[], ChannelMixScope::AllRecordings);
-    let selected = mix_cache_dir(&access, &[], ChannelMixScope::SelectedSession);
+    let all = mix_cache_dir(&access, &[], ChannelMixScope::AllRecordings, &[]);
+    let selected = mix_cache_dir(&access, &[], ChannelMixScope::SelectedSession, &[]);
 
     assert_eq!(
         selected,
@@ -642,7 +642,20 @@ fn selected_session_mix_cache_is_separate_from_all_recordings() {
     let mut other = session_access("finalized");
     other.session_id = access.session_id + 1;
     assert_ne!(
-        mix_cache_dir(&other, &[], ChannelMixScope::SelectedSession),
+        mix_cache_dir(&other, &[], ChannelMixScope::SelectedSession, &[]),
         selected
     );
+}
+
+#[test]
+fn a_mix_without_some_tracks_is_cached_apart_by_what_it_leaves_out() {
+    let access = session_access("finalized");
+    let full = mix_cache_dir(&access, &[], ChannelMixScope::AllRecordings, &[]);
+    let without =
+        |left_out: &[i64]| mix_cache_dir(&access, &[], ChannelMixScope::AllRecordings, left_out);
+    assert_eq!(without(&[7, 3]).parent(), Some(full.as_path()));
+    // The same recordings left out share a mix, in any order.
+    assert_eq!(without(&[7, 3]), without(&[3, 7, 3]));
+    assert_ne!(without(&[7, 3]), without(&[7]));
+    assert_ne!(without(&[7]), full);
 }

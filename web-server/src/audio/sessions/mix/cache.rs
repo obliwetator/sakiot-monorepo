@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use chrono::{Datelike, Utc};
 use sakiot_paths::SessionKey;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::errors::AppError;
 
@@ -19,10 +20,15 @@ use super::{
     MIX_OUTPUT, MIX_SETTINGS, MixContributor, MixPlan, SessionMixContainer,
 };
 
+/// Where a mix is cached. A viewer who may not hear every track gets a mix
+/// without them, cached apart under the recordings it leaves out
+/// (`left_out`), so viewers who hear different tracks never replace each
+/// other's mix.
 pub(super) fn mix_cache_dir(
     access: &SessionAccess,
     anchor_fragments: &[AudioFragment],
     scope: ChannelMixScope,
+    left_out: &[i64],
 ) -> PathBuf {
     let (channel_id, year, month) = anchor_fragments
         .first()
@@ -47,10 +53,27 @@ pub(super) fn mix_cache_dir(
     // mixes; the selected-session mix gets its own per-session subdirectory so
     // two sessions that share a guild, channel, and start timestamp cannot
     // overwrite each other.
-    match scope {
+    let full = match scope {
         ChannelMixScope::AllRecordings => base,
         ChannelMixScope::SelectedSession => base.join(format!("session-{}", access.session_id)),
+    };
+    if left_out.is_empty() {
+        return full;
     }
+    let mut left_out = left_out.to_vec();
+    left_out.sort_unstable();
+    left_out.dedup();
+    let digest = left_out
+        .iter()
+        .fold(Sha256::new(), |digest, id| {
+            digest.chain_update(id.to_le_bytes())
+        })
+        .finalize();
+    let name: String = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    full.join(format!("without-{name}"))
 }
 
 pub(super) fn default_generation_settings(

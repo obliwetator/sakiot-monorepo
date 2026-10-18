@@ -336,7 +336,7 @@ struct MixPlanInputs {
     responses(
         (status = 200, description = "Timestamp-aligned channel mix status", body = ChannelMixResponse),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
-        (status = 403, description = "One or more contributor sessions are inaccessible", body = crate::errors::ApiError),
+        (status = 403, description = "The session is inaccessible; contributors the viewer may not hear are left out of the mix", body = crate::errors::ApiError),
         (status = 404, description = "Session not found", body = crate::errors::ApiError),
         (status = 500, description = "Mix status failed", body = crate::errors::ApiError),
     ),
@@ -386,7 +386,7 @@ pub async fn get_session_channel_mix(
         (status = 202, description = "Mix render started or is already running", body = ChannelMixResponse),
         (status = 409, description = "Mix generation is not allowed while a source is live or pending", body = ChannelMixResponse),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
-        (status = 403, description = "One or more contributor sessions are inaccessible", body = crate::errors::ApiError),
+        (status = 403, description = "The session is inaccessible; contributors the viewer may not hear are left out of the mix", body = crate::errors::ApiError),
         (status = 404, description = "Session not found", body = crate::errors::ApiError),
         (status = 500, description = "Mix render could not be started", body = crate::errors::ApiError),
     ),
@@ -534,7 +534,7 @@ pub(crate) async fn run_session_mix_job(
     responses(
         (status = 200, description = "Timestamp-aligned Ogg/Opus mix", content_type = "audio/ogg"),
         (status = 401, description = "Missing access token", body = crate::errors::ApiError),
-        (status = 403, description = "One or more contributor sessions are inaccessible", body = crate::errors::ApiError),
+        (status = 403, description = "The session is inaccessible; contributors the viewer may not hear are left out of the mix", body = crate::errors::ApiError),
         (status = 404, description = "Mix has not been generated", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),

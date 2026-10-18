@@ -3801,7 +3801,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description One or more contributor sessions are inaccessible */
+			/** @description The session is inaccessible; contributors the viewer may not hear are left out of the mix */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -3876,7 +3876,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description One or more contributor sessions are inaccessible */
+			/** @description The session is inaccessible; contributors the viewer may not hear are left out of the mix */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -3949,7 +3949,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description One or more contributor sessions are inaccessible */
+			/** @description The session is inaccessible; contributors the viewer may not hear are left out of the mix */
 			403: {
 				headers: {
 					[name: string]: unknown;

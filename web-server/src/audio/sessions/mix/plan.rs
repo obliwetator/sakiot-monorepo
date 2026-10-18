@@ -91,28 +91,26 @@ pub(super) async fn build_mix_plan(
         }
     };
 
-    // Authorize every complete logical contributor before resolving display
-    // names or returning the participant list. Legacy rows have no logical
-    // parent; their channel permission is the only safe authorization scope.
-    let journeys = measure(
-        "journeys",
-        load_contributor_journeys(pool, access, &inputs.candidates),
-    )
-    .await?;
-    for candidate in &inputs.candidates {
-        let speaker = [candidate.fragment.user_id];
-        match candidate.fragment.recording_session_id {
-            Some(session_id) if session_id == access.session_id => {}
-            Some(session_id) => {
-                let journey = journeys.get(&session_id).ok_or(AppError::FileNotFound)?;
-                guild.require_item(&speaker, journey.iter().copied())?;
-            }
-            None => guild.require_item(&speaker, [candidate.fragment.channel_id])?,
+    // Each track is heard on its own terms, before display names are
+    // resolved or participants listed: the viewer's own voice, and anyone
+    // else's recorded in a channel they may listen in (a track holds only
+    // its recording's audio from the mix's channels, as a clip holds only
+    // its own). The rest are left out rather than refusing the whole mix.
+    // The anchor session is authorized already.
+    let mut candidates = Vec::with_capacity(inputs.candidates.len());
+    let mut left_out = Vec::new();
+    for candidate in inputs.candidates {
+        let fragment = &candidate.fragment;
+        if fragment.recording_session_id == Some(access.session_id)
+            || guild.allows_item(&[fragment.user_id], [fragment.channel_id])?
+        {
+            candidates.push(candidate);
+        } else {
+            left_out.push(fragment.id);
         }
     }
 
-    let contributors = inputs
-        .candidates
+    let contributors = candidates
         .iter()
         .filter(|candidate| {
             scope == ChannelMixScope::AllRecordings
@@ -148,7 +146,7 @@ pub(super) async fn build_mix_plan(
             );
         }
     } else {
-        for candidate in &inputs.candidates {
+        for candidate in &candidates {
             add_window_sources(
                 &mut sources,
                 &windows,
@@ -180,7 +178,7 @@ pub(super) async fn build_mix_plan(
         (scope == ChannelMixScope::SelectedSession).then_some(access.user_id),
         timeline_start_ms,
     );
-    let cache_dir = mix_cache_dir(access, &selected_fragments, scope);
+    let cache_dir = mix_cache_dir(access, &selected_fragments, scope, &left_out);
     let source_fingerprint = mix_source_fingerprint(
         access,
         scope,
@@ -206,51 +204,6 @@ pub(super) async fn build_mix_plan(
         fingerprint,
         settings,
     })
-}
-
-/// The journey of each contributing session other than the anchor, in one
-/// statement. A session that is deleted, or not of the anchor's guild, is
-/// missing.
-async fn load_contributor_journeys(
-    pool: &web::Data<Pool<Postgres>>,
-    access: &SessionAccess,
-    candidates: &[CandidateRow],
-) -> Result<HashMap<i64, HashSet<i64>>, AppError> {
-    let session_ids: Vec<i64> = candidates
-        .iter()
-        .filter_map(|candidate| candidate.fragment.recording_session_id)
-        .filter(|&session_id| session_id != access.session_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    if session_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let rows = sqlx::query!(
-        r#"SELECT rs.id,
-                  rs.starting_channel_id,
-                  ARRAY(SELECT DISTINCT channel_id
-                          FROM audio_files
-                         WHERE recording_session_id = rs.id) AS "channels!"
-             FROM recording_sessions rs
-            WHERE rs.id = ANY($1)
-              AND rs.guild_id = $2
-              AND rs.deletion_requested_at IS NULL"#,
-        &session_ids,
-        access.guild_id
-    )
-    .fetch_all(pool.get_ref())
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            let mut journey: HashSet<i64> = row.channels.into_iter().collect();
-            if journey.is_empty() {
-                journey.insert(row.starting_channel_id);
-            }
-            (row.id, journey)
-        })
-        .collect())
 }
 
 async fn load_mix_candidates(
@@ -289,6 +242,9 @@ async fn load_mix_candidates(
            FROM audio_files af
            LEFT JOIN recording_sessions rs ON rs.id = af.recording_session_id
           WHERE af.guild_id = $1
+            -- A removed or vanished session is no one's to hear.
+            AND (af.recording_session_id IS NULL
+                 OR (rs.id IS NOT NULL AND rs.deletion_requested_at IS NULL))
             AND ($2::bigint IS NULL OR af.user_id <> $2)
             AND af.start_ts IS NOT NULL
             AND af.start_ts < $4

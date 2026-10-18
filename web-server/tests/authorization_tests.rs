@@ -1499,6 +1499,128 @@ async fn a_former_member_reaches_only_their_own_recordings(
     Ok(())
 }
 
+/// A channel mix holds every track the viewer may hear and leaves out the
+/// rest, rather than refusing the whole mix: someone else's voice counts
+/// from the channel the track's audio came from, as a clip's does, and a
+/// removed session is no one's to hear.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_channel_mix_leaves_out_only_the_tracks_the_viewer_may_not_hear(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let lost = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name) VALUES ($1, $2, 2, 'lost')",
+    )
+    .bind(lost)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(lost)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(&pool)
+    .await?;
+    // A session of `speaker` with one recording per (channel, start, end).
+    let record = |speaker: i64, parts: Vec<(i64, i64, i64)>| {
+        let pool = pool.clone();
+        async move {
+            let session_id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO recording_sessions
+                    (guild_id, user_id, starting_channel_id, current_channel_id, state,
+                     started_at, ended_at, end_reason, last_segment_index)
+                 VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(1), to_timestamp(4),
+                         'test', $4)
+                 RETURNING id",
+            )
+            .bind(ALLOWED_GUILD_ID)
+            .bind(speaker)
+            .bind(parts[0].0)
+            .bind(i32::try_from(parts.len())? - 1)
+            .fetch_one(&pool)
+            .await?;
+            for (index, (channel_id, start, end)) in parts.into_iter().enumerate() {
+                sqlx::query(
+                    "INSERT INTO audio_files
+                        (file_name, guild_id, channel_id, user_id, year, month,
+                         start_ts, end_ts, recording_session_id, segment_index)
+                     VALUES ($1, $2, $3, $4, 1970, 1, $5, $6, $7, $8)",
+                )
+                .bind(format!("mix-{speaker}-{index}"))
+                .bind(ALLOWED_GUILD_ID)
+                .bind(channel_id)
+                .bind(speaker)
+                .bind(start)
+                .bind(end)
+                .bind(session_id)
+                .bind(i32::try_from(index)?)
+                .execute(&pool)
+                .await?;
+            }
+            Ok::<i64, Box<dyn std::error::Error>>(session_id)
+        }
+    };
+    let anchor = record(OTHER_USER_ID, vec![(ALLOWED_CHANNEL_ID, 1000, 3000)]).await?;
+    // Talking in the allowed channel, then moving to the lost one.
+    record(
+        31,
+        vec![(ALLOWED_CHANNEL_ID, 1000, 2000), (lost, 2000, 3000)],
+    )
+    .await?;
+    let removed = record(32, vec![(ALLOWED_CHANNEL_ID, 1000, 3000)]).await?;
+    sqlx::query("UPDATE recording_sessions SET deletion_requested_at = now() WHERE id = $1")
+        .bind(removed)
+        .execute(&pool)
+        .await?;
+    // The viewer's own session in the lost channel, with someone else there.
+    let own = record(USER_ID, vec![(lost, 1000, 3000)]).await?;
+    record(33, vec![(lost, 1000, 3000)]).await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(SessionMixContainer::default()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_session_channel_mix),
+            ),
+    )
+    .await;
+    let participants = |session_id: i64, user_id: i64| {
+        let app = &app;
+        async move {
+            let request = test::TestRequest::get()
+                .uri(&format!("/api/audio/sessions/{session_id}/channel-mix"))
+                .insert_header(("Cookie", access_cookie_for(user_id)?))
+                .to_request();
+            let response = test::call_service(app, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "mix of {session_id}");
+            let mix: serde_json::Value = test::read_body_json(response).await;
+            let mut users: Vec<String> = mix["participants"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|participant| participant["user_id"].as_str().map(str::to_owned))
+                .collect();
+            users.sort_unstable();
+            Ok::<Vec<String>, Box<dyn std::error::Error>>(users)
+        }
+    };
+    assert_eq!(
+        participants(anchor, USER_ID).await?,
+        [OTHER_USER_ID.to_string(), "31".to_string()]
+    );
+    // Their own session's mix: their voice, without the one they may not hear.
+    assert_eq!(participants(own, USER_ID).await?, [USER_ID.to_string()]);
+    Ok(())
+}
+
 fn access_keys() -> AccessKeys {
     AccessKeys {
         access_encode: EncodingKey::from_secret(b"test_secret"),
