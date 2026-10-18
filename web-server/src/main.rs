@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     init_telemetry(cfg.port);
     if deletion_policy.allow_permanent {
         tracing::warn!(
-            "permanent recording deletion enabled; explicit mode=permanent still required"
+            "permanent recording deletion enabled: managers' mode=permanent requests and speakers' erasures past their grace period are purged"
         );
     }
 

@@ -178,7 +178,10 @@ pub(super) async fn record_outcome(
     result: Result<(), AttemptError>,
 ) -> Result<(), AppError> {
     match result {
-        Ok(()) => {}
+        // Irreversible: always leave a trace of it.
+        Ok(()) => {
+            tracing::info!(job_id = %job.id, subject = ?job.subject, "recording deletion purged");
+        }
         Err(AttemptError::LeaseLost) => {
             tracing::warn!(job_id = %job.id, "recording deletion lease lost; leaving the job to its new owner");
         }
