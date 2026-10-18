@@ -26,7 +26,7 @@ pub(super) async fn resolve_sources(
                 "Segment {index}: composed clips cannot be used as sources"
             )));
         }
-        crate::clips::require_clip(&guild, &row.channel_ids)?;
+        crate::clips::require_clip(&guild, &row.speaker_ids, &row.channel_ids)?;
         let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
         let path = crate::media_archive::clip_local_path(&saved_file_name)?;
         if let Some(media) = media {
@@ -51,6 +51,15 @@ pub(super) async fn resolve_sources(
             saved_file_name,
         });
     }
+    // Hearing each source, even one of your own voice alone, is not enough
+    // to make a clip of them: that takes `CREATE_CLIPS` wherever their
+    // audio came from.
+    guild.require_channels(
+        resolved
+            .iter()
+            .flat_map(|source| source.channel_ids.iter().copied()),
+        sakiot_permissions::Capabilities::CREATE_CLIPS,
+    )?;
     Ok(resolved)
 }
 

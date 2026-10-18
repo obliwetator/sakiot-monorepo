@@ -14,7 +14,7 @@ mod facts;
 mod guild_access;
 
 pub use capability::Capability;
-pub use guild_access::{GuildAccess, load_facts};
+pub use guild_access::{GuildAccess, Listing, load_facts};
 pub use sakiot_permissions::{Permissions, Viewer};
 
 /// The viewer of a request the auth middleware let through.

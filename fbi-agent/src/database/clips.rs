@@ -1,6 +1,7 @@
 use sqlx::{Pool, Postgres};
 
 use crate::database::DbResult;
+use crate::permissions::Listening;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PlayableClip {
@@ -15,13 +16,14 @@ pub struct ClipChoice {
     pub clip_id: String,
 }
 
-/// The clip `clip_id` (an id, or else a name) of the guild, if
-/// `listening_channel_ids` holds every channel its audio came from.
+/// The clip `clip_id` (an id, or else a name) of the guild, if `listening`
+/// may hear it: it holds only their own voice, or every channel its audio
+/// came from is one of theirs.
 pub async fn playable_clip(
     pool: &Pool<Postgres>,
     guild_id: i64,
     clip_id: &str,
-    listening_channel_ids: &[i64],
+    listening: &Listening,
 ) -> DbResult<Option<PlayableClip>> {
     let row = sqlx::query!(
         "SELECT clips.clip_id, clips.saved_file_name, clips.name
@@ -29,13 +31,16 @@ pub async fn playable_clip(
           WHERE clips.guild_id = $1
             AND (clips.clip_id = $2 OR clips.name = $2)
             AND clips.deleted_at IS NULL
-            AND cardinality(clips.channel_ids) > 0
-            AND clips.channel_ids <@ $3::bigint[]
+            AND ((cardinality(clips.speaker_ids) > 0
+                  AND clips.speaker_ids <@ ARRAY[$4::bigint])
+                 OR (cardinality(clips.channel_ids) > 0
+                     AND clips.channel_ids <@ $3::bigint[]))
           ORDER BY (clips.clip_id = $2) DESC, clips.created_at, clips.clip_id
           LIMIT 1",
         guild_id,
         clip_id,
-        listening_channel_ids
+        &listening.channels,
+        listening.own
     )
     .fetch_optional(pool)
     .await?;
@@ -99,13 +104,13 @@ pub async fn resolve_jam_cooldown(
     Ok(row.cooldown_seconds)
 }
 
-/// Up to 25 of the guild's clips named like `query` whose every channel is
-/// in `listening_channel_ids`.
+/// Up to 25 of the guild's clips named like `query` that `listening` may
+/// hear (`playable_clip`).
 pub async fn autocomplete_clip_choices(
     pool: &Pool<Postgres>,
     guild_id: i64,
     query: &str,
-    listening_channel_ids: &[i64],
+    listening: &Listening,
 ) -> DbResult<Vec<ClipChoice>> {
     let query_wildcard = format!("%{}%", query);
 
@@ -115,13 +120,16 @@ pub async fn autocomplete_clip_choices(
           WHERE clips.guild_id = $1
             AND clips.name ILIKE $2
             AND clips.deleted_at IS NULL
-            AND cardinality(clips.channel_ids) > 0
-            AND clips.channel_ids <@ $3::bigint[]
+            AND ((cardinality(clips.speaker_ids) > 0
+                  AND clips.speaker_ids <@ ARRAY[$4::bigint])
+                 OR (cardinality(clips.channel_ids) > 0
+                     AND clips.channel_ids <@ $3::bigint[]))
           ORDER BY clips.name, clips.clip_id
           LIMIT 25",
         guild_id,
         query_wildcard,
-        listening_channel_ids
+        &listening.channels,
+        listening.own
     )
     .fetch_all(pool)
     .await?;

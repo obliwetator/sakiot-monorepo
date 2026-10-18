@@ -387,8 +387,8 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
                 }
                 Some(session_access_level(&audible, preview).to_string())
             }
-            TreeScope::Own(permitted) => {
-                if !audible.iter().all(|channel| permitted.contains(channel)) {
+            TreeScope::Own(viewer) => {
+                if !viewer.allows_item(&[listing.user_id], audible.iter().copied()) {
                     continue;
                 }
                 None
@@ -492,38 +492,39 @@ pub async fn get_live_stems(
         .parse::<i64>()
         .map_err(|_| AppError::InvalidParam("guild_id".into()))?;
 
-    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+    let listing = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
         .await?
-        .listing_channels(Capabilities::LISTEN_OTHERS)?;
+        .listing()?;
 
-    let permitted_channels: Vec<i64> = permitted.iter().copied().collect();
+    let permitted_channels: Vec<i64> = listing.channels.into_iter().collect();
     let rows = crate::server_timing::measure(
         "stems",
         sqlx::query!(
-            r#"SELECT af.file_name AS "file_name!", af.channel_id AS "channel_id!"
+            r#"SELECT af.file_name AS "file_name!"
            FROM live_audio_files af
           WHERE af.guild_id = $1
             AND (
-                af.recording_session_id IS NULL
-                OR NOT EXISTS (
-                    SELECT 1
-                      FROM audio_files sibling
-                     WHERE sibling.recording_session_id = af.recording_session_id
-                       AND NOT (sibling.channel_id = ANY($2))
+                -- The viewer's own voice, wherever it is recorded.
+                af.user_id = $3
+                OR (
+                    af.channel_id = ANY($2)
+                    AND NOT EXISTS (
+                        SELECT 1
+                          FROM audio_files sibling
+                         WHERE sibling.recording_session_id = af.recording_session_id
+                           AND NOT (sibling.channel_id = ANY($2))
+                    )
                 )
             )"#,
             guild_id,
-            &permitted_channels
+            &permitted_channels,
+            listing.own
         )
         .fetch_all(pool.get_ref()),
     )
     .await?;
 
-    let stems: Vec<String> = rows
-        .into_iter()
-        .filter(|row| permitted.contains(&row.channel_id))
-        .map(|row| row.file_name)
-        .collect();
+    let stems: Vec<String> = rows.into_iter().map(|row| row.file_name).collect();
 
     Ok(HttpResponse::Ok().json(stems))
 }
@@ -580,9 +581,9 @@ pub async fn get_current_month_permission(
 
 /// What a recording tree request may show.
 enum TreeScope {
-    /// The sessions the viewer can hear in full: those recorded only in
-    /// these channels.
-    Own(HashSet<i64>),
+    /// The sessions the viewer can hear in full: their own, and those
+    /// recorded only in channels they may listen in.
+    Own(sakiot_permissions::Access),
     /// A manager's role preview: the sessions of the manager's own channels,
     /// each annotated with what the role could do with it.
     Preview(RolePreview),
@@ -597,7 +598,7 @@ async fn tree_scope(
     let access = GuildAccess::load(pool, guild_id, viewer, as_role).await?;
     Ok(match access.role_preview()? {
         Some(preview) => TreeScope::Preview(preview),
-        None => TreeScope::Own(access.channels(Capabilities::LISTEN_OTHERS)?),
+        None => TreeScope::Own(access.require_member()?.clone()),
     })
 }
 

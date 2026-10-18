@@ -6,6 +6,10 @@ use crate::realtime::events::{PresenceChange, Renamed};
 const GUILD: i64 = 1;
 const PUBLIC: i64 = 100;
 const PRIVATE: i64 = 200;
+/// The viewer every test routes for.
+const VIEWER: i64 = 9;
+/// Someone else, whose voice the sessions hold unless a test says otherwise.
+const SPEAKER: i64 = 7;
 
 fn subscription(tree: &[i64], media: &[i64], manager: bool) -> Subscription {
     Subscription {
@@ -82,6 +86,7 @@ pub(super) fn journey(starting: i64, fragments: &[i64]) -> Journey {
     let mut tree = fragments.clone();
     tree.insert(starting);
     Journey {
+        speaker: SPEAKER,
         starting_channel_id: starting,
         tree,
         media: if fragments.is_empty() {
@@ -163,6 +168,7 @@ fn clips_follow_their_own_channels_and_stamps_the_media_rule() {
         stamp_id,
         channel_id: Some(PUBLIC),
         session_id: Some(session_id),
+        target_id: Some(SPEAKER),
     };
     let changes = [
         // Cut from the public part of a session that also went through the
@@ -186,6 +192,63 @@ fn clips_follow_their_own_channels_and_stamps_the_media_rule() {
     assert_eq!(
         route(&changes[..3], &preview, 9, None),
         Routed::from([(Resource::Clips, ids(&["public part"]))])
+    );
+}
+
+#[test]
+fn a_viewers_own_voice_reaches_them_from_any_channel() {
+    let own = |starting| Journey {
+        speaker: VIEWER,
+        ..journey(starting, &[PRIVATE])
+    };
+    let journeys = HashMap::from([
+        (1, own(PRIVATE)),
+        (2, journey(PRIVATE, &[PRIVATE])),
+        (3, own(PUBLIC)),
+    ]);
+    let session = |session_id| Event::Session {
+        guild_id: GUILD,
+        session_id,
+    };
+    let clip = |clip_id: &str, speakers: &[i64]| Event::Clip {
+        guild_id: GUILD,
+        clip_id: clip_id.into(),
+        channels: vec![PRIVATE],
+        speakers: speakers.to_vec(),
+    };
+    let stamp = |stamp_id, target_id| Event::Stamp {
+        guild_id: GUILD,
+        stamp_id,
+        channel_id: Some(PRIVATE),
+        session_id: None,
+        target_id: Some(target_id),
+    };
+    let changes = [
+        session(1),
+        session(2),
+        session(3),
+        clip("own", &[VIEWER]),
+        clip("with someone", &[VIEWER, SPEAKER]),
+        clip("unknown", &[]),
+        stamp(4, VIEWER),
+        stamp(5, SPEAKER),
+    ];
+    // A member who cannot listen in the private channel.
+    let viewer = subscription(&[PUBLIC], &[PUBLIC], false);
+    assert_eq!(
+        route(&changes, &viewer, VIEWER, Some(&journeys)),
+        Routed::from([
+            (Resource::Recordings, ids(&["1", "3"])),
+            (Resource::Clips, ids(&["own"])),
+            (Resource::Stamps, ids(&["4"])),
+        ])
+    );
+    // A role has no recordings of its own, whoever previews it.
+    let mut preview = viewer.clone();
+    preview.as_role = Some(1);
+    assert_eq!(
+        route(&changes, &preview, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Recordings, None)])
     );
 }
 

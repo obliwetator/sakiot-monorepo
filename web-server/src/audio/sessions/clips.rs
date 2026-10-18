@@ -1,4 +1,5 @@
 use super::*;
+use sakiot_permissions::Capabilities;
 
 #[utoipa::path(
     post,
@@ -25,7 +26,8 @@ pub async fn create_session_clip(
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
-    let (access, journey) = authorize_session_journey(&pool, session_id, token.viewer()).await?;
+    let (access, guild, journey) =
+        authorize_session_journey(&pool, session_id, token.viewer()).await?;
     let start = f64::from(range.start.unwrap_or(0.0));
     let end = f64::from(range.end.unwrap_or(0.0));
     let silence_free = range.silence_free.unwrap_or(false);
@@ -39,6 +41,22 @@ pub async fn create_session_clip(
         ));
     }
 
+    // Who may hear the clip: whoever may listen in every channel its audio
+    // came from. The silence-free copy's times no longer match the
+    // recordings, so a clip of it takes every channel of the session.
+    let plan = if silence_free {
+        None
+    } else {
+        Some(composition_plan(&pool, &access, Some(start), Some(end)).await?)
+    };
+    let channels: Vec<i64> = match plan.as_ref().map(SessionCompositionPlan::channels) {
+        Some(heard) if !heard.is_empty() => heard.into_iter().collect(),
+        _ => journey.into_iter().collect(),
+    };
+    // Hearing your own session is not enough to make a clip of it: that
+    // takes `CREATE_CLIPS` wherever its audio came from.
+    guild.require_channels(channels.iter().copied(), Capabilities::CREATE_CLIPS)?;
+
     let now = chrono::Utc::now();
     let clip_id = uuid::Uuid::new_v4().to_string();
     let target_dir = PathBuf::from(clips_path())
@@ -46,24 +64,16 @@ pub async fn create_session_clip(
         .join(format!("{:02}", now.month()));
     tokio::fs::create_dir_all(&target_dir).await?;
     let full_path = target_dir.join(format!("{clip_id}.ogg"));
-    // Who may hear the clip: whoever may listen in every channel its audio
-    // came from. The silence-free copy's times no longer match the
-    // recordings, so a clip of it takes every channel of the session.
-    let channels: Vec<i64> = if silence_free {
-        let source = session_silence_free_path(&access)?;
-        crop_silence_free_session(&source, start, end, &full_path).await?;
-        journey.into_iter().collect()
-    } else {
-        let plan =
-            composition_plan(&pool, &access, Some(start), Some(end), media.get_ref()).await?;
-        let heard = plan.channels();
-        render_composition(plan, false, &full_path, None).await?;
-        if heard.is_empty() {
-            journey.into_iter().collect()
-        } else {
-            heard.into_iter().collect()
+    match plan {
+        None => {
+            let source = session_silence_free_path(&access)?;
+            crop_silence_free_session(&source, start, end, &full_path).await?;
         }
-    };
+        Some(plan) => {
+            plan.localize(&pool, media.get_ref()).await?;
+            render_composition(plan, false, &full_path, None).await?;
+        }
+    }
     let size = tokio::fs::metadata(&full_path).await?.len() as i64;
     let saved_file_name = format!("{}/{:02}/{clip_id}.ogg", now.year(), now.month());
     let name = range

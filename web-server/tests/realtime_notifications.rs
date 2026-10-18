@@ -245,7 +245,7 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
             }),
             json!({
                 "v": 1, "k": "stamp", "g": GUILD.to_string(), "id": stamp.to_string(),
-                "c": CHANNEL.to_string(),
+                "c": CHANNEL.to_string(), "u": USER.to_string(),
             }),
             json!({ "v": 1, "k": "opt_out", "g": GUILD.to_string(), "u": USER.to_string() }),
             json!({

@@ -37,6 +37,8 @@ pub enum Event {
         stamp_id: i64,
         channel_id: Option<i64>,
         session_id: Option<i64>,
+        /// Whose voice it marks.
+        target_id: Option<i64>,
     },
     OptOut {
         guild_id: i64,
@@ -167,6 +169,7 @@ pub fn parse(payload: &str) -> Option<Event> {
             stamp_id: id(payload.id.as_ref())?,
             channel_id: id(payload.c.as_ref()),
             session_id: id(payload.s.as_ref()),
+            target_id: id(payload.u.as_ref()),
         },
         "opt_out" => Event::OptOut {
             guild_id: guild_id?,
@@ -252,12 +255,13 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(r#"{"v":1,"k":"stamp","g":"1","id":"9","s":"2"}"#),
+            parse(r#"{"v":1,"k":"stamp","g":"1","id":"9","s":"2","u":"3"}"#),
             Some(Event::Stamp {
                 guild_id: 1,
                 stamp_id: 9,
                 channel_id: None,
                 session_id: Some(2),
+                target_id: Some(3),
             })
         );
         assert_eq!(

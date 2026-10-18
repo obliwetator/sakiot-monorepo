@@ -29,7 +29,8 @@ pub(super) async fn compose_session_inner(
         end_seconds,
         remove_silence,
     } = request;
-    let plan = composition_plan(pool, access, start_seconds, end_seconds, media).await?;
+    let plan = composition_plan(pool, access, start_seconds, end_seconds).await?;
+    plan.localize(pool, media).await?;
     render_composition(plan, remove_silence, output, progress).await
 }
 
@@ -180,9 +181,8 @@ pub(super) async fn composition_plan(
     access: &SessionAccess,
     range_start_seconds: Option<f64>,
     range_end_seconds: Option<f64>,
-    media: &MediaArchive,
 ) -> Result<SessionCompositionPlan, AppError> {
-    let parts = timeline_parts(pool, access, media).await?;
+    let parts = timeline_layout(pool, access).await?;
     let timeline_end = timeline_end_ms(access);
     let duration_ms = timeline_end.saturating_sub(access.started_at_ms);
     let start_ms = seconds_to_ms(range_start_seconds.unwrap_or(0.0))?;
@@ -218,26 +218,27 @@ pub(super) async fn composition_plan(
     })
 }
 
-/// [`timeline_layout`] with every fragment's audio on local disk.
-pub(super) async fn timeline_parts(
-    pool: &web::Data<Pool<Postgres>>,
-    access: &SessionAccess,
-    media: &MediaArchive,
-) -> Result<Vec<TimelinePart>, AppError> {
-    let parts = timeline_layout(pool, access).await?;
-    for part in &parts {
-        if let PartKind::Audio {
-            path,
-            audio_file_id,
-            ..
-        } = &part.kind
-        {
-            media
-                .ensure_recording_local(pool.get_ref(), *audio_file_id, path)
-                .await?;
+impl SessionCompositionPlan {
+    /// Brings the audio of every recording the range plays to local disk.
+    pub(super) async fn localize(
+        &self,
+        pool: &web::Data<Pool<Postgres>>,
+        media: &MediaArchive,
+    ) -> Result<(), AppError> {
+        for part in &self.parts {
+            if let PartKind::Audio {
+                path,
+                audio_file_id,
+                ..
+            } = &part.kind
+            {
+                media
+                    .ensure_recording_local(pool.get_ref(), *audio_file_id, path)
+                    .await?;
+            }
         }
+        Ok(())
     }
-    Ok(parts)
 }
 
 /// The session's timeline: its fragments, and silence between and around

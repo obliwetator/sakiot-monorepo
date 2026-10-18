@@ -12,7 +12,7 @@ use serenity::model::guild::Guild;
 use serenity::model::id::UserId;
 
 use crate::cast::ToI64;
-use crate::permissions::listening_channels_in;
+use crate::permissions::listening_in;
 
 /// Serenity's answer: the voice and stage channels where a cached member
 /// has VIEW_CHANNEL and CONNECT. Someone the cache does not list gets none,
@@ -50,7 +50,17 @@ proptest! {
             });
             let users = (0..world.users).map(World::user_id).chain([STRANGER_ID]);
             for user_id in users.map(|id| UserId::new(gateway::id(id))) {
-                let ours: BTreeSet<i64> = listening_channels_in(&guild, user_id).into_iter().collect();
+                let listening = listening_in(&guild, user_id);
+                // Only a member's own voice is theirs to hear.
+                let member = guild.members.contains_key(&user_id) || user_id == guild.owner_id;
+                prop_assert_eq!(
+                    listening.own,
+                    member.then(|| user_id.to_i64()),
+                    "user {} in guild {}",
+                    user_id,
+                    g
+                );
+                let ours: BTreeSet<i64> = listening.channels.into_iter().collect();
                 prop_assert_eq!(
                     ours,
                     serenity_listening_channels(&guild, user_id),

@@ -3,7 +3,8 @@
 //! dashboard agree.
 
 use sakiot_permissions::{
-    Capabilities, ChannelFacts, GuildFacts, MemberFacts, Overwrite, Permissions, Roster, Viewer,
+    Capabilities, ChannelFacts, GuildFacts, MemberFacts, Membership, Overwrite, Permissions,
+    Roster, Viewer,
 };
 use serenity::client::Cache;
 use serenity::model::channel::{ChannelType, PermissionOverwriteType};
@@ -12,20 +13,33 @@ use serenity::model::id::{GuildId, RoleId, UserId};
 
 use crate::cast::ToI64;
 
-/// The voice and stage channels where the user may hear other members; a
-/// clip is theirs to play when every channel its audio came from is one of
-/// them. Empty while the guild is not cached.
-pub(crate) fn listening_channels(cache: &Cache, guild_id: GuildId, user_id: UserId) -> Vec<i64> {
-    cache
-        .guild(guild_id)
-        .map_or_else(Vec::new, |guild| listening_channels_in(&guild, user_id))
+/// Which clips a user may hear (`Access::allows_item`), for a query: those
+/// of only `own`'s voice, and those whose every channel is in `channels`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Listening {
+    /// The user, while a member: their own voice is always theirs.
+    pub(crate) own: Option<i64>,
+    /// The voice and stage channels where they may hear other members.
+    pub(crate) channels: Vec<i64>,
 }
 
-pub(crate) fn listening_channels_in(guild: &Guild, user_id: UserId) -> Vec<i64> {
-    guild_facts(guild, user_id)
-        .access(Viewer::discord(user_id.to_i64()))
-        .map(|access| access.channels_with(Capabilities::LISTEN_OTHERS).collect())
-        .unwrap_or_default()
+/// What the user may hear in the guild; nothing while it is not cached.
+pub(crate) fn listening(cache: &Cache, guild_id: GuildId, user_id: UserId) -> Listening {
+    cache
+        .guild(guild_id)
+        .map_or_else(Listening::default, |guild| listening_in(&guild, user_id))
+}
+
+pub(crate) fn listening_in(guild: &Guild, user_id: UserId) -> Listening {
+    let Ok(access) = guild_facts(guild, user_id).access(Viewer::discord(user_id.to_i64())) else {
+        return Listening::default();
+    };
+    Listening {
+        own: access
+            .user_id
+            .filter(|_| access.membership != Membership::Outsider),
+        channels: access.channels_with(Capabilities::LISTEN_OTHERS).collect(),
+    }
 }
 
 /// What the evaluator needs about `user_id` in `guild`, as the gateway cache

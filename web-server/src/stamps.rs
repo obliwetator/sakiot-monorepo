@@ -1,6 +1,5 @@
 use actix_web::{HttpResponse, Responder, get, web};
 use sakiot_paths::RecordingKey;
-use sakiot_permissions::Capabilities;
 use serde::Serialize;
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
@@ -72,13 +71,10 @@ pub async fn get_stamps(
 ) -> Result<impl Responder, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+    let listing = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
         .await?
-        .listing_channels(Capabilities::LISTEN_OTHERS)?;
-    if permitted.is_empty() {
-        return Ok(HttpResponse::Ok().json(Vec::<StampInfo>::new()));
-    }
-    let permitted: Vec<i64> = permitted.into_iter().collect();
+        .listing()?;
+    let permitted: Vec<i64> = listing.channels.into_iter().collect();
 
     #[derive(Debug)]
     struct Row {
@@ -149,14 +145,16 @@ pub async fn get_stamps(
           ON rs.id = COALESCE(s.recording_session_id, af.recording_session_id)
          AND rs.guild_id = s.guild_id
          AND rs.user_id = s.target_user_id
-         AND NOT EXISTS (
-                 SELECT 1
-                   FROM audio_files restricted
-                  WHERE restricted.recording_session_id = rs.id
-                    AND NOT (restricted.channel_id = ANY($2))
-             )
+         AND (rs.user_id = $3
+              OR NOT EXISTS (
+                     SELECT 1
+                       FROM audio_files restricted
+                      WHERE restricted.recording_session_id = rs.id
+                        AND NOT (restricted.channel_id = ANY($2))
+                 ))
         WHERE s.guild_id = $1
-          AND s.channel_id = ANY($2)
+          -- A stamp is on its target's voice: the viewer's own are theirs.
+          AND (s.channel_id = ANY($2) OR s.target_user_id = $3)
           AND NOT EXISTS (
               SELECT 1 FROM recording_sessions hidden
                WHERE hidden.id = COALESCE(s.recording_session_id, af.recording_session_id)
@@ -166,7 +164,8 @@ pub async fn get_stamps(
         LIMIT 500
         "#,
         guild_id,
-        &permitted
+        &permitted,
+        listing.own
     )
     .fetch_all(pool.get_ref())
     .await?;

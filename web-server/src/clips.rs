@@ -82,7 +82,7 @@ pub async fn get_clip(
     let token = token.ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name, channel_ids
+        "SELECT saved_file_name, channel_ids, speaker_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -93,6 +93,7 @@ pub async fn get_clip(
     .ok_or(AppError::ClipNotFound)?;
     require_clip(
         &GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), None).await?,
+        &row.speaker_ids,
         &row.channel_ids,
     )?;
 
@@ -148,13 +149,10 @@ pub async fn get_clips(
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
     let token = token.ok_or(AppError::Unauthorized)?;
-    let permitted = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
+    let listing = GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), query.as_role)
         .await?
-        .listing_channels(Capabilities::LISTEN_OTHERS)?;
-    if permitted.is_empty() {
-        return Ok(HttpResponse::Ok().json(Vec::<ClipInfo>::new()));
-    }
-    let permitted: Vec<i64> = permitted.into_iter().collect();
+        .listing()?;
+    let permitted: Vec<i64> = listing.channels.into_iter().collect();
 
     let rows = sqlx::query!(
         r#"
@@ -174,9 +172,10 @@ pub async fn get_clips(
         FROM clips
         WHERE guild_id = $1
           AND deleted_at IS NULL
-          -- Hearing a clip takes every channel its audio came from.
-          AND cardinality(channel_ids) > 0
-          AND channel_ids <@ $2
+          -- A clip of only the viewer's own voice is theirs; anyone else's
+          -- takes every channel its audio came from.
+          AND ((cardinality(speaker_ids) > 0 AND speaker_ids <@ ARRAY[$3::bigint])
+               OR (cardinality(channel_ids) > 0 AND channel_ids <@ $2))
         -- Heap order is not stable across imports or VACUUM FULL, so the list
         -- must be ordered explicitly. Sort the way the names read rather than
         -- the way the bytes compare, because this database collates
@@ -185,6 +184,7 @@ pub async fn get_clips(
         "#,
         guild_id,
         &permitted,
+        listing.own,
     )
     .fetch_all(pool.get_ref())
     .await?;
@@ -250,7 +250,7 @@ pub async fn play_clip(
     let viewer = token.viewer();
     let user_id = viewer.user_id;
     let clip = sqlx::query!(
-        "SELECT channel_ids
+        "SELECT channel_ids, speaker_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -261,6 +261,7 @@ pub async fn play_clip(
     .ok_or(AppError::ClipNotFound)?;
     require_clip(
         &GuildAccess::load(pool.get_ref(), guild_id, viewer, None).await?,
+        &clip.speaker_ids,
         &clip.channel_ids,
     )?;
 
@@ -347,15 +348,23 @@ pub async fn play_clip(
     }
 }
 
-/// Rejects a viewer who may not hear a clip: that takes `LISTEN_OTHERS` in
-/// every channel its audio came from (`clips.channel_ids`), not in every
-/// channel of the session it was cut from. A clip with no channels is no
-/// one's to hear.
-pub(crate) fn require_clip(guild: &GuildAccess, channel_ids: &[i64]) -> Result<(), AppError> {
-    if channel_ids.is_empty() {
-        return Err(AppError::ClipNotFound);
+/// Rejects a viewer who may not hear a clip (`GuildAccess::allows_item`):
+/// a clip of only their own voice is theirs; anyone else's takes
+/// `LISTEN_OTHERS` in every channel its audio came from
+/// (`clips.channel_ids`), not in every channel of the session it was cut
+/// from. Anyone else's clip with no channels is no one's to hear.
+pub(crate) fn require_clip(
+    guild: &GuildAccess,
+    speaker_ids: &[i64],
+    channel_ids: &[i64],
+) -> Result<(), AppError> {
+    if guild.allows_item(speaker_ids, channel_ids.iter().copied())? {
+        Ok(())
+    } else if channel_ids.is_empty() {
+        Err(AppError::ClipNotFound)
+    } else {
+        Err(AppError::Forbidden)
     }
-    guild.require_channels(channel_ids.iter().copied(), Capabilities::LISTEN_OTHERS)
 }
 
 use crate::audio::StartEnd;
@@ -510,7 +519,9 @@ pub async fn create_clip(
         &file_name_from_url,
         viewer,
     )
-    .await?;
+    .await?
+    // Hearing your own recording is not enough to make a clip of it.
+    .require_channel(channel_id, Capabilities::CREATE_CLIPS)?;
     let start = clip_duration.start.unwrap_or(0.0);
     let end = clip_duration.end.unwrap_or(0.0);
     validate_clip_range(start, end)?;

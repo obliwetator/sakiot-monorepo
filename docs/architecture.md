@@ -272,8 +272,14 @@ which other servers someone is in. `user_guilds` holds only the dev seeds
 (`scripts/dev-seed.sql`, `cargo dev` fixtures); nothing else writes it.
 `ops/sql/membership-parity.sql` lists who a deploy of this rule would cut
 off. Channel visibility applies `@everyone`, role and member overwrites in
-Discord's order. A member can list and play a recording only when they have
-VIEW_CHANNEL and CONNECT in every channel it touched. A clip needs only the
+Discord's order. A member can list and play anyone else's recording only when
+they have VIEW_CHANNEL and CONNECT in every channel it touched; a recording of
+their own voice alone is always theirs, wherever it was made
+(`Access::allows_item`). That covers their sessions and recordings, clips of
+only their voice, and stamps on it, in listings, playback, live updates and
+`/jam`. Making something new of it is not: clipping or composing takes
+`create_clips` in every channel the new clip's audio comes from, and a role
+preview never shows anyone's own recordings. A clip needs only the
 channels its own audio came from (`clips.channel_ids`, recorded when the clip
 is made): a clip cut from the part of a session recorded in one channel needs
 that channel alone, a clip of a session's silence-free copy every channel of

@@ -81,17 +81,11 @@ pub async fn play_clip(
         .ok()
         .filter(|user_id| *user_id != 0)
         .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
-    let listening_channel_ids =
-        crate::permissions::listening_channels(cache, guild_id, UserId::new(requester));
-    let clip = crate::database::clips::playable_clip(
-        pool,
-        guild_id.to_i64(),
-        clip_id,
-        &listening_channel_ids,
-    )
-    .await
-    .map_err(PlayClipError::Db)?
-    .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
+    let listening = crate::permissions::listening(cache, guild_id, UserId::new(requester));
+    let clip = crate::database::clips::playable_clip(pool, guild_id.to_i64(), clip_id, &listening)
+        .await
+        .map_err(PlayClipError::Db)?
+        .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
 
     let clip_path = media_archive
         .ensure_clip_local(pool, &clip.clip_id, &clip.saved_file_name)

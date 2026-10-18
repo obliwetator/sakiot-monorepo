@@ -263,3 +263,39 @@ fn a_role_preview_applies_only_that_roles_overwrites() {
     assert!(!role.allows(CHANNEL, Capabilities::LISTEN_OTHERS));
     assert!(role.allows(CHANNEL, Capabilities::VIEW_PRESENCE));
 }
+
+#[test]
+fn a_recording_of_only_your_voice_is_yours_wherever_it_was_made() {
+    let closed = CHANNEL + 1;
+    let mut facts = guild(VOICE);
+    facts.channels.insert(
+        closed,
+        ChannelFacts {
+            everyone: overwrite(Permissions::empty(), VOICE),
+            ..ChannelFacts::default()
+        },
+    );
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+
+    // Your own voice, even from a channel closed to you.
+    assert!(member.allows_item(&[MEMBER], [closed]));
+    assert!(member.allows_item(&[MEMBER, MEMBER], [CHANNEL, closed]));
+    assert!(member.allows_item(&[MEMBER], []));
+    // Anyone else's voice takes every one of its channels.
+    assert!(member.allows_item(&[OWNER], [CHANNEL]));
+    assert!(member.allows_item(&[MEMBER, OWNER], [CHANNEL]));
+    assert!(!member.allows_item(&[MEMBER, OWNER], [CHANNEL, closed]));
+    assert!(!member.allows_item(&[OWNER], []));
+    // Unknown speakers are never yours.
+    assert!(member.allows_item(&[], [CHANNEL]));
+    assert!(!member.allows_item(&[], [closed]));
+
+    // A role has no recordings of its own.
+    let role = facts.role_access(ROLE).expect("the guild's role");
+    assert!(!role.allows_item(&[MEMBER], [closed]));
+    assert!(role.allows_item(&[MEMBER], [CHANNEL]));
+
+    // An outsider hears nothing, not even their own voice.
+    let outsider = facts.access(Viewer::discord(MEMBER + 1)).expect("known");
+    assert!(!outsider.allows_item(&[MEMBER + 1], [CHANNEL]));
+}

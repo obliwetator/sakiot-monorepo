@@ -145,6 +145,31 @@ impl GuildAccess {
         }
     }
 
+    /// Whether the viewer may hear a recording of `speakers`' voices from
+    /// `channels` (`Access::allows_item`): always their own voice alone,
+    /// anyone else's with `LISTEN_OTHERS` in every one of the channels.
+    pub fn allows_item(
+        &self,
+        speakers: &[i64],
+        channels: impl IntoIterator<Item = i64>,
+    ) -> Result<bool, AppError> {
+        Ok(self.access()?.allows_item(speakers, channels))
+    }
+
+    /// Fails unless the viewer may hear a recording of `speakers`' voices
+    /// from `channels` (`allows_item`).
+    pub fn require_item(
+        &self,
+        speakers: &[i64],
+        channels: impl IntoIterator<Item = i64>,
+    ) -> Result<(), AppError> {
+        if self.allows_item(speakers, channels)? {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden)
+        }
+    }
+
     /// The previewed role's view, clipped to the viewer's own; `None` when
     /// not previewing. Previewing takes `PREVIEW_ROLES`, checked before
     /// whether the role is the guild's.
@@ -168,4 +193,30 @@ impl GuildAccess {
             Some(preview) => Ok(preview.access.channels_with(capability).collect()),
         }
     }
+
+    /// What a listing of recordings, clips or stamps shows: the viewer's
+    /// own access, or the previewed role's. A query applies
+    /// `Access::allows_item` with it (`Listing`).
+    pub fn listing(&self) -> Result<Listing, AppError> {
+        let access = match self.role_preview()? {
+            None => self.require_member()?.clone(),
+            Some(preview) => preview.access,
+        };
+        Ok(Listing {
+            channels: access.channels_with(Capabilities::LISTEN_OTHERS).collect(),
+            own: access.user_id,
+        })
+    }
+}
+
+/// `Access::allows_item` for a listing's query: an item is listed when it
+/// holds only `own`'s voice, or when every one of its channels is in
+/// `channels`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listing {
+    /// Where the viewer may listen to anyone.
+    pub channels: HashSet<i64>,
+    /// The viewer; `None` in a role preview, since a role has no
+    /// recordings of its own.
+    pub own: Option<i64>,
 }

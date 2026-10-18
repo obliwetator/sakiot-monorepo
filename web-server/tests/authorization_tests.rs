@@ -1065,6 +1065,270 @@ async fn a_clip_needs_only_the_channels_its_audio_came_from(
     Ok(())
 }
 
+/// A member's own voice stays theirs in a channel they can no longer listen
+/// in: their sessions, recordings, clips and stamps are listed and playable
+/// there, while anyone else's, or one mixing in anyone else's voice, stays
+/// hidden. Hearing your own voice is not making something new of it:
+/// clipping it still takes `create_clips` there.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_members_own_voice_stays_theirs_in_a_channel_they_lost(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let lost = ALLOWED_CHANNEL_ID + 1;
+    sqlx::query(
+        "INSERT INTO channels (channel_id, guild_id, type, name) VALUES ($1, $2, 2, 'lost')",
+    )
+    .bind(lost)
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO channel_permissions (channel_id, target_id, kind, allow, deny)
+         VALUES ($1, $2, 'user', 0, $3)",
+    )
+    .bind(lost)
+    .bind(USER_ID)
+    .bind(CONNECT_PERMISSION)
+    .execute(&pool)
+    .await?;
+    // Each speaker's session: a second in the allowed channel, then one in
+    // the lost one.
+    let mut sessions = Vec::new();
+    for (speaker, name) in [(USER_ID, "own"), (OTHER_USER_ID, "theirs")] {
+        let session_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO recording_sessions
+                (guild_id, user_id, starting_channel_id, current_channel_id, state,
+                 started_at, ended_at, end_reason, last_segment_index)
+             VALUES ($1, $2, $3, $4, 'finalized', to_timestamp(1), to_timestamp(3), 'test', 1)
+             RETURNING id",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(speaker)
+        .bind(ALLOWED_CHANNEL_ID)
+        .bind(lost)
+        .fetch_one(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month,
+                 start_ts, end_ts, recording_session_id, segment_index)
+             VALUES ($1 || '-first', $2, $3, $5, 1970, 1, 1000, 2000, $6, 0),
+                    ($1 || '-second', $2, $4, $5, 1970, 1, 2000, 3000, $6, 1),
+                    ($1 || '-alone', $2, $4, $5, 1970, 1, 5000, 6000, NULL, NULL)",
+        )
+        .bind(name)
+        .bind(ALLOWED_GUILD_ID)
+        .bind(ALLOWED_CHANNEL_ID)
+        .bind(lost)
+        .bind(speaker)
+        .bind(session_id)
+        .execute(&pool)
+        .await?;
+        sessions.push(session_id);
+    }
+    let [own_session, their_session] = sessions[..] else {
+        unreachable!("two sessions");
+    };
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time)
+         VALUES ('own-clip-in-lost', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $4,
+                 'own/own.ogg', 0),
+                ('their-clip-in-lost', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $4,
+                 'own/theirs.ogg', 0),
+                ('both-voices-in-lost', $1, $2, ARRAY[$2::bigint],
+                 ARRAY[$3::bigint, $4::bigint], $3, 'own/both.ogg', 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(lost)
+    .bind(USER_ID)
+    .bind(OTHER_USER_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO stamps
+            (guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts, note,
+             recording_session_id)
+         VALUES ($1, $2, $3, $4, 2500, 'on me', $5), ($1, $2, $4, $3, 2500, 'on them', $6)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(lost)
+    .bind(USER_ID)
+    .bind(OTHER_USER_ID)
+    .bind(own_session)
+    .bind(their_session)
+    .execute(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .app_data(web::Data::new(WaveformProgressContainer(RwLock::new(
+                HashMap::new(),
+            ))))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_current_month_permission)
+                    .service(get_session_listing_entry)
+                    .service(get_session_manifest)
+                    .service(get_audio)
+                    .service(get_clips)
+                    .service(get_clip)
+                    .service(get_stamps)
+                    .service(create_session_clip)
+                    .service(create_clip)
+                    .service(compose_clip),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_value()?;
+    let get = |uri: String| {
+        test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request()
+    };
+
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(format!("/api/current/{ALLOWED_GUILD_ID}"))).await;
+    let tree = tree.to_string();
+    assert!(tree.contains(&format!("\"{own_session}\"")), "{tree}");
+    assert!(!tree.contains(&format!("\"{their_session}\"")), "{tree}");
+    assert!(
+        tree.contains("own-alone") && !tree.contains("theirs-alone"),
+        "{tree}"
+    );
+    for (session_id, listed) in [(own_session, true), (their_session, false)] {
+        let entry: serde_json::Value = test::call_and_read_body_json(
+            &app,
+            get(format!(
+                "/api/current/{ALLOWED_GUILD_ID}/sessions/{session_id}"
+            )),
+        )
+        .await;
+        assert_eq!(!entry.is_null(), listed, "entry of {session_id}");
+    }
+
+    for (uri, allowed) in [
+        (format!("/api/audio/sessions/{own_session}/manifest"), true),
+        (
+            format!("/api/audio/sessions/{their_session}/manifest"),
+            false,
+        ),
+        (
+            format!("/api/audio/{ALLOWED_GUILD_ID}/{lost}/1970/1/own-alone"),
+            true,
+        ),
+        (
+            format!("/api/audio/{ALLOWED_GUILD_ID}/{lost}/1970/1/theirs-alone"),
+            false,
+        ),
+        (
+            format!("/api/audio/clips/{ALLOWED_GUILD_ID}/own-clip-in-lost"),
+            true,
+        ),
+        (
+            format!("/api/audio/clips/{ALLOWED_GUILD_ID}/their-clip-in-lost"),
+            false,
+        ),
+        (
+            format!("/api/audio/clips/{ALLOWED_GUILD_ID}/both-voices-in-lost"),
+            false,
+        ),
+    ] {
+        let response = test::call_service(&app, get(uri.clone())).await;
+        // Allowed requests get past authorization, to the audio that is not
+        // on disk here.
+        assert_eq!(
+            response.status() != StatusCode::FORBIDDEN,
+            allowed,
+            "{uri}: {}",
+            response.status()
+        );
+    }
+
+    let clips: Vec<serde_json::Value> =
+        test::call_and_read_body_json(&app, get(format!("/api/audio/clips/{ALLOWED_GUILD_ID}")))
+            .await;
+    let mut clips: Vec<&str> = clips
+        .iter()
+        .filter_map(|clip| clip["clip_id"].as_str())
+        .collect();
+    clips.sort_unstable();
+    assert_eq!(clips, ["own-clip", "own-clip-in-lost"]);
+
+    let stamps: Vec<serde_json::Value> =
+        test::call_and_read_body_json(&app, get(format!("/api/stamps/{ALLOWED_GUILD_ID}"))).await;
+    let notes: Vec<&str> = stamps
+        .iter()
+        .filter_map(|stamp| stamp["note"].as_str())
+        .collect();
+    assert_eq!(notes, ["on me"]);
+    // The stamp is on the viewer's own session, so it links to it.
+    assert_eq!(
+        stamps[0]["recording_session_id"],
+        json!(own_session.to_string())
+    );
+
+    // Clipping the part of their session from the allowed channel gets past
+    // authorization; the part from the lost one, or their recording there,
+    // does not.
+    for (uri, range, allowed) in [
+        (
+            format!("/api/audio/sessions/{own_session}/clips"),
+            (0.0, 1.0),
+            true,
+        ),
+        (
+            format!("/api/audio/sessions/{own_session}/clips"),
+            (1.0, 2.0),
+            false,
+        ),
+        (
+            format!("/api/audio/clips/create/{ALLOWED_GUILD_ID}/{lost}/1970/1/own-alone"),
+            (0.0, 1.0),
+            false,
+        ),
+    ] {
+        let request = test::TestRequest::post()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({"start": range.0, "end": range.1}))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(
+            response.status() != StatusCode::FORBIDDEN,
+            allowed,
+            "{uri} {range:?}: {}",
+            response.status()
+        );
+    }
+    // Nor can it be a source of a new clip there.
+    let request = test::TestRequest::post()
+        .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}/compose"))
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .insert_header(("Idempotency-Key", "compose-own-clip-in-lost"))
+        .set_json(json!({"master_volume_db": 0, "segments": [{
+            "source": "clip", "source_id": "own-clip-in-lost", "source_in": 0, "source_out": 1,
+            "timeline_start": 0, "track": 0,
+            "effects": {"volume_db": 0, "pitch_cents": 0, "rate": 1,
+                        "bass_db": 0, "mid_db": 0, "treble_db": 0}
+        }]}))
+        .to_request();
+    let response = test::call_service(&app, request).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN, "compose");
+    Ok(())
+}
+
 fn access_keys() -> AccessKeys {
     AccessKeys {
         access_encode: EncodingKey::from_secret(b"test_secret"),

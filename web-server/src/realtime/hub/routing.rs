@@ -6,9 +6,11 @@ use sakiot_permissions::Capabilities;
 use super::*;
 use crate::realtime::events::Renamed;
 
-/// The channels a session touches, as the HTTP listings authorize it.
+/// The channels a session touches and whose voice it holds, as the HTTP
+/// listings authorize it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Journey {
+    pub(super) speaker: i64,
     pub(super) starting_channel_id: i64,
     /// The recording tree's rule: the starting channel plus every fragment's.
     pub(super) tree: HashSet<i64>,
@@ -27,6 +29,7 @@ pub(super) async fn load_journeys(
     }
     let rows = sqlx::query!(
         r#"SELECT rs.id,
+                  rs.user_id,
                   rs.starting_channel_id,
                   COALESCE(
                       array_agg(DISTINCT af.channel_id) FILTER (WHERE af.channel_id IS NOT NULL),
@@ -35,7 +38,7 @@ pub(super) async fn load_journeys(
              FROM recording_sessions rs
              LEFT JOIN audio_files af ON af.recording_session_id = rs.id
             WHERE rs.id = ANY($1) AND rs.deletion_requested_at IS NULL
-            GROUP BY rs.id"#,
+            GROUP BY rs.id, rs.user_id, rs.starting_channel_id"#,
         session_ids
     )
     .fetch_all(pool)
@@ -54,6 +57,7 @@ pub(super) async fn load_journeys(
             (
                 row.id,
                 Journey {
+                    speaker: row.user_id,
                     starting_channel_id: row.starting_channel_id,
                     tree,
                     media,
@@ -101,13 +105,30 @@ pub(super) fn add_all(routed: &mut Routed, resource: Resource) {
     routed.insert(resource, None);
 }
 
-/// Whether a clip whose audio came from `channels` is listed for the
-/// subscription: every one of them must be a media channel.
-fn hears_clip(access: &SubscriptionAccess, channels: &[i64]) -> bool {
-    !channels.is_empty()
-        && channels
-            .iter()
-            .all(|channel| access.media_channels.contains(channel))
+/// The viewer whose own recordings, clips and stamps the subscription lists
+/// wherever they were recorded: none in a role preview, since a role has no
+/// recordings of its own.
+fn own(subscription: &Subscription, user_id: i64) -> Option<i64> {
+    subscription.as_role.is_none().then_some(user_id)
+}
+
+/// Whether a clip of `speakers`' voices from `channels` is listed for the
+/// subscription: one of only the viewer's own voice always is; anyone
+/// else's when every one of its channels is a media channel.
+fn hears_clip(
+    access: &SubscriptionAccess,
+    own: Option<i64>,
+    speakers: &[i64],
+    channels: &[i64],
+) -> bool {
+    let only_own = own.is_some_and(|user_id| {
+        !speakers.is_empty() && speakers.iter().all(|&speaker| speaker == user_id)
+    });
+    only_own
+        || (!channels.is_empty()
+            && channels
+                .iter()
+                .all(|channel| access.media_channels.contains(channel)))
 }
 
 /// Whether a stamp is listed for the subscription, or `None` when its
@@ -141,6 +162,7 @@ pub(super) fn route(
     let Some(access) = subscription.access.as_ref() else {
         return routed;
     };
+    let own = own(subscription, user_id);
     for change in changes {
         match change {
             Event::Session {
@@ -149,7 +171,9 @@ pub(super) fn route(
             } if *guild_id == subscription.guild_id => {
                 let channels = &access.tree_channels;
                 match journeys.and_then(|journeys| journeys.get(session_id)) {
-                    Some(journey) if journey.tree.is_subset(channels) => {
+                    Some(journey)
+                        if own == Some(journey.speaker) || journey.tree.is_subset(channels) =>
+                    {
                         add_id(&mut routed, Resource::Recordings, session_id.to_string());
                     }
                     Some(journey) if !channels.contains(&journey.starting_channel_id) => {
@@ -166,17 +190,27 @@ pub(super) fn route(
                 guild_id,
                 clip_id,
                 channels,
-                ..
+                speakers,
             } if *guild_id == subscription.guild_id => {
-                if hears_clip(access, channels) {
+                if hears_clip(access, own, speakers, channels) {
                     add_id(&mut routed, Resource::Clips, clip_id.clone());
                 }
             }
             Event::Stamp {
                 guild_id,
                 stamp_id,
+                target_id,
+                ..
+            } if *guild_id == subscription.guild_id && own.is_some() && *target_id == own => {
+                // A stamp on the viewer's own voice is theirs.
+                add_id(&mut routed, Resource::Stamps, stamp_id.to_string());
+            }
+            Event::Stamp {
+                guild_id,
+                stamp_id,
                 channel_id,
                 session_id,
+                ..
             } if *guild_id == subscription.guild_id => {
                 match journeys
                     .map(|journeys| media_visible(access, *channel_id, *session_id, journeys))

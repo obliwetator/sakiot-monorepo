@@ -250,13 +250,12 @@ async fn get_clip_choices(
     guild_id: serenity::model::prelude::GuildId,
     user_id: serenity::model::prelude::UserId,
 ) -> Vec<AutocompleteChoice> {
-    let listening_channel_ids =
-        crate::permissions::listening_channels(&ctx.cache, guild_id, user_id);
+    let listening = crate::permissions::listening(&ctx.cache, guild_id, user_id);
     match crate::database::clips::autocomplete_clip_choices(
         pool,
         guild_id.to_i64(),
         query,
-        &listening_channel_ids,
+        &listening,
     )
     .await
     {

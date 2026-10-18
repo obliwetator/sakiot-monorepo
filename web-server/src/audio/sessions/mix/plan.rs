@@ -100,16 +100,14 @@ pub(super) async fn build_mix_plan(
     )
     .await?;
     for candidate in &inputs.candidates {
+        let speaker = [candidate.fragment.user_id];
         match candidate.fragment.recording_session_id {
             Some(session_id) if session_id == access.session_id => {}
             Some(session_id) => {
                 let journey = journeys.get(&session_id).ok_or(AppError::FileNotFound)?;
-                super::super::access::require_journey(guild, journey)?;
+                guild.require_item(&speaker, journey.iter().copied())?;
             }
-            None => guild.require_channel(
-                candidate.fragment.channel_id,
-                sakiot_permissions::Capabilities::LISTEN_OTHERS,
-            )?,
+            None => guild.require_item(&speaker, [candidate.fragment.channel_id])?,
         }
     }
 

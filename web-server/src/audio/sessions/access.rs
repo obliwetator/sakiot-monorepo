@@ -1,10 +1,8 @@
-use sakiot_permissions::Capabilities;
-
 use super::*;
 use crate::permissions::{GuildAccess, Viewer};
 
-/// Fails unless the viewer may hear the whole session: they must hold
-/// `LISTEN_OTHERS` in every channel its audio was recorded in.
+/// Fails unless the viewer may hear the whole session: it is their own, or
+/// they hold `LISTEN_OTHERS` in every channel its audio was recorded in.
 pub(crate) async fn require_session_access(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
@@ -27,15 +25,15 @@ pub(crate) async fn authorize_session(
     Ok((session.access, guild))
 }
 
-/// `require_session_access`, also returning the session's journey: every
+/// `authorize_session`, also returning the session's journey: every
 /// channel it was recorded in.
 pub(super) async fn authorize_session_journey(
     pool: &web::Data<Pool<Postgres>>,
     recording_session_id: i64,
     viewer: Viewer,
-) -> Result<(SessionAccess, HashSet<i64>), AppError> {
-    let (session, _) = authorize(pool, recording_session_id, viewer).await?;
-    Ok((session.access, session.journey))
+) -> Result<(SessionAccess, GuildAccess, HashSet<i64>), AppError> {
+    let (session, guild) = authorize(pool, recording_session_id, viewer).await?;
+    Ok((session.access, guild, session.journey))
 }
 
 /// Two statements, the session and then the viewer's access, rather than one
@@ -51,16 +49,10 @@ async fn authorize(
         let session = load_session(pool.get_ref(), recording_session_id).await?;
         let guild =
             GuildAccess::load(pool.get_ref(), session.access.guild_id, viewer, None).await?;
-        require_journey(&guild, &session.journey)?;
+        guild.require_item(&[session.access.user_id], session.journey.iter().copied())?;
         Ok((session, guild))
     })
     .await
-}
-
-/// Fails unless the viewer may listen in every channel of a session's
-/// journey.
-pub(super) fn require_journey(guild: &GuildAccess, journey: &HashSet<i64>) -> Result<(), AppError> {
-    guild.require_channels(journey.iter().copied(), Capabilities::LISTEN_OTHERS)
 }
 
 struct LoadedSession {
@@ -117,7 +109,7 @@ async fn load_session<'e>(
 /// Keeps stem-based routes compatible while applying logical-session
 /// authorization whenever the physical file has a logical parent. A viewer
 /// must never retrieve one permitted fragment from an otherwise forbidden
-/// multi-channel session.
+/// multi-channel session. Returns the viewer's access to the guild.
 pub(crate) async fn require_recording_access(
     pool: &web::Data<Pool<Postgres>>,
     guild_id: i64,
@@ -126,10 +118,10 @@ pub(crate) async fn require_recording_access(
     month: i32,
     file_name: &str,
     viewer: Viewer,
-) -> Result<(), AppError> {
+) -> Result<GuildAccess, AppError> {
     let stem = file_name.strip_suffix(".ogg").unwrap_or(file_name);
-    let session_id = sqlx::query_scalar!(
-        r#"SELECT recording_session_id
+    let file = sqlx::query!(
+        r#"SELECT recording_session_id, user_id
            FROM audio_files
           WHERE guild_id = $1
             AND channel_id = $2
@@ -144,14 +136,13 @@ pub(crate) async fn require_recording_access(
         stem
     )
     .fetch_optional(pool.get_ref())
-    .await?
-    .flatten();
-    if let Some(session_id) = session_id {
-        require_session_access(pool, session_id, viewer).await?;
-    } else {
-        GuildAccess::load(pool.get_ref(), guild_id, viewer, None)
-            .await?
-            .require_channel(channel_id, Capabilities::LISTEN_OTHERS)?;
+    .await?;
+    if let Some(session_id) = file.as_ref().and_then(|file| file.recording_session_id) {
+        return Ok(authorize_session(pool, session_id, viewer).await?.1);
     }
-    Ok(())
+    let guild = GuildAccess::load(pool.get_ref(), guild_id, viewer, None).await?;
+    // A recording without a session holds its speaker's voice alone.
+    let speakers: Vec<i64> = file.map(|file| file.user_id).into_iter().collect();
+    guild.require_item(&speakers, [channel_id])?;
+    Ok(guild)
 }

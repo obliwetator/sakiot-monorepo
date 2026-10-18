@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT clips.name, clips.clip_id\n           FROM clips\n          WHERE clips.guild_id = $1\n            AND clips.name ILIKE $2\n            AND clips.deleted_at IS NULL\n            AND cardinality(clips.channel_ids) > 0\n            AND clips.channel_ids <@ $3::bigint[]\n          ORDER BY clips.name, clips.clip_id\n          LIMIT 25",
+  "query": "SELECT clips.name, clips.clip_id\n           FROM clips\n          WHERE clips.guild_id = $1\n            AND clips.name ILIKE $2\n            AND clips.deleted_at IS NULL\n            AND ((cardinality(clips.speaker_ids) > 0\n                  AND clips.speaker_ids <@ ARRAY[$4::bigint])\n                 OR (cardinality(clips.channel_ids) > 0\n                     AND clips.channel_ids <@ $3::bigint[]))\n          ORDER BY clips.name, clips.clip_id\n          LIMIT 25",
   "describe": {
     "columns": [
       {
@@ -30,7 +30,8 @@
       "Left": [
         "Int8",
         "Text",
-        "Int8Array"
+        "Int8Array",
+        "Int8"
       ]
     },
     "nullable": [
@@ -38,5 +39,5 @@
       false
     ]
   },
-  "hash": "72247b4940636dd3e3ec106f4370bb31fab185bec080e59aafb8612d3a652d6d"
+  "hash": "53f52e8046c95efeb7a2fa2a279ebe94bb53a20809503c4ae3316912802cf2cf"
 }

@@ -35,6 +35,9 @@ pub struct DiscordPermissions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Access {
     pub membership: Membership,
+    /// Whose access this is; `None` for a role's, which has no recordings
+    /// of its own.
+    pub user_id: Option<i64>,
     /// Guild-wide (management) capabilities.
     pub guild: Capabilities,
     /// Content capabilities per voice and stage channel. Empty for an
@@ -43,16 +46,18 @@ pub struct Access {
 }
 
 impl Access {
-    fn new(membership: Membership, discord: &DiscordPermissions) -> Self {
+    fn new(membership: Membership, user_id: Option<i64>, discord: &DiscordPermissions) -> Self {
         if membership == Membership::Outsider {
             return Self {
                 membership,
+                user_id,
                 guild: Capabilities::empty(),
                 channels: BTreeMap::new(),
             };
         }
         Self {
             membership,
+            user_id,
             guild: Capabilities::from_guild_permissions(discord.base),
             channels: discord
                 .channels
@@ -78,10 +83,41 @@ impl Access {
             .is_some_and(|held| held.contains(capability))
     }
 
+    /// Whether the viewer may hear a recording of `speakers`' voices from
+    /// `channels`: a recording, a clip, a stamp's moment, one track of a
+    /// mix.
+    ///
+    /// 1. One of only the viewer's own voice is theirs, wherever it was
+    ///    recorded: no channel needs to be open to them.
+    /// 2. Anyone else's voice takes `LISTEN_OTHERS` in every one of
+    ///    `channels`; with no channels, no one may hear it.
+    ///
+    /// `speakers` empty means not known, which is never the viewer's own.
+    /// An outsider hears nothing.
+    pub fn allows_item(&self, speakers: &[i64], channels: impl IntoIterator<Item = i64>) -> bool {
+        if self.membership == Membership::Outsider {
+            return false;
+        }
+        if self.is_own(speakers) {
+            return true;
+        }
+        let mut channels = channels.into_iter().peekable();
+        channels.peek().is_some()
+            && channels.all(|channel| self.allows(channel, Capabilities::LISTEN_OTHERS))
+    }
+
+    /// Whether `speakers` is the viewer alone.
+    fn is_own(&self, speakers: &[i64]) -> bool {
+        self.user_id.is_some_and(|user_id| {
+            !speakers.is_empty() && speakers.iter().all(|&speaker| speaker == user_id)
+        })
+    }
+
     /// Only what both `self` and `limit` hold.
     fn clipped_to(&self, limit: &Self) -> Self {
         Self {
             membership: self.membership,
+            user_id: self.user_id,
             guild: self.guild & limit.guild,
             channels: self
                 .channels
@@ -165,6 +201,7 @@ impl GuildFacts {
         let membership = self.membership(viewer)?;
         Ok(Access::new(
             membership,
+            Some(viewer.user_id),
             &self.permissions_as(membership, viewer.user_id),
         ))
     }
@@ -232,6 +269,7 @@ impl GuildFacts {
         }
         Ok(Access::new(
             Membership::Member,
+            None,
             &self.role_permissions(role_id),
         ))
     }

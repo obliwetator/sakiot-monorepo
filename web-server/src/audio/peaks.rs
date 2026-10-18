@@ -257,7 +257,7 @@ pub async fn get_clip_waveform_data(
     let token = token.ok_or(AppError::Unauthorized)?;
 
     let row = sqlx::query!(
-        "SELECT saved_file_name, channel_ids
+        "SELECT saved_file_name, channel_ids, speaker_ids
            FROM clips
           WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
         guild_id,
@@ -269,6 +269,7 @@ pub async fn get_clip_waveform_data(
     crate::clips::require_clip(
         &crate::permissions::GuildAccess::load(pool.get_ref(), guild_id, token.viewer(), None)
             .await?,
+        &row.speaker_ids,
         &row.channel_ids,
     )?;
 

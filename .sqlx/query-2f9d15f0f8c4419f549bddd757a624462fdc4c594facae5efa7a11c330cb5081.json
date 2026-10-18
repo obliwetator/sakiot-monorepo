@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT channel_ids, speaker_ids\n           FROM clips\n          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "channel_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "speaker_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "speaker_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2f9d15f0f8c4419f549bddd757a624462fdc4c594facae5efa7a11c330cb5081"
+}

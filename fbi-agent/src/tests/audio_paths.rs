@@ -1,4 +1,5 @@
 use crate::cooldown::{CheckResult, JamCooldown};
+use crate::permissions::Listening;
 use sakiot_paths::DataRoots;
 use std::time::{Duration, SystemTime};
 
@@ -37,7 +38,7 @@ async fn test_audio_paths_are_valid() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn clip_lookups_require_every_channel_of_the_clips_audio(
+async fn clip_lookups_take_every_channel_of_anyone_elses_audio(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let guild_id = 42_i64;
@@ -99,13 +100,13 @@ async fn clip_lookups_require_every_channel_of_the_clips_audio(
     .execute(&pool)
     .await?;
 
-    let visible = crate::database::clips::autocomplete_clip_choices(
-        &pool,
-        guild_id,
-        "",
-        &[allowed_channel_id],
-    )
-    .await?;
+    // Someone else, who may listen in the allowed channel only.
+    let listener = Listening {
+        own: Some(user_id + 1),
+        channels: vec![allowed_channel_id],
+    };
+    let visible =
+        crate::database::clips::autocomplete_clip_choices(&pool, guild_id, "", &listener).await?;
     assert_eq!(
         visible
             .into_iter()
@@ -113,51 +114,39 @@ async fn clip_lookups_require_every_channel_of_the_clips_audio(
             .collect::<Vec<_>>(),
         vec!["allowed-clip", "allowed-part-clip"]
     );
-    assert!(
-        crate::database::clips::playable_clip(
-            &pool,
-            guild_id,
-            "allowed-part-clip",
-            &[allowed_channel_id]
-        )
-        .await?
-        .is_some()
-    );
-    assert!(
-        crate::database::clips::playable_clip(
-            &pool,
-            guild_id,
-            "denied-part-clip",
-            &[allowed_channel_id]
-        )
-        .await?
-        .is_none()
-    );
-    assert!(
-        crate::database::clips::playable_clip(
-            &pool,
-            guild_id,
-            "denied-clip",
-            &[allowed_channel_id]
-        )
-        .await?
-        .is_none()
-    );
-    assert!(
-        crate::database::clips::playable_clip(&pool, guild_id, "mixed-clip", &[allowed_channel_id])
+    let playable = |clip_id: &'static str, listening: Listening| {
+        let pool = pool.clone();
+        async move {
+            crate::database::clips::playable_clip(&pool, guild_id, clip_id, &listening)
+                .await
+                .map(|clip| clip.is_some())
+        }
+    };
+    assert!(playable("allowed-part-clip", listener.clone()).await?);
+    assert!(!playable("denied-part-clip", listener.clone()).await?);
+    assert!(!playable("denied-clip", listener.clone()).await?);
+    assert!(!playable("mixed-clip", listener.clone()).await?);
+    let everywhere = Listening {
+        channels: vec![allowed_channel_id, denied_channel_id],
+        ..listener
+    };
+    assert!(playable("mixed-clip", everywhere).await?);
+
+    // Every clip holds the speaker's own voice alone: theirs to play from
+    // any channel, while a member.
+    let speaker = Listening {
+        own: Some(user_id),
+        channels: Vec::new(),
+    };
+    assert!(playable("denied-clip", speaker.clone()).await?);
+    assert!(playable("mixed-clip", speaker.clone()).await?);
+    assert_eq!(
+        crate::database::clips::autocomplete_clip_choices(&pool, guild_id, "part", &speaker)
             .await?
-            .is_none()
+            .len(),
+        2
     );
-    assert!(
-        crate::database::clips::playable_clip(
-            &pool,
-            guild_id,
-            "mixed-clip",
-            &[allowed_channel_id, denied_channel_id]
-        )
-        .await?
-        .is_some()
-    );
+    assert!(!playable("denied-clip", Listening::default()).await?);
 
     Ok(())
 }
