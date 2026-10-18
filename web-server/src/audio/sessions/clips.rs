@@ -78,10 +78,10 @@ pub async fn create_session_clip(
     };
     let insert = sqlx::query!(
         "INSERT INTO clips
-            (clip_id, length, size, channel_id, channel_ids, guild_id, user_id,
-             original_file_name, saved_file_name, name, start_time,
+            (clip_id, length, size, channel_id, channel_ids, speaker_ids, guild_id,
+             user_id, original_file_name, saved_file_name, name, start_time,
              recording_session_id, silence_free)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+         VALUES ($1, $2, $3, $4, $5, ARRAY[$14::bigint], $6, $7, $8, $9, $10, $11, $12, $13)",
         clip_id,
         (end - start) as f32,
         size as i64,
@@ -94,7 +94,9 @@ pub async fn create_session_clip(
         name,
         start as f32,
         session_id,
-        silence_free
+        silence_free,
+        // Sessions are per user: the clip holds its speaker's voice alone.
+        access.user_id
     )
     .execute(pool.get_ref())
     .await;

@@ -156,6 +156,7 @@ fn clips_follow_their_own_channels_and_stamps_the_media_rule() {
         guild_id: GUILD,
         clip_id: clip_id.into(),
         channels: channels.to_vec(),
+        speakers: vec![1],
     };
     let stamp = |stamp_id, session_id| Event::Stamp {
         guild_id: GUILD,

@@ -26,6 +26,7 @@ pub(super) async fn publish(
     job: &queue::Job,
     saved_file_name: &str,
     channel_ids: &[i64],
+    speaker_ids: &[i64],
     duration: f32,
     size: i64,
 ) -> Result<(), AppError> {
@@ -48,7 +49,7 @@ pub(super) async fn publish(
     }
     if let Some(target) = &job.snapshot.overwrite {
         let result = sqlx::query!(
-            "UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7, channel_ids = $9 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'",
+            "UPDATE clips SET saved_file_name = $3, length = $4, size = $5, name = $6, start_time = 0, composition = $7, channel_ids = $9, speaker_ids = $10 WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL AND saved_file_name = $8 AND original_file_name = 'compose'",
             job.guild_id,
             target.clip_id,
             saved_file_name,
@@ -57,7 +58,8 @@ pub(super) async fn publish(
             job.snapshot.name,
             composition,
             target.old_saved_file_name,
-            channel_ids
+            channel_ids,
+            speaker_ids
         )
         .execute(&mut *tx)
         .await?;
@@ -66,7 +68,7 @@ pub(super) async fn publish(
         }
     } else {
         sqlx::query!(
-            "INSERT INTO clips (clip_id, length, size, channel_id, channel_ids, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$6,$7,'compose',$8,$9,0,$10)",
+            "INSERT INTO clips (clip_id, length, size, channel_id, channel_ids, speaker_ids, guild_id, user_id, original_file_name, saved_file_name, name, start_time, composition) VALUES ($1,$2,$3,$4,$5,$11,$6,$7,'compose',$8,$9,0,$10)",
             job.result_clip_id,
             duration,
             size,
@@ -76,7 +78,8 @@ pub(super) async fn publish(
             job.requester.user_id,
             saved_file_name,
             job.snapshot.name,
-            composition
+            composition,
+            speaker_ids
         )
         .execute(&mut *tx)
         .await?;

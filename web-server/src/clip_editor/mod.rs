@@ -61,6 +61,9 @@ struct ResolvedSource {
     channel_id: i64,
     /// The channels the source's audio came from (`clips.channel_ids`).
     channel_ids: Vec<i64>,
+    /// Whose voices the source holds (`clips.speaker_ids`); empty when not
+    /// known.
+    speaker_ids: Vec<i64>,
     length: f32,
     saved_file_name: String,
 }

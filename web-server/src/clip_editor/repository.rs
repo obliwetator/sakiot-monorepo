@@ -12,7 +12,7 @@ pub(super) async fn resolve_sources(
     let mut resolved = Vec::with_capacity(segments.len());
     for (index, segment) in segments.iter().enumerate() {
         let row = sqlx::query!(
-            "SELECT saved_file_name, channel_id, channel_ids, length, original_file_name
+            "SELECT saved_file_name, channel_id, channel_ids, speaker_ids, length, original_file_name
                FROM clips
               WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
             guild_id,
@@ -46,6 +46,7 @@ pub(super) async fn resolve_sources(
             path,
             channel_id,
             channel_ids: row.channel_ids,
+            speaker_ids: row.speaker_ids,
             length,
             saved_file_name,
         });

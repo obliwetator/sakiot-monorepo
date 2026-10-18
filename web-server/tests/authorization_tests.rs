@@ -954,13 +954,13 @@ async fn a_clip_needs_only_the_channels_its_audio_came_from(
     .await?;
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name,
-             start_time, recording_session_id)
-         VALUES ('first-part-clip', $1, $2, ARRAY[$2::bigint], $4,
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time, recording_session_id)
+         VALUES ('first-part-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $4,
                  'channels-test/first.ogg', 0, $5),
-                ('second-part-clip', $1, $2, ARRAY[$3::bigint], $4,
+                ('second-part-clip', $1, $2, ARRAY[$3::bigint], ARRAY[$4::bigint], $4,
                  'channels-test/second.ogg', 1, $5),
-                ('both-parts-clip', $1, $2, ARRAY[$2::bigint, $3::bigint], $4,
+                ('both-parts-clip', $1, $2, ARRAY[$2::bigint, $3::bigint], ARRAY[$4::bigint], $4,
                  'channels-test/both.ogg', 0.5, $5)",
     )
     .bind(ALLOWED_GUILD_ID)
@@ -1124,10 +1124,12 @@ async fn seed_authorization_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query!(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time)
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id, saved_file_name,
+             start_time)
          VALUES
-            ('forbidden-clip', $1, $2, ARRAY[$2::bigint], $3, '2026/05/forbidden.ogg', 0),
-            ('own-clip', $4, $5, ARRAY[$5::bigint], $6, '2026/05/own.ogg', 0)",
+            ('forbidden-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3,
+             '2026/05/forbidden.ogg', 0),
+            ('own-clip', $4, $5, ARRAY[$5::bigint], ARRAY[$3::bigint], $6, '2026/05/own.ogg', 0)",
         FORBIDDEN_GUILD_ID,
         FORBIDDEN_CHANNEL_ID,
         OTHER_USER_ID,
@@ -1544,16 +1546,18 @@ async fn clip_list_is_ordered_by_name_case_insensitively(
     // null name, which must sort last.
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time, name)
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id, saved_file_name,
+             start_time, name)
          VALUES
-            ('clip-zeta', $1, $2, ARRAY[$2::bigint], $3, '2026/05/zeta.ogg', 0, 'zeta'),
-            ('clip-alpha', $1, $2, ARRAY[$2::bigint], $3, '2026/05/alpha.ogg', 0, 'Alpha'),
-            ('clip-beta', $1, $2, ARRAY[$2::bigint], $3, '2026/05/beta.ogg', 0, 'beta'),
-            ('clip-alpha-two', $1, $2, ARRAY[$2::bigint], $3, '2026/05/alpha2.ogg', 0, 'alpha 2')",
+            ('clip-zeta', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $3, '2026/05/zeta.ogg', 0, 'zeta'),
+            ('clip-alpha', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $3, '2026/05/alpha.ogg', 0, 'Alpha'),
+            ('clip-beta', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $3, '2026/05/beta.ogg', 0, 'beta'),
+            ('clip-alpha-two', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $3, '2026/05/alpha2.ogg', 0, 'alpha 2')",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)
     .bind(USER_ID)
+    .bind(OTHER_USER_ID)
     .execute(&pool)
     .await?;
 
@@ -2518,9 +2522,12 @@ async fn seed_role_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .await?;
     sqlx::query(
         "INSERT INTO clips
-            (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time)
-         VALUES ('public-clip', $1, $2, ARRAY[$2::bigint], $4, '2026/05/public.ogg', 0),
-                ('private-clip', $1, $3, ARRAY[$3::bigint], $4, '2026/05/private.ogg', 0)",
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id, saved_file_name,
+             start_time)
+         VALUES ('public-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$4::bigint], $4,
+                 '2026/05/public.ogg', 0),
+                ('private-clip', $1, $3, ARRAY[$3::bigint], ARRAY[$4::bigint], $4,
+                 '2026/05/private.ogg', 0)",
     )
     .bind(ALLOWED_GUILD_ID)
     .bind(ALLOWED_CHANNEL_ID)

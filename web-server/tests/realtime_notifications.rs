@@ -200,8 +200,8 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
     let mut notifications = Notifications::listen(&pool).await?;
 
     sqlx::query(
-        "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time)
-         VALUES ('clip-1', $1, $2, ARRAY[$2::bigint], $3, 'c.ogg', 0)",
+        "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id, saved_file_name, start_time)
+         VALUES ('clip-1', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3, 'c.ogg', 0)",
     )
     .bind(GUILD)
     .bind(CHANNEL)
@@ -241,7 +241,7 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
         vec![
             json!({
                 "v": 1, "k": "clip", "g": GUILD.to_string(), "id": "clip-1",
-                "cs": [CHANNEL.to_string()],
+                "cs": [CHANNEL.to_string()], "ss": [USER.to_string()],
             }),
             json!({
                 "v": 1, "k": "stamp", "g": GUILD.to_string(), "id": stamp.to_string(),
@@ -257,14 +257,15 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn a_clip_whose_channels_change_notifies_with_the_old_and_the_new(
+async fn a_clip_whose_channels_or_speakers_change_notifies_with_the_old_and_the_new(
     pool: PgPool,
 ) -> TestResult {
     const OTHER_CHANNEL: i64 = 101;
+    const OTHER_USER: i64 = 12;
     seed(&pool).await?;
     sqlx::query(
-        "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, user_id, saved_file_name, start_time, original_file_name)
-         VALUES ('composed', $1, $2, ARRAY[$2::bigint], $3, 'c.ogg', 0, 'compose')",
+        "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id, saved_file_name, start_time, original_file_name)
+         VALUES ('composed', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3, 'c.ogg', 0, 'compose')",
     )
     .bind(GUILD)
     .bind(CHANNEL)
@@ -279,21 +280,28 @@ async fn a_clip_whose_channels_change_notifies_with_the_old_and_the_new(
         .bind([CHANNEL, OTHER_CHANNEL])
         .execute(&pool)
         .await?;
+    sqlx::query("UPDATE clips SET speaker_ids = $1 WHERE clip_id = 'composed'")
+        .bind([USER, OTHER_USER])
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM clips WHERE clip_id = 'composed'")
         .execute(&pool)
         .await?;
-    let clip = |channels: &[i64]| {
+    let clip = |channels: &[i64], speakers: &[i64]| {
         json!({
             "v": 1, "k": "clip", "g": GUILD.to_string(), "id": "composed",
             "cs": channels.iter().map(i64::to_string).collect::<Vec<_>>(),
+            "ss": speakers.iter().map(i64::to_string).collect::<Vec<_>>(),
         })
     };
     assert_eq!(
         notifications.drain().await?,
         vec![
-            clip(&[CHANNEL]),
-            clip(&[CHANNEL, OTHER_CHANNEL]),
-            clip(&[CHANNEL, OTHER_CHANNEL]),
+            clip(&[CHANNEL], &[USER]),
+            clip(&[CHANNEL, OTHER_CHANNEL], &[USER]),
+            clip(&[CHANNEL, OTHER_CHANNEL], &[USER]),
+            clip(&[CHANNEL, OTHER_CHANNEL], &[USER, OTHER_USER]),
+            clip(&[CHANNEL, OTHER_CHANNEL], &[USER, OTHER_USER]),
         ]
     );
     Ok(())

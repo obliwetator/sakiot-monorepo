@@ -21,6 +21,7 @@ const MEDIA_ARCHIVE_MIGRATION: i64 = 20_260_716_000_000;
 const LOGICAL_RECORDINGS_MIGRATION: i64 = 20_260_712_000_000;
 const STAMP_RECORDING_SESSIONS_MIGRATION: i64 = 20_260_731_000_000;
 const CLIP_CHANNELS_MIGRATION: i64 = 20_261_017_020_000;
+const CLIP_SPEAKERS_MIGRATION: i64 = 20_261_018_000_000;
 
 fn unique_id() -> i64 {
     let millis = SystemTime::now()
@@ -857,6 +858,96 @@ async fn clip_channels_migration_backfills_each_kind_of_clip(
     assert!(
         missing.is_err(),
         "a new clip must say where its audio came from"
+    );
+    Ok(())
+}
+
+/// Each clip learns whose voices it holds: a session's speaker, a
+/// recording's (from its row, or from its name once the row is gone), or
+/// every source's for a composed clip, unless one of them is not known.
+#[sqlx::test(migrations = false)]
+async fn clip_speakers_migration_backfills_each_kind_of_clip(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prior = Migrator::with_migrations(
+        FULL_MIGRATOR
+            .iter()
+            .filter(|migration| migration.version < CLIP_SPEAKERS_MIGRATION)
+            .cloned()
+            .collect(),
+    );
+    prior.run(&pool).await?;
+    let session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES (1, 100, 10, 10, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts, end_ts)
+         VALUES ('1000-200.ogg', 1, 10, 300, 1970, 1, 1000, 2000)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, user_id, start_time,
+             recording_session_id, original_file_name, composition)
+         VALUES
+            ('session', 1, 10, '{10}', 900, 0, $1, 'session', NULL),
+            -- The row says 300, whatever the name says.
+            ('recording', 1, 10, '{10}', 900, 0, NULL, '1000-200', NULL),
+            ('named', 1, 10, '{10}', 900, 0, NULL, '1000-400-someone', NULL),
+            ('too-large', 1, 10, '{10}', 900, 0, NULL, '1000-9999999999999999999', NULL),
+            ('sound', 1, 10, '{10}', 900, 0, NULL, 'SOUND.ogg', NULL),
+            ('composed', 1, 10, '{10}', 900, 0, NULL, 'compose',
+             '{\"segments\": [{\"source_id\": \"session\"}, {\"source_id\": \"named\"},
+                               {\"source_id\": \"session\"}]}'),
+            ('composed-unknown-source', 1, 10, '{10}', 900, 0, NULL, 'compose',
+             '{\"segments\": [{\"source_id\": \"session\"}, {\"source_id\": \"sound\"}]}'),
+            ('composed-gone-source', 1, 10, '{10}', 900, 0, NULL, 'compose',
+             '{\"segments\": [{\"source_id\": \"session\"}, {\"source_id\": \"gone\"}]}'),
+            ('composed-legacy', 1, 10, '{10}', 900, 0, NULL, 'compose', NULL)",
+    )
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    FULL_MIGRATOR.run(&pool).await?;
+
+    let rows: Vec<(String, Vec<i64>)> =
+        sqlx::query_as("SELECT clip_id, speaker_ids FROM clips ORDER BY clip_id")
+            .fetch_all(&pool)
+            .await?;
+    let expected: Vec<(String, Vec<i64>)> = [
+        ("composed", vec![100, 400]),
+        ("composed-gone-source", vec![]),
+        ("composed-legacy", vec![]),
+        ("composed-unknown-source", vec![]),
+        ("named", vec![400]),
+        ("recording", vec![300]),
+        ("session", vec![100]),
+        ("sound", vec![]),
+        ("too-large", vec![]),
+    ]
+    .into_iter()
+    .map(|(clip_id, speakers)| (clip_id.to_owned(), speakers))
+    .collect();
+    assert_eq!(rows, expected);
+
+    let missing = sqlx::query(
+        "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, start_time)
+         VALUES ('new', 1, 10, '{10}', 0)",
+    )
+    .execute(&pool)
+    .await;
+    assert!(
+        missing.is_err(),
+        "a new clip must say whose voices it holds"
     );
     Ok(())
 }

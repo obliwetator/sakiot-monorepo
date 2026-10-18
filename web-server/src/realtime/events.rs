@@ -29,6 +29,8 @@ pub enum Event {
         guild_id: i64,
         clip_id: String,
         channels: Vec<i64>,
+        /// Whose voices it holds; empty when not known.
+        speakers: Vec<i64>,
     },
     Stamp {
         guild_id: i64,
@@ -120,6 +122,7 @@ struct Payload {
     s: Option<String>,
     c: Option<String>,
     cs: Option<Vec<String>>,
+    ss: Option<Vec<String>>,
     id: Option<String>,
     u: Option<String>,
     r: Option<String>,
@@ -130,6 +133,11 @@ struct Payload {
 
 fn id(value: Option<&String>) -> Option<i64> {
     value.and_then(|value| value.parse().ok())
+}
+
+/// Every id of a list, or `None` if one is not an id.
+fn ids(values: &[String]) -> Option<Vec<i64>> {
+    values.iter().map(|value| value.parse().ok()).collect()
 }
 
 /// Parses a notification payload. Unknown versions, kinds and malformed
@@ -151,11 +159,8 @@ pub fn parse(payload: &str) -> Option<Event> {
         "clip" => Event::Clip {
             guild_id: guild_id?,
             clip_id: payload.id?,
-            channels: payload
-                .cs?
-                .iter()
-                .map(|channel| channel.parse().ok())
-                .collect::<Option<_>>()?,
+            channels: ids(&payload.cs?)?,
+            speakers: ids(&payload.ss.unwrap_or_default())?,
         },
         "stamp" => Event::Stamp {
             guild_id: guild_id?,
@@ -238,11 +243,12 @@ mod tests {
             Some(Event::Recording { guild_id: 1 })
         );
         assert_eq!(
-            parse(r#"{"v":1,"k":"clip","g":"1","id":"abc","cs":["3","4"]}"#),
+            parse(r#"{"v":1,"k":"clip","g":"1","id":"abc","cs":["3","4"],"ss":["5"]}"#),
             Some(Event::Clip {
                 guild_id: 1,
                 clip_id: "abc".into(),
                 channels: vec![3, 4],
+                speakers: vec![5],
             })
         );
         assert_eq!(

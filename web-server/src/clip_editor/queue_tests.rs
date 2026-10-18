@@ -28,7 +28,7 @@ async fn claimed(pool: &PgPool) -> Job {
     load(pool, &id, &token).await.unwrap()
 }
 async fn target(pool: &PgPool) -> Snapshot {
-    sqlx::query("INSERT INTO clips (clip_id, guild_id, user_id, start_time, saved_file_name, original_file_name, channel_ids) VALUES ('target',1,100,0,'old.ogg','compose','{10}')").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO clips (clip_id, guild_id, user_id, start_time, saved_file_name, original_file_name, channel_ids, speaker_ids) VALUES ('target',1,100,0,'old.ogg','compose','{10}','{100}')").execute(pool).await.unwrap();
     let mut snapshot = snapshot();
     snapshot.body.overwrite_clip_id = Some("target".into());
     snapshot.overwrite = Some(ComposeOverwrite {
@@ -131,11 +131,11 @@ async fn claims_are_globally_bounded_and_old_attempt_cannot_publish(pool: PgPool
     assert!(!renew(&pool, &id, &old.token).await?);
     assert!(!report(&pool, &id, &old.token, "rendering", 80).await?);
     assert!(
-        publish(&pool, &old, "stale.ogg", &[10], 1.0, 100)
+        publish(&pool, &old, "stale.ogg", &[10], &[100], 1.0, 100)
             .await
             .is_err()
     );
-    publish(&pool, &recovered, "recovered.ogg", &[10], 1.0, 100).await?;
+    publish(&pool, &recovered, "recovered.ogg", &[10], &[100], 1.0, 100).await?;
     // A late error from the old attempt must not replace success.
     fail(&pool, &id, &old.token, ErrorKind::InternalError, true).await?;
     assert_eq!(status(&pool, 1, 100, &id).await?.status, "ready");
@@ -147,7 +147,7 @@ async fn completion_and_failure_are_stable_and_owner_scoped(pool: PgPool) -> Tes
     let snapshot = target(&pool).await;
     let id = submit(&pool, "overwrite", &snapshot).await?;
     let job = claimed(&pool).await;
-    publish(&pool, &job, "new.ogg", &[10], 1.0, 100).await?;
+    publish(&pool, &job, "new.ogg", &[10], &[100], 1.0, 100).await?;
     for _ in 0..3 {
         let result = status(&pool, 1, 100, &id).await?;
         assert_eq!(result.status, "ready");
@@ -221,7 +221,7 @@ async fn overwrite_and_archive_publication_roll_back_together(pool: PgPool) -> T
     let id = submit(&pool, "atomic", &snapshot).await?;
     let job = claimed(&pool).await;
     assert!(
-        publish(&pool, &job, "new.ogg", &[10], 1.0, 100)
+        publish(&pool, &job, "new.ogg", &[10], &[100], 1.0, 100)
             .await
             .is_err()
     );
@@ -242,7 +242,7 @@ async fn overwrite_fences_archive_worker_and_checks_revision(pool: PgPool) -> Te
     let second = submit(&pool, "second", &snapshot).await?;
     let job = claimed(&pool).await;
     assert_eq!(job.id, first);
-    publish(&pool, &job, "new.ogg", &[10], 1.0, 100).await?;
+    publish(&pool, &job, "new.ogg", &[10], &[100], 1.0, 100).await?;
     let row: (String, String, Option<String>) = sqlx::query_as("SELECT state, clip_saved_file_name, lease_owner FROM media_objects WHERE clip_id = 'target'").fetch_one(&pool).await?;
     assert_eq!(row, ("pending".into(), "new.ogg".into(), None));
     let changed = sqlx::query("UPDATE media_objects SET last_error = 'stale upload' WHERE lease_owner = 'old-upload' AND state = 'uploading'").execute(&pool).await?;
@@ -250,7 +250,7 @@ async fn overwrite_fences_archive_worker_and_checks_revision(pool: PgPool) -> Te
     let stale = claimed(&pool).await;
     assert_eq!(stale.id, second);
     assert!(matches!(
-        publish(&pool, &stale, "stale.ogg", &[10], 1.0, 100).await,
+        publish(&pool, &stale, "stale.ogg", &[10], &[100], 1.0, 100).await,
         Err(AppError::DestinationChanged)
     ));
     Ok(())
@@ -265,7 +265,7 @@ async fn deleted_overwrite_target_cannot_be_reported_ready(pool: PgPool) -> Test
         .execute(&pool)
         .await?;
     assert!(matches!(
-        publish(&pool, &job, "new.ogg", &[10], 1.0, 100).await,
+        publish(&pool, &job, "new.ogg", &[10], &[100], 1.0, 100).await,
         Err(AppError::DestinationChanged)
     ));
     assert_ne!(status(&pool, 1, 100, &id).await?.status, "ready");
@@ -320,7 +320,7 @@ async fn active_v1_lease_is_preserved_then_expired_work_migrates_with_new_token(
     assert_ne!(old.token, recovered.token);
     assert!(!renew(&pool, &id, &old.token).await?);
     assert!(
-        publish(&pool, &old, "stale-v1.ogg", &[10], 1.0, 100)
+        publish(&pool, &old, "stale-v1.ogg", &[10], &[100], 1.0, 100)
             .await
             .is_err()
     );
@@ -382,7 +382,7 @@ async fn lease_updates_skip_the_attempts_own_publication(pool: PgPool) -> TestRe
         .fetch_one(&pool)
         .await?;
     assert_eq!(progress, 60);
-    publish(&pool, &job, "export.ogg", &[10], 1.0, 100).await?;
+    publish(&pool, &job, "export.ogg", &[10], &[100], 1.0, 100).await?;
     assert!(!renew(&pool, &job.id, &job.token).await?);
     Ok(())
 }

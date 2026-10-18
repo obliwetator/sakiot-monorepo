@@ -351,6 +351,7 @@ async fn insert_history(
         let mut names = Vec::new();
         let mut offsets = Vec::new();
         let mut clip_sessions = Vec::new();
+        let mut clip_speakers = Vec::new();
         for (index, clip) in clips.iter().enumerate() {
             let source = sources.clip(clip.variant).ok_or(AppError::InternalError)?;
             let f = &fragments[clip.fragment];
@@ -365,19 +366,21 @@ async fn insert_history(
             names.push(format!("load test clip {}", index + 1));
             offsets.push(clip.offset_s);
             clip_sessions.push(f.session_id);
+            clip_speakers.push(f.user_id);
         }
         sqlx::query(
             "INSERT INTO clips
-                (clip_id, length, size, channel_id, channel_ids, guild_id, user_id,
-                 original_file_name, saved_file_name, created_at, name, start_time,
-                 recording_session_id)
-             SELECT clip_id, length, size, channel_id, ARRAY[channel_id], $1, user_id, original,
-                    saved, to_timestamp(created_ms / 1000.0), name, start_time, session_id
+                (clip_id, length, size, channel_id, channel_ids, speaker_ids, guild_id,
+                 user_id, original_file_name, saved_file_name, created_at, name,
+                 start_time, recording_session_id)
+             SELECT clip_id, length, size, channel_id, ARRAY[channel_id], ARRAY[speaker], $1,
+                    user_id, original, saved, to_timestamp(created_ms / 1000.0), name,
+                    start_time, session_id
                FROM UNNEST($2::text[], $3::real[], $4::bigint[], $5::bigint[], $6::bigint[],
                            $7::text[], $8::text[], $9::bigint[], $10::text[], $11::real[],
-                           $12::bigint[])
+                           $12::bigint[], $13::bigint[])
                  AS c(clip_id, length, size, channel_id, user_id, original, saved,
-                      created_ms, name, start_time, session_id)",
+                      created_ms, name, start_time, session_id, speaker)",
         )
         .bind(guild_id)
         .bind(&clip_ids)
@@ -391,6 +394,7 @@ async fn insert_history(
         .bind(&names)
         .bind(&offsets)
         .bind(&clip_sessions)
+        .bind(&clip_speakers)
         .execute(&mut **tx)
         .await?;
     }

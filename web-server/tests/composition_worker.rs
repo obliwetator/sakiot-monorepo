@@ -39,8 +39,8 @@ async fn seed(
     sqlx::raw_sql("INSERT INTO guilds (id, owner_id) VALUES (1,100);
         INSERT INTO user_guilds (id,user_id,name,owner,permissions,features) VALUES (1,100,'Test',true,8,'{}');
         INSERT INTO channels (channel_id,guild_id,type,name) VALUES (10,1,2,'Test'),(11,1,2,'Other');
-        INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,start_time,length,saved_file_name,original_file_name)
-        VALUES ('source',1,100,10,'{10,11}',0,1,'source.ogg','recording');").execute(pool).await?;
+        INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,speaker_ids,start_time,length,saved_file_name,original_file_name)
+        VALUES ('source',1,100,10,'{10,11}','{100,101}',0,1,'source.ogg','recording');").execute(pool).await?;
     let body = json!({"name":"Durable export", "master_volume_db":0, "segments":[{
         "source":"clip", "source_id":"source", "source_in":0, "source_out":0.5,
         "timeline_start":0, "track":0,
@@ -102,11 +102,13 @@ async fn real_worker_renders_and_publishes_once(pool: PgPool) -> TestResult {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let row = sqlx::query("SELECT j.state,c.saved_file_name,c.length,c.channel_ids,m.state AS archive_state,m.clip_saved_file_name FROM composition_jobs j JOIN clips c ON c.clip_id=j.result_clip_id JOIN media_objects m ON m.clip_id=c.clip_id WHERE j.id=$1")
+    let row = sqlx::query("SELECT j.state,c.saved_file_name,c.length,c.channel_ids,c.speaker_ids,m.state AS archive_state,m.clip_saved_file_name FROM composition_jobs j JOIN clips c ON c.clip_id=j.result_clip_id JOIN media_objects m ON m.clip_id=c.clip_id WHERE j.id=$1")
         .bind(&id).fetch_one(&pool).await?;
     assert_eq!(row.get::<String, _>("state"), "ready");
     // Hearing the export takes every channel its sources' audio came from.
     assert_eq!(row.get::<Vec<i64>, _>("channel_ids"), [10, 11]);
+    // It holds every source's speakers' voices.
+    assert_eq!(row.get::<Vec<i64>, _>("speaker_ids"), [100, 101]);
     assert_eq!(row.get::<String, _>("archive_state"), "pending");
     let saved: String = row.try_get("saved_file_name")?;
     assert_eq!(row.get::<String, _>("clip_saved_file_name"), saved);
@@ -184,8 +186,8 @@ async fn http_admission_is_durable_idempotent_and_does_not_load_media(pool: PgPo
     sqlx::raw_sql("INSERT INTO guilds (id,owner_id) VALUES (1,100);
         INSERT INTO user_guilds (id,user_id,name,owner,permissions,features) VALUES (1,100,'Test',true,8,'{}');
         INSERT INTO channels (channel_id,guild_id,type) VALUES (10,1,2);
-        INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,start_time,saved_file_name,original_file_name)
-        VALUES ('source',1,100,10,'{10}',0,'deliberately-not-on-disk.ogg','recording');").execute(&pool).await?;
+        INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,speaker_ids,start_time,saved_file_name,original_file_name)
+        VALUES ('source',1,100,10,'{10}','{100}',0,'deliberately-not-on-disk.ogg','recording');").execute(&pool).await?;
     let app = http::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))

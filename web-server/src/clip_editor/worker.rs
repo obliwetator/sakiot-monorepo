@@ -291,6 +291,7 @@ async fn execute(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
+    let speaker_ids = speakers_of(&resolved.sources);
     let directory = attempt_dir(&job.id, &job.token);
     tokio::fs::create_dir_all(&directory).await?;
     let mut segments = Vec::new();
@@ -353,7 +354,31 @@ async fn execute(
     tokio::fs::File::open(&output).await?.sync_all().await?;
     tokio::fs::rename(&output, &final_path).await?;
     tokio::fs::File::open(parent).await?.sync_all().await?;
-    publish(pool, job, &saved, &channel_ids, duration, size).await
+    publish(
+        pool,
+        job,
+        &saved,
+        &channel_ids,
+        &speaker_ids,
+        duration,
+        size,
+    )
+    .await
+}
+
+/// Every speaker of the sources, or none when one source's are not known:
+/// the rest alone could make another speaker's voice look like the
+/// listener's own.
+fn speakers_of(sources: &[ResolvedSource]) -> Vec<i64> {
+    if sources.iter().any(|source| source.speaker_ids.is_empty()) {
+        return Vec::new();
+    }
+    sources
+        .iter()
+        .flat_map(|source| source.speaker_ids.iter().copied())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 async fn workspace_bytes(path: &Path) -> Result<u64, AppError> {
@@ -455,6 +480,23 @@ async fn old_enough(entry: &tokio::fs::DirEntry) -> bool {
 mod tests {
     use super::*;
     use std::os::unix::process::CommandExt;
+
+    #[test]
+    fn an_export_holds_every_speaker_unless_one_is_unknown() {
+        let source = |speaker_ids: &[i64]| ResolvedSource {
+            path: PathBuf::from("source.ogg"),
+            channel_id: 10,
+            channel_ids: vec![10],
+            speaker_ids: speaker_ids.to_vec(),
+            length: 1.0,
+            saved_file_name: "source.ogg".into(),
+        };
+        assert_eq!(
+            speakers_of(&[source(&[2]), source(&[1, 2]), source(&[2])]),
+            [1, 2]
+        );
+        assert_eq!(speakers_of(&[source(&[1]), source(&[])]), [] as [i64; 0]);
+    }
 
     #[test]
     fn dropping_supervisor_guard_terminates_child_group() -> Result<(), Box<dyn std::error::Error>>

@@ -432,6 +432,15 @@ async fn append_selection_transform(
                 ELSE '{}'
             END
           WHERE c.channel_ids IS NULL;
+         -- Exported before clips recorded their speakers: a session's clip
+         -- holds its speaker's voice; any other is left unknown.
+         UPDATE _imp_clips c
+            SET speaker_ids = COALESCE(
+                (SELECT ARRAY[rs.user_id]
+                   FROM recording_sessions rs
+                  WHERE rs.id = c.recording_session_id),
+                '{}')
+          WHERE c.speaker_ids IS NULL;
          DELETE FROM _imp_clips c USING clips existing WHERE existing.clip_id = c.clip_id;
          INSERT INTO clips SELECT * FROM _imp_clips;
          DELETE FROM _imp_stamps s USING stamps existing
@@ -529,15 +538,15 @@ mod tests {
         );
     }
 
-    /// The columns of a destination that has grown `channel_ids` since
-    /// the export.
+    /// The columns of a destination that has grown `channel_ids` and
+    /// `speaker_ids` since the export.
     struct GrownColumns;
 
     #[async_trait]
     impl ColumnProvider for GrownColumns {
         async fn table_columns(&self, table: &str) -> Result<Vec<String>> {
             Ok(match table {
-                "clips" => vec!["clip_id".into(), "channel_ids".into()],
+                "clips" => vec!["clip_id".into(), "channel_ids".into(), "speaker_ids".into()],
                 _ => vec!["id".into()],
             })
         }
@@ -559,13 +568,19 @@ mod tests {
         let copied = rendered
             .find("COPY _imp_clips (\"clip_id\") FROM STDIN")
             .expect("only the exported columns are copied");
+        assert!(
+            rendered.contains("ALTER TABLE _imp_clips ALTER COLUMN \"speaker_ids\" DROP NOT NULL;")
+        );
         let filled = rendered
             .find("UPDATE _imp_clips c\n            SET channel_ids")
             .expect("the transform fills the clips' channels");
+        let speakers = rendered
+            .find("UPDATE _imp_clips c\n            SET speaker_ids")
+            .expect("the transform fills the clips' speakers");
         let inserted = rendered
             .find("INSERT INTO clips SELECT * FROM _imp_clips")
             .unwrap();
-        assert!(relaxed < copied && copied < filled && filled < inserted);
+        assert!(relaxed < copied && copied < filled && filled < speakers && speakers < inserted);
     }
 
     #[tokio::test]

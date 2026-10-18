@@ -13,10 +13,10 @@ async fn seed_sources(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "INSERT INTO clips (clip_id, start_time, saved_file_name, channel_ids)
+        "INSERT INTO clips (clip_id, start_time, saved_file_name, channel_ids, speaker_ids)
              VALUES
-                ('media-saved-clip', 0, '2026/07/media-saved-clip.ogg', '{}'),
-                ('media-unsaved-clip', 0, NULL, '{}')",
+                ('media-saved-clip', 0, '2026/07/media-saved-clip.ogg', '{}', '{}'),
+                ('media-unsaved-clip', 0, NULL, '{}', '{}')",
     )
     .execute(pool)
     .await?;
@@ -100,8 +100,8 @@ async fn reconciliation_skips_synthetic_load_test_media(
     .execute(&pool)
     .await?;
     sqlx::query(
-        "INSERT INTO clips (clip_id, guild_id, start_time, saved_file_name, channel_ids)
-             VALUES ('synthetic-clip', $1, 0, '2026/07/synthetic-clip.ogg', '{}')",
+        "INSERT INTO clips (clip_id, guild_id, start_time, saved_file_name, channel_ids, speaker_ids)
+             VALUES ('synthetic-clip', $1, 0, '2026/07/synthetic-clip.ogg', '{}', '{}')",
     )
     .bind(synthetic)
     .execute(&pool)

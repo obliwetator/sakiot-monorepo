@@ -278,7 +278,9 @@ channels its own audio came from (`clips.channel_ids`, recorded when the clip
 is made): a clip cut from the part of a session recorded in one channel needs
 that channel alone, a clip of a session's silence-free copy every channel of
 the session, and a composed clip every channel of its sources. The web server
-and the bot's `/jam` apply the same rule. Visibility covers the
+and the bot's `/jam` apply the same rule. Each clip also records whose voices
+it holds (`clips.speaker_ids`: a session's or recording's speaker, or every
+source's speakers for a composed clip; empty when not known). Visibility covers the
 channels the agent records: voice (type 2) and stage (type 13). Stage channels
 need a Community server, so they are verified by fixture tests only.
 

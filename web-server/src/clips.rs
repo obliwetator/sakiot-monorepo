@@ -539,6 +539,12 @@ pub async fn create_clip(
     )
     .await?
     .ok_or(AppError::FileNotFound)?;
+    let speaker_id = sqlx::query_scalar!(
+        "SELECT user_id FROM audio_files WHERE id = $1",
+        audio_file_id
+    )
+    .fetch_one(pool.get_ref())
+    .await?;
     media
         .ensure_recording_local(
             pool.get_ref(),
@@ -601,7 +607,7 @@ pub async fn create_clip(
     let size = size as i64;
 
     let insert = sqlx::query!(
-        "INSERT INTO clips (clip_id, length, size, channel_id, channel_ids, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, ARRAY[$4::bigint], $5, $6, $7, $8, $9, $10)",
+        "INSERT INTO clips (clip_id, length, size, channel_id, channel_ids, speaker_ids, guild_id, user_id, original_file_name, saved_file_name, name, start_time) VALUES ($1, $2, $3, $4, ARRAY[$4::bigint], ARRAY[$11::bigint], $5, $6, $7, $8, $9, $10)",
         clip_id,
         length as f32,
         size,
@@ -611,7 +617,8 @@ pub async fn create_clip(
         file_name_from_url,
         saved_file_name,
         clip_name,
-        start as f32
+        start as f32,
+        speaker_id
     )
     .execute(pool.get_ref())
     .await;

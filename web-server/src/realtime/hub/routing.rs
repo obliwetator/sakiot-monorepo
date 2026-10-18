@@ -166,6 +166,7 @@ pub(super) fn route(
                 guild_id,
                 clip_id,
                 channels,
+                ..
             } if *guild_id == subscription.guild_id => {
                 if hears_clip(access, channels) {
                     add_id(&mut routed, Resource::Clips, clip_id.clone());
