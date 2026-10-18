@@ -4,6 +4,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../../app/apiSlice";
 import { isLoggedIn as hasLoggedInCookie } from "../../app/authedFetch";
 import { useAppSelector } from "../../app/hooks";
+import { isFormerMember } from "../../shared/permissions";
 import {
 	Button,
 	Drawer,
@@ -13,6 +14,7 @@ import {
 	Tabs,
 	useMediaQuery,
 } from "../../shared/ui";
+import { FormerMemberBanner } from "../members/FormerMemberBanner";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { AudioInterface } from "./AudioInterface";
 import { LogicalSessionPlayer } from "./LogicalSessionPlayer";
@@ -34,6 +36,9 @@ export function YearSelection() {
 		skip: !hasLoggedInCookie(),
 	});
 	const userGuilds = authData?.guilds || null;
+	const former = isFormerMember(
+		userGuilds?.find((guild) => guild.id === params.guild_id),
+	);
 
 	React.useEffect(() => {
 		// A recording selection changes the route. Closing here also covers
@@ -47,7 +52,7 @@ export function YearSelection() {
 
 	const tree = (
 		<>
-			<VoicePresencePanel />
+			{!former && <VoicePresencePanel />}
 			<RecordingTree onRecordingSelect={() => setTreeOpen(false)} />
 		</>
 	);
@@ -76,6 +81,7 @@ export function YearSelection() {
 				</div>
 			)}
 			<div className="p-2 min-[900px]:p-4 pb-0 shrink-0">
+				<FormerMemberBanner guildId={params.guild_id ?? ""} />
 				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
 			</div>
 			<div className="flex flex-col min-[900px]:flex-row w-full min-w-0 flex-1 min-h-0 min-[900px]:h-full">

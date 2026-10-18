@@ -1,5 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { activePage } from "./constants";
+import type { UserGuilds } from "../Constants";
+import { activePage, guildPages } from "./constants";
+
+function guild(
+	capabilities: UserGuilds["capabilities"],
+	former = false,
+): UserGuilds {
+	return { id: "guild", name: "Guild", icon: null, capabilities, former };
+}
+
+describe("guildPages", () => {
+	test("adds each admin page its capability opens", () => {
+		expect(guildPages(guild([]))).toEqual([
+			"Audio",
+			"Clips",
+			"Clip Editor",
+			"Stamps",
+		]);
+		expect(guildPages(guild(["preview_roles"]))).toContain("Members");
+		expect(guildPages(guild(["preview_roles"]))).not.toContain("Admin");
+	});
+
+	test("offers a former member their own recordings, clips and stamps", () => {
+		expect(guildPages(guild(["manage_settings"], true))).toEqual([
+			"Audio",
+			"Clips",
+			"Stamps",
+		]);
+	});
+});
 
 describe("activePage", () => {
 	test("marks each media route and its nested pages", () => {

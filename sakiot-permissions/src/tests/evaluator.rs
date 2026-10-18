@@ -27,6 +27,7 @@ fn guild(everyone: Permissions) -> GuildFacts {
         MemberFacts {
             listed: true,
             roles: vec![ROLE],
+            recorded: false,
         },
     );
     facts
@@ -298,4 +299,52 @@ fn a_recording_of_only_your_voice_is_yours_wherever_it_was_made() {
     // An outsider hears nothing, not even their own voice.
     let outsider = facts.access(Viewer::discord(MEMBER + 1)).expect("known");
     assert!(!outsider.allows_item(&[MEMBER + 1], [CHANNEL]));
+}
+
+#[test]
+fn whoever_has_recordings_here_but_does_not_belong_is_a_former_member() {
+    let mut facts = guild(VOICE);
+    let left = MEMBER + 1;
+    facts.members.insert(
+        left,
+        MemberFacts {
+            listed: false,
+            roles: vec![ROLE],
+            recorded: true,
+        },
+    );
+    for user_id in [MEMBER, OWNER] {
+        facts.members.entry(user_id).or_default().recorded = true;
+    }
+    let membership = |facts: &GuildFacts, user_id| facts.membership(Viewer::discord(user_id));
+
+    assert_eq!(membership(&facts, MEMBER), Ok(Membership::Member));
+    assert_eq!(membership(&facts, left), Ok(Membership::Former));
+    assert_eq!(membership(&facts, left + 1), Ok(Membership::Outsider));
+    let former = facts.access(Viewer::discord(left)).expect("known");
+    assert_eq!(former.guild, Capabilities::empty());
+    assert!(
+        former.channels.is_empty(),
+        "the roles they held count no more"
+    );
+
+    // An unknown roster is never guessed to be a departure.
+    facts.roster = Roster::Incomplete;
+    assert_eq!(membership(&facts, left), Err(MembershipUnavailable));
+    facts.roster = Roster::Complete;
+
+    // Once the bot has left, nobody belongs: whoever has recordings is a
+    // former member, the owner included.
+    facts.bot_present = false;
+    assert_eq!(membership(&facts, OWNER), Ok(Membership::Former));
+    assert_eq!(membership(&facts, MEMBER), Ok(Membership::Former));
+    assert_eq!(membership(&facts, left + 1), Ok(Membership::Outsider));
+    facts.roster = Roster::Incomplete;
+    assert_eq!(membership(&facts, MEMBER), Ok(Membership::Former));
+    // Dev logins follow their seeding wherever the bot is.
+    let dev = Viewer {
+        user_id: OWNER,
+        dev: true,
+    };
+    assert_eq!(facts.membership(dev), Ok(Membership::Owner));
 }

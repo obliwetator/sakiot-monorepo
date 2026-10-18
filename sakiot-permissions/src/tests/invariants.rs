@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 
-use crate::testing::{self, RosterState, World};
+use crate::testing::{self, RosterState, STRANGER_ID, World};
 use crate::{
     Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, Permissions, RoleNotFound,
     RolePreview, Viewer,
@@ -83,24 +83,31 @@ fn membership(
     let Some(guild) = guild.map(|g| &world.guilds[g]) else {
         return Ok(Membership::Outsider);
     };
-    if World::owner_id(guild) == viewer.user_id {
-        return Ok(Membership::Owner);
-    }
+    let owner = World::owner_id(guild) == viewer.user_id;
     let member = &guild.members[user];
     if viewer.dev {
         return Ok(match member.seed {
+            _ if owner => Membership::Owner,
             Some(true) => Membership::Owner,
             Some(false) => Membership::Member,
             None => Membership::Outsider,
         });
     }
+    let not_member = if member.recorded {
+        Membership::Former
+    } else {
+        Membership::Outsider
+    };
+    if !guild.bot_present {
+        return Ok(not_member);
+    }
+    if owner {
+        return Ok(Membership::Owner);
+    }
     match guild.roster {
         RosterState::Complete if member.listed => Ok(Membership::Member),
-        RosterState::Complete => Ok(Membership::Outsider),
-        RosterState::Incomplete | RosterState::Missing if guild.bot_present => {
-            Err(MembershipUnavailable)
-        }
-        RosterState::Incomplete | RosterState::Missing => Ok(Membership::Outsider),
+        RosterState::Complete => Ok(not_member),
+        RosterState::Incomplete | RosterState::Missing => Err(MembershipUnavailable),
     }
 }
 
@@ -181,9 +188,17 @@ fn check_viewer(
         _ => {
             prop_assert_eq!(access.guild, Capabilities::empty(), "an outsider manages");
             prop_assert!(access.channels.is_empty(), "an outsider gets channels");
+            // A former member hears their own voice and nothing else; an
+            // outsider nothing at all.
+            let channels: Vec<i64> = recorded_channels(facts).into_iter().collect();
+            let former = access.membership == Membership::Former;
+            prop_assert_eq!(access.allows_item(&[viewer.user_id], []), former);
+            prop_assert!(!access.allows_item(&[viewer.user_id, STRANGER_ID], channels));
             return Ok(());
         }
     };
+    // A member hears their own voice from anywhere.
+    prop_assert!(access.allows_item(&[viewer.user_id], []));
     let manager = bits & (ADMINISTRATOR | MANAGE_GUILD) != 0;
     let management = if manager {
         Capabilities::MANAGEMENT
@@ -289,6 +304,9 @@ fn check_preview(
 enum Reached {
     Owner,
     Member,
+    Former,
+    /// An owner who is a former member: the bot has left their guild.
+    FormerOwner,
     Outsider,
     MembershipUnavailable,
     DevOwnerBySeed,
@@ -305,9 +323,11 @@ enum Reached {
     PreviewOfMissingRole,
 }
 
-const EVERY_OUTCOME: [Reached; 12] = [
+const EVERY_OUTCOME: [Reached; 14] = [
     Reached::Owner,
     Reached::Member,
+    Reached::Former,
+    Reached::FormerOwner,
     Reached::Outsider,
     Reached::MembershipUnavailable,
     Reached::DevOwnerBySeed,
@@ -343,6 +363,15 @@ impl Coverage {
             (_, true, _) => return,
             (Ok(Membership::Owner), false, _) => Reached::Owner,
             (Ok(Membership::Member), false, _) => Reached::Member,
+            (Ok(Membership::Former), false, _) => {
+                let owner =
+                    guild.is_some_and(|g| World::owner_id(&world.guilds[g]) == viewer.user_id);
+                if owner {
+                    Reached::FormerOwner
+                } else {
+                    Reached::Former
+                }
+            }
             (Ok(Membership::Outsider), false, _) => Reached::Outsider,
             (Err(MembershipUnavailable), false, _) => Reached::MembershipUnavailable,
         };

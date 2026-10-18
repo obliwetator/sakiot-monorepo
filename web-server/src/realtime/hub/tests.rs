@@ -591,3 +591,53 @@ fn a_slow_connection_gets_one_resync_instead_of_its_backlog() {
     });
     assert_eq!(connection.take(), (Vec::new(), Some(1012)));
 }
+
+#[test]
+fn a_former_member_subscribes_for_their_own_recordings_alone() {
+    use sakiot_permissions::{GuildFacts, MemberFacts, Permissions, Roster, Viewer};
+    let mut facts = GuildFacts::new(GUILD);
+    facts.owner_id = Some(SPEAKER);
+    facts.roster = Roster::Complete;
+    facts.bot_present = true;
+    facts.everyone = Some(Permissions::all());
+    facts.channels.insert(PUBLIC, Default::default());
+    facts.members.insert(
+        VIEWER,
+        MemberFacts {
+            listed: false,
+            roles: Vec::new(),
+            recorded: true,
+        },
+    );
+    let viewer = Viewer::discord(VIEWER);
+    let access = SubscriptionAccess::of(&GuildAccess::new(facts.clone(), viewer, None))
+        .expect("a former member may subscribe");
+    assert!(access.tree_channels.is_empty() && access.media_channels.is_empty());
+    assert!(access.presence_channels.is_empty());
+    assert_eq!(access.guild, Capabilities::empty());
+
+    let mut subscription = subscription(&[], &[], false);
+    subscription.access = Some(access);
+    let journeys = HashMap::from([
+        (
+            1,
+            Journey {
+                speaker: VIEWER,
+                ..journey(PUBLIC, &[PUBLIC])
+            },
+        ),
+        (2, journey(PUBLIC, &[PUBLIC])),
+    ]);
+    let changes = [1, 2].map(|session_id| Event::Session {
+        guild_id: GUILD,
+        session_id,
+    });
+    assert_eq!(
+        route(&changes, &subscription, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Recordings, ids(&["1"]))])
+    );
+
+    // Someone with nothing of their own here is refused.
+    facts.members.get_mut(&VIEWER).expect("loaded").recorded = false;
+    assert!(SubscriptionAccess::of(&GuildAccess::new(facts, viewer, None)).is_err());
+}

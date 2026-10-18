@@ -252,7 +252,16 @@ returned at login (`GuildFacts::membership`):
 - A Discord login owns a guild only per `guilds.owner_id`, and belongs to it
   only when listed on its complete roster (`guild_members` with
   `guild_projection_state.roster_complete_at` set). The last complete roster
-  stays authoritative after the bot leaves or stops.
+  stays authoritative while the bot is stopped.
+- Someone who does not belong but has recordings of their own in the guild
+  is a former member: they list and play the recordings, clips and stamps of
+  their own voice there, and reach nothing else. Once the bot has left a
+  guild (no `guilds_present` row; an outage does not count), nobody belongs,
+  owner included, since its cached roles and overwrites stop updating:
+  everyone with recordings there is a former member. `guilds.bot_left_at`
+  records when it left; its return clears it and everyone is back. The guild
+  picker lists a former member's guilds too, marked `former`, and the
+  dashboard shows them only their recordings, clips and stamps.
 - While the bot is in a guild whose roster is not complete yet, nobody but
   the owner can be answered: requests fail with a retryable 503
   `membership_unavailable` (Retry-After 5) rather than a guess, and the

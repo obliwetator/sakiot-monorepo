@@ -2,6 +2,7 @@ import type React from "react";
 import { useParams } from "react-router-dom";
 import type { VoiceEvent } from "../../../app/apiSlice";
 import type { AudioParams, UserGuilds } from "../../../Constants";
+import { isFormerMember } from "../../../shared/permissions";
 import { Button } from "../../../shared/ui";
 import WaveFormButton from "../Waveform";
 import type { AudioHandle } from "./audioHandle";
@@ -75,7 +76,12 @@ export function RangeSlider(props: {
 				<ClipDialog
 					params={params}
 					startEnd={range.startEnd}
-					disabled={props.isClip}
+					disabled={
+						props.isClip ||
+						isFormerMember(
+							props.userGuilds?.find((guild) => guild.id === params.guild_id),
+						)
+					}
 				/>
 				<SilenceButton
 					params={params}

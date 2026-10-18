@@ -3,7 +3,13 @@ import type { UserGuilds } from "../Constants";
 import { canDeleteClip, holds } from "./permissions";
 
 function guild(capabilities: UserGuilds["capabilities"]): UserGuilds {
-	return { id: "guild", name: "Guild", icon: null, capabilities };
+	return {
+		id: "guild",
+		name: "Guild",
+		icon: null,
+		capabilities,
+		former: false,
+	};
 }
 
 describe("holds", () => {

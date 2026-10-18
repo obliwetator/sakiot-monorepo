@@ -88,6 +88,16 @@ impl GuildAccess {
     /// The viewer's access, which must be a member's.
     pub fn require_member(&self) -> Result<&Access, AppError> {
         let access = self.access()?;
+        if !matches!(access.membership, Membership::Owner | Membership::Member) {
+            return Err(AppError::Forbidden);
+        }
+        Ok(access)
+    }
+
+    /// The viewer's access, which must be a member's or a former member's:
+    /// someone with recordings to reach here, if only their own.
+    pub fn require_member_or_former(&self) -> Result<&Access, AppError> {
+        let access = self.access()?;
         if access.membership == Membership::Outsider {
             return Err(AppError::Forbidden);
         }
@@ -109,9 +119,13 @@ impl GuildAccess {
         }
     }
 
-    /// The channels where the member holds `capability`.
+    /// The channels where the member holds `capability`; none for a former
+    /// member.
     pub fn channels(&self, capability: Capabilities) -> Result<HashSet<i64>, AppError> {
-        Ok(self.require_member()?.channels_with(capability).collect())
+        Ok(self
+            .require_member_or_former()?
+            .channels_with(capability)
+            .collect())
     }
 
     /// Fails unless the member holds `capability` in `channel_id`.
@@ -199,7 +213,7 @@ impl GuildAccess {
     /// `Access::allows_item` with it (`Listing`).
     pub fn listing(&self) -> Result<Listing, AppError> {
         let access = match self.role_preview()? {
-            None => self.require_member()?.clone(),
+            None => self.require_member_or_former()?.clone(),
             Some(preview) => preview.access,
         };
         Ok(Listing {

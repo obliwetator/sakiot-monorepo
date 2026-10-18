@@ -1329,6 +1329,176 @@ async fn a_members_own_voice_stays_theirs_in_a_channel_they_lost(
     Ok(())
 }
 
+/// Someone who left the guild keeps the recordings of their own voice, to
+/// list and play, and reaches nothing else: not anyone else's recordings,
+/// clips or stamps, not making clips, not the guild's settings.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_former_member_reaches_only_their_own_recordings(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let mut sessions = Vec::new();
+    for speaker in [USER_ID, OTHER_USER_ID] {
+        let session_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO recording_sessions
+                (guild_id, user_id, starting_channel_id, current_channel_id, state,
+                 started_at, ended_at, end_reason, last_segment_index)
+             VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)
+             RETURNING id",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(speaker)
+        .bind(ALLOWED_CHANNEL_ID)
+        .fetch_one(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month,
+                 start_ts, end_ts, recording_session_id, segment_index)
+             VALUES ('former-' || $2, $1, $3, $2, 1970, 1, 1000, 2000, $4, 0)",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(speaker)
+        .bind(ALLOWED_CHANNEL_ID)
+        .bind(session_id)
+        .execute(&pool)
+        .await?;
+        sessions.push(session_id);
+    }
+    let [own_session, their_session] = sessions[..] else {
+        unreachable!("two sessions");
+    };
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time)
+         VALUES ('former-own', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3,
+                 'former/own.ogg', 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO stamps
+            (guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts, note)
+         VALUES ($1, $2, $3, $4, 1500, 'on me'), ($1, $2, $4, $3, 1500, 'on them')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(OTHER_USER_ID)
+    .execute(&pool)
+    .await?;
+    support::leave_guild(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    assert_eq!(
+        access(&pool, ALLOWED_GUILD_ID, Viewer::discord(USER_ID))
+            .await?
+            .membership,
+        Membership::Former
+    );
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_current_month_permission)
+                    .service(get_live_stems)
+                    .service(get_session_manifest)
+                    .service(get_clips)
+                    .service(get_clip)
+                    .service(get_stamps)
+                    .service(create_session_clip)
+                    .service(get_voice_settings)
+                    .service(get_recording_opt_out),
+            ),
+    )
+    .await;
+    let cookie = access_cookie_value()?;
+    let get = |uri: String| {
+        test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request()
+    };
+
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(format!("/api/current/{ALLOWED_GUILD_ID}"))).await;
+    let tree = tree.to_string();
+    assert!(tree.contains(&format!("\"{own_session}\"")), "{tree}");
+    assert!(!tree.contains(&format!("\"{their_session}\"")), "{tree}");
+    let clips: Vec<serde_json::Value> =
+        test::call_and_read_body_json(&app, get(format!("/api/audio/clips/{ALLOWED_GUILD_ID}")))
+            .await;
+    let clips: Vec<&str> = clips
+        .iter()
+        .filter_map(|clip| clip["clip_id"].as_str())
+        .collect();
+    // Not even the clip they made of someone else's voice.
+    assert_eq!(clips, ["former-own"]);
+    let stamps: Vec<serde_json::Value> =
+        test::call_and_read_body_json(&app, get(format!("/api/stamps/{ALLOWED_GUILD_ID}"))).await;
+    let notes: Vec<&str> = stamps
+        .iter()
+        .filter_map(|stamp| stamp["note"].as_str())
+        .collect();
+    assert_eq!(notes, ["on me"]);
+    let live: Vec<String> = test::call_and_read_body_json(
+        &app,
+        get(format!("/api/current/{ALLOWED_GUILD_ID}/live-stems")),
+    )
+    .await;
+    assert!(live.is_empty());
+
+    for (uri, allowed) in [
+        (format!("/api/audio/sessions/{own_session}/manifest"), true),
+        (
+            format!("/api/audio/sessions/{their_session}/manifest"),
+            false,
+        ),
+        (
+            format!("/api/audio/clips/{ALLOWED_GUILD_ID}/former-own"),
+            true,
+        ),
+        (
+            format!("/api/audio/clips/{ALLOWED_GUILD_ID}/own-clip"),
+            false,
+        ),
+        (
+            format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/voice-settings"),
+            false,
+        ),
+        (
+            format!("/api/users/current/guilds/{ALLOWED_GUILD_ID}/recording-opt-out"),
+            false,
+        ),
+    ] {
+        let response = test::call_service(&app, get(uri.clone())).await;
+        assert_eq!(
+            response.status() != StatusCode::FORBIDDEN,
+            allowed,
+            "{uri}: {}",
+            response.status()
+        );
+    }
+    let request = test::TestRequest::post()
+        .uri(&format!("/api/audio/sessions/{own_session}/clips"))
+        .insert_header(("Cookie", cookie.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"start": 0.0, "end": 1.0}))
+        .to_request();
+    let response = test::call_service(&app, request).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN, "clipping");
+    Ok(())
+}
+
 fn access_keys() -> AccessKeys {
     AccessKeys {
         access_encode: EncodingKey::from_secret(b"test_secret"),

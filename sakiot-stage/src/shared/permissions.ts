@@ -11,6 +11,14 @@ export function holds(
 	return guild?.capabilities.includes(capability) ?? false;
 }
 
+/**
+ * No longer a member, or the bot has left the guild: only the viewer's own
+ * recordings are reachable there, and nothing can be made or managed.
+ */
+export function isFormerMember(guild: UserGuilds | null | undefined): boolean {
+	return guild?.former === true;
+}
+
 /** Renaming or deleting a clip: its creator, or a clip moderator. */
 export function canDeleteClip(
 	guild: UserGuilds | null,

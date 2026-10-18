@@ -307,6 +307,34 @@ async fn a_clip_whose_channels_or_speakers_change_notifies_with_the_old_and_the_
     Ok(())
 }
 
+/// The bot leaving a guild makes everyone there a former member, and its
+/// return brings them back: either re-authorizes the guild's viewers.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn the_bot_leaving_or_returning_reauthorizes_the_guild(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let guild_event = json!({ "v": 1, "k": "perm", "g": GUILD.to_string() });
+
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    // Seen again at startup: nothing changed, nothing sent.
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM guilds_present WHERE guild_id = $1")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        vec![guild_event.clone(), guild_event]
+    );
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn permission_changes_send_one_guild_payload_per_transaction(pool: PgPool) -> TestResult {
     seed(&pool).await?;

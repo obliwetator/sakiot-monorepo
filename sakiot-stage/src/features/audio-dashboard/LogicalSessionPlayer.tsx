@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../../app/apiSlice";
-import { holds } from "../../shared/permissions";
+import { holds, isFormerMember } from "../../shared/permissions";
 import {
 	Badge,
 	Notice,
@@ -309,10 +309,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	);
 	const hasChannelJourney = new Set(manifest.channel_journey).size > 1;
 	const clipSelectionIsValid = isValidClipSelection(selection);
-	const canDeleteRecording = holds(
-		authDetails?.guilds?.find((guild) => guild.id === manifest.guild_id),
-		"delete_recordings",
+	const guild = authDetails?.guilds?.find(
+		(guild) => guild.id === manifest.guild_id,
 	);
+	const canDeleteRecording = holds(guild, "delete_recordings");
+	// A former member hears their own voice but makes nothing new of it.
+	const canClip = !isFormerMember(guild);
 
 	return (
 		<div className="pb-8">
@@ -544,11 +546,13 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 						}}
 					/>
 				)}
-				<SessionClipForm
-					sessionId={props.sessionId}
-					selection={selection}
-					silenceFree={playbackTab === "silence"}
-				/>
+				{canClip && (
+					<SessionClipForm
+						sessionId={props.sessionId}
+						selection={selection}
+						silenceFree={playbackTab === "silence"}
+					/>
+				)}
 			</SessionClipEditorPanel>
 
 			<PhysicalRecordingsPanel

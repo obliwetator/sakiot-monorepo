@@ -37,6 +37,7 @@ import {
 	useMediaQuery,
 } from "../../shared/ui";
 import { formatDuration } from "../../utils/formatTime";
+import { FormerMemberBanner } from "../members/FormerMemberBanner";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { ClipPlayer } from "./ClipPlayer";
 import { filterClips } from "./clipSearch";
@@ -249,6 +250,7 @@ export default function Clips() {
 
 	return (
 		<div className="p-3 min-[900px]:p-6 h-full flex flex-col">
+			<FormerMemberBanner guildId={guildId} />
 			<ViewAsRoleBanner guildId={guildId} />
 			<ClipsLayout
 				data={data ?? []}

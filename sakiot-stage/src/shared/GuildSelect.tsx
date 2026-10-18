@@ -23,7 +23,7 @@ export function GuildSelect(props: {
 		>
 			{props.userGuilds?.map((guild) => (
 				<SelectItem key={guild.id} id={guild.id}>
-					{guild.name}
+					{guild.former ? `${guild.name} (former member)` : guild.name}
 				</SelectItem>
 			))}
 		</Select>

@@ -37,6 +37,7 @@ async fn seed(
         .status()?;
     assert!(result.success());
     sqlx::raw_sql("INSERT INTO guilds (id, owner_id) VALUES (1,100);
+        INSERT INTO guilds_present (guild_id) VALUES (1);
         INSERT INTO user_guilds (id,user_id,name,owner,permissions,features) VALUES (1,100,'Test',true,8,'{}');
         INSERT INTO channels (channel_id,guild_id,type,name) VALUES (10,1,2,'Test'),(11,1,2,'Other');
         INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,speaker_ids,start_time,length,saved_file_name,original_file_name)
@@ -184,6 +185,7 @@ async fn http_admission_is_durable_idempotent_and_does_not_load_media(pool: PgPo
         &keys,
     )?;
     sqlx::raw_sql("INSERT INTO guilds (id,owner_id) VALUES (1,100);
+        INSERT INTO guilds_present (guild_id) VALUES (1);
         INSERT INTO user_guilds (id,user_id,name,owner,permissions,features) VALUES (1,100,'Test',true,8,'{}');
         INSERT INTO channels (channel_id,guild_id,type) VALUES (10,1,2);
         INSERT INTO clips (clip_id,guild_id,user_id,channel_id,channel_ids,speaker_ids,start_time,saved_file_name,original_file_name)

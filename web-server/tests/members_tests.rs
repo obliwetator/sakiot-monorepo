@@ -1,3 +1,5 @@
+mod support;
+
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use serde_json::{Value, json};
@@ -52,6 +54,13 @@ async fn seed_members_data(pool: &PgPool) -> Result<(), sqlx::Error> {
         "INSERT INTO guilds (id, owner_id) VALUES ($1, $2), ($3, $2)",
         GUILD_ID,
         OWNER_ID,
+        OTHER_GUILD_ID,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO guilds_present (guild_id) VALUES ($1), ($2)",
+        GUILD_ID,
         OTHER_GUILD_ID,
     )
     .execute(pool)
@@ -164,6 +173,8 @@ async fn roles_endpoints_forbidden_for_plain_member(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     seed_members_data(&pool).await?;
+    // Known to be a member, and nothing more.
+    support::complete_rosters_from_user_guilds(&pool).await?;
 
     let cookie = access_cookie_for(MEMBER_ID)?;
     let app = test::init_service(
@@ -402,6 +413,12 @@ async fn seed_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query!(
+        "INSERT INTO guilds_present (guild_id) VALUES ($1)",
+        GUILD_ID
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query!(
         "INSERT INTO roles (guild_id, role_id, permission, name)
          VALUES
             ($1, $1, 1049600, '@everyone'),
@@ -469,6 +486,7 @@ async fn seed_preview_data(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    support::complete_rosters_from_user_guilds(pool).await?;
     Ok(())
 }
 

@@ -18,6 +18,7 @@ struct MemberRow {
     user_id: i64,
     listed: bool,
     roles: Vec<i64>,
+    recorded: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -71,7 +72,9 @@ pub(super) async fn load<'e>(
 ///   are the guild's;
 /// - every voice and stage channel with its `@everyone` overwrite and the
 ///   overwrites for exactly those roles and users;
-/// - each user's listing and roles, and their dev seeding (`user_guilds`).
+/// - each user's listing and roles, whether they have recordings of their
+///   own there (for a former member), and their dev seeding
+///   (`user_guilds`).
 ///
 /// One `GuildFacts` per distinct guild, in no particular order; a guild
 /// nothing is known about still gets one.
@@ -126,7 +129,13 @@ pub(super) async fn load_many<'e>(
                                'roles', (SELECT COALESCE(json_agg(h.role_id), '[]')
                                            FROM held h
                                           WHERE h.guild_id = g.guild_id
-                                            AND h.user_id = u.user_id))), '[]')
+                                            AND h.user_id = u.user_id),
+                               -- Erased sessions are gone; removed ones are
+                               -- still theirs to see and erase.
+                               'recorded', EXISTS (
+                                   SELECT 1 FROM recording_sessions rs
+                                    WHERE rs.guild_id = g.guild_id
+                                      AND rs.user_id = u.user_id))), '[]')
                       FROM (SELECT DISTINCT unnest($2::bigint[]) AS user_id) u
                    ) AS "members!: Json<Vec<MemberRow>>",
                    (SELECT COALESCE(json_agg(json_build_object(
@@ -193,6 +202,7 @@ pub(super) async fn load_many<'e>(
                         let facts = MemberFacts {
                             listed: member.listed,
                             roles: member.roles,
+                            recorded: member.recorded,
                         };
                         (member.user_id, facts)
                     })

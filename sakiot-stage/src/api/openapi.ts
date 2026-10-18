@@ -1439,6 +1439,11 @@ export interface components {
 		GuildDataForFrontEnd: {
 			/** @description What the viewer may do across the guild. */
 			capabilities: components["schemas"]["Capability"][];
+			/**
+			 * @description No longer a member (or the bot has left the guild): only the
+			 *     viewer's own recordings are reachable, and nothing else.
+			 */
+			former: boolean;
 			icon?: string | null;
 			/** @example 146638124288704513 */
 			id: string;

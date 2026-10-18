@@ -324,10 +324,6 @@ async fn presence_is_unknown_without_a_live_owner(pool: PgPool) -> TestResult {
     // yet. Membership itself is unknown, so a member gets a retryable error
     // rather than a guess; the owner (from `guilds.owner_id`) sees presence
     // as unknown.
-    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
-        .bind(GUILD_ID)
-        .execute(&pool)
-        .await?;
     sqlx::query("DELETE FROM guild_projection_state")
         .execute(&pool)
         .await?;
@@ -441,10 +437,6 @@ async fn managers_search_the_roster_and_everyone_counts_it(pool: PgPool) -> Test
     // be told apart from strangers, so they get 503 and retry; the owner
     // still manages the guild and sees that the roster is incomplete.
     sqlx::query("UPDATE guild_projection_state SET roster_complete_at = NULL")
-        .execute(&pool)
-        .await?;
-    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
-        .bind(GUILD_ID)
         .execute(&pool)
         .await?;
     let (status, body) = get(MANAGER_ID, search.clone()).await?;

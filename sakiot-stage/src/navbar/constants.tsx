@@ -8,7 +8,8 @@ import {
 	Mic as SettingsVoiceIcon,
 } from "lucide-react";
 import type * as React from "react";
-import type { Capability } from "../shared/permissions";
+import type { UserGuilds } from "../Constants";
+import { type Capability, holds, isFormerMember } from "../shared/permissions";
 
 export type PageName =
 	| "Audio"
@@ -27,6 +28,20 @@ export const adminPages: { page: PageName; capability: Capability }[] = [
 	{ page: "Voice Settings", capability: "manage_settings" },
 	{ page: "Members", capability: "preview_roles" },
 ];
+
+/** What a former member can open: their own recordings, clips and stamps. */
+const formerMemberPages: PageName[] = ["Audio", "Clips", "Stamps"];
+
+/** The pages the navigation offers in `guild`. */
+export function guildPages(guild: UserGuilds | null): PageName[] {
+	if (isFormerMember(guild)) return formerMemberPages;
+	return [
+		...pages,
+		...adminPages
+			.filter(({ capability }) => holds(guild, capability))
+			.map(({ page }) => page),
+	];
+}
 
 export function activePage(pathname: string): PageName | null {
 	if (pathname.startsWith("/stamps")) return "Stamps";

@@ -10,7 +10,13 @@ use crate::facts::{GuildFacts, Roster, Viewer};
 pub enum Membership {
     Owner,
     Member,
-    /// Never a member, or no longer one. Gets nothing.
+    /// No longer a member, with recordings of their own still here: they
+    /// reach those (`Access::allows_item`) and nothing else. Everyone with
+    /// recordings is one once the bot has left the guild, the owner
+    /// included: the cached roles and overwrites have stopped updating.
+    Former,
+    /// Never a member, or no longer one with nothing of their own here.
+    /// Gets nothing.
     Outsider,
 }
 
@@ -34,20 +40,21 @@ pub struct DiscordPermissions {
 /// What a viewer may do in a guild.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Access {
+    /// Never `Former` or `Outsider` with any capability.
     pub membership: Membership,
     /// Whose access this is; `None` for a role's, which has no recordings
     /// of its own.
     pub user_id: Option<i64>,
     /// Guild-wide (management) capabilities.
     pub guild: Capabilities,
-    /// Content capabilities per voice and stage channel. Empty for an
-    /// outsider.
+    /// Content capabilities per voice and stage channel. Empty for a former
+    /// member or an outsider.
     pub channels: BTreeMap<i64, Capabilities>,
 }
 
 impl Access {
     fn new(membership: Membership, user_id: Option<i64>, discord: &DiscordPermissions) -> Self {
-        if membership == Membership::Outsider {
+        if matches!(membership, Membership::Former | Membership::Outsider) {
             return Self {
                 membership,
                 user_id,
@@ -93,7 +100,7 @@ impl Access {
     ///    `channels`; with no channels, no one may hear it.
     ///
     /// `speakers` empty means not known, which is never the viewer's own.
-    /// An outsider hears nothing.
+    /// A former member hears only their own voice, an outsider nothing.
     pub fn allows_item(&self, speakers: &[i64], channels: impl IntoIterator<Item = i64>) -> bool {
         if self.membership == Membership::Outsider {
             return false;
@@ -158,38 +165,54 @@ impl RolePreview {
 impl GuildFacts {
     /// Whether the viewer belongs to the guild.
     ///
-    /// - The owner always does.
-    /// - A dev login follows its seeding: a seeded owner flag makes it an
-    ///   owner, a seeded entry a member.
-    /// - Otherwise the bot's member list decides. A list that was complete
-    ///   once stays authoritative, even while the bot is away. One that never
-    ///   was is unknown while the bot is in the guild, and holds nobody once
-    ///   the bot is gone.
+    /// - A dev login follows its seeding: the owner, or a seeded owner flag,
+    ///   makes it an owner, a seeded entry a member.
+    /// - Once the bot has left the guild, nobody does: its cached roles and
+    ///   overwrites stop updating.
+    /// - Otherwise the owner does, and the bot's member list decides for
+    ///   everyone else. A list that was complete once stays authoritative,
+    ///   even while the bot is away; one that never was leaves membership
+    ///   unknown.
+    ///
+    /// Someone who does not belong is a former member while recordings of
+    /// their own remain here, and an outsider otherwise.
     pub fn membership(&self, viewer: Viewer) -> Result<Membership, MembershipUnavailable> {
-        if self.owner_id == Some(viewer.user_id) {
-            return Ok(Membership::Owner);
-        }
+        let member = self.members.get(&viewer.user_id);
         if viewer.dev {
-            return Ok(match self.seeds.get(&viewer.user_id) {
-                Some(true) => Membership::Owner,
-                Some(false) => Membership::Member,
-                None => Membership::Outsider,
+            return Ok(if self.owner_id == Some(viewer.user_id) {
+                Membership::Owner
+            } else {
+                match self.seeds.get(&viewer.user_id) {
+                    Some(true) => Membership::Owner,
+                    Some(false) => Membership::Member,
+                    None => Membership::Outsider,
+                }
             });
         }
-        let listed = self
-            .members
-            .get(&viewer.user_id)
-            .is_some_and(|member| member.listed);
-        match self.roster {
-            Roster::Complete if listed => Ok(Membership::Member),
-            Roster::Complete => Ok(Membership::Outsider),
-            Roster::Incomplete if self.bot_present => Err(MembershipUnavailable),
-            Roster::Incomplete => Ok(Membership::Outsider),
-        }
+        let belongs = if !self.bot_present {
+            None
+        } else if self.owner_id == Some(viewer.user_id) {
+            Some(Membership::Owner)
+        } else {
+            match self.roster {
+                Roster::Complete if member.is_some_and(|member| member.listed) => {
+                    Some(Membership::Member)
+                }
+                Roster::Complete => None,
+                Roster::Incomplete => return Err(MembershipUnavailable),
+            }
+        };
+        Ok(
+            belongs.unwrap_or(if member.is_some_and(|member| member.recorded) {
+                Membership::Former
+            } else {
+                Membership::Outsider
+            }),
+        )
     }
 
     /// The viewer's Discord permissions: everything for an owner, nothing
-    /// for an outsider.
+    /// for a former member or an outsider.
     pub fn discord_permissions(
         &self,
         viewer: Viewer,
@@ -210,7 +233,7 @@ impl GuildFacts {
         match membership {
             Membership::Owner => self.permissions_in_channels(Permissions::all(), &[], None),
             Membership::Member => self.member_permissions(user_id),
-            Membership::Outsider => DiscordPermissions {
+            Membership::Former | Membership::Outsider => DiscordPermissions {
                 base: Permissions::empty(),
                 channels: BTreeMap::new(),
             },

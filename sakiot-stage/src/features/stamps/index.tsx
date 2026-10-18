@@ -16,6 +16,7 @@ import {
 } from "../../shared/ui";
 import type { RootState } from "../../store";
 import { formatDuration } from "../../utils/formatTime";
+import { FormerMemberBanner } from "../members/FormerMemberBanner";
 import { ViewAsRoleBanner } from "../members/ViewAsRoleBanner";
 import { buildStampPlaybackTarget } from "./stampNavigation";
 
@@ -82,6 +83,7 @@ export function Stamps() {
 
 	return (
 		<div className="p-3 min-[900px]:p-6 max-w-350">
+			<FormerMemberBanner guildId={guildId} />
 			<ViewAsRoleBanner guildId={guildId} />
 			<h4 className="leading-6 font-semibold tracking-tight mb-2">
 				Stamps {guildName ? `— ${guildName}` : ""}

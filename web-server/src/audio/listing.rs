@@ -598,7 +598,7 @@ async fn tree_scope(
     let access = GuildAccess::load(pool, guild_id, viewer, as_role).await?;
     Ok(match access.role_preview()? {
         Some(preview) => TreeScope::Preview(preview),
-        None => TreeScope::Own(access.require_member()?.clone()),
+        None => TreeScope::Own(access.require_member_or_former()?.clone()),
     })
 }
 

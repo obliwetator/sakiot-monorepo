@@ -112,6 +112,9 @@ pub struct GuildDataForFrontEnd {
     pub icon: Option<String>,
     /// What the viewer may do across the guild.
     pub capabilities: Vec<crate::permissions::Capability>,
+    /// No longer a member (or the bot has left the guild): only the
+    /// viewer's own recordings are reachable, and nothing else.
+    pub former: bool,
 }
 
 #[utoipa::path(
@@ -142,13 +145,15 @@ struct CandidateGuild {
     icon: Option<String>,
 }
 
-/// The guilds the bot is in that the viewer belongs to, with their names and
-/// icons and what the viewer may do there.
+/// The guilds the viewer belongs to, or has recordings of their own in, with
+/// their names and icons and what the viewer may do there.
 ///
-/// The candidates are the guilds the viewer owns or is listed in, or for a
-/// dev login those it is seeded in, under their seeded names. Membership then
-/// decides, as for every other check: a guild whose roster is not complete
-/// yet is left out until it is.
+/// The candidates are the guilds the bot is in that the viewer owns or is
+/// listed in, and every guild holding the viewer's recordings; for a dev
+/// login, the guilds the bot is in that it is seeded in, under their seeded
+/// names. Membership then decides, as for every other check: a former
+/// member's guild is marked as such, and a guild whose roster is not
+/// complete yet is left out until it is.
 async fn member_guilds(
     pool: &Pool<Postgres>,
     viewer: crate::permissions::Viewer,
@@ -171,12 +176,15 @@ async fn member_guilds(
             r#"SELECT g.id,
                       COALESCE(g.name, g.id::text) AS "name!",
                       g.icon
-                 FROM guilds_present gp
-                 JOIN guilds g ON g.id = gp.guild_id
-                WHERE g.owner_id = $1
+                 FROM guilds g
+                WHERE (EXISTS (SELECT 1 FROM guilds_present gp WHERE gp.guild_id = g.id)
+                       AND (g.owner_id = $1
+                            OR EXISTS (SELECT 1
+                                         FROM guild_members m
+                                        WHERE m.guild_id = g.id AND m.user_id = $1)))
                    OR EXISTS (SELECT 1
-                                FROM guild_members m
-                               WHERE m.guild_id = g.id AND m.user_id = $1)
+                                FROM recording_sessions rs
+                               WHERE rs.guild_id = g.id AND rs.user_id = $1)
                 ORDER BY lower(COALESCE(g.name, '')), g.id"#,
             viewer.user_id
         )
@@ -195,7 +203,8 @@ async fn member_guilds(
             Err(AppError::MembershipUnavailable) => continue,
             Err(error) => return Err(error),
         };
-        if access.membership == sakiot_permissions::Membership::Outsider {
+        use sakiot_permissions::Membership;
+        if access.membership == Membership::Outsider {
             continue;
         }
         guilds.push(GuildDataForFrontEnd {
@@ -203,6 +212,7 @@ async fn member_guilds(
             name: guild.name,
             icon: guild.icon,
             capabilities: crate::permissions::Capability::named(access.guild),
+            former: access.membership == Membership::Former,
         });
     }
     Ok(guilds)

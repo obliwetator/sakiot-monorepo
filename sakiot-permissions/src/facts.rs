@@ -51,7 +51,8 @@ pub struct GuildFacts {
     pub roles: HashMap<i64, Permissions>,
     /// Every voice and stage channel, the only channels the bot records.
     pub channels: BTreeMap<i64, ChannelFacts>,
-    /// The loaded users. One missing here is unlisted and holds no roles.
+    /// The loaded users. One missing here is unlisted, holds no roles and
+    /// has no recordings.
     pub members: HashMap<i64, MemberFacts>,
     /// Dev seeding: the owner flag of each loaded user's seeded entry.
     pub seeds: HashMap<i64, bool>,
@@ -81,6 +82,9 @@ pub struct MemberFacts {
     /// The guild's roles the user holds. Never `@everyone`, which everyone
     /// holds implicitly.
     pub roles: Vec<i64>,
+    /// Has recordings of their own in the guild that are not erased yet,
+    /// which they keep reaching after leaving (`Membership::Former`).
+    pub recorded: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

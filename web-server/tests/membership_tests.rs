@@ -1,6 +1,8 @@
 //! Who belongs to a guild: the bot's roster for Discord logins, the seeded
 //! `user_guilds` rows for dev logins (local, staging and preview builds).
 
+mod support;
+
 use actix_web::{App, http::StatusCode, test, web};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use sakiot_permissions::Membership;
@@ -99,17 +101,29 @@ async fn seed(pool: &PgPool) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// A recording session of `user_id`'s own voice in `guild_id`.
+async fn record(pool: &PgPool, guild_id: i64, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, 100, 100, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)",
+    )
+    .bind(guild_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
-async fn a_complete_roster_stays_authoritative_after_the_bot_leaves(pool: PgPool) -> TestResult {
+async fn a_complete_roster_stays_authoritative_while_the_bot_is_away(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     let member = Viewer::discord(MEMBER);
     assert_eq!(membership(&pool, GUILD, member).await?, Membership::Member);
 
-    // The bot was removed (or every instance stopped): the roster is no
-    // longer kept current, but it is the last complete one and still decides.
-    sqlx::query("DELETE FROM guilds_present")
-        .execute(&pool)
-        .await?;
+    // Every instance stopped: the roster is no longer kept current, but it
+    // is the last complete one and still decides.
     sqlx::query("UPDATE guild_projection_state SET owner_instance_id = NULL")
         .execute(&pool)
         .await?;
@@ -119,17 +133,69 @@ async fn a_complete_roster_stays_authoritative_after_the_bot_leaves(pool: PgPool
         Membership::Outsider
     );
 
-    // A guild the bot never tracked has no members at all, only its owner.
+    // Leaving the roster with recordings here: a former member.
+    record(&pool, GUILD, MEMBER).await?;
+    support::leave_guild(&pool, GUILD, MEMBER).await?;
+    assert_eq!(membership(&pool, GUILD, member).await?, Membership::Former);
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn everyone_is_a_former_member_once_the_bot_leaves(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    record(&pool, GUILD, MEMBER).await?;
+    record(&pool, GUILD, OWNER).await?;
+    let bot_left_at = || {
+        sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+            "SELECT bot_left_at FROM guilds WHERE id = $1",
+        )
+        .bind(GUILD)
+        .fetch_one(&pool)
+    };
+    assert_eq!(bot_left_at().await?, None);
+
+    // Its cached roles and overwrites stop updating, so nobody belongs any
+    // more, the owner included: whoever has recordings here reaches those
+    // alone. The time it left is kept.
+    sqlx::query("DELETE FROM guilds_present WHERE guild_id = $1")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    assert!(bot_left_at().await?.is_some());
+    for (user_id, expected) in [
+        (OWNER, Membership::Former),
+        (MEMBER, Membership::Former),
+        (DEV, Membership::Outsider),
+    ] {
+        assert_eq!(
+            membership(&pool, GUILD, Viewer::discord(user_id)).await?,
+            expected,
+            "user {user_id}"
+        );
+    }
+    // Even before its roster was ever complete.
     sqlx::query("DELETE FROM guild_projection_state")
         .execute(&pool)
         .await?;
     assert_eq!(
-        membership(&pool, GUILD, member).await?,
-        Membership::Outsider
+        membership(&pool, GUILD, Viewer::discord(MEMBER)).await?,
+        Membership::Former
     );
+
+    // Back in the guild with its roster complete, everyone is back.
+    sqlx::query("INSERT INTO guilds_present (guild_id) VALUES ($1)")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    support::complete_rosters_from_user_guilds(&pool).await?;
+    assert_eq!(bot_left_at().await?, None);
     assert_eq!(
         membership(&pool, GUILD, Viewer::discord(OWNER)).await?,
         Membership::Owner
+    );
+    assert_eq!(
+        membership(&pool, GUILD, Viewer::discord(MEMBER)).await?,
+        Membership::Member
     );
     Ok(())
 }
@@ -248,14 +314,14 @@ async fn the_guild_picker_lists_the_guilds_the_bot_counts_you_in(pool: PgPool) -
     assert_eq!(
         guilds,
         json!([
-            {"id": "2", "name": "alpha", "icon": null, "capabilities": all},
-            {"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": all},
+            {"id": "2", "name": "alpha", "icon": null, "capabilities": all, "former": false},
+            {"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": all, "former": false},
         ])
     );
     let guilds: Value = test::call_and_read_body_json(&app, picker(MEMBER)?).await;
     assert_eq!(
         guilds,
-        json!([{"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": []}])
+        json!([{"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": [], "former": false}])
     );
     // A Discord login of the dev account is not the dev login: no roster
     // entry, no guilds.
@@ -278,6 +344,28 @@ async fn the_guild_picker_lists_the_guilds_the_bot_counts_you_in(pool: PgPool) -
     assert_eq!(guilds, json!([]));
     let guilds: Value = test::call_and_read_body_json(&app, picker(OWNER)?).await;
     assert_eq!(guilds[0]["name"], json!("2"));
+
+    // Recordings of your own keep a guild listed after you leave, or the
+    // bot does, marked as a former member's, with nothing to manage.
+    sqlx::query("UPDATE guild_projection_state SET roster_complete_at = now()")
+        .execute(&pool)
+        .await?;
+    record(&pool, OTHER_GUILD, MEMBER).await?;
+    sqlx::query("DELETE FROM guilds_present WHERE guild_id = $1")
+        .bind(OTHER_GUILD)
+        .execute(&pool)
+        .await?;
+    let guilds: Value = test::call_and_read_body_json(&app, picker(MEMBER)?).await;
+    assert_eq!(
+        guilds,
+        json!([
+            {"id": "2", "name": "2", "icon": null, "capabilities": [], "former": true},
+            {"id": "1", "name": "Zeta", "icon": "zeta-icon", "capabilities": [], "former": false},
+        ])
+    );
+    // Its owner has no recordings there: it is gone from their list.
+    let guilds: Value = test::call_and_read_body_json(&app, picker(OWNER)?).await;
+    assert_eq!(guilds.as_array().map(Vec::len), Some(1));
     Ok(())
 }
 
@@ -304,7 +392,7 @@ async fn a_dev_login_picks_from_the_guilds_it_is_seeded_in(pool: PgPool) -> Test
     let guilds: Value = test::call_and_read_body_json(&app, picker()?).await;
     assert_eq!(
         guilds,
-        json!([{"id": "1", "name": "login snapshot", "icon": null, "capabilities": []}])
+        json!([{"id": "1", "name": "login snapshot", "icon": null, "capabilities": [], "former": false}])
     );
 
     // The seeded owner flag makes it an owner, with every management

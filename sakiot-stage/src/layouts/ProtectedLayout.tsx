@@ -38,6 +38,11 @@ export function ProtectedLayout() {
 						}}
 					>
 						{guild.name}
+						{guild.former && (
+							<span className="mt-1 block text-sm text-muted">
+								Former member: your own recordings only
+							</span>
+						)}
 					</button>
 				))}
 			</div>

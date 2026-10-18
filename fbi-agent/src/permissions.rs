@@ -44,7 +44,9 @@ pub(crate) fn listening_in(guild: &Guild, user_id: UserId) -> Listening {
 
 /// What the evaluator needs about `user_id` in `guild`, as the gateway cache
 /// knows it. The cache's member list is the roster: someone missing from it
-/// is not a member, unless they own the guild.
+/// is not a member, unless they own the guild. The cache knows nothing of
+/// recordings, so `/jam` treats a former member as an outsider: they are no
+/// longer in the guild to use it.
 fn guild_facts(guild: &Guild, user_id: UserId) -> GuildFacts {
     let member = guild.members.get(&user_id);
     let roles: &[RoleId] = member.map_or(&[], |member| &member.roles);
@@ -94,6 +96,8 @@ fn guild_facts(guild: &Guild, user_id: UserId) -> GuildFacts {
             MemberFacts {
                 listed: true,
                 roles: roles.iter().map(|role| role.to_i64()).collect(),
+                // A listed member belongs whatever they have recorded.
+                recorded: false,
             },
         );
     }

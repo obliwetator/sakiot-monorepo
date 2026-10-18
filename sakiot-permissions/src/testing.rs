@@ -102,6 +102,8 @@ pub struct Member {
     pub roles: Vec<bool>,
     /// A dev login's seeded `user_guilds` row and its owner flag.
     pub seed: Option<bool>,
+    /// Has a recording session of their own in the guild.
+    pub recorded: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -196,7 +198,14 @@ impl World {
                 .map(|(r, _)| Self::role_id(g, r))
                 .collect();
             let listed = member.listed && spec.roster != RosterState::Missing;
-            facts.members.insert(user_id, MemberFacts { listed, roles });
+            facts.members.insert(
+                user_id,
+                MemberFacts {
+                    listed,
+                    roles,
+                    recorded: member.recorded,
+                },
+            );
             if let Some(owner) = member.seed {
                 facts.seeds.insert(user_id, owner);
             }
@@ -279,11 +288,13 @@ fn member(roles: usize) -> impl Strategy<Value = Member> {
             3 => Just(Some(false)),
             2 => Just(Some(true)),
         ],
+        prop::bool::weighted(0.5),
     )
-        .prop_map(|(listed, roles, seed)| Member {
+        .prop_map(|(listed, roles, seed, recorded)| Member {
             listed,
             roles,
             seed,
+            recorded,
         })
 }
 
