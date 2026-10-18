@@ -6,7 +6,7 @@ use aws_sdk_s3::{
         BehaviorVersion, Credentials, Region, RequestChecksumCalculation,
         ResponseChecksumValidation, retry::RetryConfig, timeout::TimeoutConfig,
     },
-    error::ProvideErrorMetadata,
+    error::{DisplayErrorContext, ProvideErrorMetadata},
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, ServerSideEncryption},
 };
@@ -65,10 +65,12 @@ impl StorageError {
         self.kind
     }
 
-    fn unavailable(operation: &str, error: impl std::fmt::Display) -> Self {
+    /// With the whole error chain: an SDK error alone reads only "service
+    /// error", without B2's code and message.
+    fn unavailable(operation: &str, error: impl std::error::Error) -> Self {
         Self {
             kind: StorageErrorKind::Unavailable,
-            message: format!("B2 {operation} failed: {error}"),
+            message: format!("B2 {operation} failed: {}", DisplayErrorContext(&error)),
         }
     }
 
