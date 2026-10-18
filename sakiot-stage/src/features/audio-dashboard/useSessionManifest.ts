@@ -10,15 +10,17 @@ const ACTIVE_TICK_MS = 1_000;
  * finalized. Realtime cannot replace this poll: a recording that is growing
  * changes no displayed row (only its heartbeat, which notifies nothing), so
  * no event announces the new audio. Between polls an active session's end
- * keeps moving with the clock (`extendActiveManifest`).
+ * keeps moving with the clock (`extendActiveManifest`). `skip` loads nothing,
+ * for a session already known to be refused.
  */
-export function useSessionManifest(sessionId: string) {
+export function useSessionManifest(sessionId: string, skip = false) {
 	const [finalizedSessionId, setFinalizedSessionId] = useState<string | null>(
 		null,
 	);
 	const query = useGetSessionManifestQuery(sessionId, {
 		pollingInterval: finalizedSessionId === sessionId ? 0 : 5_000,
 		refetchOnMountOrArgChange: true,
+		skip,
 	});
 	const state = query.data?.state;
 	useEffect(() => {

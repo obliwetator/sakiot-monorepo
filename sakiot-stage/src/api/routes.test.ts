@@ -15,6 +15,7 @@ const SAMPLE: Record<string, string> = {
 	file: "file.ogg",
 	job_id: "job-1",
 	session_id: "session-1",
+	erasure_id: "erasure-1",
 };
 
 describe("apiUrl", () => {

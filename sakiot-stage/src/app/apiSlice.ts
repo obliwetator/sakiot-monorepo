@@ -128,6 +128,9 @@ export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 export type GuildRecordingPolicy = ApiSchema["GuildRecordingPolicy"];
 export type RecordingOptOut = ApiSchema["RecordingOptOut"];
 export type RecordingDeletionStatus = ApiSchema["RecordingDeletionStatus"];
+export type ErasureStatus = ApiSchema["ErasureStatus"];
+/** Why one of the viewer's own sessions is hidden from everyone else. */
+export type Removal = ApiSchema["Removal"];
 
 export type SessionWaveformResponse = ApiSchema["SessionWaveformResponse"];
 export type ChannelMixResponse = ApiSchema["ChannelMixResponse"];
@@ -750,6 +753,54 @@ export const apiSlice = createApi({
 				"Clips" as const,
 			],
 		}),
+		/** The speaker erases their own session: hidden from everyone else now. */
+		eraseSession: builder.mutation<
+			ErasureStatus,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.sessionErasure, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "POST",
+			}),
+			invalidatesTags: (_r, _e, { guild_id, recording_session_id }) => [
+				{ type: "Recordings" as const, id: guild_id },
+				{ type: "Stamps" as const, id: guild_id },
+				{ type: "Session" as const, id: recording_session_id },
+				"Clips" as const,
+			],
+		}),
+		/** The speaker erases a clip of their voice, and what was made of it. */
+		eraseClip: builder.mutation<
+			ErasureStatus,
+			{ guild_id: string; clip_id: string }
+		>({
+			query: ({ guild_id, clip_id }) => ({
+				url: apiUrl(API_ROUTES.clipErasure, { guild_id, clip_id }),
+				method: "POST",
+			}),
+			invalidatesTags: ["Clips"],
+		}),
+		/** Undoes an erasure while its grace period lasts. */
+		undoErasure: builder.mutation<
+			ErasureStatus,
+			{ guild_id: string; erasure_id: string }
+		>({
+			query: ({ guild_id, erasure_id }) => ({
+				url: apiUrl(API_ROUTES.erasure, { guild_id, erasure_id }),
+				method: "DELETE",
+			}),
+			invalidatesTags: (result, _e, { guild_id }) => [
+				{ type: "Recordings" as const, id: guild_id },
+				{ type: "Stamps" as const, id: guild_id },
+				result?.recording_session_id
+					? { type: "Session" as const, id: result.recording_session_id }
+					: ("Session" as const),
+				"Clips" as const,
+			],
+		}),
 		getRecordingDeletion: builder.query<
 			RecordingDeletionStatus,
 			{ guild_id: string; job_id: string }
@@ -875,6 +926,9 @@ export const {
 	useSetRecordingOptOutMutation,
 	useDeleteRecordingMutation,
 	useGetRecordingDeletionQuery,
+	useEraseSessionMutation,
+	useEraseClipMutation,
+	useUndoErasureMutation,
 	useGetGuildRolesQuery,
 	useGetRoleMembersQuery,
 	useSearchGuildMembersQuery,

@@ -74,6 +74,10 @@ export const API_ROUTES = {
 	currentUserSessions: "/api/users/current/sessions",
 	currentUserSession: "/api/users/current/sessions/{session_id}",
 	recordingOptOut: "/api/users/current/guilds/{guild_id}/recording-opt-out",
+	sessionErasure:
+		"/api/users/current/guilds/{guild_id}/recordings/{recording_session_id}/erasure",
+	clipErasure: "/api/users/current/guilds/{guild_id}/clips/{clip_id}/erasure",
+	erasure: "/api/users/current/guilds/{guild_id}/erasures/{erasure_id}",
 } satisfies Record<string, keyof paths & string>;
 
 export type ApiRoute = (typeof API_ROUTES)[keyof typeof API_ROUTES];

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
-import { useGetAuthDetailsQuery } from "../../app/apiSlice";
+import { useLocation, useParams } from "react-router-dom";
+import {
+	useGetAuthDetailsQuery,
+	useGetCurrentGuildDirsQuery,
+} from "../../app/apiSlice";
+import { useAsRole } from "../../app/useAsRole";
 import { holds, isFormerMember } from "../../shared/permissions";
 import {
 	Badge,
@@ -36,11 +40,16 @@ import {
 	RecordingDeletionStatus,
 	RemoveRecordingControl,
 } from "./RecordingDeletion";
+import {
+	EraseRecordingControl,
+	RecordingRemovalNotice,
+} from "./RecordingErasure";
 import { SessionClipForm } from "./SessionClipForm";
 import { SessionMediaActions } from "./SessionMediaActions";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
 import { SilenceFreePlayer } from "./SilenceFreePlayer";
+import { sessionRemoval } from "./sessionRemoval";
 import { useSegmentedSessionPlayback } from "./useSegmentedSessionPlayback";
 import { useSessionChannelMix } from "./useSessionChannelMix";
 import { useSessionManifest } from "./useSessionManifest";
@@ -52,8 +61,18 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const channelMixPreferences = useChannelMixPreferences();
 	const channelMixScope = channelMixPreferences.options.scope;
 	const location = useLocation();
+	const params = useParams();
+	const guildId = params.guild_id ?? "";
+	const { asRole, asRoleArg } = useAsRole();
 	const { data: authDetails } = useGetAuthDetailsQuery();
 	const [deletion, setDeletion] = useState<RecordingDeletionJob | null>(null);
+	// The tree says when one of the viewer's own sessions is hidden from
+	// everyone else, which the manifest cannot: it is refused then.
+	const { data: tree } = useGetCurrentGuildDirsQuery(
+		{ guild_id: guildId, ...asRoleArg },
+		{ skip: !guildId },
+	);
+	const ownRemoval = sessionRemoval(tree, props.sessionId);
 	const deepLink = useMemo(
 		() => parseSessionDeepLink(location.search),
 		[location.search],
@@ -64,7 +83,10 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		data: manifest,
 		isLoading,
 		isError,
-	} = useSessionManifest(props.sessionId);
+	} = useSessionManifest(
+		props.sessionId,
+		Boolean(ownRemoval && !ownRemoval.playable),
+	);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
 		null,
@@ -186,7 +208,8 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const channelMix = useSessionChannelMix({
 		sessionId: props.sessionId,
 		scope: channelMixScope,
-		manifestState: manifest?.state ?? null,
+		// A session being erased mixes with nobody's.
+		manifestState: ownRemoval ? null : (manifest?.state ?? null),
 		stopPlayback: () => {
 			stopMix();
 			stopSessionPlayback();
@@ -285,6 +308,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	};
 
 	if (deletion) return <RecordingDeletionStatus job={deletion} />;
+	if (ownRemoval && !ownRemoval.playable) {
+		return (
+			<div className="p-4">
+				<RecordingRemovalNotice
+					guildId={guildId}
+					sessionId={props.sessionId}
+					removal={ownRemoval}
+				/>
+			</div>
+		);
+	}
 	if (isLoading) return <p className="leading-6">Loading logical recording…</p>;
 	if (isError || !manifest) {
 		return (
@@ -313,8 +347,12 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		(guild) => guild.id === manifest.guild_id,
 	);
 	const canDeleteRecording = holds(guild, "delete_recordings");
-	// A former member hears their own voice but makes nothing new of it.
-	const canClip = !isFormerMember(guild);
+	const ownRecording =
+		!asRole && authDetails?.user?.user_id === manifest.user_id;
+	// A former member hears their own voice but makes nothing new of it, and
+	// nobody makes anything of a recording being erased.
+	const canClip = !isFormerMember(guild) && !ownRemoval;
+	const finalized = manifest.state === "finalized";
 
 	return (
 		<div className="pb-8">
@@ -351,12 +389,30 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 				physicalCount={physicalFragments.length}
 				currentSegment={currentSegment}
 			/>
-			{canDeleteRecording && manifest.state === "finalized" && (
-				<RemoveRecordingControl
+			{ownRemoval && (
+				<RecordingRemovalNotice
 					guildId={manifest.guild_id}
 					sessionId={props.sessionId}
-					onRemoved={setDeletion}
+					removal={ownRemoval}
 				/>
+			)}
+			{!ownRemoval && finalized && (canDeleteRecording || ownRecording) && (
+				<div className="mb-4 flex flex-wrap items-start gap-2">
+					{canDeleteRecording && (
+						<RemoveRecordingControl
+							guildId={manifest.guild_id}
+							sessionId={props.sessionId}
+							onRemoved={setDeletion}
+						/>
+					)}
+					{ownRecording && (
+						<EraseRecordingControl
+							guildId={manifest.guild_id}
+							sessionId={props.sessionId}
+							playable
+						/>
+					)}
+				</div>
 			)}
 
 			<PlaybackActionsPanel>

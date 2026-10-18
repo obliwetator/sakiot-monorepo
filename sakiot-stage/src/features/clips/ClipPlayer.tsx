@@ -30,6 +30,7 @@ import {
 	playbackShortcutTargetAcceptsText,
 	playbackShortcutTargetOwnsArrows,
 } from "../audio-dashboard/playbackShortcuts";
+import { ClipErasureNotice, EraseClipControl } from "./ClipErasure";
 import { ClipWaveform } from "./ClipWaveform";
 import { isComposedClip } from "./composedClip";
 import { JamIt } from "./JamIt";
@@ -139,7 +140,11 @@ export function ClipPlayer(props: {
 	clip: ClipData;
 	absoluteStartMs: number | null;
 	canRename: boolean;
+	currentUserId: string | null;
 }) {
+	// A clip being erased is its speaker's to play or download, and to
+	// nothing more.
+	const erasing = Boolean(props.clip.erasure);
 	const navigate = useNavigate();
 	const audioRef = useRef<HTMLAudioElement | null>(null);
 	const positionRef = useRef(0);
@@ -345,7 +350,9 @@ export function ClipPlayer(props: {
 							<h5 className="font-semibold tracking-tight text-2xl min-w-0 [overflow-wrap:anywhere]">
 								{props.clip.name || "Unnamed clip"}
 							</h5>
-							{props.canRename && <RenameClipButton clip={props.clip} />}
+							{props.canRename && !erasing && (
+								<RenameClipButton clip={props.clip} />
+							)}
 						</div>
 						<p className="text-muted text-sm">Clip {props.clip.clip_id}</p>
 					</div>
@@ -392,6 +399,8 @@ export function ClipPlayer(props: {
 					<MetadataItem label="Guild" value={props.clip.guild_id} />
 				</div>
 			</div>
+
+			<ClipErasureNotice clip={props.clip} />
 
 			<ClipWaveform
 				guildId={props.clip.guild_id}
@@ -451,21 +460,32 @@ export function ClipPlayer(props: {
 						<DownloadIcon />
 						Download clip
 					</Button>
-					<Button
-						variant="outline"
-						onPress={() =>
-							navigate(
-								`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/clips/editor?source=${encodeURIComponent(props.clip.clip_id)}`,
-							)
-						}
-					>
-						<ContentCutIcon />
-						Edit clip
-					</Button>
-					<Button variant="outline" isDisabled={true}>
-						Create clip
-					</Button>
-					<JamIt guildId={props.clip.guild_id} clipId={props.clip.clip_id} />
+					{!erasing && (
+						<>
+							<Button
+								variant="outline"
+								onPress={() =>
+									navigate(
+										`${PATH_PREFIX_FOR_LOGGED_USERS}/${props.clip.guild_id}/clips/editor?source=${encodeURIComponent(props.clip.clip_id)}`,
+									)
+								}
+							>
+								<ContentCutIcon />
+								Edit clip
+							</Button>
+							<Button variant="outline" isDisabled={true}>
+								Create clip
+							</Button>
+							<JamIt
+								guildId={props.clip.guild_id}
+								clipId={props.clip.clip_id}
+							/>
+						</>
+					)}
+					<EraseClipControl
+						clip={props.clip}
+						currentUserId={props.currentUserId}
+					/>
 				</div>
 				<span className="text-muted text-xs leading-5 block mt-2">
 					Clip creation is disabled because this audio is already a clip.

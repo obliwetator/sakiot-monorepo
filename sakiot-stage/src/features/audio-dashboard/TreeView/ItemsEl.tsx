@@ -1,4 +1,5 @@
 import type { IndividualFile } from "../../../Constants";
+import { erasureDay } from "../../../shared/Erasure";
 import { TreeItem, TreeItemContent } from "../../../shared/ui";
 import { LivePill } from "./LiveDot";
 import { parseFileName } from "./parseFileName";
@@ -32,6 +33,23 @@ export function ItemsEl(props: {
 				🚫 hidden
 			</span>
 		) : null;
+	// Only the speaker's own sessions that nobody else sees carry a removal.
+	const removal = props.file.removal;
+	const erasure = removal?.erasure;
+	const removalBadge = removal ? (
+		<span
+			className="ml-1.5 shrink-0 text-xs font-semibold text-red-300"
+			title={
+				!erasure
+					? "Removed by the server: only you still see it"
+					: erasure.state === "grace"
+						? `Deleting on ${erasureDay(erasure.purge_at_ms)}: only you see it`
+						: "Being deleted for good"
+			}
+		>
+			{erasure ? "🗑 erasing" : "removed"}
+		</span>
+	) : null;
 
 	return (
 		<TreeItem
@@ -39,7 +57,7 @@ export function ItemsEl(props: {
 			className={
 				access === "hidden"
 					? "opacity-40"
-					: access === "visible-only"
+					: access === "visible-only" || removal
 						? "opacity-70"
 						: undefined
 			}
@@ -63,6 +81,7 @@ export function ItemsEl(props: {
 					<span className="flex shrink-0 items-center gap-1.5">
 						{props.isLive && <LivePill />}
 						{accessBadge}
+						{removalBadge}
 					</span>
 				</span>
 			</TreeItemContent>

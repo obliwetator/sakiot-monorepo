@@ -89,6 +89,11 @@ function ClipList(props: {
 						</p>
 						<span className="text-muted text-xs leading-5">
 							{formatDuration(el.length ?? 0)} · User {el.user_id}
+							{el.erasure && (
+								<span className="ml-1.5 font-semibold text-red-300">
+									🗑 erasing
+								</span>
+							)}
 						</span>
 					</div>
 				</DisclosureTrigger>
@@ -112,11 +117,14 @@ function ClipList(props: {
 							)}
 							<AlertDialog
 								clip_id={el.clip_id}
-								canDelete={canDeleteClip(
-									props.guildSelected,
-									props.currentUserId,
-									el.user_id,
-								)}
+								canDelete={
+									!el.erasure &&
+									canDeleteClip(
+										props.guildSelected,
+										props.currentUserId,
+										el.user_id,
+									)
+								}
 							/>
 						</div>
 					</DisclosurePanel>
@@ -430,6 +438,7 @@ function ClipsLayout(props: {
 							props.currentUserId,
 							selectedClip.user_id,
 						)}
+						currentUserId={props.currentUserId}
 					/>
 				)}
 			</div>

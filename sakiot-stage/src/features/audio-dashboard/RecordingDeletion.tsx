@@ -35,7 +35,7 @@ export function RemoveRecordingControl(props: {
 	const [deleteRecording, deleteRecordingState] = useDeleteRecordingMutation();
 	const [unreadableReply, setUnreadableReply] = useState(false);
 	return (
-		<div className="mb-4 space-y-2">
+		<div className="space-y-2">
 			<Button
 				variant="danger"
 				isDisabled={deleteRecordingState.isLoading}
