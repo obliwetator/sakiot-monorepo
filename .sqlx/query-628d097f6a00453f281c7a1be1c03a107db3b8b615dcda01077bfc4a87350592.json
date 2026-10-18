@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_deletion_jobs\n            (id, clip_id, guild_id, requested_by, reason, mode,\n             permanent_requested_by, permanent_requested_at)\n         VALUES ($1, $2, $3, $4, 'speaker', 'permanent', $4, now())\n         ON CONFLICT (clip_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "628d097f6a00453f281c7a1be1c03a107db3b8b615dcda01077bfc4a87350592"
+}

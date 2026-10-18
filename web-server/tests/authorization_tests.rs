@@ -43,7 +43,10 @@ use web_server::clips::{
 use web_server::fbi_agent_registry::AgentGrpcRegistry;
 use web_server::members::get_role_view;
 use web_server::permissions::{GuildAccess, Permissions, Viewer};
-use web_server::recording_deletion::{DeletionPolicy, delete_recording, get_recording_deletion};
+use web_server::recording_deletion::{
+    DeletionPolicy, delete_recording, get_erasure, get_recording_deletion, request_clip_erasure,
+    request_session_erasure, undo_erasure,
+};
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::stamps::get_stamps;
 
@@ -1618,6 +1621,395 @@ async fn a_channel_mix_leaves_out_only_the_tracks_the_viewer_may_not_hear(
     );
     // Their own session's mix: their voice, without the one they may not hear.
     assert_eq!(participants(own, USER_ID).await?, [USER_ID.to_string()]);
+    Ok(())
+}
+
+/// The entry for `session_id` in the recording tree `tree`, if listed.
+fn tree_entry(tree: &serde_json::Value, session_id: i64) -> Option<serde_json::Value> {
+    let session_id = session_id.to_string();
+    tree.as_array()?
+        .iter()
+        .flat_map(|channel| channel["dirs"].as_array().into_iter().flatten())
+        .flat_map(|dir| dir["months"].as_object().into_iter().flatten())
+        .flat_map(|(_, files)| files.as_array().into_iter().flatten())
+        .find(|file| file["recording_session_id"] == session_id.as_str())
+        .cloned()
+}
+
+/// During a speaker's erasure their session is theirs alone: listed and
+/// playable to them, and to nobody else, the guild's owner and the maker of
+/// a clip of it included; it makes no mixes or clips. A session the server
+/// removed stays listed to its speaker, unplayable, and erasing then
+/// undoing returns it to that.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn during_an_erasure_only_the_speaker_sees_the_session(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('erasing', $1, $2, $3, 1970, 1, 1000, 2000, $4, 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    // The owner's clip of the speaker's voice.
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time, recording_session_id)
+         VALUES ('of-the-speaker', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $4,
+                 'erasing/of-the-speaker.ogg', 0, $5)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(OTHER_USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(DeletionPolicy::default()))
+            .app_data(web::Data::new(SessionMixContainer::default()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_current_month_permission)
+                    .service(get_session_listing_entry)
+                    .service(get_session_manifest)
+                    .service(get_session_channel_mix)
+                    .service(create_session_clip)
+                    .service(get_clips)
+                    .service(delete_recording)
+                    .service(request_session_erasure)
+                    .service(get_erasure)
+                    .service(undo_erasure),
+            ),
+    )
+    .await;
+    let speaker = access_cookie_value()?;
+    let owner = access_cookie_for(OTHER_USER_ID)?;
+    let get = |uri: String, cookie: &str| {
+        test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.to_owned()))
+            .to_request()
+    };
+    let write = |request: test::TestRequest, uri: String, cookie: &str| {
+        request
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.to_owned()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request()
+    };
+    let erasure_uri =
+        format!("/api/users/current/guilds/{ALLOWED_GUILD_ID}/recordings/{session_id}/erasure");
+    let tree_uri = format!("/api/current/{ALLOWED_GUILD_ID}");
+    let entry_uri = format!("/api/current/{ALLOWED_GUILD_ID}/sessions/{session_id}");
+    let manifest_uri = format!("/api/audio/sessions/{session_id}/manifest");
+    let clips_uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}");
+
+    // Only the speaker may erase it.
+    let refused = test::call_service(
+        &app,
+        write(test::TestRequest::post(), erasure_uri.clone(), &owner),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    let response = test::call_service(
+        &app,
+        write(test::TestRequest::post(), erasure_uri.clone(), &speaker),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let erasure: serde_json::Value = test::read_body_json(response).await;
+    assert_eq!(erasure["state"], "grace");
+    assert_eq!(erasure["recording_session_id"], session_id.to_string());
+    let erasure_id = erasure["id"].as_str().expect("erasure id").to_owned();
+    let status_uri = format!("/api/users/current/guilds/{ALLOWED_GUILD_ID}/erasures/{erasure_id}");
+
+    // The speaker still lists and plays it, and sees how it is going.
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(tree_uri.clone(), &speaker)).await;
+    let entry = tree_entry(&tree, session_id).expect("listed to the speaker");
+    assert_eq!(entry["removal"]["erasure"]["id"], erasure_id.as_str());
+    assert_eq!(entry["removal"]["erasure"]["state"], "grace");
+    assert_eq!(entry["removal"]["playable"], true);
+    let response = test::call_service(&app, get(manifest_uri.clone(), &speaker)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = test::call_service(&app, get(status_uri.clone(), &speaker)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    // But makes nothing more of it.
+    let response = test::call_service(
+        &app,
+        get(
+            format!("/api/audio/sessions/{session_id}/channel-mix"),
+            &speaker,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND, "mix");
+    let clip = test::TestRequest::post()
+        .uri(&format!("/api/audio/sessions/{session_id}/clips"))
+        .insert_header(("Cookie", speaker.clone()))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(json!({"start": 0.0, "end": 1.0}))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, clip).await.status(),
+        StatusCode::NOT_FOUND,
+        "clipping"
+    );
+
+    // Nobody else sees a thing: not the owner, nor the clip they made.
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(tree_uri.clone(), &owner)).await;
+    assert_eq!(tree_entry(&tree, session_id), None);
+    let entry: serde_json::Value =
+        test::call_and_read_body_json(&app, get(entry_uri.clone(), &owner)).await;
+    assert_eq!(entry, serde_json::Value::Null);
+    let response = test::call_service(&app, get(manifest_uri.clone(), &owner)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let clips: serde_json::Value =
+        test::call_and_read_body_json(&app, get(clips_uri.clone(), &owner)).await;
+    assert!(!clips.to_string().contains("of-the-speaker"), "{clips}");
+    let response = test::call_service(&app, get(status_uri.clone(), &owner)).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "the speaker's status"
+    );
+
+    // Undone, everyone sees it again.
+    let response = test::call_service(
+        &app,
+        write(test::TestRequest::delete(), status_uri.clone(), &speaker),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let undone: serde_json::Value = test::read_body_json(response).await;
+    assert_eq!(undone["state"], "cancelled");
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(tree_uri.clone(), &owner)).await;
+    let entry = tree_entry(&tree, session_id).expect("listed again");
+    assert_eq!(entry.get("removal"), None);
+    let clips: serde_json::Value =
+        test::call_and_read_body_json(&app, get(clips_uri.clone(), &owner)).await;
+    assert!(clips.to_string().contains("of-the-speaker"), "{clips}");
+
+    // Removed by the server: still listed to its speaker, not playable.
+    let response = test::call_service(
+        &app,
+        write(
+            test::TestRequest::delete(),
+            format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/recordings/{session_id}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let removed_by_server = || async {
+        let tree: serde_json::Value =
+            test::call_and_read_body_json(&app, get(tree_uri.clone(), &speaker)).await;
+        tree_entry(&tree, session_id).expect("listed to the speaker")["removal"].clone()
+    };
+    assert_eq!(removed_by_server().await, json!({ "playable": false }));
+    let response = test::call_service(&app, get(manifest_uri.clone(), &speaker)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // Erased, it stays unplayable; undone, it is removed by the server again.
+    let erasure: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        write(test::TestRequest::post(), erasure_uri.clone(), &speaker),
+    )
+    .await;
+    let removal = removed_by_server().await;
+    assert_eq!(removal["erasure"]["state"], "grace");
+    assert_eq!(removal["playable"], false);
+    let response = test::call_service(&app, get(manifest_uri.clone(), &speaker)).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = test::call_service(
+        &app,
+        write(
+            test::TestRequest::delete(),
+            format!(
+                "/api/users/current/guilds/{ALLOWED_GUILD_ID}/erasures/{}",
+                erasure["id"].as_str().expect("erasure id")
+            ),
+            &speaker,
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(removed_by_server().await, json!({ "playable": false }));
+    let tree: serde_json::Value =
+        test::call_and_read_body_json(&app, get(tree_uri.clone(), &owner)).await;
+    assert_eq!(tree_entry(&tree, session_id), None);
+
+    // A former member may still erase what is theirs.
+    support::leave_guild(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    let response = test::call_service(
+        &app,
+        write(test::TestRequest::post(), erasure_uri.clone(), &speaker),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    Ok(())
+}
+
+/// Each voice in a clip may erase it, and only theirs; the clip, and every
+/// clip made from it, is then theirs alone until the purge or an undo.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_speaker_erases_a_clip_of_their_voice(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time, composition)
+         VALUES ('their-voice', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $4,
+                 'erasing/their-voice.ogg', 0, NULL),
+                ('made-from-it', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint, $4::bigint], $4,
+                 'compositions/made-from-it.ogg', 0,
+                 '{\"segments\":[{\"source_id\":\"their-voice\"}]}'::jsonb)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(OTHER_USER_ID)
+    .execute(&pool)
+    .await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(
+                web_server::media_archive::MediaArchive::disabled(),
+            ))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_clips)
+                    .service(get_clip)
+                    .service(request_clip_erasure)
+                    .service(undo_erasure),
+            ),
+    )
+    .await;
+    let speaker = access_cookie_value()?;
+    let maker = access_cookie_for(OTHER_USER_ID)?;
+    let listed = |cookie: String| {
+        let app = &app;
+        async move {
+            let clips: Vec<serde_json::Value> = test::call_and_read_body_json(
+                app,
+                test::TestRequest::get()
+                    .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}"))
+                    .insert_header(("Cookie", cookie))
+                    .to_request(),
+            )
+            .await;
+            clips
+                .into_iter()
+                .filter(|clip| clip["clip_id"] != "own-clip")
+                .map(|clip| {
+                    (
+                        clip["clip_id"].as_str().unwrap_or_default().to_owned(),
+                        clip,
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        }
+    };
+    let erase = |clip_id: &str, cookie: &str| {
+        test::TestRequest::post()
+            .uri(&format!(
+                "/api/users/current/guilds/{ALLOWED_GUILD_ID}/clips/{clip_id}/erasure"
+            ))
+            .insert_header(("Cookie", cookie.to_owned()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request()
+    };
+    assert_eq!(
+        listed(speaker.clone()).await["their-voice"]["speaker_ids"],
+        json!([USER_ID.to_string()])
+    );
+
+    // Not the maker's voice: they may delete it, not erase it.
+    let response = test::call_service(&app, erase("their-voice", &maker)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = test::call_service(&app, erase("their-voice", &speaker)).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let erasure: serde_json::Value = test::read_body_json(response).await;
+    assert_eq!(erasure["clip_id"], "their-voice");
+
+    let mine = listed(speaker.clone()).await;
+    assert_eq!(mine["their-voice"]["erasure"]["state"], "grace");
+    assert!(!mine.contains_key("made-from-it"));
+    assert!(listed(maker.clone()).await.is_empty());
+    // The speaker can still play it.
+    let media = format!("{}erasing/their-voice.ogg", web_server::audio::clips_path());
+    std::fs::create_dir_all(
+        std::path::Path::new(&media)
+            .parent()
+            .expect("clip directory"),
+    )?;
+    std::fs::write(&media, b"clip")?;
+    let mut statuses = Vec::new();
+    for cookie in [&speaker, &maker] {
+        let response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/audio/clips/{ALLOWED_GUILD_ID}/their-voice"))
+                .insert_header(("Cookie", cookie.clone()))
+                .to_request(),
+        )
+        .await;
+        statuses.push(response.status());
+    }
+    std::fs::remove_file(&media)?;
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::NOT_FOUND]);
+
+    let response = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!(
+                "/api/users/current/guilds/{ALLOWED_GUILD_ID}/erasures/{}",
+                erasure["id"].as_str().expect("erasure id")
+            ))
+            .insert_header(("Cookie", speaker.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let theirs = listed(maker).await;
+    assert!(theirs.contains_key("their-voice") && theirs.contains_key("made-from-it"));
+    assert_eq!(theirs["their-voice"].get("erasure"), None);
     Ok(())
 }
 

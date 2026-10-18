@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_erasures\n            SET state = 'converted', deletion_job_id = $2, finished_at = now()\n          WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dbe5dfd2be1ffd98369b2f92388a391219eab4c6d6f7748e96ea281c6b3d8065"
+}

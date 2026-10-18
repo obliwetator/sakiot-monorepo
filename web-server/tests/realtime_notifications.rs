@@ -700,6 +700,29 @@ async fn jobs_notify_what_their_status_shows(pool: PgPool) -> TestResult {
         ]
     );
 
+    // A speaker's erasure is theirs alone to follow.
+    sqlx::query(
+        "INSERT INTO recording_deletion_jobs
+            (id, clip_id, guild_id, requested_by, reason, mode)
+         VALUES ('d2', 'erased', $1, $2, 'speaker', 'permanent')",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE recording_deletion_jobs SET state = 'ready', stage = 'ready' WHERE id = 'd2'",
+    )
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        notifications.drain().await?,
+        vec![json!({
+            "v": 1, "k": "job", "r": "deletion", "g": GUILD.to_string(), "id": "d2",
+            "u": USER.to_string(),
+        })]
+    );
+
     // Unchanged progress and bookkeeping (retry times, timestamps) are silent.
     sqlx::query("UPDATE media_jobs SET progress = 40, retry_at = now(), updated_at = now()")
         .execute(&pool)
@@ -708,6 +731,64 @@ async fn jobs_notify_what_their_status_shows(pool: PgPool) -> TestResult {
         .execute(&pool)
         .await?;
     sqlx::query("UPDATE recording_deletion_jobs SET attempts = 1, updated_at = now()")
+        .execute(&pool)
+        .await?;
+    assert_eq!(notifications.drain().await?, Vec::<Value>::new());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn erasures_notify_their_speaker_when_requested_undone_or_converted(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    sqlx::query(
+        "INSERT INTO recording_erasures
+            (id, guild_id, recording_session_id, speaker_id, purge_at, hid_session)
+         VALUES ('e1', $1, 5, $2, now(), true)",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO recording_erasures (id, guild_id, clip_id, speaker_id, purge_at)
+         VALUES ('e2', $1, 'clip', $2, now())",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .execute(&pool)
+    .await?;
+    let session = json!({
+        "v": 1, "k": "erasure", "g": GUILD.to_string(), "u": USER.to_string(),
+        "s": "5", "h": "1",
+    });
+    let clip = json!({
+        "v": 1, "k": "erasure", "g": GUILD.to_string(), "u": USER.to_string(),
+        "id": "clip",
+    });
+    assert_eq!(
+        notifications.drain().await?,
+        vec![session.clone(), clip.clone()]
+    );
+
+    sqlx::query(
+        "UPDATE recording_erasures SET state = 'cancelled', finished_at = now() WHERE id = 'e1'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE recording_erasures
+            SET state = 'converted', deletion_job_id = 'd', finished_at = now()
+          WHERE id = 'e2'",
+    )
+    .execute(&pool)
+    .await?;
+    assert_eq!(notifications.drain().await?, vec![session, clip]);
+
+    // Bookkeeping alone is silent.
+    sqlx::query("UPDATE recording_erasures SET finished_at = now()")
         .execute(&pool)
         .await?;
     assert_eq!(notifications.drain().await?, Vec::<Value>::new());

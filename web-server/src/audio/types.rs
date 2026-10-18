@@ -30,9 +30,25 @@ pub struct File {
     /// actually play.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access: Option<String>,
+    /// Only on the viewer's own sessions that everyone else no longer sees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal: Option<Removal>,
     #[serde(skip)]
     #[schema(ignore)]
     pub start_ts_ms: Option<i64>,
+}
+
+/// Why one of the viewer's own sessions is hidden from everyone else.
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq, utoipa::ToSchema)]
+pub struct Removal {
+    /// Their erasure of it. Without one, a manager or retention removed it
+    /// ("removed by the server"), and erasing it is all they can do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub erasure: Option<crate::recording_deletion::ErasureSummary>,
+    /// Whether they can still play it: only while erasing a session that
+    /// was visible when they asked, and that the server has not removed
+    /// since.
+    pub playable: bool,
 }
 
 pub type Months = HashMap<i32, Option<Vec<File>>>;

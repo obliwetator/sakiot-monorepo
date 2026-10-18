@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH hidden AS (\n               SELECT clip_id, composition\n                 FROM clips\n                WHERE guild_id = $1 AND clip_id = ANY($2) AND deleted_at IS NOT NULL\n           ), parts AS (\n               SELECT clip_id AS hidden_id, clip_id AS part_id FROM hidden\n               UNION ALL\n               SELECT h.clip_id, segment ->> 'source_id'\n                 FROM hidden h,\n                      jsonb_array_elements(\n                          CASE WHEN jsonb_typeof(h.composition -> 'segments') = 'array'\n                               THEN h.composition -> 'segments' ELSE '[]'::jsonb END\n                      ) segment\n           ), covered AS (\n               SELECT p.hidden_id\n                 FROM parts p\n                 JOIN clips part ON part.clip_id = p.part_id AND part.guild_id = $1\n                WHERE EXISTS (\n                          SELECT 1 FROM recording_sessions rs\n                           WHERE rs.id = part.recording_session_id\n                             AND rs.deletion_requested_at IS NOT NULL)\n                   OR EXISTS (\n                          SELECT 1\n                            FROM audio_files af\n                            JOIN recording_sessions rs ON rs.id = af.recording_session_id\n                           WHERE af.guild_id = part.guild_id\n                             AND af.channel_id = part.channel_id\n                             AND af.file_name = part.original_file_name\n                             AND rs.deletion_requested_at IS NOT NULL)\n                   OR EXISTS (\n                          SELECT 1 FROM recording_erasures e\n                           WHERE e.clip_id = part.clip_id AND e.state <> 'cancelled')\n           )\n           UPDATE clips c\n              SET deleted_at = NULL\n             FROM hidden h\n            WHERE c.clip_id = h.clip_id\n              AND h.clip_id NOT IN (SELECT hidden_id FROM covered)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "62abfda8334ddea0a62fa31d93475fb8a1cfbe9f3c8eb267b10618a113c0ba4a"
+}

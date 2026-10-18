@@ -1,16 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND deleted_at IS NULL",
+  "query": "UPDATE clips SET deleted_at = now()\n          WHERE guild_id = $1 AND clip_id = ANY($2) AND deleted_at IS NULL\n          RETURNING clip_id",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "saved_file_name",
+        "name": "clip_id",
         "type_info": "Varchar",
         "origin": {
           "Table": {
             "table": "clips",
-            "name": "saved_file_name"
+            "name": "clip_id"
           }
         }
       }
@@ -18,12 +18,12 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Text"
+        "TextArray"
       ]
     },
     "nullable": [
-      true
+      false
     ]
   },
-  "hash": "afb63c4c13a404ba4be370c131d98dd3c2f3114866290549a4287e768ac65516"
+  "hash": "ad018d85efcdf28c51f55ea12ccaee100f74fe5cdd440259af769503555225a1"
 }

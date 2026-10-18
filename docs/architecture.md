@@ -266,6 +266,9 @@ returned at login (`GuildFacts::membership`):
   records when it left; its return clears it and everyone is back. The guild
   picker lists a former member's guilds too, marked `former`, and the
   dashboard shows them only their recordings, clips and stamps.
+- Their own sessions the server removed (a manager's deletion, or
+  retention) stay listed to their speaker alone, as removed: unplayable,
+  and theirs only to erase (`File.removal` in the recording tree).
 - While the bot is in a guild whose roster is not complete yet, nobody but
   the owner can be answered: requests fail with a retryable 503
   `membership_unavailable` (Retry-After 5) rather than a guess, and the
@@ -356,8 +359,11 @@ voice presence).
   list (`guilds`), the members pages, and for a channel the presence and
   stamps of viewers who see it and the recording policy. Job ids reach only
   whoever may read the job's status: a media job's viewers
-  (`media_job_viewers`), an export's owner, and holders of
-  `delete_recordings` for a deletion. A refused scope (not a member yet, or a
+  (`media_job_viewers`), an export's owner, holders of
+  `delete_recordings` for a deletion by the server, and the speaker for
+  their erasure. A removed session's events and an erasure's
+  (`20261018030000_speaker_erasure.sql`) give its speaker the id, and
+  everyone else an identifier-free refresh. A refused scope (not a member yet, or a
   roster still loading) stays pending: the next permission event that grants
   it sends `subscribed`, then `access_changed` for the guild list.
 - **Socket** (`GET /api/realtime`, `web-server/src/realtime/socket.rs`)
@@ -473,6 +479,18 @@ Recordings age out of local disk into Backblaze B2:
   restore from B2 first (`RemoteDisposition`).
 - Deletion is a job (`recording_deletion.rs`, `recording_deletion_jobs`),
   soft by default, so an accidental delete is recoverable.
+- A speaker may erase a finalized session of their own voice, or a clip
+  holding it (`recording_deletion/erasure.rs`, `recording_erasures`). The
+  request hides it, and the clips made from it, from everyone else at once,
+  and records exactly what it hid; for 30 days the speaker can still play
+  it, unless the server had removed it first, and undo reverts what the
+  request hid and nothing else. A removal by the server keeps its own job,
+  so undoing returns the session to removed, never to a restored
+  recording. Then the deletion worker's sweep converts the erasure into a
+  permanent job (reason `speaker`), upgrading an existing soft job in
+  place; a clip's job purges the clip and every clip composed from it.
+  Permanent purging runs only with
+  `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED`.
 
 The archive is disabled by default locally. An enabled deployment requires
 every `SAKIOT_MEDIA_S3_*` value and fails startup on partial configuration

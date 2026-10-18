@@ -11,6 +11,8 @@ use crate::realtime::events::Renamed;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Journey {
     pub(super) speaker: i64,
+    /// Removed by the server or being erased: listed to its speaker alone.
+    pub(super) removed: bool,
     pub(super) starting_channel_id: i64,
     /// The recording tree's rule: the starting channel plus every fragment's.
     pub(super) tree: HashSet<i64>,
@@ -19,7 +21,7 @@ pub(super) struct Journey {
     pub(super) media: HashSet<i64>,
 }
 
-/// Journeys of live (not deleted) sessions; missing ids are gone or deleted.
+/// Journeys of sessions, removed ones included; missing ids are gone.
 pub(super) async fn load_journeys(
     pool: &Pool<Postgres>,
     session_ids: &[i64],
@@ -31,14 +33,15 @@ pub(super) async fn load_journeys(
         r#"SELECT rs.id,
                   rs.user_id,
                   rs.starting_channel_id,
+                  rs.deletion_requested_at IS NOT NULL AS "removed!",
                   COALESCE(
                       array_agg(DISTINCT af.channel_id) FILTER (WHERE af.channel_id IS NOT NULL),
                       '{}'
                   ) AS "fragment_channels!"
              FROM recording_sessions rs
              LEFT JOIN audio_files af ON af.recording_session_id = rs.id
-            WHERE rs.id = ANY($1) AND rs.deletion_requested_at IS NULL
-            GROUP BY rs.id, rs.user_id, rs.starting_channel_id"#,
+            WHERE rs.id = ANY($1)
+            GROUP BY rs.id"#,
         session_ids
     )
     .fetch_all(pool)
@@ -58,6 +61,7 @@ pub(super) async fn load_journeys(
                 row.id,
                 Journey {
                     speaker: row.user_id,
+                    removed: row.removed,
                     starting_channel_id: row.starting_channel_id,
                     tree,
                     media,
@@ -132,7 +136,7 @@ fn hears_clip(
 }
 
 /// Whether a stamp is listed for the subscription, or `None` when its
-/// session is gone and that can no longer be decided.
+/// session is gone or removed and that can no longer be decided.
 fn media_visible(
     access: &SubscriptionAccess,
     channel_id: Option<i64>,
@@ -143,6 +147,7 @@ fn media_visible(
     match session_id {
         Some(session_id) => journeys
             .get(&session_id)
+            .filter(|journey| !journey.removed)
             .map(|journey| journey.media.is_subset(channels)),
         None => Some(channel_id.is_some_and(|channel_id| channels.contains(&channel_id))),
     }
@@ -171,15 +176,21 @@ pub(super) fn route(
             } if *guild_id == subscription.guild_id => {
                 let channels = &access.tree_channels;
                 match journeys.and_then(|journeys| journeys.get(session_id)) {
-                    Some(journey)
-                        if own == Some(journey.speaker) || journey.tree.is_subset(channels) =>
-                    {
+                    // The viewer's own, removed or not: its entry says which.
+                    Some(journey) if own == Some(journey.speaker) => {
+                        add_id(&mut routed, Resource::Recordings, session_id.to_string());
+                        if journey.removed {
+                            // Its stamps are hidden with it.
+                            add_all(&mut routed, Resource::Stamps);
+                        }
+                    }
+                    Some(journey) if !journey.removed && journey.tree.is_subset(channels) => {
                         add_id(&mut routed, Resource::Recordings, session_id.to_string());
                     }
                     Some(journey) if !channels.contains(&journey.starting_channel_id) => {
                         // Never listed for this viewer: nothing to refresh.
                     }
-                    // Deleted, unknown, or visibility may have changed.
+                    // Removed, unknown, or visibility may have changed.
                     _ => add_all(&mut routed, Resource::Recordings),
                 }
             }
@@ -227,6 +238,37 @@ pub(super) fn route(
                 user_id: owner,
             } if *guild_id == subscription.guild_id && *owner == user_id => {
                 add_all(&mut routed, Resource::RecordingOptOut);
+            }
+            Event::Erasure {
+                guild_id,
+                speaker_id,
+                session_id,
+                clip_id,
+                ..
+            } if *guild_id == subscription.guild_id && own == Some(*speaker_id) => {
+                // Only the speaker's listings show their erasures.
+                if let Some(session_id) = session_id {
+                    add_id(&mut routed, Resource::Recordings, session_id.to_string());
+                    add_all(&mut routed, Resource::Stamps);
+                }
+                if let Some(clip_id) = clip_id {
+                    add_id(&mut routed, Resource::Clips, clip_id.clone());
+                }
+            }
+            Event::Erasure {
+                guild_id,
+                session_id: Some(session_id),
+                hid_session: true,
+                ..
+            } if *guild_id == subscription.guild_id => {
+                // The session's own payloads say when it is hidden and shown
+                // again, but not that its stamps went and came with it.
+                if journeys
+                    .and_then(|journeys| journeys.get(session_id))
+                    .is_some_and(|journey| journey.media.is_subset(&access.media_channels))
+                {
+                    add_all(&mut routed, Resource::Stamps);
+                }
             }
             Event::Settings { guild_id, resource }
                 if *guild_id == subscription.guild_id

@@ -113,16 +113,31 @@ live Manage Guild grant and returns `202` with a stable, manager-only
 disappear from view while their rows and media stay, so the deletion is
 recoverable and does not free storage. Repeating it is idempotent. A
 `recording_deletion_jobs` row keeps the actor or retention reason, the mode,
-the stage and the outcome. Restoring a soft-deleted session has no UI yet.
+the stage and the outcome. Restoring a session a manager removed has no UI
+yet; its speaker still sees it, as removed by the server, and may only erase
+it.
 
 Permanent purging needs both `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`
-and an explicit manager request with `?mode=permanent`; the flag alone never
-upgrades earlier soft deletions. The fenced worker removes every B2 version and
-delete marker under each source prefix, the local originals and derivatives,
-then the database rows, and records who authorized it and when. It is
-irreversible and not offered in the UI. A failed or `paused` permanent job
+and an explicit request: a manager's `?mode=permanent`, or a speaker's erasure
+once its grace period is over; the flag alone never upgrades earlier soft
+deletions. The fenced worker removes every B2 version and delete marker under
+each source prefix, the local originals and derivatives, then the database
+rows, and records who authorized it and when. It is irreversible, and offered
+in the UI only as the speaker's erasure. A failed or `paused` permanent job
 stays hidden until the same request requeues it after review. Database backups
 and other copies follow their own retention.
+
+Anyone, member or former member, may erase a finalized session of their own
+voice (`POST /api/users/current/guilds/{guild_id}/recordings/{recording_session_id}/erasure`)
+or a clip holding it (`…/clips/{clip_id}/erasure`). Everyone else stops
+seeing it, and the clips made from it, at once; the speaker can still play it
+and undo the erasure (`DELETE …/erasures/{erasure_id}`) for 30 days, and reads
+its state at `GET …/erasures/{erasure_id}`. Undo reverts exactly what the
+request hid: a session the server removed first stays removed. When the
+grace period ends, the deletion worker hands the erasure to the purge as a
+permanent job with reason `speaker`; a server removal's soft job is upgraded
+in place and keeps its reason. Managers get no status of a speaker's
+erasure, and its realtime events reach only the speaker.
 
 Clip-editor overwrites are tracked in `clip_source_history`, but versions
 overwritten before the oldest retained composition job could not be linked

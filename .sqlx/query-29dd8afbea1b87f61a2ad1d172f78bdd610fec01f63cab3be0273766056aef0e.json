@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND (deleted_at IS NULL OR EXISTS (SELECT 1 FROM recording_erasures e WHERE e.clip_id = clips.clip_id AND e.state = 'grace' AND e.speaker_id = $3))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "saved_file_name",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "saved_file_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "29dd8afbea1b87f61a2ad1d172f78bdd610fec01f63cab3be0273766056aef0e"
+}

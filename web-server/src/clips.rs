@@ -13,6 +13,7 @@ use tracing::{error, info, warn};
 use crate::permissions::{AsRoleQuery, GuildAccess, require_capability};
 use crate::proto::jammer::JamData;
 use crate::proto::jammer::jam_response::JamResponseEnum;
+use crate::recording_deletion::ErasureSummary;
 use crate::{
     audio::{clips_path, recording_path, util::is_valid_file_segment},
     auth::{Access, Token},
@@ -50,6 +51,13 @@ pub struct ClipInfo {
     /// Serialized clip editor edit for composed clips; re-importable into the
     /// editor. Null for clips cut from a single recording.
     composition: Option<serde_json::Value>,
+    /// Whose voices it holds; empty when not known. Each of them may erase
+    /// it.
+    speaker_ids: Vec<String>,
+    /// Only on the viewer's own erasure of the clip, which nobody else sees
+    /// it during.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    erasure: Option<ErasureSummary>,
 }
 
 #[utoipa::path(
@@ -84,9 +92,15 @@ pub async fn get_clip(
     let row = sqlx::query!(
         "SELECT saved_file_name, channel_ids, speaker_ids
            FROM clips
-          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+          WHERE guild_id = $1 AND clip_id = $2
+            AND (deleted_at IS NULL
+                 -- The speaker's own while they can still undo its erasure.
+                 OR EXISTS (SELECT 1 FROM recording_erasures e
+                             WHERE e.clip_id = clips.clip_id AND e.state = 'grace'
+                               AND e.speaker_id = $3))",
         guild_id,
-        clip_id
+        clip_id,
+        token.user_id
     )
     .fetch_optional(pool.get_ref())
     .await?
@@ -156,31 +170,38 @@ pub async fn get_clips(
 
     let rows = sqlx::query!(
         r#"
-        SELECT clip_id,
-        user_id,
-        name,
-        original_file_name,
-        saved_file_name,
-        length,
-        size,
-        guild_id,
-        channel_id,
-        start_time,
-        recording_session_id,
-        silence_free,
-        composition
-        FROM clips
-        WHERE guild_id = $1
-          AND deleted_at IS NULL
+        SELECT c.clip_id,
+        c.user_id,
+        c.name,
+        c.original_file_name,
+        c.saved_file_name,
+        c.length,
+        c.size,
+        c.guild_id,
+        c.channel_id,
+        c.start_time,
+        c.recording_session_id,
+        c.silence_free,
+        c.composition,
+        c.speaker_ids,
+        e.id AS "erasure_id?",
+        e.state AS "erasure_state?",
+        (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS "purge_at_ms?"
+        FROM clips c
+        -- The viewer's own erasure: they alone still see the clip.
+        LEFT JOIN recording_erasures e
+          ON e.clip_id = c.clip_id AND e.state <> 'cancelled' AND e.speaker_id = $3
+        WHERE c.guild_id = $1
+          AND (c.deleted_at IS NULL OR e.id IS NOT NULL)
           -- A clip of only the viewer's own voice is theirs; anyone else's
           -- takes every channel its audio came from.
-          AND ((cardinality(speaker_ids) > 0 AND speaker_ids <@ ARRAY[$3::bigint])
-               OR (cardinality(channel_ids) > 0 AND channel_ids <@ $2))
+          AND ((cardinality(c.speaker_ids) > 0 AND c.speaker_ids <@ ARRAY[$3::bigint])
+               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2))
         -- Heap order is not stable across imports or VACUUM FULL, so the list
         -- must be ordered explicitly. Sort the way the names read rather than
         -- the way the bytes compare, because this database collates
         -- case-sensitively; clip_id keeps equal names deterministic.
-        ORDER BY lower(name) NULLS LAST, name, clip_id
+        ORDER BY lower(c.name) NULLS LAST, c.name, c.clip_id
         "#,
         guild_id,
         &permitted,
@@ -207,6 +228,12 @@ pub async fn get_clips(
                     .map(|session_id| session_id.to_string()),
                 silence_free: row.silence_free,
                 composition: row.composition,
+                speaker_ids: row.speaker_ids.iter().map(i64::to_string).collect(),
+                erasure: ErasureSummary::from_columns(
+                    row.erasure_id,
+                    row.erasure_state,
+                    row.purge_at_ms,
+                ),
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -510,7 +537,7 @@ pub async fn create_clip(
     if !is_valid_file_segment(&file_name_from_url) {
         return Err(AppError::BadRequest("Invalid file name".into()));
     }
-    crate::audio::sessions::require_recording_access(
+    crate::audio::sessions::require_recording_source(
         &pool,
         guild_id,
         channel_id,

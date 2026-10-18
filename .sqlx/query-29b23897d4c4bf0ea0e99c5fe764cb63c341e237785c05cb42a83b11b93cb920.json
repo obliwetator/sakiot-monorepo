@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_erasures SET state = 'cancelled', finished_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29b23897d4c4bf0ea0e99c5fe764cb63c341e237785c05cb42a83b11b93cb920"
+}

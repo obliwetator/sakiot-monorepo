@@ -30,7 +30,9 @@ mod mix;
 mod waveforms;
 
 use access::authorize_session_journey;
-pub(crate) use access::{authorize_session, require_recording_access, require_session_access};
+pub(crate) use access::{
+    authorize_session, require_recording_access, require_recording_source, require_session_access,
+};
 pub use actions::*;
 pub use clips::*;
 pub use manifest::*;

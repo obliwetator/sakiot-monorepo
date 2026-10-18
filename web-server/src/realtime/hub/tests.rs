@@ -87,6 +87,7 @@ pub(super) fn journey(starting: i64, fragments: &[i64]) -> Journey {
     tree.insert(starting);
     Journey {
         speaker: SPEAKER,
+        removed: false,
         starting_channel_id: starting,
         tree,
         media: if fragments.is_empty() {
@@ -250,6 +251,80 @@ fn a_viewers_own_voice_reaches_them_from_any_channel() {
         route(&changes, &preview, VIEWER, Some(&journeys)),
         Routed::from([(Resource::Recordings, None)])
     );
+}
+
+#[test]
+fn removed_sessions_and_erasures_reach_their_speaker_alone() {
+    let removed = |speaker| Journey {
+        speaker,
+        removed: true,
+        ..journey(PUBLIC, &[PUBLIC])
+    };
+    let journeys = HashMap::from([
+        (1, removed(VIEWER)),
+        (2, removed(SPEAKER)),
+        (3, journey(PUBLIC, &[PUBLIC])),
+    ]);
+    let session = |session_id| Event::Session {
+        guild_id: GUILD,
+        session_id,
+    };
+    let erasure =
+        |speaker_id, session_id: Option<i64>, clip_id: Option<&str>, hid_session| Event::Erasure {
+            guild_id: GUILD,
+            speaker_id,
+            session_id,
+            clip_id: clip_id.map(str::to_owned),
+            hid_session,
+        };
+    let viewer = subscription(&[PUBLIC], &[PUBLIC], false);
+
+    // Their own removed session is listed to them alone, as removed, and
+    // takes its stamps with it; so do their erasures.
+    let own = [
+        session(1),
+        erasure(VIEWER, Some(1), None, true),
+        erasure(VIEWER, None, Some("mine"), false),
+    ];
+    assert_eq!(
+        route(&own, &viewer, VIEWER, Some(&journeys)),
+        Routed::from([
+            (Resource::Recordings, ids(&["1"])),
+            (Resource::Clips, ids(&["mine"])),
+            (Resource::Stamps, None),
+        ])
+    );
+    // A role has no recordings of its own: the session is gone from the
+    // preview with its stamps, as from anyone else's view.
+    let mut preview = viewer.clone();
+    preview.as_role = Some(1);
+    assert_eq!(
+        route(&own, &preview, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Recordings, None), (Resource::Stamps, None)])
+    );
+
+    // Someone else's: gone from the listing without an id, for whoever may
+    // have listed it.
+    assert_eq!(
+        route(&[session(2)], &viewer, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Recordings, None)])
+    );
+    let elsewhere = subscription(&[PRIVATE], &[PRIVATE], false);
+    assert!(route(&[session(2)], &elsewhere, VIEWER, Some(&journeys)).is_empty());
+    // Their erasures name nothing. Undoing one that hid the session shows
+    // its stamps again to whoever hears it, which the session's payload
+    // does not say.
+    let theirs = [
+        erasure(SPEAKER, Some(3), None, true),
+        erasure(SPEAKER, Some(3), None, false),
+        erasure(SPEAKER, None, Some("theirs"), false),
+    ];
+    assert_eq!(
+        route(&theirs, &viewer, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Stamps, None)])
+    );
+    assert!(route(&theirs[1..], &viewer, VIEWER, Some(&journeys)).is_empty());
+    assert!(route(&theirs, &elsewhere, VIEWER, Some(&journeys)).is_empty());
 }
 
 #[test]

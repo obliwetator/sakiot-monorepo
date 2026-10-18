@@ -16,6 +16,9 @@ pub fn spawn_worker(
                     if let Err(error) = enqueue_expired(&pool).await {
                         tracing::error!(?error, "retention sweep failed");
                     }
+                    if let Err(error) = convert_due_erasures(&pool).await {
+                        tracing::error!(?error, "erasure sweep failed");
+                    }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
@@ -54,9 +57,18 @@ pub(super) async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppErro
     Ok(())
 }
 
+/// What a deletion job removes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Subject {
+    /// A logical session, with its fragments and everything made from them.
+    Session(i64),
+    /// A clip a speaker erased, with the clips composed from it.
+    Clip(String),
+}
+
 pub(super) struct Claimed {
     pub(super) id: String,
-    pub(super) session_id: i64,
+    pub(super) subject: Subject,
     pub(super) guild_id: i64,
     pub(super) token: String,
 }
@@ -64,15 +76,24 @@ pub(super) struct Claimed {
 pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppError> {
     let token = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query!(
-        "WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.guild_id",
+        "WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.clip_id,j.guild_id",
         MAX_ATTEMPTS,
         token
     )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|row| Claimed {
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The table's check names exactly one of the two.
+    let subject = match (row.recording_session_id, row.clip_id) {
+        (Some(session_id), _) => Subject::Session(session_id),
+        (None, Some(clip_id)) => Subject::Clip(clip_id),
+        (None, None) => return Err(AppError::InternalError),
+    };
+    Ok(Some(Claimed {
         id: row.id,
-        session_id: row.recording_session_id,
+        subject,
         guild_id: row.guild_id,
         token,
     }))

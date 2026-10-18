@@ -1,0 +1,108 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH listed AS (\n            SELECT rs.id AS listing_id,\n                   TRUE AS logical,\n                   rs.user_id,\n                   rs.starting_channel_id,\n                   rs.state,\n                   (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS started_at_ms,\n                   af.channel_id AS fragment_channel_id,\n                   af.file_name,\n                   af.segment_index,\n                   af.id AS audio_file_id,\n                   rs.deletion_requested_at IS NOT NULL AS removed,\n                   e.id AS erasure_id,\n                   e.state AS erasure_state,\n                   (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS purge_at_ms,\n                   COALESCE(e.state = 'grace' AND e.hid_session\n                            AND NOT EXISTS (SELECT 1\n                                              FROM recording_deletion_jobs j\n                                             WHERE j.recording_session_id = rs.id),\n                            FALSE) AS playable\n              FROM recording_sessions rs\n              LEFT JOIN recording_erasures e\n                ON e.recording_session_id = rs.id AND e.state <> 'cancelled'\n              LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n             WHERE rs.guild_id = $1\n               AND (rs.deletion_requested_at IS NULL OR rs.user_id = $2)\n            UNION ALL\n            SELECT -af.id AS listing_id,\n                   FALSE AS logical,\n                   af.user_id,\n                   af.channel_id AS starting_channel_id,\n                   CASE WHEN af.end_ts IS NULL THEN 'active' ELSE 'finalized' END AS state,\n                   COALESCE(af.start_ts, 0) AS started_at_ms,\n                   af.channel_id AS fragment_channel_id,\n                   af.file_name,\n                   0 AS segment_index,\n                   af.id AS audio_file_id,\n                   FALSE AS removed,\n                   NULL AS erasure_id,\n                   NULL AS erasure_state,\n                   NULL AS purge_at_ms,\n                   FALSE AS playable\n              FROM audio_files af\n             WHERE af.guild_id = $1 AND af.recording_session_id IS NULL\n        )\n        SELECT listing_id AS \"listing_id!\",\n               logical AS \"logical!\",\n               user_id AS \"user_id!\",\n               starting_channel_id AS \"starting_channel_id!\",\n               state AS \"state!\",\n               started_at_ms AS \"started_at_ms!\",\n               fragment_channel_id AS \"fragment_channel_id?\",\n               file_name AS \"file_name?\",\n               removed AS \"removed!\",\n               erasure_id AS \"erasure_id?\",\n               erasure_state AS \"erasure_state?\",\n               purge_at_ms AS \"purge_at_ms?\",\n               playable AS \"playable!\"\n          FROM listed\n         ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "listing_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "logical!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "starting_channel_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "state!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "fragment_channel_id?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "file_name?",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "erasure_id?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "erasure_state?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "purge_at_ms?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "playable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ca54e4968f5caa6ebeff0bbd65ead7413e892ce920e911faf5af7d636e0200b6"
+}

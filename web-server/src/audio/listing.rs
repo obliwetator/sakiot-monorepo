@@ -11,7 +11,8 @@ use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::permissions::{AsRoleQuery, GuildAccess, Viewer};
 
-use super::types::{Channels, Directories, File};
+use super::types::{Channels, Directories, File, Removal};
+use crate::recording_deletion::ErasureSummary;
 
 const KIND_USERNAME: i32 = 1;
 const KIND_GLOBAL_NAME: i32 = 2;
@@ -218,6 +219,7 @@ struct SessionListing {
     state: String,
     first_file_name: Option<String>,
     channel_journey: Vec<i64>,
+    removal: Option<Removal>,
 }
 
 /// Role-preview access level for a session spanning `journey` channels:
@@ -249,8 +251,29 @@ struct ListingRow {
     started_at_ms: i64,
     fragment_channel_id: Option<i64>,
     file_name: Option<String>,
+    removed: bool,
+    erasure_id: Option<String>,
+    erasure_state: Option<String>,
+    purge_at_ms: Option<i64>,
+    playable: bool,
 }
 
+impl ListingRow {
+    fn removal(&self) -> Option<Removal> {
+        self.removed.then(|| Removal {
+            erasure: ErasureSummary::from_columns(
+                self.erasure_id.clone(),
+                self.erasure_state.clone(),
+                self.purge_at_ms,
+            ),
+            playable: self.playable,
+        })
+    }
+}
+
+/// Removed sessions are listed only to their speaker, `own`: those the
+/// server removed, and those they are erasing. `playable` is the session
+/// access rule for the latter.
 async fn get_session_tree(
     pool: &Pool<Postgres>,
     guild_id: i64,
@@ -268,10 +291,22 @@ async fn get_session_tree(
                    af.channel_id AS fragment_channel_id,
                    af.file_name,
                    af.segment_index,
-                   af.id AS audio_file_id
+                   af.id AS audio_file_id,
+                   rs.deletion_requested_at IS NOT NULL AS removed,
+                   e.id AS erasure_id,
+                   e.state AS erasure_state,
+                   (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS purge_at_ms,
+                   COALESCE(e.state = 'grace' AND e.hid_session
+                            AND NOT EXISTS (SELECT 1
+                                              FROM recording_deletion_jobs j
+                                             WHERE j.recording_session_id = rs.id),
+                            FALSE) AS playable
               FROM recording_sessions rs
+              LEFT JOIN recording_erasures e
+                ON e.recording_session_id = rs.id AND e.state <> 'cancelled'
               LEFT JOIN audio_files af ON af.recording_session_id = rs.id
-             WHERE rs.guild_id = $1 AND rs.deletion_requested_at IS NULL
+             WHERE rs.guild_id = $1
+               AND (rs.deletion_requested_at IS NULL OR rs.user_id = $2)
             UNION ALL
             SELECT -af.id AS listing_id,
                    FALSE AS logical,
@@ -282,7 +317,12 @@ async fn get_session_tree(
                    af.channel_id AS fragment_channel_id,
                    af.file_name,
                    0 AS segment_index,
-                   af.id AS audio_file_id
+                   af.id AS audio_file_id,
+                   FALSE AS removed,
+                   NULL AS erasure_id,
+                   NULL AS erasure_state,
+                   NULL AS purge_at_ms,
+                   FALSE AS playable
               FROM audio_files af
              WHERE af.guild_id = $1 AND af.recording_session_id IS NULL
         )
@@ -293,10 +333,16 @@ async fn get_session_tree(
                state AS "state!",
                started_at_ms AS "started_at_ms!",
                fragment_channel_id AS "fragment_channel_id?",
-               file_name AS "file_name?"
+               file_name AS "file_name?",
+               removed AS "removed!",
+               erasure_id AS "erasure_id?",
+               erasure_state AS "erasure_state?",
+               purge_at_ms AS "purge_at_ms?",
+               playable AS "playable!"
           FROM listed
          ORDER BY started_at_ms DESC, listing_id, segment_index NULLS LAST, audio_file_id"#,
-        guild_id
+        guild_id,
+        scope.own()
     )
     .fetch_all(pool)
     .await?;
@@ -322,13 +368,26 @@ async fn get_session_entry(
                   rs.state AS "state!",
                   (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS "started_at_ms!",
                   af.channel_id AS "fragment_channel_id?",
-                  af.file_name AS "file_name?"
+                  af.file_name AS "file_name?",
+                  rs.deletion_requested_at IS NOT NULL AS "removed!",
+                  e.id AS "erasure_id?",
+                  e.state AS "erasure_state?",
+                  (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS "purge_at_ms?",
+                  COALESCE(e.state = 'grace' AND e.hid_session
+                           AND NOT EXISTS (SELECT 1
+                                             FROM recording_deletion_jobs j
+                                            WHERE j.recording_session_id = rs.id),
+                           FALSE) AS "playable!"
              FROM recording_sessions rs
+             LEFT JOIN recording_erasures e
+               ON e.recording_session_id = rs.id AND e.state <> 'cancelled'
              LEFT JOIN audio_files af ON af.recording_session_id = rs.id
-            WHERE rs.id = $2 AND rs.guild_id = $1 AND rs.deletion_requested_at IS NULL
+            WHERE rs.id = $2 AND rs.guild_id = $1
+              AND (rs.deletion_requested_at IS NULL OR rs.user_id = $3)
             ORDER BY af.segment_index NULLS LAST, af.id"#,
         guild_id,
-        recording_session_id
+        recording_session_id,
+        scope.own()
     )
     .fetch_all(pool)
     .await?;
@@ -343,6 +402,7 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
     let mut listings: HashMap<i64, SessionListing> = HashMap::new();
     for row in rows {
         let listing_id = row.listing_id;
+        let removal = row.removal();
         let fragment_channel_id = row.fragment_channel_id;
         let file_name = row.file_name;
         let starting_channel_id = row.starting_channel_id;
@@ -354,6 +414,7 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
             state: row.state,
             first_file_name: None,
             channel_journey: vec![starting_channel_id],
+            removal,
         });
         if entry.first_file_name.is_none() {
             entry.first_file_name = file_name;
@@ -428,6 +489,7 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
                 ),
                 state: Some(listing.state),
                 access,
+                removal: listing.removal,
                 start_ts_ms: Some(listing.started_at_ms),
             });
     }
@@ -587,6 +649,17 @@ enum TreeScope {
     /// A manager's role preview: the sessions of the manager's own channels,
     /// each annotated with what the role could do with it.
     Preview(RolePreview),
+}
+
+impl TreeScope {
+    /// The viewer whose own removed sessions are listed: none in a preview,
+    /// since a role has no recordings of its own.
+    fn own(&self) -> Option<i64> {
+        match self {
+            Self::Own(access) => access.user_id,
+            Self::Preview(_) => None,
+        }
+    }
 }
 
 async fn tree_scope(

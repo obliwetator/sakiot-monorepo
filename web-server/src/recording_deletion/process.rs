@@ -1,5 +1,6 @@
-//! What one deletion attempt removes: the session's fragments, the clips and
-//! jobs that depend on them, and their archived sources.
+//! What one deletion attempt removes: a session's fragments, or an erased
+//! clip, with the clips and jobs that depend on them and their archived
+//! sources.
 
 use super::*;
 
@@ -33,9 +34,22 @@ pub(super) async fn process_with_roots(
     if active_guild_media_jobs(pool, job.guild_id).await? > 0 {
         return Err(AttemptError::Waiting);
     }
+    match &job.subject {
+        Subject::Session(session_id) => process_session(pool, media, job, *session_id, roots).await,
+        Subject::Clip(clip_id) => process_clip(pool, media, job, clip_id, roots).await,
+    }
+}
+
+async fn process_session(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    job: &Claimed,
+    session_id: i64,
+    roots: &DataRoots,
+) -> Result<(), AttemptError> {
     let session = sqlx::query!(
         "SELECT starting_channel_id,started_at,ended_at,deletion_requested_at FROM recording_sessions WHERE id=$1 AND guild_id=$2",
-        job.session_id,
+        session_id,
         job.guild_id
     )
     .fetch_optional(pool)
@@ -52,25 +66,13 @@ pub(super) async fn process_with_roots(
         session.ended_at,
         session.starting_channel_id,
     );
-    let fragments = session_fragments(pool, job.session_id).await?;
+    let fragments = session_fragments(pool, session_id).await?;
     let clips = {
         let mut connection = pool.acquire().await?;
-        related_clips(&mut connection, job.guild_id, job.session_id, &fragments).await?
+        related_clips(&mut connection, job.guild_id, session_id, &fragments).await?
     };
-    for clip in &clips {
-        if clip.id.is_empty()
-            || !clip
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(AttemptError::failed(
-                ErrorKind::UnsafeMediaReference,
-                format!("clip {:?} has an unsafe archive identifier", clip.id),
-            ));
-        }
-    }
-    let media_jobs = related_media_jobs(pool, job).await?;
+    require_safe_clip_ids(&clips)?;
+    let media_jobs = related_media_jobs(pool, job.guild_id, session_id).await?;
     let composition_jobs = related_composition_jobs(pool, job, &clips).await?;
     stage(pool, job, "purging_archive").await?;
     // Archive uploads hold this advisory lock for their entire transfer. A
@@ -91,7 +93,129 @@ pub(super) async fn process_with_roots(
         )
         .await?;
     }
-    for clip in &clips {
+    purge_clip_archive(pool, media, job, &clips).await?;
+    stage(pool, job, "purging_local").await?;
+    for fragment in &fragments {
+        purge_fragment(roots, fragment).await?;
+    }
+    purge_session_cache(
+        roots,
+        job.guild_id,
+        session_id,
+        starting_channel,
+        started,
+        ended,
+        &fragments,
+    )
+    .await?;
+    purge_clip_local(roots, &clips, &composition_jobs).await?;
+    for media_job in &media_jobs {
+        purge_job_outputs(&roots.recordings.join(".media-jobs"), &media_job.id).await?;
+    }
+    stage(pool, job, "removing_records").await?;
+    let mut tx = removal_transaction(pool, job).await?;
+    sqlx::query!(
+        "DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1)",
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM stamps WHERE recording_session_id=$1 OR audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1)",
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    delete_clip_rows(&mut tx, &clips, &composition_jobs).await?;
+    sqlx::query!(
+        "DELETE FROM media_jobs WHERE id=ANY($1)",
+        &media_jobs.iter().map(|j| j.id.clone()).collect::<Vec<_>>()
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM audio_files WHERE recording_session_id=$1",
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "DELETE FROM recording_sessions WHERE id=$1 AND deletion_requested_at IS NOT NULL",
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    finish(tx, job).await
+}
+
+/// A clip a speaker erased: its archived versions, local file and cached
+/// peaks, with every clip composed from it, then the rows. A clip already
+/// gone went with its session's purge, which took those clips too.
+async fn process_clip(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    job: &Claimed,
+    clip_id: &str,
+    roots: &DataRoots,
+) -> Result<(), AttemptError> {
+    let deleted = sqlx::query_scalar!(
+        r#"SELECT deleted_at IS NOT NULL AS "deleted!" FROM clips WHERE guild_id=$1 AND clip_id=$2"#,
+        job.guild_id,
+        clip_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    let clips = match deleted {
+        None => Vec::new(),
+        Some(false) => {
+            return Err(AttemptError::failed(
+                ErrorKind::InternalError,
+                "clip is not tombstoned",
+            ));
+        }
+        Some(true) => {
+            let mut connection = pool.acquire().await?;
+            clip_with_dependents(&mut connection, job.guild_id, clip_id).await?
+        }
+    };
+    require_safe_clip_ids(&clips)?;
+    let composition_jobs = related_composition_jobs(pool, job, &clips).await?;
+    stage(pool, job, "purging_archive").await?;
+    purge_clip_archive(pool, media, job, &clips).await?;
+    stage(pool, job, "purging_local").await?;
+    purge_clip_local(roots, &clips, &composition_jobs).await?;
+    stage(pool, job, "removing_records").await?;
+    let mut tx = removal_transaction(pool, job).await?;
+    delete_clip_rows(&mut tx, &clips, &composition_jobs).await?;
+    finish(tx, job).await
+}
+
+/// Clip ids name archive prefixes and local files.
+fn require_safe_clip_ids(clips: &[Clip]) -> Result<(), AttemptError> {
+    for clip in clips {
+        if clip.id.is_empty()
+            || !clip
+                .id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(AttemptError::failed(
+                ErrorKind::UnsafeMediaReference,
+                format!("clip {:?} has an unsafe archive identifier", clip.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every archived version of the clips.
+async fn purge_clip_archive(
+    pool: &Pool<Postgres>,
+    media: &MediaArchive,
+    job: &Claimed,
+    clips: &[Clip],
+) -> Result<(), AttemptError> {
+    for clip in clips {
         let object_id =
             sqlx::query_scalar!("SELECT id FROM media_objects WHERE clip_id=$1", clip.id)
                 .fetch_optional(pool)
@@ -113,21 +237,17 @@ pub(super) async fn process_with_roots(
                 .map_err(|error| AppError::MediaArchiveUnavailable(error.to_string()))?;
         }
     }
-    stage(pool, job, "purging_local").await?;
-    for fragment in &fragments {
-        purge_fragment(roots, fragment).await?;
-    }
-    purge_session_cache(
-        roots,
-        job.guild_id,
-        job.session_id,
-        starting_channel,
-        started,
-        ended,
-        &fragments,
-    )
-    .await?;
-    for clip in &clips {
+    Ok(())
+}
+
+/// The clips' local files and cached peaks, and whatever the composition
+/// jobs that made them left behind.
+async fn purge_clip_local(
+    roots: &DataRoots,
+    clips: &[Clip],
+    composition_jobs: &[CompositionJob],
+) -> Result<(), AttemptError> {
+    for clip in clips {
         if let Some(saved) = &clip.saved {
             remove_file_if_exists(&crate::media_archive::clip_local_path_in(
                 &roots.clips,
@@ -137,10 +257,7 @@ pub(super) async fn process_with_roots(
         }
         purge_clip_waveforms(&roots.waveforms, &clip.id).await?;
     }
-    for media_job in &media_jobs {
-        purge_job_outputs(&roots.recordings.join(".media-jobs"), &media_job.id).await?;
-    }
-    for composition_job in &composition_jobs {
+    for composition_job in composition_jobs {
         uuid::Uuid::parse_str(&composition_job.id).map_err(|_| {
             AttemptError::failed(
                 ErrorKind::UnsafeMediaReference,
@@ -159,7 +276,15 @@ pub(super) async fn process_with_roots(
         .await?;
         purge_job_outputs(&roots.clips.join("compositions"), &composition_job.id).await?;
     }
-    stage(pool, job, "removing_records").await?;
+    Ok(())
+}
+
+/// The transaction that removes the records, once the attempt still owns
+/// the job.
+async fn removal_transaction<'p>(
+    pool: &'p Pool<Postgres>,
+    job: &Claimed,
+) -> Result<sqlx::Transaction<'p, Postgres>, AttemptError> {
     let mut tx = pool.begin().await?;
     let owned = sqlx::query_scalar!(
         "SELECT id FROM recording_deletion_jobs WHERE id=$1 AND attempt_token=$2 AND state='running' AND lease_expires_at>now() FOR UPDATE",
@@ -176,29 +301,22 @@ pub(super) async fn process_with_roots(
     if active_guild_media_jobs(&mut *tx, job.guild_id).await? > 0 {
         return Err(AttemptError::Waiting);
     }
-    let clip_ids = clip_ids(&clips);
-    sqlx::query!(
-        "DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1) OR clip_id=ANY($2)",
-        job.session_id,
-        &clip_ids
-    )
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM stamps WHERE recording_session_id=$1 OR audio_file_id IN (SELECT id FROM audio_files WHERE recording_session_id=$1)",
-        job.session_id
-    )
-    .execute(&mut *tx)
-    .await?;
+    Ok(tx)
+}
+
+/// The clips' rows, and the composition jobs and source history naming them.
+async fn delete_clip_rows(
+    tx: &mut sqlx::PgConnection,
+    clips: &[Clip],
+    composition_jobs: &[CompositionJob],
+) -> Result<(), sqlx::Error> {
+    let clip_ids = clip_ids(clips);
+    sqlx::query!("DELETE FROM media_objects WHERE clip_id=ANY($1)", &clip_ids)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query!("DELETE FROM clips WHERE clip_id=ANY($1)", &clip_ids)
         .execute(&mut *tx)
         .await?;
-    sqlx::query!(
-        "DELETE FROM media_jobs WHERE id=ANY($1)",
-        &media_jobs.iter().map(|j| j.id.clone()).collect::<Vec<_>>()
-    )
-    .execute(&mut *tx)
-    .await?;
     sqlx::query!(
         "DELETE FROM composition_jobs WHERE id=ANY($1)",
         &composition_jobs
@@ -214,18 +332,14 @@ pub(super) async fn process_with_roots(
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!(
-        "DELETE FROM audio_files WHERE recording_session_id=$1",
-        job.session_id
-    )
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM recording_sessions WHERE id=$1 AND deletion_requested_at IS NOT NULL",
-        job.session_id
-    )
-    .execute(&mut *tx)
-    .await?;
+    Ok(())
+}
+
+/// Marks the job done and commits its removals.
+async fn finish(
+    mut tx: sqlx::Transaction<'_, Postgres>,
+    job: &Claimed,
+) -> Result<(), AttemptError> {
     sqlx::query!(
         "UPDATE recording_deletion_jobs SET state='ready',stage='ready',attempt_token=NULL,lease_expires_at=NULL,error=NULL,error_kind=NULL,finished_at=now(),updated_at=now() WHERE id=$1 AND attempt_token=$2",
         job.id,
@@ -306,38 +420,68 @@ struct GuildClip {
     composition: Option<serde_json::Value>,
 }
 
+async fn guild_clips(
+    connection: &mut sqlx::PgConnection,
+    guild_id: i64,
+) -> Result<Vec<GuildClip>, sqlx::Error> {
+    sqlx::query_as!(
+        GuildClip,
+        "SELECT clip_id,saved_file_name,recording_session_id,original_file_name,channel_id,composition FROM clips WHERE guild_id=$1",
+        guild_id
+    )
+    .fetch_all(&mut *connection)
+    .await
+}
+
+/// The session's clips (cut from it, or from one of its fragments) and every
+/// clip composed from them.
 pub(super) async fn related_clips(
     connection: &mut sqlx::PgConnection,
     guild_id: i64,
     session_id: i64,
     fragments: &[Fragment],
 ) -> Result<Vec<Clip>, AppError> {
-    let rows = sqlx::query_as!(
-        GuildClip,
-        "SELECT clip_id,saved_file_name,recording_session_id,original_file_name,channel_id,composition FROM clips WHERE guild_id=$1",
-        guild_id
-    )
-    .fetch_all(&mut *connection)
-    .await?;
-    let mut selected = HashSet::new();
-    let mut clips = Vec::new();
-    // A composition can depend on any session clip or physical fragment clip.
-    // Composed clips cannot themselves be sources, so one pass suffices.
-    for row in &rows {
-        if row.recording_session_id == Some(session_id)
+    let rows = guild_clips(connection, guild_id).await?;
+    let sources = rows.iter().filter(|row| {
+        row.recording_session_id == Some(session_id)
             || fragments.iter().any(|f| {
                 Some(f.channel_id) == row.channel_id
                     && row.original_file_name.as_deref() == Some(f.file_name.as_str())
             })
-        {
-            selected.insert(row.clip_id.clone());
-            clips.push(Clip {
-                id: row.clip_id.clone(),
-                saved: row.saved_file_name.clone(),
-            });
-        }
+    });
+    with_dependents(connection, &rows, sources).await
+}
+
+/// The clip and every clip composed from it, or nothing if it is gone.
+pub(super) async fn clip_with_dependents(
+    connection: &mut sqlx::PgConnection,
+    guild_id: i64,
+    clip_id: &str,
+) -> Result<Vec<Clip>, AppError> {
+    let rows = guild_clips(connection, guild_id).await?;
+    let sources = rows.iter().filter(|row| row.clip_id == clip_id);
+    with_dependents(connection, &rows, sources).await
+}
+
+/// `sources`, then every clip of `rows` composed from one of them, now or in
+/// an earlier revision.
+async fn with_dependents<'r>(
+    connection: &mut sqlx::PgConnection,
+    rows: &'r [GuildClip],
+    sources: impl Iterator<Item = &'r GuildClip>,
+) -> Result<Vec<Clip>, AppError> {
+    let mut selected = HashSet::new();
+    let mut clips = Vec::new();
+    for row in sources {
+        selected.insert(row.clip_id.clone());
+        clips.push(Clip {
+            id: row.clip_id.clone(),
+            saved: row.saved_file_name.clone(),
+        });
     }
-    for row in &rows {
+    // A composition can depend on any session clip or physical fragment clip.
+    // Composed clips cannot themselves be sources, so one pass suffices.
+    for row in rows {
         if selected.contains(&row.clip_id) {
             continue;
         }
@@ -388,12 +532,13 @@ pub(super) async fn related_clips(
 
 async fn related_media_jobs(
     pool: &Pool<Postgres>,
-    job: &Claimed,
+    guild_id: i64,
+    session_id: i64,
 ) -> Result<Vec<MediaJob>, AppError> {
     Ok(sqlx::query_scalar!(
         "SELECT id FROM media_jobs WHERE guild_id=$1 AND request->>'session_id'=$2",
-        job.guild_id,
-        job.session_id.to_string()
+        guild_id,
+        session_id.to_string()
     )
     .fetch_all(pool)
     .await?

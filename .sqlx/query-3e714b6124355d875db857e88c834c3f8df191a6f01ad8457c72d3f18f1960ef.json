@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT rs.id,\n                  rs.user_id,\n                  rs.starting_channel_id,\n                  COALESCE(\n                      array_agg(DISTINCT af.channel_id) FILTER (WHERE af.channel_id IS NOT NULL),\n                      '{}'\n                  ) AS \"fragment_channels!\"\n             FROM recording_sessions rs\n             LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n            WHERE rs.id = ANY($1) AND rs.deletion_requested_at IS NULL\n            GROUP BY rs.id, rs.user_id, rs.starting_channel_id",
+  "query": "SELECT rs.id,\n                  rs.user_id,\n                  rs.starting_channel_id,\n                  rs.deletion_requested_at IS NOT NULL AS \"removed!\",\n                  COALESCE(\n                      array_agg(DISTINCT af.channel_id) FILTER (WHERE af.channel_id IS NOT NULL),\n                      '{}'\n                  ) AS \"fragment_channels!\"\n             FROM recording_sessions rs\n             LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n            WHERE rs.id = ANY($1)\n            GROUP BY rs.id",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,12 @@
       },
       {
         "ordinal": 3,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
         "name": "fragment_channels!",
         "type_info": "Int8Array",
         "origin": "Expression"
@@ -52,8 +58,9 @@
       false,
       false,
       false,
+      null,
       null
     ]
   },
-  "hash": "0b13c45ec6f8d560ee3995b7b457ada6cb1e529cebc4c7bc8bbb64a9967ff28f"
+  "hash": "3e714b6124355d875db857e88c834c3f8df191a6f01ad8457c72d3f18f1960ef"
 }

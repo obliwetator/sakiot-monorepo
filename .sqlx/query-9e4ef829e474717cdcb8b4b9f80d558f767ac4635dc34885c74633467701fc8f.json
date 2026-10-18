@@ -1,0 +1,149 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rs.id AS \"listing_id!\",\n                  TRUE AS \"logical!\",\n                  rs.user_id AS \"user_id!\",\n                  rs.starting_channel_id AS \"starting_channel_id!\",\n                  rs.state AS \"state!\",\n                  (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS \"started_at_ms!\",\n                  af.channel_id AS \"fragment_channel_id?\",\n                  af.file_name AS \"file_name?\",\n                  rs.deletion_requested_at IS NOT NULL AS \"removed!\",\n                  e.id AS \"erasure_id?\",\n                  e.state AS \"erasure_state?\",\n                  (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS \"purge_at_ms?\",\n                  COALESCE(e.state = 'grace' AND e.hid_session\n                           AND NOT EXISTS (SELECT 1\n                                             FROM recording_deletion_jobs j\n                                            WHERE j.recording_session_id = rs.id),\n                           FALSE) AS \"playable!\"\n             FROM recording_sessions rs\n             LEFT JOIN recording_erasures e\n               ON e.recording_session_id = rs.id AND e.state <> 'cancelled'\n             LEFT JOIN audio_files af ON af.recording_session_id = rs.id\n            WHERE rs.id = $2 AND rs.guild_id = $1\n              AND (rs.deletion_requested_at IS NULL OR rs.user_id = $3)\n            ORDER BY af.segment_index NULLS LAST, af.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "listing_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "logical!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "starting_channel_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "starting_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "state!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "fragment_channel_id?",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "file_name?",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "audio_files",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "erasure_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "erasure_state?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "purge_at_ms?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "playable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "9e4ef829e474717cdcb8b4b9f80d558f767ac4635dc34885c74633467701fc8f"
+}

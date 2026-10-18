@@ -903,6 +903,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/users/current/guilds/{guild_id}/clips/{clip_id}/erasure": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["request_clip_erasure"];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/users/current/guilds/{guild_id}/erasures/{erasure_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_erasure"];
+		put?: never;
+		post?: never;
+		delete: operations["undo_erasure"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/users/current/guilds/{guild_id}/recording-opt-out": {
 		parameters: {
 			query?: never;
@@ -913,6 +945,22 @@ export interface paths {
 		get: operations["get_recording_opt_out"];
 		put: operations["put_recording_opt_out"];
 		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/users/current/guilds/{guild_id}/recordings/{recording_session_id}/erasure": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["request_session_erasure"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -1223,6 +1271,7 @@ export interface components {
 			 *     editor. Null for clips cut from a single recording.
 			 */
 			composition?: unknown;
+			erasure?: null | components["schemas"]["ErasureSummary"];
 			/** @example 146638124288704513 */
 			guild_id: string;
 			/** Format: float */
@@ -1234,6 +1283,11 @@ export interface components {
 			silence_free: boolean;
 			/** Format: int64 */
 			size?: number | null;
+			/**
+			 * @description Whose voices it holds; empty when not known. Each of them may erase
+			 *     it.
+			 */
+			speaker_ids: string[];
 			/** Format: float */
 			start_time: number;
 			/** @example 146638124288704513 */
@@ -1375,6 +1429,36 @@ export interface components {
 			/** Format: int32 */
 			year: number;
 		};
+		ErasureStatus: {
+			/** @description The erased clip; absent for a session. */
+			clip_id?: string | null;
+			id: string;
+			/** Format: int64 */
+			purge_at_ms: number;
+			/**
+			 * @description The purge once converted: `queued` or `running`, `ready` once erased,
+			 *     `failed` or `paused` while it waits for an administrator.
+			 */
+			purge_state?: string | null;
+			/** @description The erased session; absent for a clip. */
+			recording_session_id?: string | null;
+			/** Format: int64 */
+			requested_at_ms: number;
+			/**
+			 * @description `grace`: hidden from everyone else and undoable until
+			 *     `purge_at_ms`; `cancelled`: undone; `converted`: handed to the purge
+			 *     (`purge_state`).
+			 */
+			state: string;
+		};
+		/** @description The viewer's own erasure of an item, as their listings show it. */
+		ErasureSummary: {
+			id: string;
+			/** Format: int64 */
+			purge_at_ms: number;
+			/** @description `grace`: undoable until `purge_at_ms`; `converted`: being purged. */
+			state: string;
+		};
 		/**
 		 * @description Stable machine-readable error classification. Values are part of the
 		 *     API and are persisted by background jobs: add new ones, never rename.
@@ -1426,6 +1510,7 @@ export interface components {
 			display_name?: string | null;
 			file: string;
 			recording_session_id?: string | null;
+			removal?: null | components["schemas"]["Removal"];
 			state?: string | null;
 			user_id?: string | null;
 		};
@@ -1523,6 +1608,7 @@ export interface components {
 						display_name?: string | null;
 						file: string;
 						recording_session_id?: string | null;
+						removal?: null | components["schemas"]["Removal"];
 						state?: string | null;
 						user_id?: string | null;
 				  }[];
@@ -1607,6 +1693,16 @@ export interface components {
 		};
 		RefreshTokenResponse: {
 			status: string;
+		};
+		/** @description Why one of the viewer's own sessions is hidden from everyone else. */
+		Removal: {
+			erasure?: null | components["schemas"]["ErasureSummary"];
+			/**
+			 * @description Whether they can still play it: only while erasing a session that
+			 *     was visible when they asked, and that the server has not removed
+			 *     since.
+			 */
+			playable: boolean;
 		};
 		RemoveSilenceResponse: {
 			message: string;
@@ -5713,6 +5809,135 @@ export interface operations {
 			};
 		};
 	};
+	request_clip_erasure: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description A clip holding the current user's voice */
+				clip_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The clip, and every clip composed from it, is hidden from everyone else and will be erased once the grace period ends; asking again answers with the same erasure */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErasureStatus"];
+				};
+			};
+			/** @description The clip does not hold the current user's voice, or they may not hear it */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Clip not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_erasure: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description One of the current user's erasures */
+				erasure_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The erasure and, once converted, its purge */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErasureStatus"];
+				};
+			};
+			/** @description No such erasure of the current user's */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	undo_erasure: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description One of the current user's erasures */
+				erasure_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Undone: what the request hid is visible again, unless something else still hides it; undoing again answers the same */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErasureStatus"];
+				};
+			};
+			/** @description Not a member or former member */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description No such erasure of the current user's */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The grace period is over */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_recording_opt_out: {
 		parameters: {
 			query?: never;
@@ -5772,6 +5997,58 @@ export interface operations {
 			};
 			/** @description Not a member of this guild */
 			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	request_session_erasure: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description A session of the current user's voice */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The session is hidden from everyone else and will be erased once the grace period ends; asking again answers with the same erasure */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ErasureStatus"];
+				};
+			};
+			/** @description Not the session's speaker, or not a member or former member */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Recording not found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Still recording, or already being deleted permanently */
+			409: {
 				headers: {
 					[name: string]: unknown;
 				};

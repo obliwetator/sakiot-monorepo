@@ -457,6 +457,7 @@ impl Hub {
             .filter_map(|event| match event {
                 Event::Session { session_id, .. } => Some(*session_id),
                 Event::Stamp { session_id, .. } => *session_id,
+                Event::Erasure { session_id, .. } => *session_id,
                 _ => None,
             })
             .collect::<BTreeSet<_>>()

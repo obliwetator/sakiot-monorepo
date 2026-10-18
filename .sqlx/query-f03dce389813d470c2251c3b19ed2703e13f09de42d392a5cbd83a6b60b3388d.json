@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT speaker_ids, channel_ids, deleted_at IS NOT NULL AS \"removed!\"\n             FROM clips\n            WHERE guild_id = $1 AND clip_id = $2\n              FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "speaker_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "speaker_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "channel_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "removed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "f03dce389813d470c2251c3b19ed2703e13f09de42d392a5cbd83a6b60b3388d"
+}

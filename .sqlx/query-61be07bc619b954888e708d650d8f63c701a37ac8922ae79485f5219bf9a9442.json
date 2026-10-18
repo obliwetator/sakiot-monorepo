@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2",
+  "query": "SELECT recording_session_id AS \"recording_session_id!\",state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2 AND reason<>'speaker' AND recording_session_id IS NOT NULL",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "recording_session_id",
+        "name": "recording_session_id!",
         "type_info": "Int8",
         "origin": {
           "Table": {
@@ -88,7 +88,7 @@
       ]
     },
     "nullable": [
-      false,
+      true,
       false,
       false,
       false,
@@ -97,5 +97,5 @@
       true
     ]
   },
-  "hash": "6c1514528143d8525cb0af4b5d0f9c390665a46003814dd49bbb539bb0779bd7"
+  "hash": "61be07bc619b954888e708d650d8f63c701a37ac8922ae79485f5219bf9a9442"
 }

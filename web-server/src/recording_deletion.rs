@@ -16,10 +16,12 @@ use crate::errors::{AppError, ErrorKind, JobError};
 use crate::media_archive::MediaArchive;
 use crate::permissions::require_capability;
 
+mod erasure;
 mod files;
 mod process;
 mod worker;
 
+pub use erasure::*;
 pub use worker::spawn_worker;
 
 use files::*;
@@ -71,13 +73,15 @@ pub struct RecordingDeletionStatus {
     pub error_kind: Option<ErrorKind>,
 }
 
+/// A manager's view of a session's deletion job. A speaker's erasure is
+/// theirs alone ([`erasure`]): managers get no status of it.
 async fn load_status(
     pool: &Pool<Postgres>,
     guild_id: i64,
     id: &str,
 ) -> Result<RecordingDeletionStatus, AppError> {
     let row = sqlx::query!(
-        "SELECT recording_session_id,state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2",
+        r#"SELECT recording_session_id AS "recording_session_id!",state,stage,mode,attempts,error,error_kind FROM recording_deletion_jobs WHERE guild_id=$1 AND id=$2 AND reason<>'speaker' AND recording_session_id IS NOT NULL"#,
         guild_id,
         id
     )
@@ -170,9 +174,30 @@ async fn enqueue(
     mode: DeletionMode,
 ) -> Result<String, AppError> {
     let mut tx = pool.begin().await?;
+    lock_guild(&mut tx, guild_id).await?;
+    let id = enqueue_in(&mut tx, guild_id, session_id, actor, reason, mode).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Serializes removals with clip publication in the guild
+/// (`reject_deleted_recording_clip` takes the same lock).
+async fn lock_guild(tx: &mut sqlx::PgConnection, guild_id: i64) -> Result<(), sqlx::Error> {
     sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
         .execute(&mut *tx)
         .await?;
+    Ok(())
+}
+
+/// `enqueue` inside the caller's transaction, which holds the guild's lock.
+async fn enqueue_in(
+    tx: &mut sqlx::PgConnection,
+    guild_id: i64,
+    session_id: i64,
+    actor: Option<i64>,
+    reason: &str,
+    mode: DeletionMode,
+) -> Result<String, AppError> {
     let state = sqlx::query_scalar!(
         "SELECT state FROM recording_sessions WHERE guild_id=$1 AND id=$2 FOR UPDATE",
         guild_id,
@@ -219,7 +244,7 @@ async fn enqueue(
     } else {
         let id = uuid::Uuid::new_v4().to_string();
         let fragments = session_fragments(&mut *tx, session_id).await?;
-        let clips = related_clips(&mut tx, guild_id, session_id, &fragments).await?;
+        let clips = related_clips(&mut *tx, guild_id, session_id, &fragments).await?;
         sqlx::query!(
             "UPDATE recording_sessions SET deletion_requested_at=now() WHERE id=$1",
             session_id
@@ -262,7 +287,6 @@ async fn enqueue(
         }
         id
     };
-    tx.commit().await?;
     Ok(id)
 }
 

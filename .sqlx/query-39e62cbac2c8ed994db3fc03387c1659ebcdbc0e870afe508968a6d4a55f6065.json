@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_sessions SET deletion_requested_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "39e62cbac2c8ed994db3fc03387c1659ebcdbc0e870afe508968a6d4a55f6065"
+}

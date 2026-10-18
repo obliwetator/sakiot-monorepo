@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT recording_session_id, clip_id, speaker_id\n           FROM recording_erasures\n          WHERE id = $1 AND state = 'grace' AND purge_at <= now()\n            FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "recording_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "clip_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "clip_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "speaker_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "speaker_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "0a2009b4a78be5fb60cbaedf1dc0b19814f40be619b9a2c2d3f5b923934ae88c"
+}

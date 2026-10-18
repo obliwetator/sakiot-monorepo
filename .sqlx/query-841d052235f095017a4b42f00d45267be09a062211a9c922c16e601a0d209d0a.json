@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n             SELECT 1 FROM recording_deletion_jobs\n              WHERE recording_session_id = $1 AND mode = 'permanent'\n           ) AS \"purging!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "purging!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "841d052235f095017a4b42f00d45267be09a062211a9c922c16e601a0d209d0a"
+}

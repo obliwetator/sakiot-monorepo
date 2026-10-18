@@ -44,6 +44,16 @@ pub enum Event {
         guild_id: i64,
         user_id: i64,
     },
+    /// A speaker asked to erase their session or a clip of their voice, or
+    /// the erasure was undone or handed to the purge.
+    Erasure {
+        guild_id: i64,
+        speaker_id: i64,
+        session_id: Option<i64>,
+        clip_id: Option<String>,
+        /// The request hid the session, which undo shows again.
+        hid_session: bool,
+    },
     Settings {
         guild_id: i64,
         resource: Resource,
@@ -110,9 +120,10 @@ pub enum JobAudience {
     /// A media job (waveforms, mixes, downloads): the users attached to it in
     /// `media_job_viewers`.
     Viewers,
-    /// A clip export: the user who started it.
+    /// A clip export: the user who started it. A speaker's erasure: the
+    /// speaker.
     Owner(i64),
-    /// A recording deletion: the guild's managers.
+    /// A recording deletion by the server: the guild's managers.
     Managers,
 }
 
@@ -131,6 +142,7 @@ struct Payload {
     n: Option<String>,
     t: Option<i64>,
     o: Option<String>,
+    h: Option<String>,
 }
 
 fn id(value: Option<&String>) -> Option<i64> {
@@ -175,6 +187,16 @@ pub fn parse(payload: &str) -> Option<Event> {
             guild_id: guild_id?,
             user_id: id(payload.u.as_ref())?,
         },
+        "erasure" => Event::Erasure {
+            guild_id: guild_id?,
+            speaker_id: id(payload.u.as_ref())?,
+            session_id: match payload.s.as_ref() {
+                None => None,
+                Some(session_id) => Some(session_id.parse().ok()?),
+            },
+            clip_id: payload.id,
+            hid_session: payload.h.is_some(),
+        },
         "settings" => Event::Settings {
             guild_id: guild_id?,
             resource: match payload.r.as_deref()? {
@@ -216,7 +238,10 @@ pub fn parse(payload: &str) -> Option<Event> {
             audience: match payload.r.as_deref()? {
                 "media" => JobAudience::Viewers,
                 "composition" => JobAudience::Owner(id(payload.u.as_ref())?),
-                "deletion" => JobAudience::Managers,
+                "deletion" => match payload.u.as_ref() {
+                    None => JobAudience::Managers,
+                    Some(speaker) => JobAudience::Owner(speaker.parse().ok()?),
+                },
                 _ => return None,
             },
         },
@@ -362,6 +387,35 @@ mod tests {
                 audience: JobAudience::Managers,
             })
         );
+        // A speaker's erasure is theirs alone.
+        assert_eq!(
+            parse(r#"{"v":1,"k":"job","r":"deletion","g":"1","id":"j4","u":"7"}"#),
+            Some(Event::Job {
+                guild_id: 1,
+                job_id: "j4".into(),
+                audience: JobAudience::Owner(7),
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"erasure","g":"1","u":"7","s":"2","h":"1"}"#),
+            Some(Event::Erasure {
+                guild_id: 1,
+                speaker_id: 7,
+                session_id: Some(2),
+                clip_id: None,
+                hid_session: true,
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"erasure","g":"1","u":"7","id":"abc"}"#),
+            Some(Event::Erasure {
+                guild_id: 1,
+                speaker_id: 7,
+                session_id: None,
+                clip_id: Some("abc".into()),
+                hid_session: false,
+            })
+        );
     }
 
     #[test]
@@ -386,6 +440,12 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"v":1,"k":"job","r":"future","g":"1","id":"j"}"#),
+            None
+        );
+        // An erasure names its speaker.
+        assert_eq!(parse(r#"{"v":1,"k":"erasure","g":"1","s":"2"}"#), None);
+        assert_eq!(
+            parse(r#"{"v":1,"k":"erasure","g":"1","u":"7","s":"x"}"#),
             None
         );
     }

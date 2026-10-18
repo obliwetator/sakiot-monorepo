@@ -259,9 +259,15 @@ pub async fn get_clip_waveform_data(
     let row = sqlx::query!(
         "SELECT saved_file_name, channel_ids, speaker_ids
            FROM clips
-          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+          WHERE guild_id = $1 AND clip_id = $2
+            AND (deleted_at IS NULL
+                 -- The speaker's own while they can still undo its erasure.
+                 OR EXISTS (SELECT 1 FROM recording_erasures e
+                             WHERE e.clip_id = clips.clip_id AND e.state = 'grace'
+                               AND e.speaker_id = $3))",
         guild_id,
-        clip_id
+        clip_id,
+        token.user_id
     )
     .fetch_optional(pool.get_ref())
     .await?
@@ -305,9 +311,10 @@ pub(crate) async fn run_clip_waveform_job(
     clip_id: &str,
 ) -> Result<(Option<String>, Option<PathBuf>), AppError> {
     let saved_file_name = sqlx::query_scalar!(
-        "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND deleted_at IS NULL",
+        "SELECT saved_file_name FROM clips WHERE guild_id=$1 AND clip_id=$2 AND (deleted_at IS NULL OR EXISTS (SELECT 1 FROM recording_erasures e WHERE e.clip_id = clips.clip_id AND e.state = 'grace' AND e.speaker_id = $3))",
         guild_id,
-        clip_id
+        clip_id,
+        attempt.requester.user_id
     )
     .fetch_optional(attempt.pool)
     .await?

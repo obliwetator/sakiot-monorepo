@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT deleted_at IS NOT NULL AS \"deleted!\" FROM clips WHERE guild_id=$1 AND clip_id=$2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deleted!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a15d4a8ddc9b2fba3a076aa787bbb3fbf52b9f6f600b52d36ca6cfbf5a067d9d"
+}

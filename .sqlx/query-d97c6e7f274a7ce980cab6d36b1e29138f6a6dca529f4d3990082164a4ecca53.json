@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT saved_file_name, channel_ids, speaker_ids\n           FROM clips\n          WHERE guild_id = $1 AND clip_id = $2 AND deleted_at IS NULL",
+  "query": "SELECT saved_file_name, channel_ids, speaker_ids\n           FROM clips\n          WHERE guild_id = $1 AND clip_id = $2\n            AND (deleted_at IS NULL\n                 -- The speaker's own while they can still undo its erasure.\n                 OR EXISTS (SELECT 1 FROM recording_erasures e\n                             WHERE e.clip_id = clips.clip_id AND e.state = 'grace'\n                               AND e.speaker_id = $3))",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,8 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
@@ -49,5 +50,5 @@
       false
     ]
   },
-  "hash": "57739220ebcecb3cc466384cc46bd75fa545ea1a7afb4ca00bc7946d20669b43"
+  "hash": "d97c6e7f274a7ce980cab6d36b1e29138f6a6dca529f4d3990082164a4ecca53"
 }

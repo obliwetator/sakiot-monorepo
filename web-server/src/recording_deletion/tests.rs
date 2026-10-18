@@ -210,7 +210,7 @@ async fn retention_and_fencing_prevent_late_publication(pool: PgPool) -> TestRes
     .await?;
     assert_eq!(authorization, ("retention".into(), None, Some(200), true));
     let first = claim(&pool).await?.unwrap();
-    assert_eq!(first.session_id, session_id);
+    assert_eq!(first.subject, Subject::Session(session_id));
     sqlx::query(
         "UPDATE recording_deletion_jobs SET lease_expires_at=now()-interval '1 second' WHERE id=$1",
     )

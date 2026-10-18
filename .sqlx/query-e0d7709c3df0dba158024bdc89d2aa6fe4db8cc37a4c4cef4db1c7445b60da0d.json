@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT clip_id,\n        user_id,\n        name,\n        original_file_name,\n        saved_file_name,\n        length,\n        size,\n        guild_id,\n        channel_id,\n        start_time,\n        recording_session_id,\n        silence_free,\n        composition\n        FROM clips\n        WHERE guild_id = $1\n          AND deleted_at IS NULL\n          -- A clip of only the viewer's own voice is theirs; anyone else's\n          -- takes every channel its audio came from.\n          AND ((cardinality(speaker_ids) > 0 AND speaker_ids <@ ARRAY[$3::bigint])\n               OR (cardinality(channel_ids) > 0 AND channel_ids <@ $2))\n        -- Heap order is not stable across imports or VACUUM FULL, so the list\n        -- must be ordered explicitly. Sort the way the names read rather than\n        -- the way the bytes compare, because this database collates\n        -- case-sensitively; clip_id keeps equal names deterministic.\n        ORDER BY lower(name) NULLS LAST, name, clip_id\n        ",
+  "query": "\n        SELECT c.clip_id,\n        c.user_id,\n        c.name,\n        c.original_file_name,\n        c.saved_file_name,\n        c.length,\n        c.size,\n        c.guild_id,\n        c.channel_id,\n        c.start_time,\n        c.recording_session_id,\n        c.silence_free,\n        c.composition,\n        c.speaker_ids,\n        e.id AS \"erasure_id?\",\n        e.state AS \"erasure_state?\",\n        (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS \"purge_at_ms?\"\n        FROM clips c\n        -- The viewer's own erasure: they alone still see the clip.\n        LEFT JOIN recording_erasures e\n          ON e.clip_id = c.clip_id AND e.state <> 'cancelled' AND e.speaker_id = $3\n        WHERE c.guild_id = $1\n          AND (c.deleted_at IS NULL OR e.id IS NOT NULL)\n          -- A clip of only the viewer's own voice is theirs; anyone else's\n          -- takes every channel its audio came from.\n          AND ((cardinality(c.speaker_ids) > 0 AND c.speaker_ids <@ ARRAY[$3::bigint])\n               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2))\n        -- Heap order is not stable across imports or VACUUM FULL, so the list\n        -- must be ordered explicitly. Sort the way the names read rather than\n        -- the way the bytes compare, because this database collates\n        -- case-sensitively; clip_id keeps equal names deterministic.\n        ORDER BY lower(c.name) NULLS LAST, c.name, c.clip_id\n        ",
   "describe": {
     "columns": [
       {
@@ -145,6 +145,45 @@
             "name": "composition"
           }
         }
+      },
+      {
+        "ordinal": 13,
+        "name": "speaker_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "speaker_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "erasure_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "erasure_state?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "purge_at_ms?",
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -167,8 +206,12 @@
       false,
       true,
       false,
-      true
+      true,
+      false,
+      false,
+      false,
+      null
     ]
   },
-  "hash": "5c162b2fea6963fa3bf196f0e9b5e3f56307d864314382334b3bd74f6cc973f6"
+  "hash": "e0d7709c3df0dba158024bdc89d2aa6fe4db8cc37a4c4cef4db1c7445b60da0d"
 }

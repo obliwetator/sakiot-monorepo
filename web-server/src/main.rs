@@ -50,7 +50,8 @@ use web_server::members::{get_guild_roles, get_role_members, get_role_view, sear
 use web_server::presence::get_voice_presence;
 use web_server::realtime::{Hub, realtime_socket};
 use web_server::recording_deletion::{
-    DeletionPolicy, delete_recording, get_recording_deletion, spawn_worker as spawn_deletion_worker,
+    DeletionPolicy, delete_recording, get_erasure, get_recording_deletion, request_clip_erasure,
+    request_session_erasure, spawn_worker as spawn_deletion_worker, undo_erasure,
 };
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::security_headers::SecurityHeaders;
@@ -302,6 +303,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let api_scope = api_scope
             .service(delete_recording)
             .service(get_recording_deletion)
+            .service(request_session_erasure)
+            .service(request_clip_erasure)
+            .service(get_erasure)
+            .service(undo_erasure)
             .service(get_recording_opt_out)
             .service(put_recording_opt_out)
             .service(realtime_socket);

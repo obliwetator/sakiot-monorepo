@@ -18,6 +18,7 @@ async function mockManyClips(page: import("@playwright/test").Page) {
 		length: 3,
 		name: `Clip number ${index}`,
 		original_file_name: `clip-${index}.wav`,
+		speaker_ids: [],
 		start_time: 0,
 		user_id: "user-123",
 	}));

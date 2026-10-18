@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT recording_session_id, state, purge_at > now() AS \"undoable!\",\n                  hid_session, hidden_clip_ids\n             FROM recording_erasures\n            WHERE guild_id = $1 AND id = $2 AND speaker_id = $3\n              FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recording_session_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "recording_session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "undoable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "hid_session",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "hid_session"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "hidden_clip_ids",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "recording_erasures",
+            "name": "hidden_clip_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "00355fb848ff0e5d397419e9592025dd5e4f8dca034eb39eea48c20413dd62b3"
+}

@@ -7,6 +7,7 @@ function clip(overrides: Partial<ClipData> & { clip_id: string }): ClipData {
 		channel_id: "channel-1",
 		guild_id: "guild-1",
 		silence_free: false,
+		speaker_ids: [],
 		start_time: 0,
 		user_id: "user-1",
 		...overrides,
