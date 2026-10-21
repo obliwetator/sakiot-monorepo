@@ -34,6 +34,9 @@ pub struct File {
     /// spoke, where and when are shown: no audio, waveform, live stream,
     /// mix track or stamps. Listed only to holders of `delete_recordings`,
     /// who may remove it, and only where they could otherwise listen.
+    /// Sent only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[schema(required = false)]
     pub redacted: bool,
     /// Only on the viewer's own sessions that everyone else no longer sees.
     #[serde(skip_serializing_if = "Option::is_none")]

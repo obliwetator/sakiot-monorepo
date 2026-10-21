@@ -1531,8 +1531,9 @@ export interface components {
 			 *     spoke, where and when are shown: no audio, waveform, live stream,
 			 *     mix track or stamps. Listed only to holders of `delete_recordings`,
 			 *     who may remove it, and only where they could otherwise listen.
+			 *     Sent only when true.
 			 */
-			redacted: boolean;
+			redacted?: boolean;
 			removal?: null | components["schemas"]["Removal"];
 			state?: string | null;
 			user_id?: string | null;
@@ -1636,8 +1637,9 @@ export interface components {
 						 *     spoke, where and when are shown: no audio, waveform, live stream,
 						 *     mix track or stamps. Listed only to holders of `delete_recordings`,
 						 *     who may remove it, and only where they could otherwise listen.
+						 *     Sent only when true.
 						 */
-						redacted: boolean;
+						redacted?: boolean;
 						removal?: null | components["schemas"]["Removal"];
 						state?: string | null;
 						user_id?: string | null;

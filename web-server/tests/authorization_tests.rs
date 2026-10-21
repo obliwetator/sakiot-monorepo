@@ -2077,9 +2077,9 @@ async fn a_private_voice_is_heard_by_its_speaker_alone(
         test::call_and_read_body_json(&app, get(&privacy_uri, &speaker)).await;
     assert_eq!(initial, json!({ "private": false }));
     let (entry, plays, clips, stamps) = finds(listener.clone()).await;
-    assert_eq!(
-        entry.map(|entry| entry["redacted"].clone()),
-        Some(json!(false))
+    assert!(
+        entry.is_some_and(|entry| entry.get("redacted").is_none()),
+        "listed in full"
     );
     assert_eq!(
         (plays, &clips, stamps),
@@ -2142,9 +2142,9 @@ async fn a_private_voice_is_heard_by_its_speaker_alone(
 
     // The speaker hears all of it, as before.
     let (entry, plays, clips, stamps) = finds(speaker.clone()).await;
-    assert_eq!(
-        entry.map(|entry| entry["redacted"].clone()),
-        Some(json!(false))
+    assert!(
+        entry.is_some_and(|entry| entry.get("redacted").is_none()),
+        "listed in full"
     );
     assert_eq!(
         (plays, &clips, stamps),
