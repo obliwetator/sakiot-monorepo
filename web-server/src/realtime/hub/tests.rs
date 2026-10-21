@@ -19,6 +19,8 @@ fn subscription(tree: &[i64], media: &[i64], manager: bool) -> Subscription {
             tree_channels: tree.iter().copied().collect(),
             media_channels: media.iter().copied().collect(),
             presence_channels: tree.iter().copied().collect(),
+            private: BTreeSet::new(),
+            redacts: manager,
             guild: if manager {
                 Capabilities::MANAGEMENT
             } else {
@@ -254,6 +256,112 @@ fn a_viewers_own_voice_reaches_them_from_any_channel() {
 }
 
 #[test]
+fn a_private_voice_reaches_its_speaker_and_redacting_managers_alone() {
+    let journeys = HashMap::from([
+        (1, journey(PUBLIC, &[PUBLIC])),
+        (
+            2,
+            Journey {
+                removed: true,
+                ..journey(PUBLIC, &[PUBLIC])
+            },
+        ),
+        (3, journey(PUBLIC, &[PUBLIC, PRIVATE])),
+    ]);
+    let session = |session_id| Event::Session {
+        guild_id: GUILD,
+        session_id,
+    };
+    let changes = [
+        session(1),
+        session(2),
+        session(3),
+        Event::Clip {
+            guild_id: GUILD,
+            clip_id: "theirs".into(),
+            channels: vec![PUBLIC],
+            speakers: vec![SPEAKER],
+        },
+        Event::Clip {
+            guild_id: GUILD,
+            clip_id: "with the viewer".into(),
+            channels: vec![PUBLIC],
+            speakers: vec![VIEWER, SPEAKER],
+        },
+        Event::Clip {
+            guild_id: GUILD,
+            clip_id: "unknown".into(),
+            channels: vec![PUBLIC],
+            speakers: vec![],
+        },
+        Event::Stamp {
+            guild_id: GUILD,
+            stamp_id: 4,
+            channel_id: Some(PUBLIC),
+            session_id: Some(1),
+            target_id: Some(SPEAKER),
+        },
+        Event::Erasure {
+            guild_id: GUILD,
+            speaker_id: SPEAKER,
+            session_id: Some(1),
+            clip_id: None,
+            hid_session: true,
+        },
+    ];
+    let keeping = |mut subscription: Subscription| {
+        if let Some(access) = subscription.access.as_mut() {
+            access.private = BTreeSet::from([SPEAKER]);
+        }
+        subscription
+    };
+
+    // A member they keep it from: nothing, but the clip of unknown voices.
+    let member = keeping(subscription(&[PUBLIC], &[PUBLIC], false));
+    assert_eq!(
+        route(&changes, &member, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Clips, ids(&["unknown"]))])
+    );
+    // A manager sees the visible session they could hear, redacted; one
+    // removed or recorded where they cannot listen, they never saw.
+    let manager = keeping(subscription(&[PUBLIC], &[PUBLIC], true));
+    assert_eq!(
+        route(&changes, &manager, VIEWER, Some(&journeys)),
+        Routed::from([
+            (Resource::Recordings, None),
+            (Resource::Clips, ids(&["unknown"])),
+        ])
+    );
+    assert_eq!(
+        route(&changes[..1], &manager, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Recordings, ids(&["1"]))])
+    );
+    // Previewing a role, the manager redacts nothing.
+    let mut preview = manager.clone();
+    preview.as_role = Some(1);
+    if let Some(access) = preview.access.as_mut() {
+        access.redacts = false;
+    }
+    assert_eq!(
+        route(&changes, &preview, VIEWER, Some(&journeys)),
+        Routed::from([(Resource::Clips, ids(&["unknown"]))])
+    );
+    // The speaker still hears all of it, the viewer's voice included.
+    let speaker = subscription(&[PUBLIC], &[PUBLIC], false);
+    assert_eq!(
+        route(&changes, &speaker, SPEAKER, Some(&journeys)),
+        Routed::from([
+            (Resource::Recordings, ids(&["1", "2", "3"])),
+            (
+                Resource::Clips,
+                ids(&["theirs", "unknown", "with the viewer"])
+            ),
+            (Resource::Stamps, None),
+        ])
+    );
+}
+
+#[test]
 fn removed_sessions_and_erasures_reach_their_speaker_alone() {
     let removed = |speaker| Journey {
         speaker,
@@ -338,12 +446,19 @@ fn private_and_admin_events_reach_only_their_audience() {
             guild_id: GUILD,
             resource: Resource::Cooldowns,
         },
+        Event::Privacy {
+            guild_id: GUILD,
+            user_id: 9,
+        },
         Event::Recording { guild_id: 2 },
     ];
     let member = subscription(&[PUBLIC], &[PUBLIC], false);
     assert_eq!(
         route(&changes, &member, 9, Some(&HashMap::new())),
-        Routed::from([(Resource::RecordingOptOut, None)])
+        Routed::from([
+            (Resource::RecordingOptOut, None),
+            (Resource::RecordingPrivacy, None)
+        ])
     );
     assert!(route(&changes, &member, 10, Some(&HashMap::new())).is_empty());
     let manager = subscription(&[PUBLIC], &[PUBLIC], true);

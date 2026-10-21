@@ -194,9 +194,11 @@ pub async fn get_clips(
         WHERE c.guild_id = $1
           AND (c.deleted_at IS NULL OR e.id IS NOT NULL)
           -- A clip of only the viewer's own voice is theirs; anyone else's
-          -- takes every channel its audio came from.
+          -- takes every channel its audio came from, and none of its other
+          -- speakers keeping their recordings private.
           AND ((cardinality(c.speaker_ids) > 0 AND c.speaker_ids <@ ARRAY[$3::bigint])
-               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2))
+               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2
+                   AND NOT c.speaker_ids && $4))
         -- Heap order is not stable across imports or VACUUM FULL, so the list
         -- must be ordered explicitly. Sort the way the names read rather than
         -- the way the bytes compare, because this database collates
@@ -206,6 +208,7 @@ pub async fn get_clips(
         guild_id,
         &permitted,
         listing.own,
+        &listing.private,
     )
     .fetch_all(pool.get_ref())
     .await?;
@@ -379,7 +382,8 @@ pub async fn play_clip(
 /// a clip of only their own voice is theirs; anyone else's takes
 /// `LISTEN_OTHERS` in every channel its audio came from
 /// (`clips.channel_ids`), not in every channel of the session it was cut
-/// from. Anyone else's clip with no channels is no one's to hear.
+/// from, and none of its other speakers keeping their recordings private.
+/// Anyone else's clip with no channels is no one's to hear.
 pub(crate) fn require_clip(
     guild: &GuildAccess,
     speaker_ids: &[i64],

@@ -106,7 +106,8 @@ same paths from the same crate rather than reading them from the database.
   reconstructs who the bot had in the channel across the timeline, so the mix
   and the UI agree on which participants exist when. Each viewer's mix holds
   only the tracks they may hear (their own voice, and anyone else's recorded
-  in a channel they may listen in); the rest are left out, and such a mix is
+  in a channel they may listen in, unless that speaker keeps their
+  recordings private); the rest are left out, and such a mix is
   cached apart, keyed by the recordings it leaves out. Removed sessions never
   contribute.
 - **Live** — a recording still in progress, muxed to HLS while it grows
@@ -306,12 +307,29 @@ source's speakers for a composed clip; empty when not known). Visibility covers 
 channels the agent records: voice (type 2) and stage (type 13). Stage channels
 need a Community server, so they are verified by fixture tests only.
 
+Each member also decides who may hear their voice, per server (listening
+consent, `recording_private`): shared by default, meaning whoever the
+channels admit, or private, meaning only themselves. No capability outweighs
+it, the owner's included. It is checked when read, never copied onto items,
+so it covers earlier sessions, mix tracks, clips holding their voice (with
+anyone else's), stamps on it, live recordings and `/jam` at once. The facts
+statement loads the guild's private members, and `Access::allows_item` asks
+it. A clip whose speakers are unknown cannot ask, and follows its channels
+alone. A holder of `delete_recordings` sees a private session they could
+otherwise hear as a redacted tree entry (`File.redacted`: who, where and
+when; no audio, waveform, live stream, mix track or stamps) so they can
+still remove it (`Access::redacts_item`). Members change it with
+`/recording private` and `/recording shared`, or in the account menu
+(`/api/users/current/guilds/{guild_id}/recording-privacy`); former members
+can too.
+
 Managers with `preview_roles` (by default Administrator or MANAGE_GUILD) can
 preview a guild as one of its roles (`as_role` on the session tree, live
 stems, clips and stamps, and the role view under `/api/admin`). A preview
 never shows more than the manager's own view: `RolePreview` keeps only the
 channels the manager can view and join, and a session touching any other
-channel is dropped rather than shown as hidden. Only Administrator bypasses channel overwrites in
+channel is dropped rather than shown as hidden, and so is a session whose
+speaker keeps it private: a preview never redacts. Only Administrator bypasses channel overwrites in
 Discord, so this matters for MANAGE_GUILD-only managers; owners and
 Administrators see unclipped previews.
 
@@ -352,7 +370,11 @@ voice presence).
   payload carries the clip's channels for that, and a change of channels
   (an overwritten composition) is sent with the old ones too. A viewer
   who may have seen a session before a change hid it gets an
-  identifier-free `changed` instead. Opt-outs reach only their owner;
+  identifier-free `changed` instead. Opt-outs and listening consent reach
+  only their owner; a consent change is also a permission event, since it
+  changes what everyone else hears, and the speaker's sessions, clips and
+  stamps then reach only them (and a session id the managers who redact
+  it);
   settings reach holders of `manage_settings`, the roster and roles holders
   of `preview_roles` or `manage_settings`, and role previews follow the
   role-preview rule above. Renames refresh where the name shows: the guild
@@ -467,7 +489,8 @@ under the guild's advisory lock:
 
 The recorder re-checks both once per second, closes writers as soon as either
 applies, and suspends recording when it cannot read them. Opting out keeps
-earlier recordings.
+earlier recordings. Who may hear them is a separate choice, listening
+consent (see "Authentication and authorization").
 
 ## Media lifecycle
 

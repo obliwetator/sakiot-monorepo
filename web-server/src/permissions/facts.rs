@@ -74,7 +74,8 @@ pub(super) async fn load<'e>(
 ///   overwrites for exactly those roles and users;
 /// - each user's listing and roles, whether they have recordings of their
 ///   own there (for a former member), and their dev seeding
-///   (`user_guilds`).
+///   (`user_guilds`);
+/// - everyone who keeps their recordings private there, loaded or not.
 ///
 /// One `GuildFacts` per distinct guild, in no particular order; a guild
 /// nothing is known about still gets one.
@@ -165,7 +166,9 @@ pub(super) async fn load_many<'e>(
                       FROM channels c
                      WHERE c.guild_id = g.guild_id
                        AND c.type IN (2, 13)
-                   ) AS "channels!: Json<Vec<ChannelRow>>"
+                   ) AS "channels!: Json<Vec<ChannelRow>>",
+                   ARRAY(SELECT user_id FROM recording_private WHERE guild_id = g.guild_id)
+                       AS "private!"
                  FROM requested g"#,
             guilds,
             users,
@@ -207,6 +210,7 @@ pub(super) async fn load_many<'e>(
                         (member.user_id, facts)
                     })
                     .collect();
+                facts.private = row.private.into_iter().collect();
                 facts.seeds = row
                     .seeds
                     .0

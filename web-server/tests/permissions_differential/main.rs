@@ -195,7 +195,8 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
          DELETE FROM guild_projection_state;
          DELETE FROM guilds_present;
          DELETE FROM user_guilds;
-         DELETE FROM recording_sessions;",
+         DELETE FROM recording_sessions;
+         DELETE FROM recording_private;",
     )
     .execute(&mut *tx)
     .await?;
@@ -311,6 +312,13 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
                 .bind(user_id)
                 .execute(&mut *tx)
                 .await?;
+            }
+            if member.private {
+                sqlx::query("INSERT INTO recording_private (guild_id, user_id) VALUES ($1, $2)")
+                    .bind(guild_id)
+                    .bind(user_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
     }

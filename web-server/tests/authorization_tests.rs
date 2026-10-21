@@ -48,6 +48,7 @@ use web_server::recording_deletion::{
     request_session_erasure, undo_erasure,
 };
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
+use web_server::recording_privacy::{get_recording_privacy, put_recording_privacy};
 use web_server::stamps::get_stamps;
 
 const USER_ID: i64 = 10;
@@ -1621,6 +1622,15 @@ async fn a_channel_mix_leaves_out_only_the_tracks_the_viewer_may_not_hear(
     );
     // Their own session's mix: their voice, without the one they may not hear.
     assert_eq!(participants(own, USER_ID).await?, [USER_ID.to_string()]);
+    // A speaker who keeps their recordings private leaves the mix.
+    sqlx::query("INSERT INTO recording_private (guild_id, user_id) VALUES ($1, 31)")
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
+    assert_eq!(
+        participants(anchor, USER_ID).await?,
+        [OTHER_USER_ID.to_string()]
+    );
     Ok(())
 }
 
@@ -1877,6 +1887,322 @@ async fn during_an_erasure_only_the_speaker_sees_the_session(
     )
     .await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+    Ok(())
+}
+
+/// A member who keeps their recordings private is heard by nobody else, the
+/// owner included: their sessions, the clips and stamps of their voice leave
+/// every other listing, and their sessions refuse to play. The owner, who may
+/// delete recordings, sees the session redacted and can remove it; a role
+/// preview shows nothing of it. Clips of unknown voices cannot ask, and stay.
+/// The setting is the member's own, a former member's too.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_private_voice_is_heard_by_its_speaker_alone(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const LISTENER_ID: i64 = 50;
+    seed_authorization_data(&pool).await?;
+    sqlx::query(
+        "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)
+         VALUES ($1, $2, 'allowed guild', NULL, false, 0, ARRAY[]::text[])",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(LISTENER_ID)
+    .execute(&pool)
+    .await?;
+    support::complete_rosters_from_user_guilds(&pool).await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(1), to_timestamp(2), 'test', 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('private-voice', $1, $2, $3, 1970, 1, 1000, 2000, $4, 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time, recording_session_id)
+         VALUES ('of-the-speaker', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $4,
+                 'private-voice/of-the-speaker.ogg', 0, $5),
+                ('of-unknown-voices', $1, $2, ARRAY[$2::bigint], '{}', $4,
+                 'unknown.ogg', 0, NULL)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(LISTENER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO stamps
+            (guild_id, channel_id, target_user_id, stamper_user_id, stamp_ts,
+             recording_session_id)
+         VALUES ($1, $2, $3, $4, 1500, $5)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(LISTENER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    // Their voice, live right now.
+    sqlx::query(
+        "INSERT INTO bot_instances (instance_id, role, state) VALUES ('bot', 'active', 'active')",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO recorder_heartbeats (recorder_id, owner_instance_id, guild_id)
+         VALUES ('recorder', 'bot', $1)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month, start_ts,
+             recording_owner_instance_id, recorder_id)
+         VALUES ('live-voice', $1, $2, $3, 2026, 5, 1000, 'bot', 'recorder')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .execute(&pool)
+    .await?;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .app_data(web::Data::new(DeletionPolicy::default()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_current_month_permission)
+                    .service(get_session_listing_entry)
+                    .service(get_session_manifest)
+                    .service(get_clips)
+                    .service(get_stamps)
+                    .service(get_live_stems)
+                    .service(delete_recording)
+                    .service(get_recording_privacy)
+                    .service(put_recording_privacy),
+            ),
+    )
+    .await;
+    let speaker = access_cookie_value()?;
+    let owner = access_cookie_for(OTHER_USER_ID)?;
+    let listener = access_cookie_for(LISTENER_ID)?;
+    let get = |uri: &str, cookie: &str| {
+        test::TestRequest::get()
+            .uri(uri)
+            .insert_header(("Cookie", cookie.to_owned()))
+            .to_request()
+    };
+    let privacy_uri = format!("/api/users/current/guilds/{ALLOWED_GUILD_ID}/recording-privacy");
+    let set_private = |private: bool| {
+        test::TestRequest::put()
+            .uri(&privacy_uri)
+            .insert_header(("Cookie", speaker.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({ "private": private }))
+            .to_request()
+    };
+    let tree_uri = format!("/api/current/{ALLOWED_GUILD_ID}");
+    let entry_uri = format!("/api/current/{ALLOWED_GUILD_ID}/sessions/{session_id}");
+    let manifest_uri = format!("/api/audio/sessions/{session_id}/manifest");
+    let clips_uri = format!("/api/audio/clips/{ALLOWED_GUILD_ID}");
+    let stamps_uri = format!("/api/stamps/{ALLOWED_GUILD_ID}");
+    let live_uri = format!("/api/current/{ALLOWED_GUILD_ID}/live-stems");
+    // What a viewer finds: the session's tree entry, whether its manifest
+    // plays, the clips listed, and how many stamps and live recordings.
+    let finds = |cookie: String| {
+        let app = &app;
+        let (tree_uri, manifest_uri, clips_uri, stamps_uri, live_uri) =
+            (&tree_uri, &manifest_uri, &clips_uri, &stamps_uri, &live_uri);
+        async move {
+            let tree: serde_json::Value =
+                test::call_and_read_body_json(app, get(tree_uri, &cookie)).await;
+            let plays = test::call_service(app, get(manifest_uri, &cookie))
+                .await
+                .status();
+            let clips: serde_json::Value =
+                test::call_and_read_body_json(app, get(clips_uri, &cookie)).await;
+            let mut clips: Vec<String> = clips
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|clip| clip["clip_id"].as_str().map(str::to_owned))
+                .collect();
+            clips.sort();
+            let stamps: serde_json::Value =
+                test::call_and_read_body_json(app, get(stamps_uri, &cookie)).await;
+            let live: Vec<String> =
+                test::call_and_read_body_json(app, get(live_uri, &cookie)).await;
+            (
+                tree_entry(&tree, session_id),
+                plays,
+                clips,
+                (stamps.as_array().map_or(0, Vec::len), live.len()),
+            )
+        }
+    };
+    let all_clips = vec![
+        "of-the-speaker".to_owned(),
+        "of-unknown-voices".to_owned(),
+        "own-clip".to_owned(),
+    ];
+
+    // Shared by default: everyone who may listen there hears it.
+    let initial: serde_json::Value =
+        test::call_and_read_body_json(&app, get(&privacy_uri, &speaker)).await;
+    assert_eq!(initial, json!({ "private": false }));
+    let (entry, plays, clips, stamps) = finds(listener.clone()).await;
+    assert_eq!(
+        entry.map(|entry| entry["redacted"].clone()),
+        Some(json!(false))
+    );
+    assert_eq!(
+        (plays, &clips, stamps),
+        (StatusCode::OK, &all_clips, (1, 1))
+    );
+
+    // Private: a write, so it takes the CSRF token like every other one.
+    let forged = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&privacy_uri)
+            .insert_header(("Cookie", speaker.clone()))
+            .set_json(json!({ "private": true }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(forged.status(), StatusCode::FORBIDDEN);
+    for _ in 0..2 {
+        let stored: serde_json::Value =
+            test::call_and_read_body_json(&app, set_private(true)).await;
+        assert_eq!(stored, json!({ "private": true }));
+    }
+    let stored: serde_json::Value =
+        test::call_and_read_body_json(&app, get(&privacy_uri, &speaker)).await;
+    assert_eq!(stored, json!({ "private": true }));
+
+    // Another member finds nothing of their voice; clips of unknown voices
+    // and of others' stay.
+    let others_clips = vec!["of-unknown-voices".to_owned(), "own-clip".to_owned()];
+    let (entry, plays, clips, stamps) = finds(listener.clone()).await;
+    assert_eq!(entry, None);
+    assert_eq!(
+        (plays, &clips, stamps),
+        (StatusCode::FORBIDDEN, &others_clips, (0, 0))
+    );
+    let entry: serde_json::Value =
+        test::call_and_read_body_json(&app, get(&entry_uri, &listener)).await;
+    assert_eq!(entry, serde_json::Value::Null);
+
+    // The owner hears it no more than anyone, but may delete recordings, so
+    // sees who spoke, where and when.
+    let (entry, plays, clips, stamps) = finds(owner.clone()).await;
+    let entry = entry.expect("redacted for the owner");
+    assert_eq!(entry["redacted"], true);
+    assert_eq!(entry["user_id"], USER_ID.to_string());
+    assert_eq!(
+        (plays, &clips, stamps),
+        (StatusCode::FORBIDDEN, &others_clips, (0, 0))
+    );
+    let single: serde_json::Value =
+        test::call_and_read_body_json(&app, get(&entry_uri, &owner)).await;
+    assert_eq!(tree_entry(&json!([single]), session_id), Some(entry));
+    // A preview shows what the role could hear: none of it.
+    let preview: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        get(&format!("{tree_uri}?as_role={ALLOWED_GUILD_ID}"), &owner),
+    )
+    .await;
+    assert_eq!(tree_entry(&preview, session_id), None);
+
+    // The speaker hears all of it, as before.
+    let (entry, plays, clips, stamps) = finds(speaker.clone()).await;
+    assert_eq!(
+        entry.map(|entry| entry["redacted"].clone()),
+        Some(json!(false))
+    );
+    assert_eq!(
+        (plays, &clips, stamps),
+        (StatusCode::OK, &all_clips, (1, 1))
+    );
+
+    // Shared again, everyone who may listen hears it again.
+    let stored: serde_json::Value = test::call_and_read_body_json(&app, set_private(false)).await;
+    assert_eq!(stored, json!({ "private": false }));
+    let (entry, plays, clips, stamps) = finds(listener.clone()).await;
+    assert!(entry.is_some());
+    assert_eq!(
+        (plays, &clips, stamps),
+        (StatusCode::OK, &all_clips, (1, 1))
+    );
+
+    // The owner removes the redacted session, which is all it offers.
+    test::call_and_read_body_json::<_, _, serde_json::Value>(&app, set_private(true)).await;
+    let response = test::call_service(
+        &app,
+        test::TestRequest::delete()
+            .uri(&format!(
+                "/api/admin/guilds/{ALLOWED_GUILD_ID}/recordings/{session_id}"
+            ))
+            .insert_header(("Cookie", owner.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let (entry, ..) = finds(owner.clone()).await;
+    assert_eq!(entry, None);
+
+    // A former member keeps their setting in their hands; an outsider has
+    // none to read or change.
+    support::leave_guild(&pool, ALLOWED_GUILD_ID, USER_ID).await?;
+    let stored: serde_json::Value = test::call_and_read_body_json(&app, set_private(false)).await;
+    assert_eq!(stored, json!({ "private": false }));
+    let foreign_uri = format!("/api/users/current/guilds/{FORBIDDEN_GUILD_ID}/recording-privacy");
+    let response = test::call_service(&app, get(&foreign_uri, &speaker)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = test::call_service(
+        &app,
+        test::TestRequest::put()
+            .uri(&foreign_uri)
+            .insert_header(("Cookie", speaker.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({ "private": true }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM recording_private WHERE guild_id = $1")
+            .bind(FORBIDDEN_GUILD_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(rows, 0);
     Ok(())
 }
 

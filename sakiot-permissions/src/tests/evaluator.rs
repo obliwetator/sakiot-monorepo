@@ -348,3 +348,38 @@ fn whoever_has_recordings_here_but_does_not_belong_is_a_former_member() {
     };
     assert_eq!(facts.membership(dev), Ok(Membership::Owner));
 }
+
+#[test]
+fn a_private_voice_is_heard_by_its_speaker_alone_whatever_anyone_holds() {
+    let mut facts = guild(VOICE);
+    facts.private.insert(MEMBER);
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    let owner = facts.access(Viewer::discord(OWNER)).expect("known");
+
+    // Their own voice stays theirs, alone or with others'.
+    assert!(member.allows_item(&[MEMBER], [CHANNEL]));
+    assert!(member.allows_item(&[MEMBER, OWNER], [CHANNEL]));
+    // Nobody else hears it, not even the owner, who holds everything.
+    assert!(!owner.allows_item(&[MEMBER], [CHANNEL]));
+    assert!(!owner.allows_item(&[OWNER, MEMBER], [CHANNEL]));
+    assert!(owner.allows_item(&[OWNER], [CHANNEL]));
+    // Unknown speakers cannot be asked; the channels decide.
+    assert!(owner.allows_item(&[], [CHANNEL]));
+    // A role hears nobody who keeps their voice private.
+    let role = facts.role_access(ROLE).expect("the guild's role");
+    assert!(!role.allows_item(&[MEMBER], [CHANNEL]));
+
+    // The owner, who may delete recordings, sees it redacted; only where
+    // they could otherwise listen, and never in a preview.
+    assert!(owner.redacts_item(&[MEMBER], [CHANNEL]));
+    assert!(!owner.redacts_item(&[MEMBER], []));
+    assert!(!owner.redacts_item(&[OWNER], [CHANNEL]));
+    assert!(!member.redacts_item(&[MEMBER], [CHANNEL]));
+    let preview = RolePreview::new(&owner, &facts.role_access(GUILD).expect("@everyone"));
+    assert!(!preview.access.redacts_item(&[MEMBER], [CHANNEL]));
+    // A member who may not delete recordings sees nothing of it.
+    facts.private = [OWNER].into();
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert!(!member.allows_item(&[OWNER], [CHANNEL]));
+    assert!(!member.redacts_item(&[OWNER], [CHANNEL]));
+}

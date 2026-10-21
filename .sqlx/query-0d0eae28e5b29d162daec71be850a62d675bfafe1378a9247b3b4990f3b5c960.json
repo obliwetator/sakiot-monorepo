@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n             SELECT 1 FROM recording_private WHERE guild_id = $1 AND user_id = $2\n           ) AS \"private!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "private!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0d0eae28e5b29d162daec71be850a62d675bfafe1378a9247b3b4990f3b5c960"
+}

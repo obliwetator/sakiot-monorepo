@@ -194,11 +194,13 @@ fn check_viewer(
             let former = access.membership == Membership::Former;
             prop_assert_eq!(access.allows_item(&[viewer.user_id], []), former);
             prop_assert!(!access.allows_item(&[viewer.user_id, STRANGER_ID], channels));
+            prop_assert!(access.private.is_empty(), "nobody else's to keep from them");
             return Ok(());
         }
     };
     // A member hears their own voice from anywhere.
     prop_assert!(access.allows_item(&[viewer.user_id], []));
+    check_consent(world, guild, user, &access, coverage)?;
     let manager = bits & (ADMINISTRATOR | MANAGE_GUILD) != 0;
     let management = if manager {
         Capabilities::MANAGEMENT
@@ -240,6 +242,66 @@ fn check_viewer(
         check_preview(world, guild, facts, &access, role, manager, coverage)
             .map_err(within(format!("previewing role {role}")))?;
     }
+    Ok(())
+}
+
+/// Listening consent, for a member: nobody hears the voice of someone who
+/// keeps their recordings private but themselves, the owner included; and
+/// whoever holds `DELETE_RECORDINGS` sees what consent alone keeps from them
+/// as a redacted entry.
+fn check_consent(
+    world: &World,
+    guild: Option<usize>,
+    user: usize,
+    access: &Access,
+    coverage: &mut Coverage,
+) -> Result<(), TestCaseError> {
+    let own = World::user_id(user);
+    let listening = channels_with(access, Capabilities::LISTEN_OTHERS);
+    let deletes = access.guild.contains(Capabilities::DELETE_RECORDINGS);
+    prop_assert!(
+        !access.private.contains(&own),
+        "their own voice kept from them"
+    );
+    for other in (0..world.users).filter(|&other| other != user) {
+        let speaker = World::user_id(other);
+        let private = guild.is_some_and(|g| world.guilds[g].members[other].private);
+        let heard = !private && !listening.is_empty();
+        let place = format!("speaker {speaker}, private: {private}");
+        prop_assert_eq!(access.private.contains(&speaker), private, "{}", &place);
+        let everywhere = || listening.iter().copied();
+        prop_assert_eq!(
+            access.allows_item(&[speaker], everywhere()),
+            heard,
+            "{}",
+            &place
+        );
+        prop_assert_eq!(
+            access.allows_item(&[own, speaker], everywhere()),
+            heard,
+            "{} with their own voice",
+            &place
+        );
+        prop_assert_eq!(
+            access.redacts_item(&[speaker], everywhere()),
+            private && deletes && !listening.is_empty(),
+            "{}",
+            &place
+        );
+        if private && !listening.is_empty() {
+            if access.membership == Membership::Owner {
+                coverage.reach(Reached::KeptFromTheOwner);
+            }
+            if deletes {
+                coverage.reach(Reached::Redacted);
+            }
+        }
+    }
+    // Unknown speakers cannot be asked: the channels alone decide.
+    prop_assert_eq!(
+        access.allows_item(&[], listening.iter().copied()),
+        !listening.is_empty()
+    );
     Ok(())
 }
 
@@ -296,6 +358,30 @@ fn check_preview(
     if manages && joinable.len() < listening.len() {
         coverage.reach(Reached::PreviewJoinsLess);
     }
+    // A role hears nobody who keeps their recordings private, and redacts
+    // nothing: a preview shows what the role could hear.
+    let private: BTreeSet<i64> = guild
+        .map(|g| {
+            let members = &world.guilds[g].members;
+            (0..world.users)
+                .filter(|&u| members[u].private)
+                .map(World::user_id)
+                .collect()
+        })
+        .unwrap_or_default();
+    prop_assert_eq!(&preview.access.private, &private);
+    for &speaker in &private {
+        prop_assert!(
+            !preview
+                .access
+                .allows_item(&[speaker], joinable.iter().copied())
+        );
+        prop_assert!(
+            !preview
+                .access
+                .redacts_item(&[speaker], joinable.iter().copied())
+        );
+    }
     Ok(())
 }
 
@@ -321,9 +407,13 @@ enum Reached {
     PreviewJoinsLess,
     /// A manager's preview of a deleted or foreign role.
     PreviewOfMissingRole,
+    /// The owner may listen where someone keeps their recordings private.
+    KeptFromTheOwner,
+    /// A holder of `DELETE_RECORDINGS` sees a private recording redacted.
+    Redacted,
 }
 
-const EVERY_OUTCOME: [Reached; 14] = [
+const EVERY_OUTCOME: [Reached; 16] = [
     Reached::Owner,
     Reached::Member,
     Reached::Former,
@@ -338,6 +428,8 @@ const EVERY_OUTCOME: [Reached; 14] = [
     Reached::ManagerWhoIsNotOwner,
     Reached::PreviewJoinsLess,
     Reached::PreviewOfMissingRole,
+    Reached::KeptFromTheOwner,
+    Reached::Redacted,
 ];
 
 #[derive(Debug, Default)]

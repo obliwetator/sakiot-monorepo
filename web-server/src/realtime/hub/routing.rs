@@ -118,7 +118,8 @@ fn own(subscription: &Subscription, user_id: i64) -> Option<i64> {
 
 /// Whether a clip of `speakers`' voices from `channels` is listed for the
 /// subscription: one of only the viewer's own voice always is; anyone
-/// else's when every one of its channels is a media channel.
+/// else's when every one of its channels is a media channel and none of
+/// its other speakers keeps their recordings from the viewer.
 fn hears_clip(
     access: &SubscriptionAccess,
     own: Option<i64>,
@@ -132,7 +133,10 @@ fn hears_clip(
         || (!channels.is_empty()
             && channels
                 .iter()
-                .all(|channel| access.media_channels.contains(channel)))
+                .all(|channel| access.media_channels.contains(channel))
+            && !speakers
+                .iter()
+                .any(|speaker| access.private.contains(speaker)))
 }
 
 /// Whether a stamp is listed for the subscription, or `None` when its
@@ -184,6 +188,12 @@ pub(super) fn route(
                             add_all(&mut routed, Resource::Stamps);
                         }
                     }
+                    // Its speaker keeps it from the viewer, who never sees
+                    // it unless redacted. Consent changing is a `perm`.
+                    Some(journey)
+                        if access.private.contains(&journey.speaker) && !access.redacts => {}
+                    // Listed, or redacted for the viewer: its entry says
+                    // which.
                     Some(journey) if !journey.removed && journey.tree.is_subset(channels) => {
                         add_id(&mut routed, Resource::Recordings, session_id.to_string());
                     }
@@ -218,6 +228,13 @@ pub(super) fn route(
             }
             Event::Stamp {
                 guild_id,
+                target_id: Some(target_id),
+                ..
+            } if *guild_id == subscription.guild_id && access.private.contains(target_id) => {
+                // On a voice kept from the viewer: never listed.
+            }
+            Event::Stamp {
+                guild_id,
                 stamp_id,
                 channel_id,
                 session_id,
@@ -238,6 +255,12 @@ pub(super) fn route(
                 user_id: owner,
             } if *guild_id == subscription.guild_id && *owner == user_id => {
                 add_all(&mut routed, Resource::RecordingOptOut);
+            }
+            Event::Privacy {
+                guild_id,
+                user_id: owner,
+            } if *guild_id == subscription.guild_id && *owner == user_id => {
+                add_all(&mut routed, Resource::RecordingPrivacy);
             }
             Event::Erasure {
                 guild_id,
@@ -265,7 +288,10 @@ pub(super) fn route(
                 // again, but not that its stamps went and came with it.
                 if journeys
                     .and_then(|journeys| journeys.get(session_id))
-                    .is_some_and(|journey| journey.media.is_subset(&access.media_channels))
+                    .is_some_and(|journey| {
+                        journey.media.is_subset(&access.media_channels)
+                            && !access.private.contains(&journey.speaker)
+                    })
                 {
                     add_all(&mut routed, Resource::Stamps);
                 }

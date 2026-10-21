@@ -54,6 +54,7 @@ use web_server::recording_deletion::{
     request_session_erasure, spawn_worker as spawn_deletion_worker, undo_erasure,
 };
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
+use web_server::recording_privacy::{get_recording_privacy, put_recording_privacy};
 use web_server::security_headers::SecurityHeaders;
 use web_server::stamps::get_stamps;
 use web_server::user::{get_current_user, get_current_user_guilds};
@@ -309,6 +310,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(undo_erasure)
             .service(get_recording_opt_out)
             .service(put_recording_opt_out)
+            .service(get_recording_privacy)
+            .service(put_recording_privacy)
             .service(realtime_socket);
 
         let (json_config, path_config, query_config) = web_server::errors::extractor_configs();

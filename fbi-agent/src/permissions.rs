@@ -15,6 +15,8 @@ use crate::cast::ToI64;
 
 /// Which clips a user may hear (`Access::allows_item`), for a query: those
 /// of only `own`'s voice, and those whose every channel is in `channels`.
+/// The query asks the speakers' consent itself (`recording_private`): the
+/// gateway cache does not know it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Listening {
     /// The user, while a member: their own voice is always theirs.

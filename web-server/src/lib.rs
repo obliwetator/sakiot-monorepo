@@ -27,6 +27,7 @@ pub mod proto;
 pub mod realtime;
 pub mod recording_deletion;
 pub mod recording_opt_out;
+pub mod recording_privacy;
 pub mod runtime_metrics;
 pub mod security_headers;
 pub mod server_timing;

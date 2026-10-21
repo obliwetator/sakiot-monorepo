@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT c.clip_id,\n        c.user_id,\n        c.name,\n        c.original_file_name,\n        c.saved_file_name,\n        c.length,\n        c.size,\n        c.guild_id,\n        c.channel_id,\n        c.start_time,\n        c.recording_session_id,\n        c.silence_free,\n        c.composition,\n        c.speaker_ids,\n        e.id AS \"erasure_id?\",\n        e.state AS \"erasure_state?\",\n        (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS \"purge_at_ms?\"\n        FROM clips c\n        -- The viewer's own erasure: they alone still see the clip.\n        LEFT JOIN recording_erasures e\n          ON e.clip_id = c.clip_id AND e.state <> 'cancelled' AND e.speaker_id = $3\n        WHERE c.guild_id = $1\n          AND (c.deleted_at IS NULL OR e.id IS NOT NULL)\n          -- A clip of only the viewer's own voice is theirs; anyone else's\n          -- takes every channel its audio came from.\n          AND ((cardinality(c.speaker_ids) > 0 AND c.speaker_ids <@ ARRAY[$3::bigint])\n               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2))\n        -- Heap order is not stable across imports or VACUUM FULL, so the list\n        -- must be ordered explicitly. Sort the way the names read rather than\n        -- the way the bytes compare, because this database collates\n        -- case-sensitively; clip_id keeps equal names deterministic.\n        ORDER BY lower(c.name) NULLS LAST, c.name, c.clip_id\n        ",
+  "query": "\n        SELECT c.clip_id,\n        c.user_id,\n        c.name,\n        c.original_file_name,\n        c.saved_file_name,\n        c.length,\n        c.size,\n        c.guild_id,\n        c.channel_id,\n        c.start_time,\n        c.recording_session_id,\n        c.silence_free,\n        c.composition,\n        c.speaker_ids,\n        e.id AS \"erasure_id?\",\n        e.state AS \"erasure_state?\",\n        (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS \"purge_at_ms?\"\n        FROM clips c\n        -- The viewer's own erasure: they alone still see the clip.\n        LEFT JOIN recording_erasures e\n          ON e.clip_id = c.clip_id AND e.state <> 'cancelled' AND e.speaker_id = $3\n        WHERE c.guild_id = $1\n          AND (c.deleted_at IS NULL OR e.id IS NOT NULL)\n          -- A clip of only the viewer's own voice is theirs; anyone else's\n          -- takes every channel its audio came from, and none of its other\n          -- speakers keeping their recordings private.\n          AND ((cardinality(c.speaker_ids) > 0 AND c.speaker_ids <@ ARRAY[$3::bigint])\n               OR (cardinality(c.channel_ids) > 0 AND c.channel_ids <@ $2\n                   AND NOT c.speaker_ids && $4))\n        -- Heap order is not stable across imports or VACUUM FULL, so the list\n        -- must be ordered explicitly. Sort the way the names read rather than\n        -- the way the bytes compare, because this database collates\n        -- case-sensitively; clip_id keeps equal names deterministic.\n        ORDER BY lower(c.name) NULLS LAST, c.name, c.clip_id\n        ",
   "describe": {
     "columns": [
       {
@@ -190,7 +190,8 @@
       "Left": [
         "Int8",
         "Int8Array",
-        "Int8"
+        "Int8",
+        "Int8Array"
       ]
     },
     "nullable": [
@@ -213,5 +214,5 @@
       null
     ]
   },
-  "hash": "e0d7709c3df0dba158024bdc89d2aa6fe4db8cc37a4c4cef4db1c7445b60da0d"
+  "hash": "8e91310a0a593ff9fd148d628e0f51003cda2055e460033c9bffbd224d41d240"
 }

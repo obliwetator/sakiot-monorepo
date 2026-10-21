@@ -434,25 +434,37 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
             listing.channel_journey.iter().copied().collect()
         };
         // Role previews annotate what the role could do with each session;
-        // normal listings hide whatever the viewer cannot fully hear. A
-        // preview lists only the manager's own channels, so a session
-        // touching any other channel disappears rather than showing up as
-        // `hidden`.
-        let access = match scope {
+        // normal listings hide whatever the viewer cannot fully hear, or
+        // redact it for a manager when only its speaker's consent keeps it
+        // from them. A preview lists only the manager's own channels, so a
+        // session touching any other channel disappears rather than showing
+        // up as `hidden`; so does one whose speaker keeps it private, which
+        // the role may not hear and a preview never redacts.
+        let speakers = [listing.user_id];
+        let (access, redacted) = match scope {
             TreeScope::Preview(preview) => {
-                if !audible
-                    .iter()
-                    .all(|channel| preview.listed.contains(channel))
+                if preview.access.private.contains(&listing.user_id)
+                    || !audible
+                        .iter()
+                        .all(|channel| preview.listed.contains(channel))
                 {
                     continue;
                 }
-                Some(session_access_level(&audible, preview).to_string())
+                (
+                    Some(session_access_level(&audible, preview).to_string()),
+                    false,
+                )
             }
             TreeScope::Own(viewer) => {
-                if !viewer.allows_item(&[listing.user_id], audible.iter().copied()) {
+                if viewer.allows_item(&speakers, audible.iter().copied()) {
+                    (None, false)
+                } else if listing.logical && viewer.redacts_item(&speakers, audible.iter().copied())
+                {
+                    // Only sessions: removing one is all a redacted entry offers.
+                    (None, true)
+                } else {
                     continue;
                 }
-                None
             }
         };
         let Some(started_at) =
@@ -489,6 +501,7 @@ fn assemble_tree(rows: Vec<ListingRow>, scope: &TreeScope) -> Vec<Channels> {
                 ),
                 state: Some(listing.state),
                 access,
+                redacted,
                 removal: listing.removal,
                 start_ts_ms: Some(listing.started_at_ms),
             });
@@ -570,6 +583,7 @@ pub async fn get_live_stems(
                 af.user_id = $3
                 OR (
                     af.channel_id = ANY($2)
+                    AND af.user_id <> ALL($4)
                     AND NOT EXISTS (
                         SELECT 1
                           FROM audio_files sibling
@@ -580,7 +594,8 @@ pub async fn get_live_stems(
             )"#,
             guild_id,
             &permitted_channels,
-            listing.own
+            listing.own,
+            &listing.private
         )
         .fetch_all(pool.get_ref()),
     )
@@ -644,7 +659,9 @@ pub async fn get_current_month_permission(
 /// What a recording tree request may show.
 enum TreeScope {
     /// The sessions the viewer can hear in full: their own, and those
-    /// recorded only in channels they may listen in.
+    /// recorded only in channels they may listen in by speakers who share
+    /// them. Plus, for a holder of `delete_recordings`, the private ones
+    /// they would otherwise hear, redacted.
     Own(sakiot_permissions::Access),
     /// A manager's role preview: the sessions of the manager's own channels,
     /// each annotated with what the role could do with it.

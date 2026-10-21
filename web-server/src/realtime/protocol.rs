@@ -34,6 +34,8 @@ pub enum Resource {
     Stamps,
     /// The viewer's own recording opt-out.
     RecordingOptOut,
+    /// The viewer's own listening consent: who may hear their recordings.
+    RecordingPrivacy,
     /// Guild voice settings (holders of `manage_settings` only).
     VoiceSettings,
     /// Guild recording policy, with the names of its channels (holders of

@@ -153,8 +153,10 @@ pub async fn get_stamps(
                         AND NOT (restricted.channel_id = ANY($2))
                  ))
         WHERE s.guild_id = $1
-          -- A stamp is on its target's voice: the viewer's own are theirs.
-          AND (s.channel_id = ANY($2) OR s.target_user_id = $3)
+          -- A stamp is on its target's voice: the viewer's own are theirs,
+          -- and no one else's who keeps their recordings private.
+          AND ((s.channel_id = ANY($2) AND s.target_user_id <> ALL($4))
+               OR s.target_user_id = $3)
           AND NOT EXISTS (
               SELECT 1 FROM recording_sessions hidden
                WHERE hidden.id = COALESCE(s.recording_session_id, af.recording_session_id)
@@ -165,7 +167,8 @@ pub async fn get_stamps(
         "#,
         guild_id,
         &permitted,
-        listing.own
+        listing.own,
+        &listing.private
     )
     .fetch_all(pool.get_ref())
     .await?;

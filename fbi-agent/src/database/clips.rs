@@ -18,7 +18,8 @@ pub struct ClipChoice {
 
 /// The clip `clip_id` (an id, or else a name) of the guild, if `listening`
 /// may hear it: it holds only their own voice, or every channel its audio
-/// came from is one of theirs.
+/// came from is one of theirs and none of its other speakers keeps their
+/// recordings private.
 pub async fn playable_clip(
     pool: &Pool<Postgres>,
     guild_id: i64,
@@ -34,7 +35,10 @@ pub async fn playable_clip(
             AND ((cardinality(clips.speaker_ids) > 0
                   AND clips.speaker_ids <@ ARRAY[$4::bigint])
                  OR (cardinality(clips.channel_ids) > 0
-                     AND clips.channel_ids <@ $3::bigint[]))
+                     AND clips.channel_ids <@ $3::bigint[]
+                     AND NOT clips.speaker_ids && ARRAY(
+                         SELECT user_id FROM recording_private
+                          WHERE guild_id = $1 AND user_id IS DISTINCT FROM $4)))
           ORDER BY (clips.clip_id = $2) DESC, clips.created_at, clips.clip_id
           LIMIT 1",
         guild_id,
@@ -123,7 +127,10 @@ pub async fn autocomplete_clip_choices(
             AND ((cardinality(clips.speaker_ids) > 0
                   AND clips.speaker_ids <@ ARRAY[$4::bigint])
                  OR (cardinality(clips.channel_ids) > 0
-                     AND clips.channel_ids <@ $3::bigint[]))
+                     AND clips.channel_ids <@ $3::bigint[]
+                     AND NOT clips.speaker_ids && ARRAY(
+                         SELECT user_id FROM recording_private
+                          WHERE guild_id = $1 AND user_id IS DISTINCT FROM $4)))
           ORDER BY clips.name, clips.clip_id
           LIMIT 25",
         guild_id,

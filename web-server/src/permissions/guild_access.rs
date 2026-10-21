@@ -161,7 +161,8 @@ impl GuildAccess {
 
     /// Whether the viewer may hear a recording of `speakers`' voices from
     /// `channels` (`Access::allows_item`): always their own voice alone,
-    /// anyone else's with `LISTEN_OTHERS` in every one of the channels.
+    /// anyone else's with `LISTEN_OTHERS` in every one of the channels,
+    /// unless one of the others keeps their recordings private.
     pub fn allows_item(
         &self,
         speakers: &[i64],
@@ -219,13 +220,14 @@ impl GuildAccess {
         Ok(Listing {
             channels: access.channels_with(Capabilities::LISTEN_OTHERS).collect(),
             own: access.user_id,
+            private: access.private.into_iter().collect(),
         })
     }
 }
 
 /// `Access::allows_item` for a listing's query: an item is listed when it
 /// holds only `own`'s voice, or when every one of its channels is in
-/// `channels`.
+/// `channels` and none of its speakers is in `private`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     /// Where the viewer may listen to anyone.
@@ -233,4 +235,6 @@ pub struct Listing {
     /// The viewer; `None` in a role preview, since a role has no
     /// recordings of its own.
     pub own: Option<i64>,
+    /// The others who keep their recordings from the viewer.
+    pub private: Vec<i64>,
 }

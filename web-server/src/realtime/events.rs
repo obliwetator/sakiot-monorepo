@@ -44,6 +44,12 @@ pub enum Event {
         guild_id: i64,
         user_id: i64,
     },
+    /// A member's listening consent changed. Who may hear them is a `perm`
+    /// of its own; this refreshes the member's own setting.
+    Privacy {
+        guild_id: i64,
+        user_id: i64,
+    },
     /// A speaker asked to erase their session or a clip of their voice, or
     /// the erasure was undone or handed to the purge.
     Erasure {
@@ -187,6 +193,10 @@ pub fn parse(payload: &str) -> Option<Event> {
             guild_id: guild_id?,
             user_id: id(payload.u.as_ref())?,
         },
+        "privacy" => Event::Privacy {
+            guild_id: guild_id?,
+            user_id: id(payload.u.as_ref())?,
+        },
         "erasure" => Event::Erasure {
             guild_id: guild_id?,
             speaker_id: id(payload.u.as_ref())?,
@@ -292,6 +302,13 @@ mod tests {
         assert_eq!(
             parse(r#"{"v":1,"k":"opt_out","g":"1","u":"7"}"#),
             Some(Event::OptOut {
+                guild_id: 1,
+                user_id: 7
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"privacy","g":"1","u":"7"}"#),
+            Some(Event::Privacy {
                 guild_id: 1,
                 user_id: 7
             })

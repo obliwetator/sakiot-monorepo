@@ -951,6 +951,22 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/users/current/guilds/{guild_id}/recording-privacy": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_recording_privacy"];
+		put: operations["put_recording_privacy"];
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/users/current/guilds/{guild_id}/recordings/{recording_session_id}/erasure": {
 		parameters: {
 			query?: never;
@@ -1510,6 +1526,13 @@ export interface components {
 			display_name?: string | null;
 			file: string;
 			recording_session_id?: string | null;
+			/**
+			 * @description The session's speaker keeps their recordings private, so only who
+			 *     spoke, where and when are shown: no audio, waveform, live stream,
+			 *     mix track or stamps. Listed only to holders of `delete_recordings`,
+			 *     who may remove it, and only where they could otherwise listen.
+			 */
+			redacted: boolean;
 			removal?: null | components["schemas"]["Removal"];
 			state?: string | null;
 			user_id?: string | null;
@@ -1608,6 +1631,13 @@ export interface components {
 						display_name?: string | null;
 						file: string;
 						recording_session_id?: string | null;
+						/**
+						 * @description The session's speaker keeps their recordings private, so only who
+						 *     spoke, where and when are shown: no audio, waveform, live stream,
+						 *     mix track or stamps. Listed only to holders of `delete_recordings`,
+						 *     who may remove it, and only where they could otherwise listen.
+						 */
+						redacted: boolean;
 						removal?: null | components["schemas"]["Removal"];
 						state?: string | null;
 						user_id?: string | null;
@@ -1691,6 +1721,13 @@ export interface components {
 			 */
 			opted_out: boolean;
 		};
+		RecordingPrivacy: {
+			/**
+			 * @description True when nobody but the current user may hear the recordings of
+			 *     their voice in this server.
+			 */
+			private: boolean;
+		};
 		RefreshTokenResponse: {
 			status: string;
 		};
@@ -1720,6 +1757,7 @@ export interface components {
 			| "clips"
 			| "stamps"
 			| "recording_opt_out"
+			| "recording_privacy"
 			| "voice_settings"
 			| "recording_policy"
 			| "cooldowns"
@@ -5996,6 +6034,74 @@ export interface operations {
 				};
 			};
 			/** @description Not a member of this guild */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_recording_privacy: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Who may hear the current user's recordings in this guild */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingPrivacy"];
+				};
+			};
+			/** @description Neither a member nor a former member with recordings here */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_recording_privacy: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["RecordingPrivacy"];
+			};
+		};
+		responses: {
+			/** @description The stored setting */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RecordingPrivacy"];
+				};
+			};
+			/** @description Neither a member nor a former member with recordings here */
 			403: {
 				headers: {
 					[name: string]: unknown;

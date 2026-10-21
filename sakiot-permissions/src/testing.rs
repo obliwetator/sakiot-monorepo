@@ -104,6 +104,9 @@ pub struct Member {
     pub seed: Option<bool>,
     /// Has a recording session of their own in the guild.
     pub recorded: bool,
+    /// Keeps their recordings to themselves (`recording_private`), member
+    /// or not.
+    pub private: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -209,6 +212,9 @@ impl World {
             if let Some(owner) = member.seed {
                 facts.seeds.insert(user_id, owner);
             }
+            if member.private {
+                facts.private.insert(user_id);
+            }
         }
         facts
     }
@@ -289,12 +295,14 @@ fn member(roles: usize) -> impl Strategy<Value = Member> {
             2 => Just(Some(true)),
         ],
         prop::bool::weighted(0.5),
+        prop::bool::weighted(0.3),
     )
-        .prop_map(|(listed, roles, seed, recorded)| Member {
+        .prop_map(|(listed, roles, seed, recorded, private)| Member {
             listed,
             roles,
             seed,
             recorded,
+            private,
         })
 }
 

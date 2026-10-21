@@ -257,6 +257,35 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn listening_consent_reauthorizes_the_guild_and_tells_the_member(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let private = "INSERT INTO recording_private (guild_id, user_id) VALUES ($1, $2)
+                   ON CONFLICT DO NOTHING";
+    for statement in [
+        private,
+        // Already private: nothing changes, nothing is sent.
+        private,
+        "DELETE FROM recording_private WHERE guild_id = $1 AND user_id = $2",
+    ] {
+        sqlx::query(statement)
+            .bind(GUILD)
+            .bind(USER)
+            .execute(&pool)
+            .await?;
+    }
+    let changed = [
+        json!({ "v": 1, "k": "perm", "g": GUILD.to_string() }),
+        json!({ "v": 1, "k": "privacy", "g": GUILD.to_string(), "u": USER.to_string() }),
+    ];
+    assert_eq!(
+        notifications.drain().await?,
+        [changed.clone(), changed].concat()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn a_clip_whose_channels_or_speakers_change_notifies_with_the_old_and_the_new(
     pool: PgPool,
 ) -> TestResult {

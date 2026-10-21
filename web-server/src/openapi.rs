@@ -97,6 +97,8 @@ use utoipa::{
         crate::user::get_current_user_guilds,
         crate::recording_opt_out::get_recording_opt_out,
         crate::recording_opt_out::put_recording_opt_out,
+        crate::recording_privacy::get_recording_privacy,
+        crate::recording_privacy::put_recording_privacy,
         crate::realtime::socket::realtime_socket,
     ),
     components(schemas(
@@ -158,6 +160,7 @@ use utoipa::{
         crate::recording_deletion::RecordingDeletionStatus,
         crate::recording_deletion::ErasureStatus,
         crate::recording_opt_out::RecordingOptOut,
+        crate::recording_privacy::RecordingPrivacy,
         crate::realtime::protocol::ClientMessage,
         crate::realtime::protocol::Resource,
         crate::realtime::protocol::ResyncReason,

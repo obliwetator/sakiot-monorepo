@@ -1,7 +1,7 @@
 //! What the evaluator knows about a guild: plain data, however it was
 //! loaded.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::discord::{Overwrite, Permissions};
 
@@ -56,6 +56,10 @@ pub struct GuildFacts {
     pub members: HashMap<i64, MemberFacts>,
     /// Dev seeding: the owner flag of each loaded user's seeded entry.
     pub seeds: HashMap<i64, bool>,
+    /// Everyone who keeps their recordings to themselves here (listening
+    /// consent `private`), loaded or not: nobody else may hear their voice,
+    /// the owner included.
+    pub private: BTreeSet<i64>,
 }
 
 impl GuildFacts {
@@ -71,6 +75,7 @@ impl GuildFacts {
             channels: BTreeMap::new(),
             members: HashMap::new(),
             seeds: HashMap::new(),
+            private: BTreeSet::new(),
         }
     }
 }

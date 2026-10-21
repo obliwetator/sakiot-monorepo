@@ -50,16 +50,26 @@ pub struct Access {
     /// Content capabilities per voice and stage channel. Empty for a former
     /// member or an outsider.
     pub channels: BTreeMap<i64, Capabilities>,
+    /// The others whose voices the viewer may not hear anywhere: everyone
+    /// else who keeps their recordings to themselves. Empty for a former
+    /// member or an outsider, who hear nobody else's anyway.
+    pub private: BTreeSet<i64>,
 }
 
 impl Access {
-    fn new(membership: Membership, user_id: Option<i64>, discord: &DiscordPermissions) -> Self {
+    fn new(
+        membership: Membership,
+        user_id: Option<i64>,
+        discord: &DiscordPermissions,
+        private: &BTreeSet<i64>,
+    ) -> Self {
         if matches!(membership, Membership::Former | Membership::Outsider) {
             return Self {
                 membership,
                 user_id,
                 guild: Capabilities::empty(),
                 channels: BTreeMap::new(),
+                private: BTreeSet::new(),
             };
         }
         Self {
@@ -72,6 +82,11 @@ impl Access {
                 .map(|(&channel, &permissions)| {
                     (channel, Capabilities::from_channel_permissions(permissions))
                 })
+                .collect(),
+            private: private
+                .iter()
+                .copied()
+                .filter(|&speaker| Some(speaker) != user_id)
                 .collect(),
         }
     }
@@ -97,20 +112,32 @@ impl Access {
     /// 1. One of only the viewer's own voice is theirs, wherever it was
     ///    recorded: no channel needs to be open to them.
     /// 2. Anyone else's voice takes `LISTEN_OTHERS` in every one of
-    ///    `channels`; with no channels, no one may hear it.
+    ///    `channels` (with no channels, no one may hear it), and none of the
+    ///    other speakers may keep their recordings private. No capability
+    ///    outweighs that consent, the owner's included.
     ///
-    /// `speakers` empty means not known, which is never the viewer's own.
+    /// `speakers` empty means not known, which is never the viewer's own,
+    /// and whose consent cannot be asked: the channels alone decide.
     /// A former member hears only their own voice, an outsider nothing.
     pub fn allows_item(&self, speakers: &[i64], channels: impl IntoIterator<Item = i64>) -> bool {
         if self.membership == Membership::Outsider {
             return false;
         }
-        if self.is_own(speakers) {
-            return true;
-        }
-        let mut channels = channels.into_iter().peekable();
-        channels.peek().is_some()
-            && channels.all(|channel| self.allows(channel, Capabilities::LISTEN_OTHERS))
+        self.is_own(speakers) || (self.hears_in(channels) && !self.keeps_private(speakers))
+    }
+
+    /// Whether the viewer sees a recording they may not hear
+    /// (`allows_item`) as a redacted entry, which tells who spoke, where
+    /// and when, and offers to remove it: when they hold
+    /// `DELETE_RECORDINGS`, and only a speaker's consent keeps it from
+    /// them. A role's access never does: a preview shows what the role
+    /// could hear.
+    pub fn redacts_item(&self, speakers: &[i64], channels: impl IntoIterator<Item = i64>) -> bool {
+        self.user_id.is_some()
+            && self.guild.contains(Capabilities::DELETE_RECORDINGS)
+            && !self.is_own(speakers)
+            && self.keeps_private(speakers)
+            && self.hears_in(channels)
     }
 
     /// Whether `speakers` is the viewer alone.
@@ -118,6 +145,21 @@ impl Access {
         self.user_id.is_some_and(|user_id| {
             !speakers.is_empty() && speakers.iter().all(|&speaker| speaker == user_id)
         })
+    }
+
+    /// Whether the viewer may listen to others in every one of `channels`,
+    /// of which there is at least one.
+    fn hears_in(&self, channels: impl IntoIterator<Item = i64>) -> bool {
+        let mut channels = channels.into_iter().peekable();
+        channels.peek().is_some()
+            && channels.all(|channel| self.allows(channel, Capabilities::LISTEN_OTHERS))
+    }
+
+    /// Whether one of `speakers` keeps their voice from the viewer.
+    fn keeps_private(&self, speakers: &[i64]) -> bool {
+        speakers
+            .iter()
+            .any(|speaker| self.private.contains(speaker))
     }
 
     /// Only what both `self` and `limit` hold.
@@ -134,6 +176,7 @@ impl Access {
                     (channel, held & allowed)
                 })
                 .collect(),
+            private: self.private.union(&limit.private).copied().collect(),
         }
     }
 }
@@ -226,6 +269,7 @@ impl GuildFacts {
             membership,
             Some(viewer.user_id),
             &self.permissions_as(membership, viewer.user_id),
+            &self.private,
         ))
     }
 
@@ -294,6 +338,7 @@ impl GuildFacts {
             Membership::Member,
             None,
             &self.role_permissions(role_id),
+            &self.private,
         ))
     }
 

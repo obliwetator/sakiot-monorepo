@@ -30,6 +30,11 @@ pub struct File {
     /// actually play.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access: Option<String>,
+    /// The session's speaker keeps their recordings private, so only who
+    /// spoke, where and when are shown: no audio, waveform, live stream,
+    /// mix track or stamps. Listed only to holders of `delete_recordings`,
+    /// who may remove it, and only where they could otherwise listen.
+    pub redacted: bool,
     /// Only on the viewer's own sessions that everyone else no longer sees.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removal: Option<Removal>,

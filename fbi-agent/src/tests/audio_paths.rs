@@ -130,7 +130,7 @@ async fn clip_lookups_take_every_channel_of_anyone_elses_audio(
         channels: vec![allowed_channel_id, denied_channel_id],
         ..listener
     };
-    assert!(playable("mixed-clip", everywhere).await?);
+    assert!(playable("mixed-clip", everywhere.clone()).await?);
 
     // Every clip holds the speaker's own voice alone: theirs to play from
     // any channel, while a member.
@@ -147,6 +147,47 @@ async fn clip_lookups_take_every_channel_of_anyone_elses_audio(
         2
     );
     assert!(!playable("denied-clip", Listening::default()).await?);
+
+    // Once the speaker keeps their recordings private, a clip holding their
+    // voice is theirs alone, wherever anyone else may listen. Clips of
+    // unknown voices cannot ask, and follow their channels.
+    sqlx::query(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, recording_session_id,
+             user_id, saved_file_name, start_time, name)
+         VALUES
+            ('duet-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint, $3 + 1], NULL, $3,
+             'duet.ogg', 0, 'Duet'),
+            ('unknown-clip', $1, $2, ARRAY[$2::bigint], '{}', NULL, $3,
+             'unknown.ogg', 0, 'Unknown')",
+    )
+    .bind(guild_id)
+    .bind(allowed_channel_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO recording_private (guild_id, user_id) VALUES ($1, $2)")
+        .bind(guild_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    assert!(!playable("allowed-clip", everywhere.clone()).await?);
+    assert!(!playable("duet-clip", everywhere.clone()).await?);
+    assert!(playable("unknown-clip", listener.clone()).await?);
+    assert_eq!(
+        crate::database::clips::autocomplete_clip_choices(&pool, guild_id, "", &everywhere)
+            .await?
+            .into_iter()
+            .map(|choice| choice.clip_id)
+            .collect::<Vec<_>>(),
+        vec!["unknown-clip"]
+    );
+    assert!(playable("denied-clip", speaker.clone()).await?);
+    let speaker_listening = Listening {
+        channels: vec![allowed_channel_id],
+        ..speaker
+    };
+    assert!(playable("duet-clip", speaker_listening).await?);
 
     Ok(())
 }
