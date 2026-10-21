@@ -88,4 +88,22 @@ describe("transform_to_months", () => {
 			},
 		]);
 	});
+
+	it("keeps what the listing says about each file, such as its removal", () => {
+		const removed = {
+			file: "d.ogg",
+			recording_session_id: "7",
+			removal: { playable: false },
+		};
+		const data = [
+			{
+				channel_id: "channel-a",
+				dirs: [{ year: 2025, months: { 3: [removed] } }],
+			},
+		] as Channels[];
+
+		expect(transform_to_months(data)[0]?.months[3]).toEqual([
+			{ ...removed, channel_id: "channel-a" },
+		]);
+	});
 });

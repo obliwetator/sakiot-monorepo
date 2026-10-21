@@ -20,16 +20,8 @@ export function transform_to_months(data: Channels[]) {
 				}
 				if (!yearEntry[month]) yearEntry[month] = [];
 				for (const file of files) {
-					yearEntry[month]?.push({
-						channel_id: channel.channel_id,
-						file: file.file,
-						user_id: file.user_id,
-						display_name: file.display_name,
-						recording_session_id: file.recording_session_id,
-						channel_journey: file.channel_journey,
-						state: file.state,
-						access: file.access,
-					});
+					// All of it: the tree item reads a removal from the entry too.
+					yearEntry[month]?.push({ ...file, channel_id: channel.channel_id });
 				}
 			}
 		}
