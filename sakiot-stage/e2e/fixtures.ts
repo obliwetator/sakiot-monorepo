@@ -71,14 +71,17 @@ export const test = base.extend<{
 
 const RECORDING_OPT_OUT_PATH =
 	/\/api\/users\/current\/guilds\/[^/]+\/recording-opt-out$/;
+const RECORDING_PRIVACY_PATH =
+	/\/api\/users\/current\/guilds\/[^/]+\/recording-privacy$/;
 const VOICE_PRESENCE_PATH = /\/api\/current\/[^/]+\/voice-presence$/;
 
 /**
  * Answers the endpoints every page queries on its own, so catch-all API mocks
  * can try it before their own routes (it returns false for anything else):
  *
- * - the recording opt-out the account menu shows for the selected server, as
- *   a member who is recorded and whose changes are accepted;
+ * - the recording opt-out and listening consent the account menu shows for
+ *   the selected server, as a member who is recorded, shares their
+ *   recordings, and whose changes are accepted;
  * - voice presence for the recordings sidebar, with nobody in voice.
  */
 export async function fulfillSharedRoutes(
@@ -96,7 +99,12 @@ export async function fulfillSharedRoutes(
 		});
 		return true;
 	}
-	if (!RECORDING_OPT_OUT_PATH.test(path)) {
+	const initial = RECORDING_OPT_OUT_PATH.test(path)
+		? { opted_out: false }
+		: RECORDING_PRIVACY_PATH.test(path)
+			? { private: false }
+			: null;
+	if (!initial) {
 		return false;
 	}
 	await route.fulfill({
@@ -105,7 +113,7 @@ export async function fulfillSharedRoutes(
 		body:
 			request.method() === "PUT"
 				? (request.postData() ?? "{}")
-				: JSON.stringify({ opted_out: false }),
+				: JSON.stringify(initial),
 	});
 	return true;
 }

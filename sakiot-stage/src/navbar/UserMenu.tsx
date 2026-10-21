@@ -1,12 +1,14 @@
 import { Check } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { problemFromError } from "../app/apiError";
 import {
 	type User,
 	useGetRecordingOptOutQuery,
+	useGetRecordingPrivacyQuery,
 	useLogoutEverywhereMutation,
 	useLogoutMutation,
 	useSetRecordingOptOutMutation,
+	useSetRecordingPrivacyMutation,
 } from "../app/apiSlice";
 import { setCsrfToken } from "../app/authedFetch";
 import type { UserGuilds } from "../Constants";
@@ -25,6 +27,7 @@ import {
 import { SessionsDialog } from "./SessionsDialog";
 
 const RECORD_ME = "record-me";
+const ONLY_ME = "only-me";
 const DEVICES = "devices";
 const LOG_OUT = "log-out";
 const LOG_OUT_EVERYWHERE = "log-out-everywhere";
@@ -38,6 +41,13 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 	const { data: optOut, isError: optOutUnavailable } =
 		useGetRecordingOptOutQuery(guild?.id ?? "", { skip: !guild });
 	const [setOptOut] = useSetRecordingOptOutMutation();
+	// Who may hear their recordings: anyone the server lets listen, or only
+	// themselves. Former members, who can no longer opt out, still choose.
+	const { data: privacy, isError: privacyUnavailable } =
+		useGetRecordingPrivacyQuery(guild?.id ?? "", { skip: !guild });
+	const [setPrivacy] = useSetRecordingPrivacyMutation();
+	const recorded = optOut?.opted_out === false;
+	const onlyMe = privacy?.private === true;
 	const [menuError, setMenuError] = useState<string | null>(null);
 	const [devicesOpen, setDevicesOpen] = useState(false);
 
@@ -77,6 +87,18 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 		}
 	};
 
+	const setOnlyMe = async (onlyMe: boolean) => {
+		if (!guild) return;
+		setMenuError(null);
+		try {
+			await setPrivacy({ guild_id: guild.id, private: onlyMe }).unwrap();
+		} catch (error) {
+			setMenuError(
+				`Could not change who can listen to your recordings. ${problemFromError(error).message}`,
+			);
+		}
+	};
+
 	return (
 		<>
 			<MenuTrigger>
@@ -96,35 +118,52 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 						className="w-72"
 						onAction={(key) => void handleAction(String(key))}
 					>
-						{guild && !optOutUnavailable ? (
+						{guild && !(optOutUnavailable && privacyUnavailable) ? (
 							<MenuSection
 								aria-label="Recording"
 								// Stay open so the check mark visibly follows the change.
 								shouldCloseOnSelect={false}
 								selectionMode="multiple"
-								selectedKeys={optOut?.opted_out === false ? [RECORD_ME] : []}
-								onSelectionChange={(keys) =>
-									void setRecorded(keys === "all" || keys.has(RECORD_ME))
-								}
+								selectedKeys={[
+									...(recorded ? [RECORD_ME] : []),
+									...(onlyMe ? [ONLY_ME] : []),
+								]}
+								onSelectionChange={(keys) => {
+									const has = (key: string) => keys === "all" || keys.has(key);
+									if (optOut && has(RECORD_ME) !== recorded)
+										void setRecorded(has(RECORD_ME));
+									if (privacy && has(ONLY_ME) !== onlyMe)
+										void setOnlyMe(has(ONLY_ME));
+								}}
 							>
-								{/* Present while its state loads, so the open menu never
+								{/* Present while their state loads, so the open menu never
 								    changes size underneath the pointer. */}
-								<MenuItem
-									id={RECORD_ME}
-									isDisabled={!optOut}
-									textValue={`Record my voice in ${guild.name}`}
-								>
-									{({ isSelected }) => (
-										<span className="flex items-center gap-2">
-											<Check
-												aria-hidden="true"
-												size={16}
-												className={cn("shrink-0", !isSelected && "invisible")}
-											/>
-											Record my voice in {guild.name}
-										</span>
-									)}
-								</MenuItem>
+								{!optOutUnavailable && (
+									<MenuItem
+										id={RECORD_ME}
+										isDisabled={!optOut}
+										textValue={`Record my voice in ${guild.name}`}
+									>
+										{({ isSelected }) => (
+											<CheckLabel isSelected={isSelected}>
+												Record my voice in {guild.name}
+											</CheckLabel>
+										)}
+									</MenuItem>
+								)}
+								{!privacyUnavailable && (
+									<MenuItem
+										id={ONLY_ME}
+										isDisabled={!privacy}
+										textValue={`Only I can listen to my recordings in ${guild.name}`}
+									>
+										{({ isSelected }) => (
+											<CheckLabel isSelected={isSelected}>
+												Only I can listen to my recordings in {guild.name}
+											</CheckLabel>
+										)}
+									</MenuItem>
+								)}
 							</MenuSection>
 						) : null}
 						<MenuSection aria-label="Account">
@@ -144,5 +183,18 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 				</div>
 			)}
 		</>
+	);
+}
+
+function CheckLabel(props: { isSelected: boolean; children: ReactNode }) {
+	return (
+		<span className="flex items-center gap-2">
+			<Check
+				aria-hidden="true"
+				size={16}
+				className={cn("shrink-0", !props.isSelected && "invisible")}
+			/>
+			<span>{props.children}</span>
+		</span>
 	);
 }

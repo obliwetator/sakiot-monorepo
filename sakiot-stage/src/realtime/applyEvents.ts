@@ -27,6 +27,7 @@ const GUILD_TAGS: ApiTag[] = [
 	"Clips",
 	"Stamps",
 	"RecordingOptOut",
+	"RecordingPrivacy",
 	"GuildVoiceSettings",
 	"GuildRecordingPolicy",
 	"GuildCooldown",
@@ -156,6 +157,9 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 			return;
 		case "recording_opt_out":
 			invalidate(ctx, guildId, ["RecordingOptOut"]);
+			return;
+		case "recording_privacy":
+			invalidate(ctx, guildId, ["RecordingPrivacy"]);
 			return;
 		case "voice_settings":
 			invalidate(ctx, guildId, ["GuildVoiceSettings"]);

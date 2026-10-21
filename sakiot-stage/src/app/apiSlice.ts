@@ -127,6 +127,7 @@ export type SessionSegment = ApiSchema["SessionSegmentDto"];
 export type GuildVoiceSettings = ApiSchema["GuildVoiceSettings"];
 export type GuildRecordingPolicy = ApiSchema["GuildRecordingPolicy"];
 export type RecordingOptOut = ApiSchema["RecordingOptOut"];
+export type RecordingPrivacy = ApiSchema["RecordingPrivacy"];
 export type RecordingDeletionStatus = ApiSchema["RecordingDeletionStatus"];
 export type ErasureStatus = ApiSchema["ErasureStatus"];
 /** Why one of the viewer's own sessions is hidden from everyone else. */
@@ -184,6 +185,8 @@ const TAG_TYPES = [
 	"GuildVoiceSettings",
 	"GuildRecordingPolicy",
 	"RecordingOptOut",
+	/** Who may hear the viewer's own recordings in the guild. */
+	"RecordingPrivacy",
 	"Recordings",
 	"LiveStems",
 	"LiveState",
@@ -735,6 +738,21 @@ export const apiSlice = createApi({
 			}),
 			invalidatesTags: guildScoped("RecordingOptOut"),
 		}),
+		getRecordingPrivacy: builder.query<RecordingPrivacy, string>({
+			query: (guild_id) => apiUrl(API_ROUTES.recordingPrivacy, { guild_id }),
+			providesTags: guildScoped("RecordingPrivacy"),
+		}),
+		setRecordingPrivacy: builder.mutation<
+			RecordingPrivacy,
+			{ guild_id: string; private: boolean }
+		>({
+			query: ({ guild_id, private: keepPrivate }) => ({
+				url: apiUrl(API_ROUTES.recordingPrivacy, { guild_id }),
+				method: "PUT",
+				body: { private: keepPrivate },
+			}),
+			invalidatesTags: guildScoped("RecordingPrivacy"),
+		}),
 		deleteRecording: builder.mutation<
 			RecordingDeletionStatus,
 			{ guild_id: string; recording_session_id: string }
@@ -924,6 +942,8 @@ export const {
 	useSetGuildRecordingPolicyMutation,
 	useGetRecordingOptOutQuery,
 	useSetRecordingOptOutMutation,
+	useGetRecordingPrivacyQuery,
+	useSetRecordingPrivacyMutation,
 	useDeleteRecordingMutation,
 	useGetRecordingDeletionQuery,
 	useEraseSessionMutation,

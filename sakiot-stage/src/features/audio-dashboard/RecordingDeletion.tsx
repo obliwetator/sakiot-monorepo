@@ -85,6 +85,26 @@ export function RemoveRecordingControl(props: {
 	);
 }
 
+/**
+ * What a manager sees of a recording whose speaker keeps their recordings
+ * private: that it exists, so they can remove it, and nothing to play.
+ */
+export function RedactedRecordingNotice(props: {
+	guildId: string;
+	sessionId: string;
+	onRemoved: (job: RecordingDeletionJob) => void;
+}) {
+	return (
+		<div className="mb-4 space-y-2">
+			<Notice>
+				Its speaker keeps their recordings private, so nobody else can play it.
+				You see it only to remove it from view.
+			</Notice>
+			<RemoveRecordingControl {...props} />
+		</div>
+	);
+}
+
 const TERMINAL_STATES = new Set(["soft_deleted", "ready", "failed", "paused"]);
 
 function describe(status: DeletionStatus): {

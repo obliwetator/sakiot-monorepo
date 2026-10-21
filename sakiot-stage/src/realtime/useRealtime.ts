@@ -70,6 +70,7 @@ const PRIVATE_TAGS = [
 	"Clips",
 	"Stamps",
 	"RecordingOptOut",
+	"RecordingPrivacy",
 	"GuildVoiceSettings",
 	"GuildRecordingPolicy",
 	"GuildCooldown",

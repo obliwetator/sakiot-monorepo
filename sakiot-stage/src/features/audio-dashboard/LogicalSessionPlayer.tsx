@@ -38,6 +38,7 @@ import { visiblePlaybackTab } from "./playbackTabs";
 import {
 	type RecordingDeletionJob,
 	RecordingDeletionStatus,
+	RedactedRecordingNotice,
 	RemoveRecordingControl,
 } from "./RecordingDeletion";
 import {
@@ -49,7 +50,7 @@ import { SessionMediaActions } from "./SessionMediaActions";
 import { SessionPlaybackTimeline } from "./SessionPlaybackTimeline";
 import { SessionWaveform } from "./SessionWaveform";
 import { SilenceFreePlayer } from "./SilenceFreePlayer";
-import { sessionRemoval } from "./sessionRemoval";
+import { sessionRedacted, sessionRemoval } from "./sessionRemoval";
 import { useSegmentedSessionPlayback } from "./useSegmentedSessionPlayback";
 import { useSessionChannelMix } from "./useSessionChannelMix";
 import { useSessionManifest } from "./useSessionManifest";
@@ -73,6 +74,9 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		{ skip: !guildId },
 	);
 	const ownRemoval = sessionRemoval(tree, props.sessionId);
+	// Or that its speaker keeps it private, listed to a manager only to
+	// remove it: the manifest is refused then too.
+	const redacted = sessionRedacted(tree, props.sessionId);
 	const deepLink = useMemo(
 		() => parseSessionDeepLink(location.search),
 		[location.search],
@@ -85,7 +89,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 		isError,
 	} = useSessionManifest(
 		props.sessionId,
-		Boolean(ownRemoval && !ownRemoval.playable),
+		Boolean(ownRemoval && !ownRemoval.playable) || redacted,
 	);
 
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
@@ -315,6 +319,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 					guildId={guildId}
 					sessionId={props.sessionId}
 					removal={ownRemoval}
+				/>
+			</div>
+		);
+	}
+	if (redacted) {
+		return (
+			<div className="p-4">
+				<RedactedRecordingNotice
+					guildId={guildId}
+					sessionId={props.sessionId}
+					onRemoved={setDeletion}
 				/>
 			</div>
 		);

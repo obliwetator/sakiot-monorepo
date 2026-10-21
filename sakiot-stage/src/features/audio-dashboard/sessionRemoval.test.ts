@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Channels } from "../../Constants";
-import { sessionRemoval } from "./sessionRemoval";
+import { sessionRedacted, sessionRemoval } from "./sessionRemoval";
 
 const erasing = {
 	erasure: { id: "erasure-1", state: "grace", purge_at_ms: 1 },
@@ -15,12 +15,14 @@ const tree: Channels[] = [
 				year: 2026,
 				months: {
 					9: [
-						{ file: "visible.ogg", recording_session_id: "1" },
+						{ file: "visible.ogg", recording_session_id: "1", redacted: false },
 						{
 							file: "removed.ogg",
 							recording_session_id: "2",
+							redacted: false,
 							removal: erasing,
 						},
+						{ file: "private.ogg", recording_session_id: "5", redacted: true },
 					],
 				},
 			},
@@ -36,6 +38,7 @@ const tree: Channels[] = [
 						{
 							file: "server.ogg",
 							recording_session_id: "3",
+							redacted: false,
 							removal: { playable: false },
 						},
 					],
@@ -55,5 +58,14 @@ describe("sessionRemoval", () => {
 		expect(sessionRemoval(tree, "1")).toBeNull();
 		expect(sessionRemoval(tree, "4")).toBeNull();
 		expect(sessionRemoval(undefined, "2")).toBeNull();
+	});
+});
+
+describe("sessionRedacted", () => {
+	it("is true only for a session the tree lists redacted", () => {
+		expect(sessionRedacted(tree, "5")).toBe(true);
+		expect(sessionRedacted(tree, "1")).toBe(false);
+		expect(sessionRedacted(tree, "4")).toBe(false);
+		expect(sessionRedacted(undefined, "5")).toBe(false);
 	});
 });

@@ -51,13 +51,22 @@ export function ItemsEl(props: {
 		</span>
 	) : null;
 
+	const redactedBadge = props.file.redacted ? (
+		<span
+			className="ml-1.5 shrink-0 text-xs font-semibold text-slate-300"
+			title="Its speaker keeps their recordings private: you see it only to remove it"
+		>
+			🔒 private
+		</span>
+	) : null;
+
 	return (
 		<TreeItem
 			id={recordingTreeItemId(props.file, props.year, props.month_name)}
 			className={
 				access === "hidden"
 					? "opacity-40"
-					: access === "visible-only" || removal
+					: access === "visible-only" || removal || props.file.redacted
 						? "opacity-70"
 						: undefined
 			}
@@ -82,6 +91,7 @@ export function ItemsEl(props: {
 						{props.isLive && <LivePill />}
 						{accessBadge}
 						{removalBadge}
+						{redactedBadge}
 					</span>
 				</span>
 			</TreeItemContent>
