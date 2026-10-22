@@ -5,6 +5,7 @@ import {
 	Scissors as ContentCutIcon,
 	Users as GroupsIcon,
 	Film as MovieIcon,
+	KeyRound as PermissionsIcon,
 	Mic as SettingsVoiceIcon,
 } from "lucide-react";
 import type * as React from "react";
@@ -18,7 +19,8 @@ export type PageName =
 	| "Stamps"
 	| "Admin"
 	| "Voice Settings"
-	| "Members";
+	| "Members"
+	| "Permissions";
 
 export const pages: PageName[] = ["Audio", "Clips", "Clip Editor", "Stamps"];
 
@@ -27,6 +29,7 @@ export const adminPages: { page: PageName; capability: Capability }[] = [
 	{ page: "Admin", capability: "manage_settings" },
 	{ page: "Voice Settings", capability: "manage_settings" },
 	{ page: "Members", capability: "preview_roles" },
+	{ page: "Permissions", capability: "manage_permissions" },
 ];
 
 /** What a former member can open: their own recordings, clips and stamps. */
@@ -55,7 +58,9 @@ export function activePage(pathname: string): PageName | null {
 		case "members":
 			return "Members";
 		case "admin":
-			return parts[3] === "voice-settings" ? "Voice Settings" : "Admin";
+			if (parts[3] === "voice-settings") return "Voice Settings";
+			if (parts[3] === "permissions") return "Permissions";
+			return "Admin";
 		default:
 			return null;
 	}
@@ -72,6 +77,7 @@ export const guildPagePaths: Record<Exclude<PageName, "Stamps">, string> = {
 	Admin: "admin/cooldowns",
 	"Voice Settings": "admin/voice-settings",
 	Members: "members",
+	Permissions: "admin/permissions",
 };
 
 export const pageIcons: Record<PageName, React.ReactElement> = {
@@ -82,4 +88,5 @@ export const pageIcons: Record<PageName, React.ReactElement> = {
 	Admin: <AdminPanelSettingsIcon />,
 	"Voice Settings": <SettingsVoiceIcon />,
 	Members: <GroupsIcon />,
+	Permissions: <PermissionsIcon />,
 };

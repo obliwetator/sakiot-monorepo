@@ -8,6 +8,7 @@ import {
 	clipsRouteLoader,
 	cooldownsRouteLoader,
 	membersRouteLoader,
+	permissionsRouteLoader,
 	stampsRouteLoader,
 	voiceSettingsRouteLoader,
 } from "./pageRouteLoaders";
@@ -31,6 +32,10 @@ const loadCooldownsRoute = () =>
 const loadVoiceSettingsRoute = () =>
 	import("../features/admin-voice-settings").then((m) => ({
 		Component: m.GuildVoiceSettingsPage,
+	}));
+const loadPermissionsRoute = () =>
+	import("../features/admin-permissions").then((m) => ({
+		Component: m.GuildPermissionsPage,
 	}));
 const loadMembersRoute = () =>
 	import("../features/members").then((m) => ({
@@ -107,6 +112,12 @@ export const appRoutesElement = (
 							path="voice-settings"
 							lazy={loadVoiceSettingsRoute}
 							loader={voiceSettingsRouteLoader}
+							shouldRevalidate={shouldRevalidateGuildData}
+						/>
+						<Route
+							path="permissions"
+							lazy={loadPermissionsRoute}
+							loader={permissionsRouteLoader}
 							shouldRevalidate={shouldRevalidateGuildData}
 						/>
 					</Route>

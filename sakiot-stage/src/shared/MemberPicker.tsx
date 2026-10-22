@@ -8,10 +8,7 @@ import {
 	Popover,
 	Text,
 } from "react-aria-components";
-import {
-	type GuildMember,
-	useSearchGuildMembersQuery,
-} from "../../app/apiSlice";
+import { type GuildMember, useSearchGuildMembersQuery } from "../app/apiSlice";
 
 const SEARCH_DELAY_MS = 250;
 
@@ -33,15 +30,20 @@ function describe(member: GuildMember): string {
 
 interface MemberPickerProps {
 	guildId: string;
-	/** A member was chosen: fill in their user id. */
-	onPick: (userId: string) => void;
+	/** A member was chosen: their user id, and how the list named them. */
+	onPick: (userId: string, name: string) => void;
+	label?: string;
 }
 
 /**
  * Searches the guild's members by name or id. Typing an id by hand stays
  * possible next to it, for members the bot has not seen yet.
  */
-export function MemberPicker({ guildId, onPick }: MemberPickerProps) {
+export function MemberPicker({
+	guildId,
+	onPick,
+	label = "Find member",
+}: MemberPickerProps) {
 	const [input, setInput] = useState("");
 	const query = useSettled(input.trim(), SEARCH_DELAY_MS);
 	const { currentData: page, isFetching } = useSearchGuildMembersQuery(
@@ -60,12 +62,13 @@ export function MemberPicker({ guildId, onPick }: MemberPickerProps) {
 			menuTrigger="input"
 			onSelectionChange={(key) => {
 				if (key === null) return;
-				onPick(String(key));
+				const member = members.find((member) => member.user_id === key);
+				onPick(String(key), member ? describe(member) : String(key));
 				setInput("");
 			}}
 		>
 			<Label className="text-xs font-semibold tracking-wide text-slate-200">
-				Find member
+				{label}
 			</Label>
 			<Input
 				placeholder="Name or user ID"

@@ -169,6 +169,14 @@ export type VoicePresence = ApiSchema["VoicePresence"];
 
 export type RoleView = ApiSchema["RoleView"];
 
+export type PermissionRules = ApiSchema["PermissionRules"];
+export type PermissionRule = ApiSchema["PermissionRule"];
+export type RuleSubject = ApiSchema["RuleSubject"];
+export type RuleChange = ApiSchema["RuleChange"];
+export type RuleRole = ApiSchema["RuleRole"];
+export type AccessExplanation = ApiSchema["AccessExplanation"];
+export type CapabilityDecision = ApiSchema["CapabilityDecision"];
+
 /** Two constants, not one: unifying them would change what requests send. */
 const JSON_BODY_HEADERS = { "Content-Type": "application/json" } as const;
 const JSON_HEADERS = {
@@ -196,6 +204,10 @@ const TAG_TYPES = [
 	"GuildMembers",
 	/** Who is in the guild's voice and stage channels. */
 	"VoicePresence",
+	/** Sakiot's own permission rules, as the rule editor shows them. */
+	"PermissionRules",
+	/** What a member or a role holds, and what decided it. */
+	"PermissionExplanation",
 	/** One recording session's manifest and waveform, by session id. */
 	"Session",
 	/**
@@ -862,6 +874,35 @@ export const apiSlice = createApi({
 				withAsRole(apiUrl(API_ROUTES.voicePresence, { guild_id }), as_role),
 			providesTags: guildScoped("VoicePresence"),
 		}),
+		getPermissionRules: builder.query<PermissionRules, string>({
+			query: (guild_id) => apiUrl(API_ROUTES.permissionRules, { guild_id }),
+			providesTags: guildScoped("PermissionRules"),
+		}),
+		/** Sets one rule; allowing and denying nothing deletes it. */
+		setPermissionRule: builder.mutation<
+			void,
+			RuleChange & { guild_id: string }
+		>({
+			query: ({ guild_id, ...rule }) => ({
+				url: apiUrl(API_ROUTES.permissionRules, { guild_id }),
+				method: "PUT",
+				body: rule,
+			}),
+			invalidatesTags: guildScoped("PermissionRules", "PermissionExplanation"),
+		}),
+		/** What a member (`user_id`) or a role (`role_id`) holds, and why. */
+		explainAccess: builder.query<
+			AccessExplanation,
+			{ guild_id: string; user_id?: string; role_id?: string }
+		>({
+			query: ({ guild_id, user_id, role_id }) => {
+				const params = new URLSearchParams();
+				if (user_id) params.set("user_id", user_id);
+				if (role_id) params.set("role_id", role_id);
+				return `${apiUrl(API_ROUTES.permissionExplanation, { guild_id })}?${params}`;
+			},
+			providesTags: guildScoped("PermissionExplanation"),
+		}),
 		getRoleView: builder.query<RoleView, { guild_id: string; role_id: string }>(
 			{
 				query: ({ guild_id, role_id }) =>
@@ -954,4 +995,7 @@ export const {
 	useSearchGuildMembersQuery,
 	useGetVoicePresenceQuery,
 	useGetRoleViewQuery,
+	useGetPermissionRulesQuery,
+	useSetPermissionRuleMutation,
+	useExplainAccessQuery,
 } = apiSlice;

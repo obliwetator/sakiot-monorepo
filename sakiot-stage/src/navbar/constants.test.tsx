@@ -19,6 +19,13 @@ describe("guildPages", () => {
 		]);
 		expect(guildPages(guild(["preview_roles"]))).toContain("Members");
 		expect(guildPages(guild(["preview_roles"]))).not.toContain("Admin");
+		expect(guildPages(guild(["manage_permissions"]))).toEqual([
+			"Audio",
+			"Clips",
+			"Clip Editor",
+			"Stamps",
+			"Permissions",
+		]);
 	});
 
 	test("offers a former member their own recordings, clips and stamps", () => {
@@ -43,6 +50,7 @@ describe("activePage", () => {
 			"Voice Settings",
 		);
 		expect(activePage("/dashboard/123/members")).toBe("Members");
+		expect(activePage("/dashboard/123/admin/permissions")).toBe("Permissions");
 		expect(activePage("/stamps/123")).toBe("Stamps");
 		expect(activePage("/dashboard/123/missing")).toBeNull();
 	});

@@ -10,6 +10,7 @@ import {
 	useSetUserOverrideMutation,
 } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
+import { MemberPicker } from "../../shared/MemberPicker";
 import { SavedValueChanged } from "../../shared/SavedValueChanged";
 import {
 	Button,
@@ -30,7 +31,6 @@ import {
 	TextField,
 } from "../../shared/ui";
 import { useDraftField } from "../../shared/useDraftField";
-import { MemberPicker } from "./MemberPicker";
 
 function parseSeconds(value: string): number | null {
 	const seconds = Number(value);

@@ -69,6 +69,9 @@ export const API_ROUTES = {
 	roleMembers: "/api/admin/guilds/{guild_id}/roles/{role_id}/members",
 	roleChannels: "/api/admin/guilds/{guild_id}/roles/{role_id}/channels",
 	guildMembers: "/api/admin/guilds/{guild_id}/members",
+	permissionRules: "/api/admin/guilds/{guild_id}/permission-rules",
+	permissionExplanation:
+		"/api/admin/guilds/{guild_id}/permission-rules/explain",
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
 	currentUserSessions: "/api/users/current/sessions",

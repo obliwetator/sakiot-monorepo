@@ -68,6 +68,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/permission-rules": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_permission_rules"];
+		put: operations["put_permission_rule"];
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/permission-rules/explain": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["explain_access"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/recording-deletions/{job_id}": {
 		parameters: {
 			query?: never;
@@ -1019,6 +1051,17 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
 	schemas: {
+		/** @description Why a member or a role holds what it holds. */
+		AccessExplanation: {
+			/**
+			 * @description The content capabilities in each voice and stage channel the viewer
+			 *     sees.
+			 */
+			channels: components["schemas"]["ChannelDecisions"][];
+			/** @description The management capabilities; empty when no rule reaches them. */
+			guild: components["schemas"]["CapabilityDecision"][];
+			membership: components["schemas"]["ExplainedMembership"];
+		};
 		AdvancedSegmentEffectsDto: {
 			/**
 			 * Format: float
@@ -1169,6 +1212,19 @@ export interface components {
 			| "create_clips"
 			| "jam"
 			| "stamp";
+		CapabilityDecision: {
+			capability: components["schemas"]["Capability"];
+			/** @description What Discord's permissions alone would give. */
+			discord: boolean;
+			held: boolean;
+			source: components["schemas"]["DecisionSource"];
+		};
+		ChannelDecisions: {
+			capabilities: components["schemas"]["CapabilityDecision"][];
+			/** @example 146638124288704513 */
+			channel_id: string;
+			name: string;
+		};
 		ChannelMixGenerationSettings: {
 			participants: components["schemas"]["ChannelMixParticipantSettings"][];
 			source_fingerprint?: string | null;
@@ -1440,6 +1496,16 @@ export interface components {
 			name: string;
 			status: string;
 		};
+		/** @description What decided a capability. */
+		DecisionSource: {
+			/**
+			 * @description For a rule: its channel, null when server-wide.
+			 * @example 146638124288704513
+			 */
+			channel_id?: string | null;
+			kind: components["schemas"]["SourceKind"];
+			subject?: null | components["schemas"]["RuleSubject"];
+		};
 		Directories: {
 			months?: null | components["schemas"]["HashMap"];
 			/** Format: int32 */
@@ -1515,6 +1581,8 @@ export interface components {
 			| "waiting_for_media_work"
 			| "unsafe_media_reference"
 			| "internal_error";
+		/** @enum {string} */
+		ExplainedMembership: "owner" | "member" | "former" | "outsider";
 		File: {
 			/**
 			 * @description Role-preview annotation only: "can-listen" | "visible-only" | "hidden".
@@ -1667,6 +1735,47 @@ export interface components {
 			/** Format: int64 */
 			next_offset?: number | null;
 		};
+		/** @description One rule, as stored. */
+		PermissionRule: {
+			allow: components["schemas"]["Capability"][];
+			/**
+			 * @description Null for a server-wide rule.
+			 * @example 146638124288704513
+			 */
+			channel_id?: string | null;
+			deny: components["schemas"]["Capability"][];
+			/**
+			 * @description The role's or member's name; null for everyone, a role that is gone
+			 *     or a user never seen.
+			 */
+			name?: string | null;
+			/**
+			 * @description Its role or channel is gone, so it reaches nobody; only deleting it
+			 *     is left.
+			 */
+			reaches_nobody: boolean;
+			subject: components["schemas"]["RuleSubject"];
+			/** Format: date-time */
+			updated_at: string;
+			/** @example 146638124288704513 */
+			updated_by: string;
+		};
+		PermissionRules: {
+			/** @description The voice and stage channels the viewer sees, by name. */
+			channels: components["schemas"]["RuleChannel"][];
+			/** @description What the viewer may allow or deny in server-wide rules. */
+			editable: components["schemas"]["Capability"][];
+			/**
+			 * @description The server's roles other than `@everyone`, for choosing whom a rule
+			 *     is for.
+			 */
+			roles: components["schemas"]["RuleRole"][];
+			/**
+			 * @description The server-wide rules, those of the channels the viewer sees, and
+			 *     those whose channel is gone.
+			 */
+			rules: components["schemas"]["PermissionRule"][];
+		};
 		PlayClipResponse: {
 			/** @description `queued`: the clip is in the bot's voice queue for the guild. */
 			status: string;
@@ -1763,6 +1872,7 @@ export interface components {
 			| "voice_settings"
 			| "recording_policy"
 			| "cooldowns"
+			| "permission_rules"
 			| "presence"
 			| "members"
 			| "guilds"
@@ -1791,6 +1901,47 @@ export interface components {
 			 */
 			capabilities: components["schemas"]["Capability"][];
 			channels: components["schemas"]["RoleChannel"][];
+		};
+		/** @description One rule as the editor sets it. Allowing and denying nothing deletes it. */
+		RuleChange: {
+			allow: components["schemas"]["Capability"][];
+			/**
+			 * @description Null for a server-wide rule.
+			 * @example 146638124288704513
+			 */
+			channel_id?: string | null;
+			deny: components["schemas"]["Capability"][];
+			subject: components["schemas"]["RuleSubject"];
+		};
+		RuleChannel: {
+			/** @example 146638124288704513 */
+			channel_id: string;
+			/** @description What the viewer may allow or deny in this channel's rules. */
+			editable: components["schemas"]["Capability"][];
+			name: string;
+		};
+		RuleRole: {
+			/**
+			 * Format: int64
+			 * @example 16711680
+			 */
+			color: number;
+			/** Format: int64 */
+			color_secondary?: number | null;
+			/** Format: int64 */
+			color_tertiary?: number | null;
+			name: string;
+			/** @example 146638124288704513 */
+			role_id: string;
+		};
+		/** @description Whom a rule is for. */
+		RuleSubject: {
+			/**
+			 * @description The role or user; absent for `everyone`.
+			 * @example 146638124288704513
+			 */
+			id?: string | null;
+			kind: components["schemas"]["SubjectKind"];
 		};
 		SegmentEffectsDto: {
 			/**
@@ -1978,6 +2129,8 @@ export interface components {
 			progress: number;
 			status: string;
 		};
+		/** @enum {string} */
+		SourceKind: "discord" | "rule" | "owner";
 		StampInfo: {
 			/** Format: int64 */
 			audio_file_id?: number | null;
@@ -2033,6 +2186,8 @@ export interface components {
 			/** Format: int64 */
 			started_at?: number | null;
 		};
+		/** @enum {string} */
+		SubjectKind: "everyone" | "role" | "user";
 		UserDataForFrontEnd: {
 			avatar: string;
 			is_dev: boolean;
@@ -2408,7 +2563,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description User cannot manage this guild */
+			/** @description The viewer holds none of preview_roles, manage_settings and manage_permissions */
 			403: {
 				headers: {
 					[name: string]: unknown;
@@ -2419,6 +2574,229 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_permission_rules: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The rules the viewer may see, and what they may change */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["PermissionRules"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The viewer does not hold manage_permissions */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The server's member list is still loading */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_permission_rule: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["RuleChange"];
+			};
+		};
+		responses: {
+			/** @description Rule set, or deleted when it allows and denies nothing */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid rule */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The viewer may not make this change: no manage_permissions, a capability they do not hold there, or taking manage_permissions from themselves */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The role or channel is not this server's */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The server's member list is still loading */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	explain_access: {
+		parameters: {
+			query?: {
+				/** @description The member to explain. Exactly one of `user_id` and `role_id`. */
+				user_id?: string | null;
+				/**
+				 * @description The role to explain, as a member holding only it; the server's id is
+				 *     `@everyone`.
+				 */
+				role_id?: string | null;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description What the member or role holds, capability by capability, and what decided it */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["AccessExplanation"];
+				};
+			};
+			/** @description Neither or both of user_id and role_id */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Missing or invalid access token */
+			401: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The viewer does not hold manage_permissions */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The role is not this server's */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Server error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The server's member list is still loading */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -3487,7 +3865,7 @@ export interface operations {
 					"application/json": components["schemas"]["ApiError"];
 				};
 			};
-			/** @description Missing access to the clip's source */
+			/** @description Missing access to the clip's source, or `jam` in the bot's voice channel */
 			403: {
 				headers: {
 					[name: string]: unknown;

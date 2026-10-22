@@ -16,7 +16,7 @@ const COMPILED_HOOKS = [
 	"useSourceBuffers.ts",
 	"useTimelineViewport.ts",
 	"../../shared/useDraftField.ts",
-	"../admin-cooldowns/MemberPicker.tsx",
+	"../../shared/MemberPicker.tsx",
 	"../audio-dashboard/VoicePresencePanel.tsx",
 ];
 

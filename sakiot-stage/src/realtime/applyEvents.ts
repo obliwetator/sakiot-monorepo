@@ -35,6 +35,8 @@ const GUILD_TAGS: ApiTag[] = [
 	"GuildRoles",
 	"GuildMembers",
 	"VoicePresence",
+	"PermissionRules",
+	"PermissionExplanation",
 ];
 
 function invalidate(ctx: ApplyContext, guildId: string, types: ApiTag[]) {
@@ -174,8 +176,16 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 			invalidate(ctx, guildId, ["VoicePresence"]);
 			return;
 		case "members":
-			// Role pages list roles and count their members from the roster.
-			invalidate(ctx, guildId, ["GuildMembers", "GuildRoles"]);
+			// Role pages list roles and count their members from the roster;
+			// a member's roles decide what the rules give them.
+			invalidate(ctx, guildId, [
+				"GuildMembers",
+				"GuildRoles",
+				"PermissionExplanation",
+			]);
+			return;
+		case "permission_rules":
+			invalidate(ctx, guildId, ["PermissionRules", "PermissionExplanation"]);
 			return;
 		case "guilds":
 			// The guild list: a name, an icon, or what the viewer may do.

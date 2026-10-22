@@ -78,6 +78,8 @@ const PRIVATE_TAGS = [
 	"GuildRoles",
 	"GuildMembers",
 	"VoicePresence",
+	"PermissionRules",
+	"PermissionExplanation",
 	"Session",
 ] as const;
 
