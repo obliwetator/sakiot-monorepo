@@ -259,7 +259,7 @@ pub struct PlayClipResponse {
     responses(
         (status = 200, description = "The clip was queued in the bot's voice channel", body = PlayClipResponse),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "Missing access to the clip's source", body = crate::errors::ApiError),
+        (status = 403, description = "Missing access to the clip's source, or `jam` in the bot's voice channel", body = crate::errors::ApiError),
         (status = 404, description = "Clip not found", body = crate::errors::ApiError),
         (status = 409, description = "The bot is not in a voice channel in this guild", body = crate::errors::ApiError),
         (status = 429, description = "The caller played a clip too recently; `retry_after_seconds` says when to retry", body = crate::errors::ApiError),
@@ -374,6 +374,9 @@ pub async fn play_clip(
         JamResponseEnum::Cooldown => Err(AppError::JamCooldown {
             retry_after_seconds: response.cooldown_remaining_seconds,
         }),
+        JamResponseEnum::NotAllowed => Err(AppError::Refused(
+            "You may not play clips in the bot's voice channel.".into(),
+        )),
         JamResponseEnum::Unknown => Err(AppError::ClipPlaybackFailed),
     }
 }

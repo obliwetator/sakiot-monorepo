@@ -213,6 +213,7 @@ pub fn parse(payload: &str) -> Option<Event> {
                 "guild_voice_settings" => Resource::VoiceSettings,
                 "guild_recording_policy" => Resource::RecordingPolicy,
                 "guild_jam_cooldowns" | "user_jam_cooldown_overrides" => Resource::Cooldowns,
+                "permission_rules" => Resource::PermissionRules,
                 _ => return None,
             },
         },
@@ -318,6 +319,13 @@ mod tests {
             Some(Event::Settings {
                 guild_id: 1,
                 resource: Resource::Cooldowns
+            })
+        );
+        assert_eq!(
+            parse(r#"{"v":1,"k":"settings","g":"1","r":"permission_rules"}"#),
+            Some(Event::Settings {
+                guild_id: 1,
+                resource: Resource::PermissionRules
             })
         );
         assert_eq!(

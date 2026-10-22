@@ -49,6 +49,17 @@ bitflags::bitflags! {
 }
 
 impl Capabilities {
+    /// As rules store them.
+    pub fn stored(self) -> i64 {
+        i64::from(self.bits())
+    }
+
+    /// From their stored form. Bits this build does not name (a newer
+    /// build's capability) are dropped: nothing here could check them.
+    pub fn from_stored(bits: i64) -> Self {
+        Self::from_bits_truncate(u32::try_from(bits & i64::from(u32::MAX)).unwrap_or_default())
+    }
+
     /// The management capabilities Discord's guild-level permissions grant:
     /// all of them with ADMINISTRATOR or MANAGE_GUILD, none otherwise.
     pub fn from_guild_permissions(permissions: Permissions) -> Self {

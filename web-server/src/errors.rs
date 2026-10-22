@@ -134,6 +134,9 @@ pub enum AppError {
     NotFound,
     #[error("Forbidden")]
     Forbidden,
+    /// Forbidden, for a reason written for the user.
+    #[error("Refused: {0}")]
+    Refused(String),
     /// The guild's roster has never been complete: membership is unknown.
     #[error("Guild membership is not known yet")]
     MembershipUnavailable,
@@ -232,7 +235,7 @@ impl AppError {
             Self::RoleNotFound => ErrorKind::RoleNotFound,
             Self::FileNotFound => ErrorKind::MediaNotFound,
             Self::NotFound => ErrorKind::NotFound,
-            Self::Forbidden => ErrorKind::Forbidden,
+            Self::Forbidden | Self::Refused(_) => ErrorKind::Forbidden,
             Self::MembershipUnavailable => ErrorKind::MembershipUnavailable,
             Self::Unauthorized | Self::InvalidToken => ErrorKind::Unauthorized,
             Self::CsrfRejected => ErrorKind::CsrfRejected,
@@ -273,7 +276,9 @@ impl AppError {
     /// for users contribute text; everything else uses the kind's message.
     pub fn public_message(&self) -> Cow<'static, str> {
         match self {
-            Self::BadRequest(message) | Self::Conflict(message) => Cow::Owned(message.clone()),
+            Self::BadRequest(message) | Self::Conflict(message) | Self::Refused(message) => {
+                Cow::Owned(message.clone())
+            }
             Self::InvalidParam(name) => Cow::Owned(format!("Invalid request parameter: {name}")),
             Self::ParseError(_) => Cow::Borrowed("A numeric request parameter is invalid."),
             Self::JamCooldown {
@@ -296,7 +301,9 @@ impl ResponseError for AppError {
             AppError::RoleNotFound => StatusCode::NOT_FOUND,
             AppError::FileNotFound => StatusCode::NOT_FOUND,
             AppError::NotFound => StatusCode::NOT_FOUND,
-            AppError::Forbidden | AppError::CsrfRejected => StatusCode::FORBIDDEN,
+            AppError::Forbidden | AppError::Refused(_) | AppError::CsrfRejected => {
+                StatusCode::FORBIDDEN
+            }
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::InvalidToken => StatusCode::UNAUTHORIZED,
             AppError::BadRequest(_) | AppError::StorageBudgetExceeded => StatusCode::BAD_REQUEST,

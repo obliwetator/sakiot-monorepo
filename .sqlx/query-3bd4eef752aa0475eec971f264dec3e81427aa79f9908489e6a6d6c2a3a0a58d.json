@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM permission_rules\n              WHERE guild_id = $1\n                AND channel_id IS NOT DISTINCT FROM $2\n                AND subject_kind = $3\n                AND subject_id IS NOT DISTINCT FROM $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3bd4eef752aa0475eec971f264dec3e81427aa79f9908489e6a6d6c2a3a0a58d"
+}

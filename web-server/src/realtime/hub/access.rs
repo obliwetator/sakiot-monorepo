@@ -90,10 +90,9 @@ impl SubscriptionAccess {
     }
 
     /// Who sees the member roster and the roles: the members page
-    /// (`PREVIEW_ROLES`) and the cooldowns page's member picker
-    /// (`MANAGE_SETTINGS`).
+    /// (`PREVIEW_ROLES`), and the member pickers of the cooldowns page
+    /// (`MANAGE_SETTINGS`) and the rule editor (`MANAGE_PERMISSIONS`).
     pub fn sees_members(&self) -> bool {
-        self.guild
-            .intersects(Capabilities::PREVIEW_ROLES | Capabilities::MANAGE_SETTINGS)
+        self.guild.intersects(crate::members::MEMBER_SEARCH)
     }
 }

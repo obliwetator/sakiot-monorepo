@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_guilds (id, user_id, name, icon, owner, permissions, features)\n         SELECT $1, user_id, 'guild', NULL, false, 0, ARRAY[]::text[]\n           FROM unnest($2::bigint[]) AS user_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "df273c0e9e37134685b17a723e4e8e4071ccad409de8bf9f30e12dab61867633"
+}

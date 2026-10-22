@@ -1,4 +1,5 @@
 use crate::cast::ToI64;
+use sakiot_permissions::Capabilities;
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::client::{Cache, Context};
 use serenity::model::id::{ChannelId, UserId};
@@ -6,6 +7,7 @@ use serenity::model::prelude::CommandOptionType;
 
 use crate::cooldown::{CheckResult, JamCooldown};
 use crate::database::DbError;
+use crate::permissions::Listening;
 use serenity::model::prelude::GuildId;
 use songbird::Songbird;
 use sqlx::{Pool, Postgres};
@@ -23,6 +25,9 @@ pub enum PlayClipError {
     /// The clip was ready to play, but the user played one too recently.
     #[error("On cooldown — {remaining_secs}s remaining.")]
     Cooldown { remaining_secs: u32 },
+    /// The user lacks `jam` in the bot's voice channel.
+    #[error("You can't play clips in <#{channel}>.")]
+    NotAllowed { channel: ChannelId },
     #[error("{0}")]
     User(String),
 }
@@ -32,7 +37,7 @@ impl PlayClipError {
         match self {
             Self::Db(_) => "Database error. Try again later.".to_string(),
             Self::Media(_) => "Clip media is unavailable. Try again later.".to_string(),
-            Self::NotInVoice | Self::Cooldown { .. } => self.to_string(),
+            Self::NotInVoice | Self::Cooldown { .. } | Self::NotAllowed { .. } => self.to_string(),
             Self::User(message) => message.clone(),
         }
     }
@@ -73,15 +78,26 @@ pub async fn play_clip(
     let Some(handler) = manager.get(guild_id) else {
         return Err(PlayClipError::NotInVoice);
     };
-    if handler.lock().await.current_channel().is_none() {
+    let Some(channel) = handler.lock().await.current_channel() else {
         return Err(PlayClipError::NotInVoice);
-    }
+    };
+    let channel = ChannelId::new(channel.0.get());
 
     let requester = u64::try_from(user_id)
         .ok()
         .filter(|user_id| *user_id != 0)
         .ok_or_else(|| PlayClipError::User("Clip is not available to you.".to_string()))?;
-    let listening = crate::permissions::listening(cache, guild_id, UserId::new(requester));
+    let access = crate::permissions::access(cache, pool, guild_id, UserId::new(requester))
+        .await
+        .map_err(PlayClipError::Db)?;
+    // Playing takes `jam` where the bot is, besides hearing the clip.
+    if !access
+        .as_ref()
+        .is_some_and(|access| access.allows(channel.to_i64(), Capabilities::JAM))
+    {
+        return Err(PlayClipError::NotAllowed { channel });
+    }
+    let listening = Listening::of(access.as_ref());
     let clip = crate::database::clips::playable_clip(pool, guild_id.to_i64(), clip_id, &listening)
         .await
         .map_err(PlayClipError::Db)?

@@ -11,6 +11,9 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
+use web_server::admin::permission_rules::{
+    explain_access, get_permission_rules, put_permission_rule,
+};
 use web_server::admin::recording_policy::{get_recording_policy, put_recording_policy};
 use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
@@ -298,7 +301,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(put_voice_settings)
             .service(delete_voice_settings)
             .service(get_recording_policy)
-            .service(put_recording_policy);
+            .service(put_recording_policy)
+            .service(get_permission_rules)
+            .service(put_permission_rule)
+            .service(explain_access);
         #[cfg(feature = "loadtest")]
         let api_scope = api_scope.service(web_server::loadtest::scope(loadtest_state.clone()));
         let api_scope = api_scope

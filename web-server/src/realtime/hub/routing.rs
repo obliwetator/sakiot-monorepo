@@ -298,7 +298,7 @@ pub(super) fn route(
             }
             Event::Settings { guild_id, resource }
                 if *guild_id == subscription.guild_id
-                    && access.holds(Capabilities::MANAGE_SETTINGS) =>
+                    && access.holds(settings_audience(*resource)) =>
             {
                 add_all(&mut routed, *resource);
             }
@@ -325,6 +325,9 @@ fn route_names(renamed: Renamed, access: &SubscriptionAccess, routed: &mut Route
             if access.sees_members() {
                 add_all(routed, Resource::Members);
             }
+            if access.holds(Capabilities::MANAGE_PERMISSIONS) {
+                add_all(routed, Resource::PermissionRules);
+            }
         }
         Renamed::Channel(channel_id) => {
             if access.presence_channels.contains(&channel_id) {
@@ -336,7 +339,19 @@ fn route_names(renamed: Renamed, access: &SubscriptionAccess, routed: &mut Route
             if access.holds(Capabilities::MANAGE_SETTINGS) {
                 add_all(routed, Resource::RecordingPolicy);
             }
+            if access.holds(Capabilities::MANAGE_PERMISSIONS) {
+                add_all(routed, Resource::PermissionRules);
+            }
         }
+    }
+}
+
+/// Who may read a settings resource: the rule editor's holders of
+/// `manage_permissions`, everything else's holders of `manage_settings`.
+fn settings_audience(resource: Resource) -> Capabilities {
+    match resource {
+        Resource::PermissionRules => Capabilities::MANAGE_PERMISSIONS,
+        _ => Capabilities::MANAGE_SETTINGS,
     }
 }
 

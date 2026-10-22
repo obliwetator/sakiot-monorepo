@@ -771,6 +771,7 @@ async fn clip_playback_reports_every_bot_outcome_through_the_contract(
         (JamResponseEnum::Ok, 0),
         (JamResponseEnum::NotPresent, 0),
         (JamResponseEnum::Cooldown, 12),
+        (JamResponseEnum::NotAllowed, 0),
         (JamResponseEnum::Unknown, 0),
     ];
     bot.responses
@@ -810,6 +811,15 @@ async fn clip_playback_reports_every_bot_outcome_through_the_contract(
     assert_eq!(body["kind"], "jam_cooldown");
     assert_eq!(body["retry_after_seconds"], 12);
     assert_eq!(retry_after.as_deref(), Some("12"));
+
+    let (status, _, body) =
+        play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["kind"], "forbidden");
+    assert_eq!(
+        body["message"],
+        "You may not play clips in the bot's voice channel."
+    );
 
     let (status, _, body) =
         play_outcome(test::call_service(&app, play_request(&uri)?.to_request()).await).await;

@@ -16,7 +16,7 @@ use std::fmt::Debug;
 use proptest::prop_assert_eq;
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
-use sakiot_permissions::testing::{self, RosterState, Target, World};
+use sakiot_permissions::testing::{self, RosterState, Target, TargetedRule, World};
 use sqlx::PgPool;
 use web_server::errors::AppError;
 use web_server::permissions::{GuildAccess, Viewer};
@@ -196,7 +196,8 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
          DELETE FROM guilds_present;
          DELETE FROM user_guilds;
          DELETE FROM recording_sessions;
-         DELETE FROM recording_private;",
+         DELETE FROM recording_private;
+         DELETE FROM permission_rules;",
     )
     .execute(&mut *tx)
     .await?;
@@ -230,8 +231,14 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
             .execute(&mut *tx)
             .await?;
         }
+        for rule in &guild.rules {
+            store_rule(&mut tx, g, None, rule).await?;
+        }
         for (c, channel) in guild.channels.iter().enumerate() {
             let channel_id = World::channel_id(g, c);
+            for rule in &channel.rules {
+                store_rule(&mut tx, g, Some(channel_id), rule).await?;
+            }
             sqlx::query(
                 "INSERT INTO channels (channel_id, guild_id, type, name)
                  VALUES ($1, $2, $3, 'channel')",
@@ -323,6 +330,34 @@ async fn store(pool: &PgPool, world: &World) -> sqlx::Result<()> {
         }
     }
     tx.commit().await
+}
+
+/// A Sakiot rule of guild `guild`, as the editor stores it: no row when it
+/// is empty.
+async fn store_rule(
+    tx: &mut sqlx::PgConnection,
+    guild: usize,
+    channel_id: Option<i64>,
+    rule: &TargetedRule,
+) -> sqlx::Result<()> {
+    if rule.rule().is_empty() {
+        return Ok(());
+    }
+    let (kind, subject_id) = World::subject(guild, rule.target).stored();
+    sqlx::query(
+        "INSERT INTO permission_rules
+            (guild_id, channel_id, subject_kind, subject_id, allow, deny, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 1)",
+    )
+    .bind(World::guild_id(guild))
+    .bind(channel_id)
+    .bind(kind)
+    .bind(subject_id)
+    .bind(rule.allow.stored())
+    .bind(rule.deny.stored())
+    .execute(tx)
+    .await?;
+    Ok(())
 }
 
 /// The guilds a world is observed in: each generated one (`Some(index)`),

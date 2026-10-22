@@ -3,6 +3,7 @@ pub mod error;
 pub mod guild_cache;
 pub mod logical_recordings;
 pub mod opt_outs;
+pub mod permission_rules;
 pub mod privacy;
 pub mod projections;
 pub mod recordings;

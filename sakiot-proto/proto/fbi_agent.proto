@@ -61,6 +61,8 @@ message JamResponse {
 		NOT_PRESENT = 1;
 		UNKNOWN = 2;
 		COOLDOWN = 3;
+		// The user may not play clips in the bot's voice channel (`jam`).
+		NOT_ALLOWED = 4;
 	}
 
 	JamResponseEnum resp = 1;

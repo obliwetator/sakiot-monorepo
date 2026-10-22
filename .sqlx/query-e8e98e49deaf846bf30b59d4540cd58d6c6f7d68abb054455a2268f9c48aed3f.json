@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH requested AS (\n                   SELECT DISTINCT unnest($1::bigint[]) AS guild_id\n               ),\n               held AS (\n                   SELECT r.guild_id, ur.user_id, ur.role_id\n                     FROM user_roles ur\n                     JOIN roles r ON r.role_id = ur.role_id\n                    WHERE r.guild_id IN (SELECT guild_id FROM requested)\n                      AND ur.user_id = ANY($2::bigint[])\n               ),\n               loaded_roles AS (\n                   SELECT guild_id, role_id, permission\n                     FROM roles\n                    WHERE guild_id IN (SELECT guild_id FROM requested)\n                      AND (role_id = guild_id\n                           OR role_id IN (SELECT role_id FROM held)\n                           OR role_id = ANY($3::bigint[]))\n               )\n               SELECT\n                   g.guild_id AS \"guild_id!\",\n                   (SELECT owner_id FROM guilds WHERE id = g.guild_id) AS owner_id,\n                   COALESCE(\n                       (SELECT roster_complete_at IS NOT NULL\n                          FROM guild_projection_state\n                         WHERE guild_id = g.guild_id),\n                       false\n                   ) AS \"roster_complete!\",\n                   EXISTS (SELECT 1 FROM guilds_present WHERE guild_id = g.guild_id)\n                       AS \"bot_present!\",\n                   (SELECT COALESCE(json_agg(json_build_object(\n                               'role_id', role_id,\n                               'permissions', permission)), '[]')\n                      FROM loaded_roles\n                     WHERE guild_id = g.guild_id) AS \"roles!: Json<Vec<RoleRow>>\",\n                   (SELECT COALESCE(json_agg(json_build_object(\n                               'user_id', u.user_id,\n                               'listed', EXISTS (\n                                   SELECT 1 FROM guild_members gm\n                                    WHERE gm.guild_id = g.guild_id\n                                      AND gm.user_id = u.user_id),\n                               'roles', (SELECT COALESCE(json_agg(h.role_id), '[]')\n                                           FROM held h\n                                          WHERE h.guild_id = g.guild_id\n                                            AND h.user_id = u.user_id),\n                               -- Erased sessions are gone; removed ones are\n                               -- still theirs to see and erase.\n                               'recorded', EXISTS (\n                                   SELECT 1 FROM recording_sessions rs\n                                    WHERE rs.guild_id = g.guild_id\n                                      AND rs.user_id = u.user_id))), '[]')\n                      FROM (SELECT DISTINCT unnest($2::bigint[]) AS user_id) u\n                   ) AS \"members!: Json<Vec<MemberRow>>\",\n                   (SELECT COALESCE(json_agg(json_build_object(\n                               'user_id', user_id,\n                               'owner', owner)), '[]')\n                      FROM user_guilds\n                     WHERE id = g.guild_id AND user_id = ANY($2::bigint[])\n                   ) AS \"seeds!: Json<Vec<SeedRow>>\",\n                   (SELECT COALESCE(json_agg(json_build_object(\n                               'channel_id', c.channel_id,\n                               'overwrites', (\n                                   SELECT COALESCE(json_agg(json_build_object(\n                                              'target_id', cp.target_id,\n                                              'kind', cp.kind,\n                                              'allow', cp.allow,\n                                              'deny', cp.deny)), '[]')\n                                     FROM channel_permissions cp\n                                    WHERE cp.channel_id = c.channel_id\n                                      AND (cp.target_id = g.guild_id\n                                           OR (cp.kind = 'role'\n                                               AND cp.target_id IN (\n                                                   SELECT role_id FROM loaded_roles\n                                                    WHERE guild_id = g.guild_id))\n                                           OR (cp.kind = 'user'\n                                               AND cp.target_id = ANY($2::bigint[]))))\n                           )), '[]')\n                      FROM channels c\n                     WHERE c.guild_id = g.guild_id\n                       AND c.type IN (2, 13)\n                   ) AS \"channels!: Json<Vec<ChannelRow>>\",\n                   ARRAY(SELECT user_id FROM recording_private WHERE guild_id = g.guild_id)\n                       AS \"private!\",\n                   (SELECT COALESCE(json_agg(json_build_object(\n                               'channel_id', pr.channel_id,\n                               'subject_kind', pr.subject_kind,\n                               'subject_id', pr.subject_id,\n                               'allow', pr.allow,\n                               'deny', pr.deny)), '[]')\n                      FROM permission_rules pr\n                     WHERE pr.guild_id = g.guild_id\n                       AND (pr.channel_id IS NULL\n                            OR pr.channel_id IN (\n                                SELECT channel_id FROM channels\n                                 WHERE guild_id = g.guild_id AND type IN (2, 13)))\n                       AND (pr.subject_kind = 'everyone'\n                            OR (pr.subject_kind = 'role'\n                                AND pr.subject_id IN (\n                                    SELECT role_id FROM loaded_roles\n                                     WHERE guild_id = g.guild_id))\n                            OR (pr.subject_kind = 'user'\n                                AND pr.subject_id = ANY($2::bigint[])))\n                   ) AS \"rules!: Json<Vec<RuleRow>>\"\n                 FROM requested g",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guild_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_id",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "roster_complete!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "bot_present!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "roles!: Json<Vec<RoleRow>>",
+        "type_info": "Json",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "members!: Json<Vec<MemberRow>>",
+        "type_info": "Json",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "seeds!: Json<Vec<SeedRow>>",
+        "type_info": "Json",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "channels!: Json<Vec<ChannelRow>>",
+        "type_info": "Json",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "private!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "rules!: Json<Vec<RuleRow>>",
+        "type_info": "Json",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e8e98e49deaf846bf30b59d4540cd58d6c6f7d68abb054455a2268f9c48aed3f"
+}

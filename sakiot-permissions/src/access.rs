@@ -57,37 +57,14 @@ pub struct Access {
 }
 
 impl Access {
-    fn new(
-        membership: Membership,
-        user_id: Option<i64>,
-        discord: &DiscordPermissions,
-        private: &BTreeSet<i64>,
-    ) -> Self {
-        if matches!(membership, Membership::Former | Membership::Outsider) {
-            return Self {
-                membership,
-                user_id,
-                guild: Capabilities::empty(),
-                channels: BTreeMap::new(),
-                private: BTreeSet::new(),
-            };
-        }
+    /// No access at all: a former member's or an outsider's.
+    fn none(membership: Membership, user_id: Option<i64>) -> Self {
         Self {
             membership,
             user_id,
-            guild: Capabilities::from_guild_permissions(discord.base),
-            channels: discord
-                .channels
-                .iter()
-                .map(|(&channel, &permissions)| {
-                    (channel, Capabilities::from_channel_permissions(permissions))
-                })
-                .collect(),
-            private: private
-                .iter()
-                .copied()
-                .filter(|&speaker| Some(speaker) != user_id)
-                .collect(),
+            guild: Capabilities::empty(),
+            channels: BTreeMap::new(),
+            private: BTreeSet::new(),
         }
     }
 
@@ -103,6 +80,36 @@ impl Access {
         self.channels
             .get(&channel)
             .is_some_and(|held| held.contains(capability))
+    }
+
+    /// What the viewer may allow or deny in a Sakiot rule guild-wide
+    /// (`channel` `None`) or in `channel`: only what they hold there
+    /// themselves, as Discord lets a member grant only permissions they
+    /// have. A guild-wide content capability reaches every channel, so it
+    /// takes holding it in every one. The owner may change anything.
+    pub fn editable(&self, channel: Option<i64>) -> Capabilities {
+        match (self.membership, channel) {
+            (Membership::Owner, None) => Capabilities::all(),
+            (Membership::Owner, Some(_)) => Capabilities::CONTENT,
+            (Membership::Member, None) => {
+                let everywhere = self
+                    .channels
+                    .values()
+                    .fold(Capabilities::CONTENT, |held, channel| held & *channel);
+                self.guild | everywhere
+            }
+            (Membership::Member, Some(channel)) => {
+                self.channels.get(&channel).copied().unwrap_or_default()
+            }
+            (Membership::Former | Membership::Outsider, _) => Capabilities::empty(),
+        }
+    }
+
+    /// Whether the viewer sees `channel` in the rule editor: the owner sees
+    /// every one, anyone else those they can see in Discord's sense
+    /// (`VIEW_PRESENCE`).
+    pub fn sees_channel(&self, channel: i64) -> bool {
+        self.membership == Membership::Owner || self.allows(channel, Capabilities::VIEW_PRESENCE)
     }
 
     /// Whether the viewer may hear a recording of `speakers`' voices from
@@ -263,17 +270,97 @@ impl GuildFacts {
         Ok(self.permissions_as(self.membership(viewer)?, viewer.user_id))
     }
 
+    /// What the viewer may do: Discord's permissions, then the Sakiot
+    /// rules for their roles and themselves, then the guards no rule can
+    /// break (the owner keeps every management capability; a former member
+    /// or an outsider holds nothing, whatever the rules say).
     pub fn access(&self, viewer: Viewer) -> Result<Access, MembershipUnavailable> {
         let membership = self.membership(viewer)?;
-        Ok(Access::new(
+        Ok(self.evaluate(
             membership,
             Some(viewer.user_id),
+            self.held_roles(viewer.user_id),
             &self.permissions_as(membership, viewer.user_id),
-            &self.private,
         ))
     }
 
-    fn permissions_as(&self, membership: Membership, user_id: i64) -> DiscordPermissions {
+    /// The roles whose rules apply to `user_id`.
+    pub(crate) fn held_roles(&self, user_id: i64) -> &[i64] {
+        self.members
+            .get(&user_id)
+            .map_or(&[][..], |member| member.roles.as_slice())
+    }
+
+    /// The roles whose rules apply to a member whose only role is
+    /// `role_id`: none beyond `@everyone`'s for `@everyone` itself.
+    pub(crate) fn preview_roles(&self, role_id: i64) -> Vec<i64> {
+        if role_id == self.guild_id {
+            Vec::new()
+        } else {
+            vec![role_id]
+        }
+    }
+
+    fn evaluate(
+        &self,
+        membership: Membership,
+        user_id: Option<i64>,
+        roles: &[i64],
+        discord: &DiscordPermissions,
+    ) -> Access {
+        if matches!(membership, Membership::Former | Membership::Outsider) {
+            return Access::none(membership, user_id);
+        }
+        let guild_wide = self
+            .rules
+            .guild
+            .layers(roles, user_id)
+            .map(|layer| layer.rule());
+        let mut guild = guild_wide.iter().fold(
+            Capabilities::from_guild_permissions(discord.base),
+            |held, rule| rule.within(Capabilities::MANAGEMENT).apply(held),
+        );
+        if membership == Membership::Owner {
+            guild |= Capabilities::MANAGEMENT;
+        }
+        let channels = discord
+            .channels
+            .iter()
+            .map(|(&channel, &permissions)| {
+                let held = guild_wide.iter().fold(
+                    Capabilities::from_channel_permissions(permissions),
+                    |held, rule| rule.within(Capabilities::CONTENT).apply(held),
+                );
+                let held = self.rules.channels.get(&channel).map_or(held, |rules| {
+                    rules
+                        .layers(roles, user_id)
+                        .iter()
+                        .fold(held, |held, layer| {
+                            layer.rule().within(Capabilities::CONTENT).apply(held)
+                        })
+                });
+                (channel, held)
+            })
+            .collect();
+        Access {
+            membership,
+            user_id,
+            guild,
+            channels,
+            private: self
+                .private
+                .iter()
+                .copied()
+                .filter(|&speaker| Some(speaker) != user_id)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn permissions_as(
+        &self,
+        membership: Membership,
+        user_id: i64,
+    ) -> DiscordPermissions {
         match membership {
             Membership::Owner => self.permissions_in_channels(Permissions::all(), &[], None),
             Membership::Member => self.member_permissions(user_id),
@@ -329,16 +416,17 @@ impl GuildFacts {
         }
     }
 
-    /// The access of a member whose only role is `role_id`.
+    /// The access of a member whose only role is `role_id`, Sakiot's rules
+    /// for `@everyone` and that role included.
     pub fn role_access(&self, role_id: i64) -> Result<Access, RoleNotFound> {
         if !self.has_role(role_id) {
             return Err(RoleNotFound);
         }
-        Ok(Access::new(
+        Ok(self.evaluate(
             Membership::Member,
             None,
+            &self.preview_roles(role_id),
             &self.role_permissions(role_id),
-            &self.private,
         ))
     }
 

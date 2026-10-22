@@ -1,7 +1,8 @@
 //! The evaluator's invariants on random guilds: who is a member, which
-//! guild-wide capabilities they hold, which channels they get, and what a
-//! role preview shows. `discord_reference` checks the Discord rules channel
-//! by channel; this checks what Sakiot builds on them.
+//! guild-wide capabilities they hold, which channels they get, what Sakiot's
+//! rules change, and what a role preview shows. `discord_reference` checks
+//! the Discord rules channel by channel; this checks what Sakiot builds on
+//! them, against a model of the rules written per capability.
 //!
 //! The test fails if the generator stops reaching an interesting outcome, so
 //! it cannot pass because every world is trivial. `PROPTEST_CASES`
@@ -13,10 +14,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
 
-use crate::testing::{self, RosterState, STRANGER_ID, World};
+use crate::testing::{self, RosterState, STRANGER_ID, Target, TargetedRule, World};
 use crate::{
-    Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, Permissions, RoleNotFound,
-    RolePreview, Viewer,
+    Access, Capabilities, Decision, Explanation, GuildFacts, Membership, MembershipUnavailable,
+    Permissions, RoleNotFound, RolePreview, Source, Viewer,
 };
 
 const ADMINISTRATOR: i64 = Permissions::ADMINISTRATOR.bits();
@@ -135,6 +136,215 @@ fn stored_role(world: &World, guild: Option<usize>, role: i64) -> Option<i64> {
         .map(|r| spec.roles[r])
 }
 
+/// The index of `role` among the guild's roles; `None` for `@everyone`, a
+/// deleted role or another guild's.
+fn role_index(world: &World, guild: usize, role: i64) -> Option<usize> {
+    (0..world.guilds[guild].roles.len()).find(|&r| World::role_id(guild, r) == role)
+}
+
+/// Who the rules are evaluated for: the roles held (indices) and the user,
+/// `None` for a role preview.
+struct Holder {
+    roles: Vec<usize>,
+    user: Option<usize>,
+}
+
+impl Holder {
+    fn member(world: &World, guild: usize, user: usize) -> Self {
+        let held = &world.guilds[guild].members[user].roles;
+        Self {
+            roles: (0..held.len()).filter(|&r| held[r]).collect(),
+            user: Some(user),
+        }
+    }
+
+    fn role(world: &World, guild: usize, role: i64) -> Self {
+        Self {
+            roles: role_index(world, guild, role).into_iter().collect(),
+            user: None,
+        }
+    }
+}
+
+/// Whether `holder` holds `capability` once the rules have had their say
+/// over what Discord gives (`discord`), modelled one capability at a time:
+/// management capabilities through the guild-wide layers, content ones
+/// through those and then `channel`'s (a channel index). Each layer that
+/// mentions the capability decides it anew: `@everyone`, then the
+/// holder's roles (any allow beats any deny), then the user.
+fn ruled(
+    world: &World,
+    guild: usize,
+    channel: Option<usize>,
+    holder: &Holder,
+    capability: Capabilities,
+    discord: bool,
+) -> bool {
+    let spec = &world.guilds[guild];
+    let management = Capabilities::MANAGEMENT.contains(capability);
+    let mut scopes = vec![spec.rules.as_slice()];
+    if let Some(c) = channel.filter(|_| !management) {
+        scopes.push(spec.channels[c].rules.as_slice());
+    }
+    let says = |rules: &[TargetedRule], applies: &dyn Fn(Target) -> bool| {
+        let applying = || rules.iter().filter(|rule| applies(rule.target));
+        if applying().any(|rule| rule.allow.contains(capability)) {
+            Some(true)
+        } else if applying().any(|rule| rule.deny.contains(capability)) {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    scopes.into_iter().fold(discord, |held, rules| {
+        let layers: [&dyn Fn(Target) -> bool; 3] = [
+            &|target| target == Target::Everyone,
+            &|target| matches!(target, Target::Role(r) if holder.roles.contains(&r)),
+            &|target| matches!(target, Target::User(u) if Some(u) == holder.user),
+        ];
+        layers
+            .into_iter()
+            .fold(held, |held, applies| says(rules, applies).unwrap_or(held))
+    })
+}
+
+/// The channel index of a voice or stage channel's id.
+fn channel_index(guild: usize, channel: i64) -> Option<usize> {
+    usize::try_from(channel - World::channel_id(guild, 0)).ok()
+}
+
+/// `access` as the model has it, from Discord's `discord` answer
+/// (`facts.discord_permissions`, checked against serenity elsewhere).
+fn check_rules(
+    world: &World,
+    guild: usize,
+    holder: &Holder,
+    owner: bool,
+    discord: &crate::DiscordPermissions,
+    access: &Access,
+    coverage: &mut Coverage,
+) -> Result<(), TestCaseError> {
+    let granted = Capabilities::from_guild_permissions(discord.base);
+    for capability in Capabilities::MANAGEMENT.iter() {
+        let held = ruled(
+            world,
+            guild,
+            None,
+            holder,
+            capability,
+            granted.contains(capability),
+        );
+        prop_assert_eq!(
+            access.guild.contains(capability),
+            held || owner,
+            "{:?} guild-wide",
+            capability
+        );
+        if owner && !held {
+            coverage.reach(Reached::OwnerKeepsManagement);
+        }
+    }
+    let administrator = discord.base.contains(Permissions::ADMINISTRATOR);
+    for (&channel, &permissions) in &discord.channels {
+        let c = channel_index(guild, channel)
+            .ok_or_else(|| TestCaseError::fail(format!("channel {channel} not generated")))?;
+        let granted = Capabilities::from_channel_permissions(permissions);
+        let expected = Capabilities::CONTENT
+            .iter()
+            .filter(|&capability| {
+                ruled(
+                    world,
+                    guild,
+                    Some(c),
+                    holder,
+                    capability,
+                    granted.contains(capability),
+                )
+            })
+            .fold(Capabilities::empty(), |held, capability| held | capability);
+        let held = access.channels.get(&channel).copied().unwrap_or_default();
+        prop_assert_eq!(held, expected, "channel {}", channel);
+        if !(expected - granted).is_empty() {
+            coverage.reach(Reached::RuleGrants);
+        }
+        if !(granted - expected).is_empty() {
+            coverage.reach(if administrator {
+                Reached::RuleDeniesAdministrator
+            } else {
+                Reached::RuleDenies
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The explanation agrees with the access it explains, capability by
+/// capability, and with what Discord alone gives.
+fn check_explanation(
+    explanation: &Explanation,
+    access: &Access,
+    discord: &crate::DiscordPermissions,
+    coverage: &mut Coverage,
+) -> Result<(), TestCaseError> {
+    prop_assert_eq!(explanation.membership, access.membership);
+    let agrees = |decisions: &[Decision], held: Capabilities, granted: Capabilities, scope| {
+        let capabilities: Vec<Capabilities> = decisions
+            .iter()
+            .map(|decision| decision.capability)
+            .collect();
+        let expected: Vec<Capabilities> = Capabilities::iter(&scope).collect();
+        prop_assert_eq!(capabilities, expected, "one decision per capability");
+        for decision in decisions {
+            prop_assert_eq!(
+                decision.held,
+                held.contains(decision.capability),
+                "{:?}",
+                decision
+            );
+            prop_assert_eq!(
+                decision.discord,
+                granted.contains(decision.capability),
+                "{:?}",
+                decision
+            );
+            if decision.by == Source::Discord {
+                prop_assert_eq!(decision.held, decision.discord, "{:?}", decision);
+            }
+        }
+        Ok(())
+    };
+    agrees(
+        &explanation.guild,
+        access.guild,
+        Capabilities::from_guild_permissions(discord.base),
+        Capabilities::MANAGEMENT,
+    )?;
+    prop_assert_eq!(
+        explanation.channels.keys().collect::<Vec<_>>(),
+        access.channels.keys().collect::<Vec<_>>()
+    );
+    for (channel, decisions) in &explanation.channels {
+        agrees(
+            decisions,
+            access.channels[channel],
+            Capabilities::from_channel_permissions(discord.channels[channel]),
+            Capabilities::CONTENT,
+        )?;
+        if decisions.iter().any(|decision| {
+            matches!(
+                decision.by,
+                Source::Rule {
+                    channel: Some(_),
+                    ..
+                }
+            )
+        }) {
+            coverage.reach(Reached::ExplainedByChannelRule);
+        }
+    }
+    Ok(())
+}
+
 fn recorded_channels(facts: &GuildFacts) -> BTreeSet<i64> {
     facts.channels.keys().copied().collect()
 }
@@ -188,6 +398,13 @@ fn check_viewer(
         _ => {
             prop_assert_eq!(access.guild, Capabilities::empty(), "an outsider manages");
             prop_assert!(access.channels.is_empty(), "an outsider gets channels");
+            prop_assert_eq!(
+                facts
+                    .explain(viewer)
+                    .map(|explained| explained.guild.is_empty() && explained.channels.is_empty()),
+                Ok(true),
+                "rules reach an outsider"
+            );
             // A former member hears their own voice and nothing else; an
             // outsider nothing at all.
             let channels: Vec<i64> = recorded_channels(facts).into_iter().collect();
@@ -207,17 +424,48 @@ fn check_viewer(
     } else {
         Capabilities::empty()
     };
-    prop_assert_eq!(access.guild, management);
+    let discord = facts
+        .discord_permissions(viewer)
+        .map_err(|_| TestCaseError::fail("membership known for access, not for Discord"))?;
+    prop_assert_eq!(
+        Capabilities::from_guild_permissions(discord.base),
+        management
+    );
+    let g = guild.ok_or_else(|| TestCaseError::fail("a member of the unknown guild"))?;
+    let owner = access.membership == Membership::Owner;
+    check_rules(
+        world,
+        g,
+        &Holder::member(world, g, user),
+        owner,
+        &discord,
+        &access,
+        coverage,
+    )?;
+    let explanation = facts
+        .explain(viewer)
+        .map_err(|_| TestCaseError::fail("membership known for access, not to explain"))?;
+    check_explanation(&explanation, &access, &discord, coverage)?;
 
+    // Discord's defaults, before any rule.
     let recorded = recorded_channels(facts);
     let channels: BTreeSet<i64> = access.channels.keys().copied().collect();
     prop_assert_eq!(&channels, &recorded, "every voice and stage channel");
+    let defaults: BTreeMap<i64, Capabilities> = discord
+        .channels
+        .iter()
+        .map(|(&channel, &permissions)| {
+            (channel, Capabilities::from_channel_permissions(permissions))
+        })
+        .collect();
     for (&channel, &held) in &access.channels {
         prop_assert!(
             !held.intersects(Capabilities::MANAGEMENT),
             "channel {} holds a guild-wide capability",
             channel
         );
+    }
+    for (&channel, &held) in &defaults {
         prop_assert!(held.contains(Capabilities::STAMP), "channel {}", channel);
         let listens = held.contains(Capabilities::LISTEN_OTHERS);
         prop_assert!(
@@ -228,8 +476,15 @@ fn check_viewer(
         prop_assert_eq!(listens, held.contains(Capabilities::CREATE_CLIPS));
         prop_assert_eq!(listens, held.contains(Capabilities::JAM));
     }
-    let listening = channels_with(&access, Capabilities::LISTEN_OTHERS);
-    let presence = channels_with(&access, Capabilities::VIEW_PRESENCE);
+    let by_default = |capability: Capabilities| -> BTreeSet<i64> {
+        defaults
+            .iter()
+            .filter(|(_, held)| held.contains(capability))
+            .map(|(&channel, _)| channel)
+            .collect()
+    };
+    let listening = by_default(Capabilities::LISTEN_OTHERS);
+    let presence = by_default(Capabilities::VIEW_PRESENCE);
     if bits & ADMINISTRATOR != 0 {
         prop_assert_eq!(&listening, &recorded, "ADMINISTRATOR bypasses overwrites");
         prop_assert_eq!(&presence, &recorded, "ADMINISTRATOR bypasses overwrites");
@@ -341,18 +596,43 @@ fn check_preview(
         "a preview shows more than the manager's own view: {:?}",
         clipped
     );
+    // The role's own access, before clipping: Discord's answer for a member
+    // holding only that role, then the rules for `@everyone` and the role.
+    let g = guild.ok_or_else(|| TestCaseError::fail("a stored role of the unknown guild"))?;
+    let discord = facts.role_permissions(role);
+    check_rules(
+        world,
+        g,
+        &Holder::role(world, g, role),
+        false,
+        &discord,
+        &role_access,
+        coverage,
+    )?;
+    let explanation = facts
+        .explain_role(role)
+        .map_err(|RoleNotFound| TestCaseError::fail("a stored role not found to explain"))?;
+    check_explanation(&explanation, &role_access, &discord, coverage)?;
     let joinable = channels_with(&preview.access, Capabilities::LISTEN_OTHERS);
-    let presence = channels_with(&preview.access, Capabilities::VIEW_PRESENCE);
-    prop_assert!(
-        joinable.is_subset(&presence),
-        "joins a channel it cannot view"
-    );
+    let defaults = |capability: Capabilities| -> BTreeSet<i64> {
+        discord
+            .channels
+            .iter()
+            .filter(|(_, permissions)| {
+                Capabilities::from_channel_permissions(**permissions).contains(capability)
+            })
+            .map(|(&channel, _)| channel)
+            .collect()
+    };
     let everyone = guild.and_then(|g| world.guilds[g].everyone).unwrap_or(0);
     if (everyone | role_bits) & ADMINISTRATOR != 0 {
-        prop_assert_eq!(&joinable, &listening);
         prop_assert_eq!(
-            &presence,
-            &channels_with(manager, Capabilities::VIEW_PRESENCE)
+            defaults(Capabilities::LISTEN_OTHERS),
+            recorded_channels(facts)
+        );
+        prop_assert_eq!(
+            defaults(Capabilities::VIEW_PRESENCE),
+            recorded_channels(facts)
         );
     }
     if manages && joinable.len() < listening.len() {
@@ -411,9 +691,19 @@ enum Reached {
     KeptFromTheOwner,
     /// A holder of `DELETE_RECORDINGS` sees a private recording redacted.
     Redacted,
+    /// A rule grants a content capability Discord does not.
+    RuleGrants,
+    /// A rule takes one Discord grants, from someone without
+    /// ADMINISTRATOR and from someone with it.
+    RuleDenies,
+    RuleDeniesAdministrator,
+    /// A rule denies the owner a management capability, which they keep.
+    OwnerKeepsManagement,
+    /// A channel's own rule decides a capability.
+    ExplainedByChannelRule,
 }
 
-const EVERY_OUTCOME: [Reached; 16] = [
+const EVERY_OUTCOME: [Reached; 21] = [
     Reached::Owner,
     Reached::Member,
     Reached::Former,
@@ -430,6 +720,11 @@ const EVERY_OUTCOME: [Reached; 16] = [
     Reached::PreviewOfMissingRole,
     Reached::KeptFromTheOwner,
     Reached::Redacted,
+    Reached::RuleGrants,
+    Reached::RuleDenies,
+    Reached::RuleDeniesAdministrator,
+    Reached::OwnerKeepsManagement,
+    Reached::ExplainedByChannelRule,
 ];
 
 #[derive(Debug, Default)]

@@ -1,4 +1,5 @@
 use crate::cast::ToI64;
+use sakiot_permissions::Capabilities;
 use serenity::all::{CommandDataOptionValue, CommandInteraction, UserId};
 use serenity::builder::{CreateCommand, CreateCommandOption};
 use serenity::client::Context;
@@ -65,6 +66,18 @@ pub async fn handle_stamp(
         Some(c) => c,
         None => return "You must be in a voice channel to use /stamp.".to_string(),
     };
+    // Stamping takes `stamp` in the channel the stamp is made in.
+    match crate::permissions::access(&ctx.cache, pool, guild_id, stamper_id).await {
+        Ok(access)
+            if access
+                .as_ref()
+                .is_some_and(|access| access.allows(channel_id.to_i64(), Capabilities::STAMP)) => {}
+        Ok(_) => return format!("You can't stamp in <#{channel_id}>."),
+        Err(e) => {
+            warn!("Failed to load permission rules: {}", e);
+            return "Database error. Try again later.".to_string();
+        }
+    }
 
     crate::database::user_names::observe(pool, guild_id.get(), &application_command.user, None)
         .await;

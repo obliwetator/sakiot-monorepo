@@ -1,17 +1,20 @@
-//! What a member may do in a guild, answered from the gateway cache by the
-//! evaluator the web server uses (`sakiot-permissions`), so `/jam` and the
-//! dashboard agree.
+//! What a member may do in a guild, answered by the evaluator the web server
+//! uses (`sakiot-permissions`), so the bot's commands and the dashboard
+//! agree: Discord's permissions from the gateway cache, then Sakiot's own
+//! rules from the database.
 
 use sakiot_permissions::{
-    Capabilities, ChannelFacts, GuildFacts, MemberFacts, Membership, Overwrite, Permissions,
-    Roster, Viewer,
+    Access, Capabilities, ChannelFacts, GuildFacts, MemberFacts, Membership, Overwrite,
+    Permissions, Roster, Rules, Viewer,
 };
 use serenity::client::Cache;
 use serenity::model::channel::{ChannelType, PermissionOverwriteType};
 use serenity::model::guild::Guild;
 use serenity::model::id::{GuildId, RoleId, UserId};
+use sqlx::{Pool, Postgres};
 
 use crate::cast::ToI64;
+use crate::database::DbResult;
 
 /// Which clips a user may hear (`Access::allows_item`), for a query: those
 /// of only `own`'s voice, and those whose every channel is in `channels`.
@@ -25,23 +28,42 @@ pub(crate) struct Listening {
     pub(crate) channels: Vec<i64>,
 }
 
-/// What the user may hear in the guild; nothing while it is not cached.
-pub(crate) fn listening(cache: &Cache, guild_id: GuildId, user_id: UserId) -> Listening {
-    cache
-        .guild(guild_id)
-        .map_or_else(Listening::default, |guild| listening_in(&guild, user_id))
+impl Listening {
+    /// What `access` lets its viewer hear; nothing without access.
+    pub(crate) fn of(access: Option<&Access>) -> Self {
+        let Some(access) = access else {
+            return Self::default();
+        };
+        Self {
+            own: access
+                .user_id
+                .filter(|_| access.membership != Membership::Outsider),
+            channels: access.channels_with(Capabilities::LISTEN_OTHERS).collect(),
+        }
+    }
 }
 
-pub(crate) fn listening_in(guild: &Guild, user_id: UserId) -> Listening {
-    let Ok(access) = guild_facts(guild, user_id).access(Viewer::discord(user_id.to_i64())) else {
-        return Listening::default();
-    };
-    Listening {
-        own: access
-            .user_id
-            .filter(|_| access.membership != Membership::Outsider),
-        channels: access.channels_with(Capabilities::LISTEN_OTHERS).collect(),
-    }
+/// What the user may do in the guild; `None` while the guild is not cached.
+/// Reads the guild's rules first, since the cache cannot be held across the
+/// query.
+pub(crate) async fn access(
+    cache: &Cache,
+    pool: &Pool<Postgres>,
+    guild_id: GuildId,
+    user_id: UserId,
+) -> DbResult<Option<Access>> {
+    let rules = crate::database::permission_rules::load(pool, guild_id.to_i64()).await?;
+    Ok(cache
+        .guild(guild_id)
+        .and_then(|guild| access_in(&guild, user_id, rules)))
+}
+
+/// What the user may do in `guild` under `rules`; `None` while membership is
+/// unknown, which a cached guild never leaves it.
+pub(crate) fn access_in(guild: &Guild, user_id: UserId, rules: Rules) -> Option<Access> {
+    let mut facts = guild_facts(guild, user_id);
+    facts.rules = rules;
+    facts.access(Viewer::discord(user_id.to_i64())).ok()
 }
 
 /// What the evaluator needs about `user_id` in `guild`, as the gateway cache

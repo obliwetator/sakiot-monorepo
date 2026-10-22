@@ -286,6 +286,36 @@ async fn listening_consent_reauthorizes_the_guild_and_tells_the_member(pool: PgP
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn permission_rules_reauthorize_the_guild_and_refresh_the_editor(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    for statement in [
+        "INSERT INTO permission_rules
+            (guild_id, channel_id, subject_kind, subject_id, allow, deny, updated_by)
+         VALUES ($1, NULL, 'user', $2, 64, 0, $2)",
+        "UPDATE permission_rules SET deny = 512 WHERE guild_id = $1 AND subject_id = $2",
+        "DELETE FROM permission_rules WHERE guild_id = $1 AND subject_id = $2",
+        // Nothing to delete: nothing changes, nothing is sent.
+        "DELETE FROM permission_rules WHERE guild_id = $1 AND subject_id = $2",
+    ] {
+        sqlx::query(statement)
+            .bind(GUILD)
+            .bind(USER)
+            .execute(&pool)
+            .await?;
+    }
+    let changed = [
+        json!({ "v": 1, "k": "perm", "g": GUILD.to_string() }),
+        json!({ "v": 1, "k": "settings", "g": GUILD.to_string(), "r": "permission_rules" }),
+    ];
+    assert_eq!(
+        notifications.drain().await?,
+        [changed.clone(), changed.clone(), changed].concat()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn a_clip_whose_channels_or_speakers_change_notifies_with_the_old_and_the_new(
     pool: PgPool,
 ) -> TestResult {

@@ -2,7 +2,10 @@
 
 use std::collections::HashMap;
 
-use sakiot_permissions::{ChannelFacts, GuildFacts, MemberFacts, Overwrite, Permissions, Roster};
+use sakiot_permissions::{
+    Capabilities, ChannelFacts, GuildFacts, MemberFacts, Overwrite, Permissions, Roster, Rule,
+    Subject,
+};
 use sqlx::types::Json;
 
 use crate::errors::AppError;
@@ -41,6 +44,15 @@ enum OverwriteKind {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct RuleRow {
+    channel_id: Option<i64>,
+    subject_kind: String,
+    subject_id: Option<i64>,
+    allow: i64,
+    deny: i64,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct OverwriteRow {
     target_id: i64,
     kind: OverwriteKind,
@@ -75,7 +87,9 @@ pub(super) async fn load<'e>(
 /// - each user's listing and roles, whether they have recordings of their
 ///   own there (for a former member), and their dev seeding
 ///   (`user_guilds`);
-/// - everyone who keeps their recordings private there, loaded or not.
+/// - everyone who keeps their recordings private there, loaded or not;
+/// - Sakiot's rules for `@everyone` and for exactly those roles and users,
+///   guild-wide and in the voice and stage channels.
 ///
 /// One `GuildFacts` per distinct guild, in no particular order; a guild
 /// nothing is known about still gets one.
@@ -168,7 +182,27 @@ pub(super) async fn load_many<'e>(
                        AND c.type IN (2, 13)
                    ) AS "channels!: Json<Vec<ChannelRow>>",
                    ARRAY(SELECT user_id FROM recording_private WHERE guild_id = g.guild_id)
-                       AS "private!"
+                       AS "private!",
+                   (SELECT COALESCE(json_agg(json_build_object(
+                               'channel_id', pr.channel_id,
+                               'subject_kind', pr.subject_kind,
+                               'subject_id', pr.subject_id,
+                               'allow', pr.allow,
+                               'deny', pr.deny)), '[]')
+                      FROM permission_rules pr
+                     WHERE pr.guild_id = g.guild_id
+                       AND (pr.channel_id IS NULL
+                            OR pr.channel_id IN (
+                                SELECT channel_id FROM channels
+                                 WHERE guild_id = g.guild_id AND type IN (2, 13)))
+                       AND (pr.subject_kind = 'everyone'
+                            OR (pr.subject_kind = 'role'
+                                AND pr.subject_id IN (
+                                    SELECT role_id FROM loaded_roles
+                                     WHERE guild_id = g.guild_id))
+                            OR (pr.subject_kind = 'user'
+                                AND pr.subject_id = ANY($2::bigint[])))
+                   ) AS "rules!: Json<Vec<RuleRow>>"
                  FROM requested g"#,
             guilds,
             users,
@@ -211,6 +245,18 @@ pub(super) async fn load_many<'e>(
                     })
                     .collect();
                 facts.private = row.private.into_iter().collect();
+                for rule in row.rules.0 {
+                    // The table's constraints admit nothing else.
+                    let Some(subject) = Subject::from_stored(&rule.subject_kind, rule.subject_id)
+                    else {
+                        continue;
+                    };
+                    let effect = Rule {
+                        allow: Capabilities::from_stored(rule.allow),
+                        deny: Capabilities::from_stored(rule.deny),
+                    };
+                    facts.rules.set(rule.channel_id, subject, effect);
+                }
                 facts.seeds = row
                     .seeds
                     .0

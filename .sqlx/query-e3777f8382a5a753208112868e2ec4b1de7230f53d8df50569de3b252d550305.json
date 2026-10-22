@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_names (user_id, username, global_name) VALUES ($1, 'member', 'Member')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e3777f8382a5a753208112868e2ec4b1de7230f53d8df50569de3b252d550305"
+}

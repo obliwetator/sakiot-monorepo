@@ -289,6 +289,13 @@ async fn complete_roster_size(
     .await?)
 }
 
+/// Who may search the roster, any one of: the members page
+/// (`PREVIEW_ROLES`), and the member pickers of the cooldowns page
+/// (`MANAGE_SETTINGS`) and the rule editor (`MANAGE_PERMISSIONS`).
+pub const MEMBER_SEARCH: Capabilities = Capabilities::PREVIEW_ROLES
+    .union(Capabilities::MANAGE_SETTINGS)
+    .union(Capabilities::MANAGE_PERMISSIONS);
+
 const MEMBER_PAGE_DEFAULT: i64 = 20;
 const MEMBER_PAGE_MAX: i64 = 50;
 /// Searching narrows a picker; nobody pages this deep.
@@ -346,7 +353,7 @@ fn like_escape(value: &str) -> String {
         (status = 200, description = "Matching guild members, by name", body = MemberPage),
         (status = 400, description = "Invalid limit or offset", body = crate::errors::ApiError),
         (status = 401, description = "Missing or invalid access token", body = crate::errors::ApiError),
-        (status = 403, description = "User cannot manage this guild", body = crate::errors::ApiError),
+        (status = 403, description = "The viewer holds none of preview_roles, manage_settings and manage_permissions", body = crate::errors::ApiError),
         (status = 500, description = "Server error", body = crate::errors::ApiError),
     ),
     security(("access_token" = [])),
@@ -359,13 +366,8 @@ pub async fn search_guild_members(
     query: web::Query<MemberSearchQuery>,
 ) -> Result<HttpResponse, AppError> {
     let guild_id = path.into_inner();
-    // The members page, and the cooldowns page's member picker.
     let access = GuildAccess::load(pool.get_ref(), guild_id, request_viewer(&req)?, None).await?;
-    if !access
-        .access()?
-        .guild
-        .intersects(Capabilities::PREVIEW_ROLES | Capabilities::MANAGE_SETTINGS)
-    {
+    if !access.access()?.guild.intersects(MEMBER_SEARCH) {
         return Err(AppError::Forbidden);
     }
 

@@ -8,13 +8,18 @@
 //! The generator stays inside what the bot can write: member role lists never
 //! hold `@everyone`, and a role overwrite only targets `@everyone`, one of the
 //! guild's roles, or a role deleted from `roles` before its overwrites were.
+//! Sakiot's rules go further than the editor lets them (management
+//! capabilities in a channel, rules in text channels), since the evaluator
+//! must ignore what does not apply.
 
 use std::collections::{BTreeMap, HashMap};
 
 use proptest::prelude::*;
 
+use crate::capabilities::Capabilities;
 use crate::discord::Permissions;
 use crate::facts::{ChannelFacts, GuildFacts, MemberFacts};
+use crate::rules::{Rule, Subject};
 
 #[cfg(any(test, feature = "serenity"))]
 pub mod gateway;
@@ -89,6 +94,17 @@ pub struct Channel {
     pub kind: ChannelKind,
     /// At most one per target, as `channel_permissions` allows.
     pub overwrites: Vec<TargetedOverwrite>,
+    /// Sakiot's rules here, at most one per target.
+    pub rules: Vec<TargetedRule>,
+}
+
+/// A Sakiot rule (`permission_rules`). `Target::Everyone` is the rule for
+/// `@everyone`; `Target::DeletedRole` one whose role is gone.
+#[derive(Clone, Debug)]
+pub struct TargetedRule {
+    pub target: Target,
+    pub allow: Capabilities,
+    pub deny: Capabilities,
 }
 
 /// One user's standing in one guild.
@@ -123,6 +139,8 @@ pub struct Guild {
     pub channels: Vec<Channel>,
     /// One per user of the world.
     pub members: Vec<Member>,
+    /// Sakiot's guild-wide rules, at most one per target.
+    pub rules: Vec<TargetedRule>,
 }
 
 /// Guilds that share one pool of users, so a role or overwrite leaking from
@@ -156,6 +174,17 @@ impl World {
 
     pub fn owner_id(guild: &Guild) -> i64 {
         guild.owner.map_or(STRANGER_ID, Self::user_id)
+    }
+
+    /// Whom a rule of guild `guild` targeting `target` is for, as stored:
+    /// `@everyone`, or a role or user by id.
+    pub fn subject(guild: usize, target: Target) -> Subject {
+        match target {
+            Target::Everyone => Subject::Everyone,
+            Target::Role(r) => Subject::Role(Self::role_id(guild, r)),
+            Target::User(u) => Subject::User(Self::user_id(u)),
+            Target::DeletedRole => Subject::Role(Self::deleted_role_id(guild)),
+        }
     }
 
     /// A generated guild's id, or `UNKNOWN_GUILD_ID` for `None`.
@@ -216,7 +245,36 @@ impl World {
                 facts.private.insert(user_id);
             }
         }
+        // As loaded: a deleted role's rules with the role, and channel
+        // rules only where permissions are computed.
+        let loaded = |rule: &&TargetedRule| rule.target != Target::DeletedRole;
+        for rule in spec.rules.iter().filter(loaded) {
+            facts
+                .rules
+                .set(None, Self::subject(g, rule.target), rule.rule());
+        }
+        for (c, channel) in spec.channels.iter().enumerate() {
+            if !channel.kind.recorded() {
+                continue;
+            }
+            for rule in channel.rules.iter().filter(loaded) {
+                facts.rules.set(
+                    Some(Self::channel_id(g, c)),
+                    Self::subject(g, rule.target),
+                    rule.rule(),
+                );
+            }
+        }
         facts
+    }
+}
+
+impl TargetedRule {
+    pub fn rule(&self) -> Rule {
+        Rule {
+            allow: self.allow,
+            deny: self.deny,
+        }
     }
 }
 
@@ -270,9 +328,10 @@ fn guild(users: usize) -> impl Strategy<Value = Guild> {
             prop::collection::vec(role_bits(), roles),
             prop::collection::vec(channel(roles, users), channels),
             prop::collection::vec(member(roles), users),
+            rules(roles, users, 0.35),
         )
             .prop_map(
-                |(owner, roster, bot_present, everyone, roles, channels, members)| Guild {
+                |(owner, roster, bot_present, everyone, roles, channels, members, rules)| Guild {
                     owner,
                     roster,
                     bot_present,
@@ -280,6 +339,7 @@ fn guild(users: usize) -> impl Strategy<Value = Guild> {
                     roles,
                     channels,
                     members,
+                    rules,
                 },
             )
     })
@@ -318,8 +378,9 @@ fn channel(roles: usize, users: usize) -> impl Strategy<Value = Channel> {
         prop::collection::vec(prop::option::weighted(0.4, overwrite_bits()), roles),
         prop::collection::vec(prop::option::weighted(0.25, overwrite_bits()), users),
         prop::option::weighted(0.1, overwrite_bits()),
+        rules(roles, users, 0.2),
     )
-        .prop_map(|(kind, everyone, roles, users, deleted)| {
+        .prop_map(|(kind, everyone, roles, users, deleted, rules)| {
             let targeted = everyone
                 .map(|bits| (Target::Everyone, bits))
                 .into_iter()
@@ -345,8 +406,54 @@ fn channel(roles: usize, users: usize) -> impl Strategy<Value = Channel> {
                         deny,
                     })
                     .collect(),
+                rules,
             }
         })
+}
+
+/// Sakiot rules at one scope: one for `@everyone`, each role, each user and
+/// a deleted role, each present with probability `weight` (a deleted role's
+/// less often).
+fn rules(roles: usize, users: usize, weight: f64) -> impl Strategy<Value = Vec<TargetedRule>> {
+    let targets: Vec<(Target, f64)> = [(Target::Everyone, weight)]
+        .into_iter()
+        .chain((0..roles).map(|r| (Target::Role(r), weight)))
+        .chain((0..users).map(|u| (Target::User(u), weight)))
+        .chain([(Target::DeletedRole, weight / 3.0)])
+        .collect();
+    targets
+        .into_iter()
+        .map(|(target, weight)| {
+            prop::option::weighted(weight, rule_bits()).prop_map(move |bits| {
+                bits.map(|(allow, deny)| TargetedRule {
+                    target,
+                    allow,
+                    deny,
+                })
+            })
+        })
+        .collect::<Vec<_>>()
+        .prop_map(|rules| rules.into_iter().flatten().collect())
+}
+
+/// A rule's `(allow, deny)`: each capability left alone, allowed or denied,
+/// never both (the editor refuses that).
+pub fn rule_bits() -> impl Strategy<Value = (Capabilities, Capabilities)> {
+    let each: Vec<Capabilities> = Capabilities::all().iter().collect();
+    prop::collection::vec(
+        prop_oneof![6 => Just(0u8), 2 => Just(1u8), 2 => Just(2u8)],
+        each.len(),
+    )
+    .prop_map(move |choices| {
+        each.iter().zip(choices).fold(
+            (Capabilities::empty(), Capabilities::empty()),
+            |(allow, deny), (&capability, choice)| match choice {
+                1 => (allow | capability, deny),
+                2 => (allow, deny | capability),
+                _ => (allow, deny),
+            },
+        )
+    })
 }
 
 /// Guild-level role permissions, weighted toward the bits that decide

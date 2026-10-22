@@ -43,6 +43,9 @@ pub enum Resource {
     RecordingPolicy,
     /// Guild and per-user Jam cooldowns (holders of `manage_settings` only).
     Cooldowns,
+    /// Sakiot's permission rules, with the names of the channels and roles
+    /// they show (holders of `manage_permissions` only).
+    PermissionRules,
     /// Who is in which voice or stage channel. Never carries `ids`. Clients
     /// that set `presence_updates` get it only when a change cannot be sent
     /// as `presence` updates.

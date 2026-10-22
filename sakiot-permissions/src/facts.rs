@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::discord::{Overwrite, Permissions};
+use crate::rules::Rules;
 
 /// Who is asking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -60,6 +61,9 @@ pub struct GuildFacts {
     /// consent `private`), loaded or not: nobody else may hear their voice,
     /// the owner included.
     pub private: BTreeSet<i64>,
+    /// Sakiot's own rules for `@everyone`, the loaded roles and the loaded
+    /// users, guild-wide and in voice and stage channels.
+    pub rules: Rules,
 }
 
 impl GuildFacts {
@@ -76,6 +80,7 @@ impl GuildFacts {
             members: HashMap::new(),
             seeds: HashMap::new(),
             private: BTreeSet::new(),
+            rules: Rules::default(),
         }
     }
 }

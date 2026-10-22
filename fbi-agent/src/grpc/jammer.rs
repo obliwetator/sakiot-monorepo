@@ -53,6 +53,7 @@ impl Jammer for FbiAgentGrpc {
                 response(JamResponseEnum::Ok, 0)
             }
             Err(PlayClipError::NotInVoice) => response(JamResponseEnum::NotPresent, 0),
+            Err(PlayClipError::NotAllowed { .. }) => response(JamResponseEnum::NotAllowed, 0),
             Err(PlayClipError::Cooldown { remaining_secs }) => {
                 response(JamResponseEnum::Cooldown, remaining_secs)
             }

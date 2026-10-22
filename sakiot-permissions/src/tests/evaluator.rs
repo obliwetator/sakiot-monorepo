@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::{
     Capabilities, ChannelFacts, GuildFacts, MemberFacts, Membership, MembershipUnavailable,
-    Overwrite, Permissions, RoleNotFound, RolePreview, Roster, Viewer,
+    Overwrite, Permissions, RoleNotFound, RolePreview, Roster, Rule, RuleRefused, Source, Subject,
+    Viewer,
 };
 
 const GUILD: i64 = 1;
@@ -382,4 +383,291 @@ fn a_private_voice_is_heard_by_its_speaker_alone_whatever_anyone_holds() {
     let member = facts.access(Viewer::discord(MEMBER)).expect("known");
     assert!(!member.allows_item(&[OWNER], [CHANNEL]));
     assert!(!member.redacts_item(&[OWNER], [CHANNEL]));
+}
+
+fn allow(capabilities: Capabilities) -> Rule {
+    Rule {
+        allow: capabilities,
+        deny: Capabilities::empty(),
+    }
+}
+
+fn deny(capabilities: Capabilities) -> Rule {
+    Rule {
+        allow: Capabilities::empty(),
+        deny: capabilities,
+    }
+}
+
+fn member_holds(facts: &GuildFacts, capability: Capabilities) -> bool {
+    facts
+        .access(Viewer::discord(MEMBER))
+        .expect("known")
+        .allows(CHANNEL, capability)
+}
+
+#[test]
+fn a_sakiot_allow_grants_what_discord_denies() {
+    let mut facts = guild(Permissions::empty());
+    assert!(!member_holds(&facts, Capabilities::LISTEN_OTHERS));
+
+    facts.rules.set(
+        None,
+        Subject::Role(ROLE),
+        allow(Capabilities::LISTEN_OTHERS),
+    );
+
+    assert!(member_holds(&facts, Capabilities::LISTEN_OTHERS));
+    // Only what the rule names.
+    assert!(!member_holds(&facts, Capabilities::VIEW_PRESENCE));
+}
+
+#[test]
+fn a_sakiot_deny_holds_even_against_an_administrator() {
+    let mut facts = guild(Permissions::empty());
+    facts.roles.insert(ROLE, Permissions::ADMINISTRATOR);
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::Everyone, deny(Capabilities::JAM));
+
+    assert!(!member_holds(&facts, Capabilities::JAM));
+    assert!(member_holds(&facts, Capabilities::LISTEN_OTHERS));
+}
+
+#[test]
+fn the_most_specific_rule_wins() {
+    let mut facts = guild(VOICE);
+    let stamp = Capabilities::STAMP;
+    // Guild-wide: `@everyone` < the member's roles < the member.
+    facts.rules.set(None, Subject::Everyone, deny(stamp));
+    assert!(!member_holds(&facts, stamp));
+    facts.rules.set(None, Subject::Role(ROLE), allow(stamp));
+    assert!(member_holds(&facts, stamp));
+    facts.rules.set(None, Subject::User(MEMBER), deny(stamp));
+    assert!(!member_holds(&facts, stamp));
+    // Any channel rule beats every guild-wide one, `@everyone`'s included.
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::Everyone, allow(stamp));
+    assert!(member_holds(&facts, stamp));
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::Role(ROLE), deny(stamp));
+    assert!(!member_holds(&facts, stamp));
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::User(MEMBER), allow(stamp));
+    assert!(member_holds(&facts, stamp));
+    // A rule for someone else, or a role they do not hold, changes nothing.
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::User(OWNER), deny(stamp));
+    facts
+        .rules
+        .set(Some(CHANNEL), Subject::Role(ROLE + 1), deny(stamp));
+    assert!(member_holds(&facts, stamp));
+}
+
+#[test]
+fn among_roles_an_allow_beats_a_deny() {
+    let other = ROLE + 1;
+    let mut facts = guild(VOICE);
+    facts.roles.insert(other, Permissions::empty());
+    if let Some(member) = facts.members.get_mut(&MEMBER) {
+        member.roles.push(other);
+    }
+    facts
+        .rules
+        .set(None, Subject::Role(ROLE), deny(Capabilities::CREATE_CLIPS));
+    facts.rules.set(
+        None,
+        Subject::Role(other),
+        allow(Capabilities::CREATE_CLIPS),
+    );
+
+    assert!(member_holds(&facts, Capabilities::CREATE_CLIPS));
+}
+
+#[test]
+fn the_owner_keeps_management_but_not_what_rules_take_from_content() {
+    let mut facts = guild(VOICE);
+    facts.rules.set(
+        None,
+        Subject::User(OWNER),
+        deny(Capabilities::MANAGEMENT | Capabilities::LISTEN_OTHERS),
+    );
+
+    let owner = facts.access(Viewer::discord(OWNER)).expect("known");
+    assert_eq!(owner.guild, Capabilities::MANAGEMENT);
+    assert!(!owner.allows(CHANNEL, Capabilities::LISTEN_OTHERS));
+    let explained = facts.explain(Viewer::discord(OWNER)).expect("known");
+    assert!(
+        explained
+            .guild
+            .iter()
+            .all(|decision| decision.held && decision.by == Source::Owner)
+    );
+}
+
+#[test]
+fn rules_apply_management_guild_wide_and_content_per_channel() {
+    let mut facts = guild(VOICE);
+    // A channel rule cannot reach a guild-wide capability.
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::User(MEMBER),
+        allow(Capabilities::DELETE_RECORDINGS),
+    );
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(member.guild, Capabilities::empty());
+    assert!(!member.allows(CHANNEL, Capabilities::DELETE_RECORDINGS));
+    // A guild-wide one grants it, and its content capabilities reach every
+    // channel.
+    facts.rules.set(
+        None,
+        Subject::User(MEMBER),
+        Rule {
+            allow: Capabilities::DELETE_RECORDINGS,
+            deny: Capabilities::STAMP,
+        },
+    );
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(member.guild, Capabilities::DELETE_RECORDINGS);
+    assert!(!member.allows(CHANNEL, Capabilities::STAMP));
+}
+
+#[test]
+fn rules_never_reach_a_former_member() {
+    let mut facts = guild(VOICE);
+    if let Some(member) = facts.members.get_mut(&MEMBER) {
+        member.listed = false;
+        member.recorded = true;
+    }
+    facts
+        .rules
+        .set(None, Subject::User(MEMBER), allow(Capabilities::all()));
+
+    let former = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(former.membership, Membership::Former);
+    assert_eq!(former.guild, Capabilities::empty());
+    assert!(former.channels.is_empty());
+}
+
+#[test]
+fn a_role_preview_applies_everyones_and_that_roles_rules() {
+    let mut facts = guild(VOICE);
+    facts
+        .rules
+        .set(None, Subject::Everyone, deny(Capabilities::JAM));
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::Role(ROLE),
+        allow(Capabilities::PREVIEW_ROLES | Capabilities::JAM),
+    );
+    facts
+        .rules
+        .set(None, Subject::User(MEMBER), allow(Capabilities::JAM));
+
+    let everyone = facts.role_access(GUILD).expect("@everyone");
+    assert!(!everyone.allows(CHANNEL, Capabilities::JAM));
+    let role = facts.role_access(ROLE).expect("the guild's role");
+    assert!(role.allows(CHANNEL, Capabilities::JAM));
+    assert_eq!(role.guild, Capabilities::empty());
+    let explained = facts.explain_role(ROLE).expect("the guild's role");
+    let jam = explained.channels[&CHANNEL]
+        .iter()
+        .find(|decision| decision.capability == Capabilities::JAM)
+        .expect("every content capability");
+    assert!(jam.held && jam.discord);
+    assert_eq!(
+        jam.by,
+        Source::Rule {
+            channel: Some(CHANNEL),
+            subject: Subject::Role(ROLE)
+        }
+    );
+}
+
+#[test]
+fn an_editor_changes_only_what_they_hold_and_keeps_editing() {
+    let mut facts = guild(Permissions::VIEW_CHANNEL);
+    let editor = Viewer::discord(MEMBER);
+    let change = |facts: &mut GuildFacts, channel, subject, rule| {
+        facts.edit_rule(editor, channel, subject, rule)
+    };
+    assert_eq!(
+        change(
+            &mut facts,
+            None,
+            Subject::Everyone,
+            deny(Capabilities::STAMP)
+        ),
+        Err(RuleRefused::NotAnEditor)
+    );
+
+    facts.rules.set(
+        None,
+        Subject::User(MEMBER),
+        allow(Capabilities::MANAGE_PERMISSIONS),
+    );
+    // Not what they lack: they cannot listen in the channel.
+    assert_eq!(
+        change(
+            &mut facts,
+            Some(CHANNEL),
+            Subject::Role(ROLE),
+            allow(Capabilities::LISTEN_OTHERS | Capabilities::STAMP)
+        ),
+        Err(RuleRefused::NotHeld(Capabilities::LISTEN_OTHERS))
+    );
+    assert_eq!(
+        change(
+            &mut facts,
+            None,
+            Subject::Everyone,
+            allow(Capabilities::DELETE_RECORDINGS)
+        ),
+        Err(RuleRefused::NotHeld(Capabilities::DELETE_RECORDINGS))
+    );
+    // What they hold, they may give or take.
+    assert_eq!(
+        change(
+            &mut facts,
+            Some(CHANNEL),
+            Subject::Everyone,
+            deny(Capabilities::STAMP)
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        facts.rules.get(Some(CHANNEL), Subject::Everyone),
+        deny(Capabilities::STAMP)
+    );
+    // Never `MANAGE_PERMISSIONS` from themselves.
+    assert_eq!(
+        change(&mut facts, None, Subject::User(MEMBER), Rule::default()),
+        Err(RuleRefused::OwnManagePermissions)
+    );
+    assert_eq!(
+        change(
+            &mut facts,
+            Some(CHANNEL),
+            Subject::Everyone,
+            deny(Capabilities::MANAGE_PERMISSIONS)
+        ),
+        Err(RuleRefused::ManagementInChannel)
+    );
+    // The owner may change anything, their own rules included.
+    facts
+        .rules
+        .set(None, Subject::User(OWNER), deny(Capabilities::all()));
+    assert_eq!(
+        facts.edit_rule(
+            Viewer::discord(OWNER),
+            Some(CHANNEL),
+            Subject::Role(ROLE),
+            allow(Capabilities::LISTEN_OTHERS)
+        ),
+        Ok(())
+    );
 }

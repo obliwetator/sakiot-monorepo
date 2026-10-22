@@ -502,6 +502,10 @@ fn each_admin_event_follows_its_own_capability() {
             guild_id: GUILD,
             resource: Resource::VoiceSettings,
         },
+        Event::Settings {
+            guild_id: GUILD,
+            resource: Resource::PermissionRules,
+        },
         Event::Members { guild_id: GUILD },
     ];
     let deletion = [Event::Job {
@@ -525,6 +529,11 @@ fn each_admin_event_follows_its_own_capability() {
     assert_eq!(
         routed(&holding(Capabilities::DELETE_RECORDINGS)),
         Routed::from([(Resource::Jobs, ids(&["deletion"]))])
+    );
+    // The rule editor, and its member picker.
+    assert_eq!(
+        routed(&holding(Capabilities::MANAGE_PERMISSIONS)),
+        Routed::from([(Resource::PermissionRules, None), (Resource::Members, None)])
     );
     assert!(routed(&holding(Capabilities::MODERATE_CLIPS)).is_empty());
 }
@@ -550,14 +559,14 @@ fn renames_reach_whoever_shows_the_name() {
             Routed::from([(Resource::Guilds, None)])
         );
     }
-    // Roles show only on the members pages.
+    // Roles show only on the members pages and in the rule editor.
     assert!(routed(Renamed::Roles, &viewer).is_empty());
     assert_eq!(
         routed(Renamed::Roles, &manager),
-        Routed::from([(Resource::Members, None)])
+        Routed::from([(Resource::Members, None), (Resource::PermissionRules, None)])
     );
     // A channel's name shows in presence and stamps where the viewer sees
-    // the channel, and on the recording policy page.
+    // the channel, and on the recording policy page and in the rule editor.
     assert_eq!(
         routed(Renamed::Channel(PUBLIC), &viewer),
         Routed::from([(Resource::Stamps, None), (Resource::Presence, None)])
@@ -565,7 +574,10 @@ fn renames_reach_whoever_shows_the_name() {
     assert!(routed(Renamed::Channel(PRIVATE), &viewer).is_empty());
     assert_eq!(
         routed(Renamed::Channel(PRIVATE), &manager),
-        Routed::from([(Resource::RecordingPolicy, None)])
+        Routed::from([
+            (Resource::RecordingPolicy, None),
+            (Resource::PermissionRules, None)
+        ])
     );
     // Another guild's renames and refused scopes hear nothing.
     let elsewhere = [Event::Names {

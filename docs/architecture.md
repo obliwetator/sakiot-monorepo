@@ -243,14 +243,37 @@ On the read side, a request loads the viewer's access once
 (`GuildAccess`, `web-server/src/permissions/`) and asks it everything. It
 takes one statement (`permissions/facts.rs`), which sees one consistent
 snapshot, so a cache write committing mid-check cannot mix old and new state.
-The agent asks the same evaluator for `/jam` and its autocomplete, with facts
-built from its gateway cache (`fbi-agent/src/permissions.rs`), where the
-cached member list is the roster; a test checks its answers against
+The agent asks the same evaluator for `/jam`, its autocomplete and `/stamp`,
+with facts built from its gateway cache (`fbi-agent/src/permissions.rs`),
+where the cached member list is the roster, and the guild's rules read from
+the database per command; a test checks its Discord answers against
 serenity's own permission rules on random guilds.
 Each guild-wide action needs its own capability: `manage_settings` for
-cooldowns, recording policy and voice settings; `preview_roles` for role
-preview and the roles page; `delete_recordings`; and `moderate_clips` for
-someone else's clip.
+cooldowns, recording policy and voice settings; `manage_permissions` for the
+rule editor; `preview_roles` for role preview and the roles page;
+`delete_recordings`; and `moderate_clips` for someone else's clip. Per voice
+channel: `view_presence`, `listen_others`, `create_clips`, `jam` (playing a
+clip where the bot is, from `/jam` or the dashboard) and `stamp`.
+
+Sakiot's own rules (`permission_rules`, `sakiot_permissions::Rules`) sit on
+top of Discord's. A rule allows or denies capabilities to `@everyone`, a role
+or a user, guild-wide or in one voice or stage channel, and they apply after
+Discord in Discord's own order, the most specific last: guild-wide
+`@everyone`, the holder's roles together (an allow beats a deny), the user;
+then the same in the channel. A guild-wide rule's content capabilities reach
+every channel; management capabilities exist only guild-wide. So a rule can
+grant what Discord denies, and deny even an `ADMINISTRATOR`. Guards no rule
+breaks: the owner keeps every management capability; rules never reach a
+former member or an outsider; and no rule widens listening past a member's
+consent. Holders of `manage_permissions` edit them
+(`web-server/src/admin/permission_rules.rs`, `GuildFacts::edit_rule`): they
+see the channels they can see (the owner every one), change only what they
+hold where the rule applies (guild-wide content takes holding it in every
+channel), and never take `manage_permissions` from themselves. Edits run one
+at a time per guild. A rule whose role or channel is gone reaches nobody and
+anyone may delete it. The explainer (`.../permission-rules/explain`) shows,
+for a member or a role, each capability and the layer that decided it
+(`GuildFacts::explain`).
 Membership comes from the agent's roster, not from the guild list Discord
 returned at login (`GuildFacts::membership`):
 
@@ -375,8 +398,10 @@ voice presence).
   changes what everyone else hears, and the speaker's sessions, clips and
   stamps then reach only them (and a session id the managers who redact
   it);
-  settings reach holders of `manage_settings`, the roster and roles holders
-  of `preview_roles` or `manage_settings`, and role previews follow the
+  settings reach holders of `manage_settings`, permission rules holders of
+  `manage_permissions` (a rule change is also a permission event), the
+  roster and roles holders of `preview_roles`, `manage_settings` or
+  `manage_permissions`, and role previews follow the
   role-preview rule above. Renames refresh where the name shows: the guild
   list (`guilds`), the members pages, and for a channel the presence and
   stamps of viewers who see it and the recording policy. Job ids reach only

@@ -1,0 +1,114 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pr.channel_id, pr.subject_kind, pr.subject_id, pr.allow, pr.deny,\n                  pr.updated_by, pr.updated_at,\n                  CASE pr.subject_kind\n                      WHEN 'role' THEN (SELECT r.name FROM roles r\n                                         WHERE r.role_id = pr.subject_id\n                                           AND r.guild_id = pr.guild_id)\n                      WHEN 'user' THEN (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                                          FROM user_names un\n                                          LEFT JOIN user_nicknames nn\n                                            ON nn.user_id = un.user_id\n                                           AND nn.guild_id = pr.guild_id\n                                         WHERE un.user_id = pr.subject_id)\n                  END AS name,\n                  (pr.subject_kind = 'role'\n                   AND NOT EXISTS (SELECT 1 FROM roles r\n                                    WHERE r.role_id = pr.subject_id\n                                      AND r.guild_id = pr.guild_id))\n                  OR (pr.channel_id IS NOT NULL\n                      AND NOT EXISTS (SELECT 1 FROM channels c\n                                       WHERE c.channel_id = pr.channel_id\n                                         AND c.guild_id = pr.guild_id\n                                         AND c.type IN (2, 13))) AS \"reaches_nobody!\"\n             FROM permission_rules pr\n            WHERE pr.guild_id = $1\n            ORDER BY pr.channel_id NULLS FIRST,\n                     array_position(ARRAY['everyone', 'role', 'user'], pr.subject_kind),\n                     pr.subject_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "subject_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "subject_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "subject_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "subject_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "allow",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "allow"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "deny",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "deny"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "updated_by"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "permission_rules",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "reaches_nobody!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8b911696d4894819ff02fd2b101a809efefdea4ad76d8dfd457ec7a6259dce91"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO permission_rules\n                (guild_id, channel_id, subject_kind, subject_id, allow, deny, updated_by)\n             VALUES ($1, $2, $3, $4, $5, $6, $7)\n             ON CONFLICT ON CONSTRAINT permission_rules_one_per_subject DO UPDATE\n             SET allow = EXCLUDED.allow,\n                 deny = EXCLUDED.deny,\n                 updated_by = EXCLUDED.updated_by,\n                 updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "106f01ef3cb45a7617ffc1ca4f890fb00131a94801c40a25f3b8575f935d5865"
+}
