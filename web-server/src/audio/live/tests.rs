@@ -452,3 +452,68 @@ async fn stderr_drain_allows_noisy_child_to_exit() -> Result<(), Box<dyn std::er
     assert!(status.success());
     Ok(())
 }
+
+fn finished_job(container: &LiveContainer, id: &str) -> Arc<Mutex<JobState>> {
+    let job = Arc::new(Mutex::new(JobState {
+        finalized: true,
+        child: None,
+        follow_stop: None,
+    }));
+    container
+        .jobs
+        .try_write()
+        .expect("uncontended")
+        .insert(id.to_owned(), job.clone());
+    job
+}
+
+#[tokio::test]
+async fn a_finished_job_is_reused_while_its_playlist_exists()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let playlist = directory.path().join("playlist.m3u8");
+    tokio::fs::write(&playlist, "#EXTM3U\n#EXT-X-ENDLIST\n").await?;
+    let container = LiveContainer::default();
+    let job = finished_job(&container, "recording");
+
+    let reused = reusable_job(&container, "recording", &playlist).await;
+
+    assert!(reused.is_some_and(|reused| Arc::ptr_eq(&reused, &job)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finished_job_whose_output_was_reaped_is_forgotten()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let playlist = directory.path().join("hls-recording/playlist.m3u8");
+    let container = LiveContainer::default();
+    finished_job(&container, "recording");
+
+    assert!(
+        reusable_job(&container, "recording", &playlist)
+            .await
+            .is_none()
+    );
+    assert!(container.jobs.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_holding_its_state_is_reused_without_a_playlist()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let playlist = directory.path().join("playlist.m3u8");
+    let container = LiveContainer::default();
+    let job = finished_job(&container, "recording");
+    // A VOD job holds its state for the whole transcode.
+    let _transcoding = job.lock().await;
+
+    assert!(
+        reusable_job(&container, "recording", &playlist)
+            .await
+            .is_some()
+    );
+    assert!(container.jobs.read().await.contains_key("recording"));
+    Ok(())
+}

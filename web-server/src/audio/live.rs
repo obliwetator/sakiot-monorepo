@@ -212,7 +212,8 @@ pub(crate) async fn ensure_job(
     key: RecordingKey,
 ) -> Result<Arc<Mutex<JobState>>, AppError> {
     let id = key_id(&key);
-    if let Some(s) = container.jobs.read().await.get(&id).cloned() {
+    let playlist = key.live_playlist_path(&recording_path());
+    if let Some(s) = reusable_job(&container, &id, &playlist).await {
         return Ok(s);
     }
 
@@ -222,7 +223,7 @@ pub(crate) async fn ensure_job(
     let key_guard = container.key_lock(&id).await;
     let result = {
         let _key_guard = key_guard.lock().await;
-        if let Some(s) = container.jobs.read().await.get(&id).cloned() {
+        if let Some(s) = reusable_job(&container, &id, &playlist).await {
             Ok(s)
         } else {
             ensure_job_locked(container.clone(), pool, key).await
@@ -230,6 +231,30 @@ pub(crate) async fn ensure_job(
     };
     container.release_key_lock(&id, key_guard).await;
     result
+}
+
+/// The job entry to reuse for `id`, if any. A finished job whose output the
+/// cache reaper has since deleted is forgotten instead, so the next request
+/// rebuilds the playlist rather than answering 404 until a restart. A job
+/// still transcoding holds its state lock and is never stale.
+async fn reusable_job(
+    container: &LiveContainer,
+    id: &str,
+    playlist: &Path,
+) -> Option<Arc<Mutex<JobState>>> {
+    let job = container.jobs.read().await.get(id).cloned()?;
+    let finalized = job.try_lock().is_ok_and(|state| state.finalized);
+    if !finalized || tokio::fs::try_exists(playlist).await.unwrap_or(true) {
+        return Some(job);
+    }
+    let mut jobs = container.jobs.write().await;
+    if jobs
+        .get(id)
+        .is_some_and(|current| Arc::ptr_eq(current, &job))
+    {
+        jobs.remove(id);
+    }
+    None
 }
 
 /// Start (or reuse) the HLS job behind a live playlist request. `None` while
