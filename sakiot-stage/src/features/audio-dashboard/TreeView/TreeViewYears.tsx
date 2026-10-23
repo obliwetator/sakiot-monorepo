@@ -4,7 +4,9 @@ import { LiveDot } from "./LiveDot";
 import { TreeViewMonths } from "./TreeViewMonths";
 
 function anyLive(files: IndividualFile[], liveSet: Set<string>): boolean {
-	return files.some((f) => liveSet.has(f.file.slice(0, -4)));
+	return files.some(
+		(f) => f.state === "active" || liveSet.has(f.file.slice(0, -4)),
+	);
 }
 
 export function TreeViewYears(props: {
