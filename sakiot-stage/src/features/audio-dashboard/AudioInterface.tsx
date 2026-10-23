@@ -293,8 +293,8 @@ export function AudioInterface(props: {
 		return (
 			<div className="w-full">
 				{props.isSilence
-					? "Audio file doesn't have silence free vesion"
-					: "An error occured fetching the audio. Try refreshing"}
+					? "Audio file doesn't have a silence free version"
+					: "An error occurred fetching the audio. Try refreshing"}
 			</div>
 		);
 	}

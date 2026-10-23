@@ -64,7 +64,7 @@ export function RangeDetails(props: {
 				</div>
 			</div>
 			<br />
-			value 2: {formatDuration(props.startEnd[1])}
+			Selection end: {formatDuration(props.startEnd[1])}
 			<br />
 			Cropped length: {formatDuration(props.startEnd[1] - props.startEnd[0])}
 			<br />
