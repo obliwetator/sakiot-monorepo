@@ -24,6 +24,18 @@ pub struct SilenceJobContainer {
     _compat: (),
 }
 
+/// Where the silence-free variant is served. The cached and freshly rendered
+/// answers both point here, never at the file on disk.
+fn silence_free_url(
+    guild_id: i64,
+    channel_id: i64,
+    year: i32,
+    month: i32,
+    file_name: &str,
+) -> String {
+    format!("/api/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}?silence=true")
+}
+
 fn recording_fingerprint(path: &(i64, i64, i32, i32, String)) -> String {
     format!(
         "{}/{}/{:04}/{:02}/{}",
@@ -98,7 +110,7 @@ pub async fn remove_silence(
     if cached_fresh {
         info!("silence-free file already exists");
         return Ok(HttpResponse::Ok().json(RemoveSilenceResponse {
-            url: file_no_silence,
+            url: silence_free_url(path.0, path.1, path.2, path.3, &path.4),
             message: "File already exists",
         }));
     }
@@ -180,7 +192,7 @@ pub(crate) async fn run_recording_silence_job(
     {
         return Err(error.into());
     }
-    let url = format!("/api/audio/{guild_id}/{channel_id}/{year}/{month}/{file_name}?silence=true");
+    let url = silence_free_url(guild_id, channel_id, year, month, file_name);
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))
 }
