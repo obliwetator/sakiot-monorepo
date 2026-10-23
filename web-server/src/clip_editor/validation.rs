@@ -63,14 +63,26 @@ pub(super) fn validate_effects(
             limits.rate_min, limits.rate_max
         )));
     }
-    if !(limits.bass_db_min..=limits.bass_db_max).contains(&effects.bass_db)
-        || !(limits.mid_db_min..=limits.mid_db_max).contains(&effects.mid_db)
-        || !(limits.treble_db_min..=limits.treble_db_max).contains(&effects.treble_db)
-    {
-        return Err(AppError::BadRequest(format!(
-            "Segment {index}: EQ gains must be between {} and {} dB",
-            limits.bass_db_min, limits.bass_db_max
-        )));
+    for (band, gain, minimum, maximum) in [
+        (
+            "bass",
+            effects.bass_db,
+            limits.bass_db_min,
+            limits.bass_db_max,
+        ),
+        ("mid", effects.mid_db, limits.mid_db_min, limits.mid_db_max),
+        (
+            "treble",
+            effects.treble_db,
+            limits.treble_db_min,
+            limits.treble_db_max,
+        ),
+    ] {
+        if !(minimum..=maximum).contains(&gain) {
+            return Err(AppError::BadRequest(format!(
+                "Segment {index}: {band} gain must be between {minimum} and {maximum} dB"
+            )));
+        }
     }
     if !(0.0..=sakiot_dsp::MAX_EFFECT_TAIL_SECONDS).contains(&advanced.tail_seconds) {
         return Err(AppError::BadRequest(format!(

@@ -350,6 +350,24 @@ fn custom_limits_override_the_defaults() {
 }
 
 #[test]
+fn an_eq_gain_outside_its_band_names_that_bands_limits() {
+    let mut seg = segment();
+    seg.effects.treble_db = 50.0;
+    let mut edit = body(vec![seg]);
+    edit.limits = Some(ComposeLimitsDto {
+        treble_db_max: 40.0,
+        ..ComposeLimitsDto::default()
+    });
+    let Err(crate::errors::AppError::BadRequest(message)) = validate_edit(&edit) else {
+        panic!("expected a bad request");
+    };
+    assert!(
+        message.ends_with("treble gain must be between -24 and 40 dB"),
+        "{message}"
+    );
+}
+
+#[test]
 fn rejects_limits_outside_the_safety_caps() {
     let limit_cases: Vec<ComposeLimitsDto> = vec![
         ComposeLimitsDto {
