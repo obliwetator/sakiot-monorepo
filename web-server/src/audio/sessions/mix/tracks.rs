@@ -1,5 +1,7 @@
 //! The per-participant tracks and source segments a mix response lists.
 
+use std::collections::HashMap;
+
 use super::*;
 
 pub(super) async fn participant_metadata(

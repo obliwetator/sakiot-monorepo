@@ -22,8 +22,8 @@ pub use serve::{download_audio, get_audio};
 pub use sessions::{
     ChannelMixGenerationSettings, ChannelMixMediaQuery, ChannelMixParticipant,
     ChannelMixParticipantSettings, ChannelMixReason, ChannelMixResponse, ChannelMixSourceSegment,
-    ChannelMixStatus, ChannelMixTrack, GenerateChannelMixBody, SessionMixContainer,
-    create_session_clip, download_session, generate_session_channel_mix, get_session_channel_mix,
+    ChannelMixStatus, ChannelMixTrack, GenerateChannelMixBody, create_session_clip,
+    download_session, generate_session_channel_mix, get_session_channel_mix,
     get_session_channel_mix_media, get_session_events, get_session_manifest, get_session_segment,
     get_session_silence_free, get_session_silence_free_waveform,
     get_session_silence_removal_status, get_session_waveform,

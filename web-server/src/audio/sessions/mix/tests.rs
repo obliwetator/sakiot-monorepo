@@ -530,15 +530,7 @@ async fn ffmpeg_fixture_starts_delayed_audio_at_the_expected_offset() {
     assert!(generated.status.success());
 
     let output = directory.path().join("combined.ogg");
-    let job = Arc::new(Mutex::new(MixJob {
-        source_fingerprint: "fixture".into(),
-        settings: ChannelMixGenerationSettings {
-            participants: Vec::new(),
-            source_fingerprint: None,
-        },
-        progress: 0,
-        failed: None,
-    }));
+    let job = Arc::new(Mutex::new(MixJob { progress: 0 }));
     let plan = MixPlan {
         session_id: 1,
         scope: ChannelMixScope::SelectedSession,

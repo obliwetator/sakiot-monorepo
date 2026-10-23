@@ -2,11 +2,11 @@
 //!
 //! A mix is deliberately a filesystem cache rather than a database object. The
 //! database remains the source of truth for the selected scope's timeline,
-//! contributors, authorization, and cache fingerprint. A process-local job
-//! container deduplicates concurrent renders while the cache makes successful
-//! renders rebuildable after a restart.
+//! contributors, authorization, and cache fingerprint. The media job queue
+//! deduplicates concurrent renders while the cache makes successful renders
+//! rebuildable after a restart.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, get, http::header, post, r
 use sakiot_paths::RecordingKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
@@ -168,29 +168,11 @@ impl ChannelMixQuery {
     }
 }
 
+/// Render progress, shared between FFmpeg's progress reader and the task that
+/// reports it to the media job.
 #[derive(Debug)]
 struct MixJob {
-    source_fingerprint: String,
-    settings: ChannelMixGenerationSettings,
     progress: i16,
-    failed: Option<String>,
-}
-
-type MixJobKey = (i64, ChannelMixScope);
-type MixJobHandle = Arc<Mutex<MixJob>>;
-type MixJobs = HashMap<MixJobKey, MixJobHandle>;
-
-/// A separate job container prevents a session mix from sharing progress or
-/// retry state with waveform, silence-removal, or per-recording HLS jobs.
-#[derive(Default, Debug)]
-pub struct SessionMixContainer {
-    jobs: RwLock<MixJobs>,
-}
-
-impl SessionMixContainer {
-    async fn job(&self, session_id: i64, scope: ChannelMixScope) -> Option<Arc<Mutex<MixJob>>> {
-        self.jobs.read().await.get(&(session_id, scope)).cloned()
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,7 +330,6 @@ pub async fn get_session_channel_mix(
     query: web::Query<ChannelMixQuery>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
-    container: web::Data<SessionMixContainer>,
 ) -> Result<web::Json<ChannelMixResponse>, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -358,7 +339,7 @@ pub async fn get_session_channel_mix(
         build_mix_plan(&pool, &access, &guild, query.scope()),
     )
     .await?;
-    let mut response = measure("status", mix_response(&plan, &access, &container, true)).await?;
+    let mut response = measure("status", mix_response(&plan, &access, true)).await?;
     let resource = format!("session-mix:{session_id}:{}", query.scope().as_str());
     if let Some(job) = measure(
         "jobs",
@@ -368,6 +349,28 @@ pub async fn get_session_channel_mix(
     {
         response.status = ChannelMixStatus::Processing;
         response.progress = job.progress;
+        response.job_id = Some(job.id);
+    } else if matches!(response.status, ChannelMixStatus::Idle)
+        && let Some(job) = measure(
+            "failed",
+            crate::media_jobs::latest_failed_for_resource(
+                &pool,
+                token.user_id,
+                "session_mix",
+                &resource,
+            ),
+        )
+        .await?
+    {
+        // Without a usable cache, the last render's failure is what the
+        // viewer needs to see before retrying.
+        response.status = ChannelMixStatus::Failed;
+        response.reason = Some(ChannelMixReason {
+            code: "render_failed".into(),
+            message: job
+                .error
+                .unwrap_or_else(|| "The channel mix could not be rendered.".into()),
+        });
         response.job_id = Some(job.id);
     }
     Ok(web::Json(response))
@@ -400,7 +403,6 @@ pub async fn generate_session_channel_mix(
     body: Option<web::Json<GenerateChannelMixBody>>,
     token: Option<web::ReqData<Token<Access>>>,
     pool: web::Data<Pool<Postgres>>,
-    container: web::Data<SessionMixContainer>,
 ) -> Result<HttpResponse, AppError> {
     let token = token.ok_or(AppError::Unauthorized)?;
     let session_id = path.into_inner();
@@ -412,7 +414,7 @@ pub async fn generate_session_channel_mix(
             .unwrap_or_default(),
     )?;
     let plan = base_plan.with_settings(settings);
-    let status = mix_response(&plan, &access, &container, false).await?;
+    let status = mix_response(&plan, &access, false).await?;
 
     // A live/pending mix is useful for browser preview, but server rendering
     // must never snapshot it. Return the full status document so clients can
@@ -490,12 +492,7 @@ pub(crate) async fn run_session_mix_job(
             "Channel mix sources are not finalized".into(),
         ));
     }
-    let job = Arc::new(Mutex::new(MixJob {
-        source_fingerprint: plan.source_fingerprint.clone(),
-        settings: plan.settings.clone(),
-        progress: 0,
-        failed: None,
-    }));
+    let job = Arc::new(Mutex::new(MixJob { progress: 0 }));
     crate::media_jobs::report_progress(pool, job_id, attempt_token, "rendering", 5).await?;
     let rendering = render::render_mix(&pool_data, media, &plan, &job, Some(attempt));
     tokio::pin!(rendering);

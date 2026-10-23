@@ -17,7 +17,7 @@ use super::occupancy::MixWindow;
 use super::{
     ChannelMixGenerationSettings, ChannelMixParticipantSettings, ChannelMixReason,
     ChannelMixResponse, ChannelMixScope, ChannelMixStatus, ChannelMixTrack, MIX_FINGERPRINT,
-    MIX_OUTPUT, MIX_SETTINGS, MixContributor, MixPlan, SessionMixContainer,
+    MIX_OUTPUT, MIX_SETTINGS, MixContributor, MixPlan,
 };
 
 /// Where a mix is cached. A viewer who may not hear every track gets a mix
@@ -282,7 +282,6 @@ pub(super) async fn cache_is_valid(plan: &MixPlan) -> bool {
 pub(super) async fn mix_response(
     plan: &MixPlan,
     access: &SessionAccess,
-    container: &SessionMixContainer,
     include_existing_artifact: bool,
 ) -> Result<ChannelMixResponse, AppError> {
     if tokio::fs::try_exists(&plan.cache_dir)
@@ -340,32 +339,6 @@ pub(super) async fn mix_response(
             0,
             None,
             None,
-        ));
-    }
-    if let Some(job) = container.job(plan.session_id, plan.scope).await {
-        let job = job.lock().await;
-        if job.source_fingerprint != plan.source_fingerprint {
-            return Ok(common(ChannelMixStatus::Idle, None, 0, None, None));
-        }
-        let settings = Some(response_settings(&job.settings, &job.source_fingerprint));
-        if let Some(error) = &job.failed {
-            return Ok(common(
-                ChannelMixStatus::Failed,
-                Some(ChannelMixReason {
-                    code: "render_failed".into(),
-                    message: error.clone(),
-                }),
-                0,
-                None,
-                settings,
-            ));
-        }
-        return Ok(common(
-            ChannelMixStatus::Processing,
-            None,
-            job.progress,
-            None,
-            settings,
         ));
     }
     if cache_is_valid(plan).await {

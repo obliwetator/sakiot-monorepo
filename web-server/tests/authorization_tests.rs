@@ -24,8 +24,8 @@ use web_server::admin::voice_settings::{
     delete_voice_settings, get_voice_settings, put_voice_settings,
 };
 use web_server::audio::{
-    LiveContainer, SessionMixContainer, SilenceJobContainer, WaveformProgressContainer,
-    create_session_clip, download_audio, download_session, generate_session_channel_mix, get_audio,
+    LiveContainer, SilenceJobContainer, WaveformProgressContainer, create_session_clip,
+    download_audio, download_session, generate_session_channel_mix, get_audio,
     get_clip_waveform_data, get_current_month_permission, get_live_stems, get_recording_events,
     get_session_channel_mix, get_session_channel_mix_media, get_session_events,
     get_session_listing_entry, get_session_manifest, get_session_segment, get_session_silence_free,
@@ -191,7 +191,6 @@ async fn one_inaccessible_fragment_denies_every_session_endpoint(
                 HashMap::new(),
             ))))
             .app_data(web::Data::new(LiveContainer::default()))
-            .app_data(web::Data::new(SessionMixContainer::default()))
             .app_data(web::Data::new(SilenceJobContainer::default()))
             .service(
                 web::scope("/api")
@@ -317,7 +316,6 @@ async fn traversal_file_names_are_rejected_by_every_audio_handler(
                 HashMap::new(),
             ))))
             .app_data(web::Data::new(LiveContainer::default()))
-            .app_data(web::Data::new(SessionMixContainer::default()))
             .app_data(web::Data::new(SilenceJobContainer::default()))
             .service(
                 web::scope("/api")
@@ -1598,7 +1596,6 @@ async fn a_channel_mix_leaves_out_only_the_tracks_the_viewer_may_not_hear(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
-            .app_data(web::Data::new(SessionMixContainer::default()))
             .service(
                 web::scope("/api")
                     .wrap(AuthMiddleware)
@@ -1641,6 +1638,89 @@ async fn a_channel_mix_leaves_out_only_the_tracks_the_viewer_may_not_hear(
         participants(anchor, USER_ID).await?,
         [OTHER_USER_ID.to_string()]
     );
+    Ok(())
+}
+
+/// Without a mix to fall back on, the status shows the viewer's last failed
+/// render, so they can read why and retry it.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_failed_channel_mix_render_is_reported(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let mut sessions = Vec::new();
+    for speaker in [OTHER_USER_ID, USER_ID] {
+        let session_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO recording_sessions
+                (guild_id, user_id, starting_channel_id, current_channel_id, state,
+                 started_at, ended_at, end_reason, last_segment_index)
+             VALUES ($1, $2, $3, $3, 'finalized', to_timestamp(1), to_timestamp(4), 'test', 0)
+             RETURNING id",
+        )
+        .bind(ALLOWED_GUILD_ID)
+        .bind(speaker)
+        .bind(ALLOWED_CHANNEL_ID)
+        .fetch_one(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audio_files
+                (file_name, guild_id, channel_id, user_id, year, month,
+                 start_ts, end_ts, recording_session_id, segment_index)
+             VALUES ($1, $2, $3, $4, 1970, 1, 1000, 3000, $5, 0)",
+        )
+        .bind(format!("failed-mix-{speaker}"))
+        .bind(ALLOWED_GUILD_ID)
+        .bind(ALLOWED_CHANNEL_ID)
+        .bind(speaker)
+        .bind(session_id)
+        .execute(&pool)
+        .await?;
+        sessions.push(session_id);
+    }
+    let anchor = sessions[0];
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_session_channel_mix),
+            ),
+    )
+    .await;
+    let mix = || async {
+        let request = test::TestRequest::get()
+            .uri(&format!("/api/audio/sessions/{anchor}/channel-mix"))
+            .insert_header(("Cookie", access_cookie_for(USER_ID)?))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let mix: serde_json::Value = test::read_body_json(response).await;
+        Ok::<serde_json::Value, Box<dyn std::error::Error>>(mix)
+    };
+    assert_eq!(mix().await?["status"], "idle");
+
+    sqlx::query(
+        "INSERT INTO media_jobs
+            (id, kind, guild_id, user_id, idempotency_key, resource_key, request, state, error)
+         VALUES ('failed-mix', 'session_mix', $1, $2, 'key', $3, '{}', 'failed', 'ffmpeg exited')",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(USER_ID)
+    .bind(format!("session-mix:{anchor}:all_recordings"))
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO media_job_viewers (job_id, user_id) VALUES ('failed-mix', $1)")
+        .bind(USER_ID)
+        .execute(&pool)
+        .await?;
+
+    let failed = mix().await?;
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["reason"]["code"], "render_failed");
+    assert_eq!(failed["job_id"], "failed-mix");
     Ok(())
 }
 
@@ -1711,7 +1791,6 @@ async fn during_an_erasure_only_the_speaker_sees_the_session(
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(access_keys()))
             .app_data(web::Data::new(DeletionPolicy::default()))
-            .app_data(web::Data::new(SessionMixContainer::default()))
             .app_data(web::Data::new(
                 web_server::media_archive::MediaArchive::disabled(),
             ))
