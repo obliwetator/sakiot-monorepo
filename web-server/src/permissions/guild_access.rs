@@ -79,6 +79,15 @@ impl GuildAccess {
         self.facts.guild_id
     }
 
+    /// The roles the viewer holds, never `@everyone`; none in a role
+    /// preview or for someone the bot does not list.
+    pub fn roles(&self) -> &[i64] {
+        let user_id = self.access.as_ref().ok().and_then(|access| access.user_id);
+        user_id
+            .and_then(|user_id| self.facts.members.get(&user_id))
+            .map_or(&[], |member| member.roles.as_slice())
+    }
+
     pub fn access(&self) -> Result<&Access, AppError> {
         self.access
             .as_ref()

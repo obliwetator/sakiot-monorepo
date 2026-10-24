@@ -19,10 +19,12 @@ use crate::permissions::require_capability;
 mod erasure;
 mod files;
 mod process;
+mod restore;
 mod worker;
 
 pub use erasure::*;
-pub use worker::spawn_worker;
+pub use restore::*;
+pub use worker::{enqueue_expired, spawn_worker};
 
 use files::*;
 use process::*;
@@ -181,8 +183,12 @@ async fn enqueue(
 }
 
 /// Serializes removals with clip publication in the guild
-/// (`reject_deleted_recording_clip` takes the same lock).
-async fn lock_guild(tx: &mut sqlx::PgConnection, guild_id: i64) -> Result<(), sqlx::Error> {
+/// (`reject_deleted_recording_clip` takes the same lock), and with keeping
+/// ([`crate::keeping`]).
+pub(crate) async fn lock_guild(
+    tx: &mut sqlx::PgConnection,
+    guild_id: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query!("SELECT pg_advisory_xact_lock($1)", guild_id)
         .execute(&mut *tx)
         .await?;
@@ -251,35 +257,34 @@ async fn enqueue_in(
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query!(
-            "UPDATE clips SET deleted_at=COALESCE(deleted_at,now()) WHERE guild_id=$1 AND clip_id=ANY($2)",
-            guild_id,
-            &clip_ids(&clips) as &[String]
-        )
-        .execute(&mut *tx)
-        .await?;
+        // Restoring the session reverts exactly these.
+        let hidden = hide_clips(&mut *tx, guild_id, &clip_ids(&clips)).await?;
+        // Only visible sessions are kept: removing one frees its keeps.
+        drop_keeps(&mut *tx, session_id).await?;
         match mode {
             DeletionMode::Soft => {
                 sqlx::query!(
-                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now())",
+                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at,hidden_clip_ids) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now(),$6)",
                     id,
                     session_id,
                     guild_id,
                     actor,
-                    reason
+                    reason,
+                    &hidden
                 )
                 .execute(&mut *tx)
                 .await?;
             }
             DeletionMode::Permanent => {
                 sqlx::query!(
-                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,permanent_requested_by,permanent_requested_at) VALUES ($1,$2,$3,$4,$5,$6,$4,now())",
+                    "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,permanent_requested_by,permanent_requested_at,hidden_clip_ids) VALUES ($1,$2,$3,$4,$5,$6,$4,now(),$7)",
                     id,
                     session_id,
                     guild_id,
                     actor,
                     reason,
-                    mode.as_str()
+                    mode.as_str(),
+                    &hidden
                 )
                 .execute(&mut *tx)
                 .await?;
@@ -288,6 +293,17 @@ async fn enqueue_in(
         id
     };
     Ok(id)
+}
+
+/// Frees every keep of `session_id`, which is no longer visible.
+async fn drop_keeps(tx: &mut sqlx::PgConnection, session_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM kept_recordings WHERE recording_session_id=$1",
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

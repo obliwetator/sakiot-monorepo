@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM recording_deletion_jobs WHERE id = $1\n         RETURNING reason, requested_by, created_at, hidden_clip_ids",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "requested_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "requested_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "hidden_clip_ids",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "recording_deletion_jobs",
+            "name": "hidden_clip_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "6b4f140f0c6a5ff540b412059a193bb1cd0a5a7f832c5036b5cd6c74dbe9fa1e"
+}

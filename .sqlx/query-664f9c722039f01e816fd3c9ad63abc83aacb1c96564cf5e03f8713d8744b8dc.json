@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO discord_auth_user (id, username, avatar)\n         SELECT id, 'user-' || id, '' FROM unnest($1::bigint[]) AS id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "664f9c722039f01e816fd3c9ad63abc83aacb1c96564cf5e03f8713d8744b8dc"
+}

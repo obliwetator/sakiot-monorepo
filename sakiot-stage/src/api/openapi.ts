@@ -52,6 +52,38 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/guilds/{guild_id}/keep-allowances": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_keep_allowances"];
+		put: operations["put_keep_allowance"];
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/kept-recordings/{recording_session_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		delete: operations["release_recording_for_everyone"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/members": {
 		parameters: {
 			query?: never;
@@ -143,6 +175,22 @@ export interface paths {
 		put?: never;
 		post?: never;
 		delete: operations["delete_recording"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/admin/guilds/{guild_id}/recordings/{recording_session_id}/restore": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post: operations["restore_recording"];
+		delete?: never;
 		options?: never;
 		head?: never;
 		patch?: never;
@@ -791,6 +839,44 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/guilds/{guild_id}/kept-recordings": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_kept_recordings"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/guilds/{guild_id}/removed-recordings": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/**
+		 * The removed recordings the viewer may bring back: those retention
+		 *     removed that they may hear, and for a holder of `delete_recordings`
+		 *     managers' removals too, including those they see redacted. Never one its
+		 *     speaker is erasing.
+		 */
+		get: operations["get_removed_recordings"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/logout": {
 		parameters: {
 			query?: never;
@@ -848,6 +934,38 @@ export interface paths {
 		};
 		get: operations["oauth_start"];
 		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/operator/guilds": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_operator_guilds"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/operator/guilds/{guild_id}/limits": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put: operations["put_guild_limits"];
 		post?: never;
 		delete?: never;
 		options?: never;
@@ -962,6 +1080,22 @@ export interface paths {
 		put?: never;
 		post?: never;
 		delete: operations["undo_erasure"];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	"/api/users/current/guilds/{guild_id}/kept-recordings/{recording_session_id}": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put: operations["keep_recording"];
+		post?: never;
+		delete: operations["release_recording"];
 		options?: never;
 		head?: never;
 		patch?: never;
@@ -1626,6 +1760,13 @@ export interface components {
 			id: string;
 			name: string;
 		};
+		GuildLimits: {
+			/**
+			 * Format: int32
+			 * @description How many recordings the guild may keep past retention.
+			 */
+			kept_recordings: number;
+		};
 		GuildMember: {
 			is_bot: boolean;
 			/** @description Nickname, display name or username, whichever is set first. */
@@ -1713,6 +1854,112 @@ export interface components {
 						user_id?: string | null;
 				  }[];
 		};
+		KeepAllowance: {
+			/** Format: int32 */
+			allowance: number;
+			/**
+			 * @description The role's or member's name; null for everyone, a role that is gone
+			 *     or a user never seen.
+			 */
+			name?: string | null;
+			/** @description Its role is gone, so it reaches nobody; only removing it is left. */
+			reaches_nobody: boolean;
+			subject: components["schemas"]["RuleSubject"];
+		};
+		KeepAllowanceChange: {
+			/**
+			 * Format: int32
+			 * @description Null removes the subject's allowance.
+			 */
+			allowance?: number | null;
+			subject: components["schemas"]["RuleSubject"];
+		};
+		KeepAllowances: {
+			/** @description @everyone's first, then roles' and members'. */
+			allowances: components["schemas"]["KeepAllowance"][];
+			/**
+			 * Format: int32
+			 * @description How many recordings the server may keep, as the bot's operators set
+			 *     it.
+			 */
+			cap: number;
+			/**
+			 * Format: int64
+			 * @description How many it keeps, each once however many members keep it.
+			 */
+			kept: number;
+			/** @description The server's roles, but `@everyone`. */
+			roles: components["schemas"]["RuleRole"][];
+		};
+		Keeping: {
+			/**
+			 * Format: int32
+			 * @description How many the viewer may keep; absent when only the server's cap
+			 *     limits them.
+			 */
+			allowance?: number | null;
+			/**
+			 * Format: int32
+			 * @description How many recordings the server may keep, as the bot's operators set
+			 *     it.
+			 */
+			cap: number;
+			/**
+			 * Format: int64
+			 * @description How many it keeps, each once however many members keep it.
+			 */
+			kept: number;
+			/**
+			 * @description The kept recordings the viewer may hear, newest first, and the
+			 *     viewer's own keeps they may no longer hear (`audible: false`).
+			 */
+			recordings: components["schemas"]["KeptRecording"][];
+			/**
+			 * Format: int32
+			 * @description After how many days retention removes a recording; absent when it
+			 *     never does.
+			 */
+			retention_days?: number | null;
+			/**
+			 * Format: int64
+			 * @description How many the viewer keeps.
+			 */
+			used: number;
+		};
+		KeptRecording: {
+			/**
+			 * @description Whether the viewer may still hear it. When not, it is one of their
+			 *     own keeps, and nothing else about it is told.
+			 */
+			audible: boolean;
+			/**
+			 * @description The channel it started in.
+			 * @example 146638124288704513
+			 */
+			channel_id?: string | null;
+			channel_name?: string | null;
+			/** Format: int64 */
+			ended_at_ms?: number | null;
+			/**
+			 * Format: int64
+			 * @description How many members keep it.
+			 */
+			keepers: number;
+			/**
+			 * Format: int64
+			 * @description When the viewer kept it, or else when it was first kept.
+			 */
+			kept_at_ms: number;
+			/** @description The viewer keeps it. */
+			mine: boolean;
+			/** @example 146638124288704513 */
+			recording_session_id: string;
+			/** @example 146638124288704513 */
+			speaker_id?: string | null;
+			speaker_name?: string | null;
+			/** Format: int64 */
+			started_at_ms?: number | null;
+		};
 		MediaJobStatus: {
 			/** @description Safe explanation of the last failed attempt; never internal detail. */
 			error?: string | null;
@@ -1734,6 +1981,30 @@ export interface components {
 			members: components["schemas"]["GuildMember"][];
 			/** Format: int64 */
 			next_offset?: number | null;
+		};
+		OperatorGuild: {
+			/** @example 146638124288704513 */
+			guild_id: string;
+			icon?: string | null;
+			/**
+			 * Format: int64
+			 * @description How many it keeps.
+			 */
+			kept_recordings: number;
+			/**
+			 * Format: int32
+			 * @description How many recordings it may keep.
+			 */
+			kept_recordings_cap: number;
+			name?: string | null;
+			/** @description The bot is in it. */
+			present: boolean;
+			/**
+			 * Format: int32
+			 * @description After how many days its retention removes a recording; absent when
+			 *     it never does.
+			 */
+			retention_days?: number | null;
 		};
 		/** @description One rule, as stored. */
 		PermissionRule: {
@@ -1852,9 +2123,54 @@ export interface components {
 			 */
 			playable: boolean;
 		};
+		/** @enum {string} */
+		RemovalReason: "manager" | "retention";
 		RemoveSilenceResponse: {
 			message: string;
 			url: string;
+		};
+		RemovedRecording: {
+			/**
+			 * @description The channel it started in.
+			 * @example 146638124288704513
+			 */
+			channel_id: string;
+			channel_name?: string | null;
+			/** Format: int64 */
+			ended_at_ms?: number | null;
+			/** @description Older than the retention period: only keeping it brings it back. */
+			past_retention: boolean;
+			reason: components["schemas"]["RemovalReason"];
+			/** @example 146638124288704513 */
+			recording_session_id: string;
+			/**
+			 * @description Its speaker keeps their recordings private: the viewer, a manager,
+			 *     may bring it back but not hear it.
+			 */
+			redacted: boolean;
+			/** Format: int64 */
+			removed_at_ms: number;
+			/**
+			 * @description The manager who removed it; absent for retention.
+			 * @example 146638124288704513
+			 */
+			removed_by?: string | null;
+			/**
+			 * @description The viewer may bring it back without keeping it: a manager, while it
+			 *     is within the retention period.
+			 */
+			restorable: boolean;
+			/** @example 146638124288704513 */
+			speaker_id: string;
+			speaker_name?: string | null;
+			/** Format: int64 */
+			started_at_ms: number;
+		};
+		RemovedRecordings: {
+			/** @description Pass as `before` for the next page; absent on the last. */
+			next?: string | null;
+			/** @description Most recently removed first. */
+			recordings: components["schemas"]["RemovedRecording"][];
 		};
 		RenameClipBody: {
 			name: string;
@@ -1873,6 +2189,7 @@ export interface components {
 			| "recording_policy"
 			| "cooldowns"
 			| "permission_rules"
+			| "keeping"
 			| "presence"
 			| "members"
 			| "guilds"
@@ -2191,6 +2508,8 @@ export interface components {
 		UserDataForFrontEnd: {
 			avatar: string;
 			is_dev: boolean;
+			/** @description One of the bot's operators, who set every guild's limits. */
+			is_operator: boolean;
 			/** @example 146638124288704513 */
 			user_id: string;
 			username: string;
@@ -2505,6 +2824,122 @@ export interface operations {
 			};
 			/** @description Server error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_keep_allowances: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The server's cap and how many recordings each member may keep */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["KeepAllowances"];
+				};
+			};
+			/** @description Manage settings required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_keep_allowance: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["KeepAllowanceChange"];
+			};
+		};
+		responses: {
+			/** @description Allowance set, or removed when null */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid subject or allowance */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Manage settings required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description The role is not this server's */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	release_recording_for_everyone: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description A kept recording */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Nobody keeps it any more; retention removes it if it is old enough */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Delete recordings required */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -2959,6 +3394,54 @@ export interface operations {
 			};
 			/** @description Recording not found */
 			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	restore_recording: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				guild_id: number;
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description The recording, and the clips its removal hid, are visible again */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Delete recordings required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description No removal of this recording to undo: never removed, already restored, being erased by its speaker or purged */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Older than the retention period: only keeping it brings it back */
+			409: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -5885,6 +6368,82 @@ export interface operations {
 			};
 		};
 	};
+	get_kept_recordings: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description How many recordings the server and the viewer may keep and keep, and the kept recordings the viewer may hear */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["Keeping"];
+				};
+			};
+			/** @description Not a member or former member */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_removed_recordings: {
+		parameters: {
+			query?: {
+				/** @description The previous page's `next`. */
+				before?: string | null;
+			};
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description One page of removed recordings the viewer may keep or restore */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["RemovedRecordings"];
+				};
+			};
+			/** @description Invalid `before` */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Not a member */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	logout: {
 		parameters: {
 			query?: never;
@@ -6001,6 +6560,78 @@ export interface operations {
 			};
 			/** @description Invalid opener origin */
 			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	get_operator_guilds: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Every guild the bot is in, has limits for or holds recordings of */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["OperatorGuild"][];
+				};
+			};
+			/** @description Not an operator */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	put_guild_limits: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				"application/json": components["schemas"]["GuildLimits"];
+			};
+		};
+		responses: {
+			/** @description Limits set. Lowering the cap below what the guild keeps keeps those, and stops new keeps until it is under the cap again */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Invalid limit */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Not an operator */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -6347,6 +6978,88 @@ export interface operations {
 			};
 			/** @description The grace period is over */
 			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	keep_recording: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description A recording the viewer may hear */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Kept: retention leaves it be, and if retention had removed it, it is back for everyone who may hear it; keeping it again changes nothing */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Not a member */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description No such recording the viewer may keep: missing, beyond their hearing, or removed other than by retention */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+			/** @description Still recording, or the viewer's allowance or the server's cap is used up */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
+	release_recording: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+				/** @description A recording the viewer keeps */
+				recording_session_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description No longer kept by the viewer; retention removes it once nobody keeps it, if it is old enough */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Not a member or former member */
+			403: {
 				headers: {
 					[name: string]: unknown;
 				};

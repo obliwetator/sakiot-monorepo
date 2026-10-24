@@ -399,7 +399,8 @@ voice presence).
   stamps then reach only them (and a session id the managers who redact
   it);
   settings reach holders of `manage_settings`, permission rules holders of
-  `manage_permissions` (a rule change is also a permission event), the
+  `manage_permissions` (a rule change is also a permission event), keeping
+  (caps, allowances and keeps) every member, the
   roster and roles holders of `preview_roles`, `manage_settings` or
   `manage_permissions`, and role previews follow the
   role-preview rule above. Renames refresh where the name shows: the guild
@@ -526,7 +527,27 @@ Recordings age out of local disk into Backblaze B2:
 - `media_archive/serve.rs` decides per request whether to serve locally or
   restore from B2 first (`RemoteDisposition`).
 - Deletion is a job (`recording_deletion.rs`, `recording_deletion_jobs`),
-  soft by default, so an accidental delete is recoverable.
+  soft by default, so an accidental delete is recoverable. A soft job
+  records the clips it hid (`hidden_clip_ids`). A holder of
+  `delete_recordings` restores a removal within the retention period
+  (`recording_deletion/restore.rs`): the session and those clips come back,
+  unless something else still hides a clip, the job is deleted and
+  `recording_restorations` keeps its audit. A removal its speaker is erasing
+  stays removed.
+- Members keep recordings past retention (`keeping.rs`, `kept_recordings`).
+  The bot's operators (`operators`, managed on the server with
+  `web-server operators list|add|remove`) cap how many distinct recordings
+  each guild keeps (`guild_limits`, 0 by default) on their own dashboard
+  (`/operator`). Within the cap, holders of `manage_settings` set allowances
+  (`keep_allowances`): a member's own wins, else the largest of their
+  roles', else @everyone's, else only the cap. For now a member keeps a
+  recording retention removed, if they may hear it, which restores it for
+  everyone; managers keep their own removals too, including redacted ones,
+  and keeping is the only way back for anything past the retention period.
+  Retention never removes a kept recording; any other removal (a
+  manager's, or its speaker's erasure) frees its keeps, so every kept
+  recording is visible. Lowering a cap leaves existing keeps alone and
+  blocks new ones until the guild is under it.
 - A speaker may erase a finalized session of their own voice, or a clip
   holding it (`recording_deletion/erasure.rs`, `recording_erasures`). The
   request hides it, and the clips made from it, from everyone else at once,

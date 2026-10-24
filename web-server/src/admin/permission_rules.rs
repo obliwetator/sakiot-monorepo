@@ -44,7 +44,7 @@ pub struct RuleSubject {
 }
 
 impl RuleSubject {
-    fn of(subject: Subject) -> Self {
+    pub(crate) fn of(subject: Subject) -> Self {
         let (kind, id) = match subject {
             Subject::Everyone => (SubjectKind::Everyone, None),
             Subject::Role(role_id) => (SubjectKind::Role, Some(role_id)),
@@ -55,7 +55,7 @@ impl RuleSubject {
 
     /// The subject, if well formed: an id for a role or a user (never
     /// `@everyone`'s, the guild's), none for everyone.
-    fn subject(self, guild_id: i64) -> Result<Subject, AppError> {
+    pub(crate) fn subject(self, guild_id: i64) -> Result<Subject, AppError> {
         match (self.kind, self.id) {
             (SubjectKind::Everyone, None) => Ok(Subject::Everyone),
             (SubjectKind::Role, Some(role_id)) if role_id > 0 && role_id != guild_id => {

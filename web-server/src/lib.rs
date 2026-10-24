@@ -13,12 +13,14 @@ pub mod grpc_client;
 pub mod health;
 pub mod http_metrics;
 pub mod job_metrics;
+pub mod keeping;
 #[cfg(feature = "loadtest")]
 pub mod loadtest;
 pub mod media_archive;
 pub mod media_jobs;
 pub mod members;
 pub mod openapi;
+pub mod operators;
 pub mod outbound_metrics;
 pub mod permissions;
 pub mod presence;

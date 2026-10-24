@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO clips (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,\n                            start_time, original_file_name, saved_file_name,\n                            recording_session_id, deleted_at)\n         VALUES ($1, $2, $3, ARRAY[$3::bigint], ARRAY[$4::bigint], $4, 0, 'session', $1, $5,\n                 CASE WHEN $6 THEN now() END)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "871bcf7abd5235a482b250f166e002dc48fcde8b7409efb10d284f8b3f0296d5"
+}

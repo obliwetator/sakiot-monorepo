@@ -46,7 +46,7 @@ pub(super) async fn teardown(
 
     let mut tx = state.pool.begin().await?;
     let mut rows = 0;
-    let statements: [&str; 29] = [
+    let statements: [&str; 33] = [
         "DELETE FROM media_objects WHERE audio_file_id IN (SELECT id FROM audio_files WHERE guild_id = $1)
             OR clip_id IN (SELECT clip_id FROM clips WHERE guild_id = $1)",
         "DELETE FROM stamps WHERE guild_id = $1",
@@ -57,6 +57,8 @@ pub(super) async fn teardown(
         "DELETE FROM composition_jobs WHERE guild_id = $1",
         "DELETE FROM recording_deletion_jobs WHERE guild_id = $1",
         "DELETE FROM recording_erasures WHERE guild_id = $1",
+        "DELETE FROM recording_restorations WHERE guild_id = $1",
+        "DELETE FROM kept_recordings WHERE guild_id = $1",
         "DELETE FROM audio_files WHERE guild_id = $1",
         "DELETE FROM recording_sessions WHERE guild_id = $1",
         "DELETE FROM voice_state_events WHERE guild_id = $1",
@@ -71,6 +73,8 @@ pub(super) async fn teardown(
         "DELETE FROM recording_opt_outs WHERE guild_id = $1",
         "DELETE FROM recording_private WHERE guild_id = $1",
         "DELETE FROM permission_rules WHERE guild_id = $1",
+        "DELETE FROM keep_allowances WHERE guild_id = $1",
+        "DELETE FROM guild_limits WHERE guild_id = $1",
         "DELETE FROM user_guilds WHERE id = $1",
         "DELETE FROM user_nicknames WHERE guild_id = $1",
         "DELETE FROM user_name_history WHERE guild_id = $1",

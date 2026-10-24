@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_deletion_jobs (id,recording_session_id,guild_id,requested_by,reason,mode,state,stage,finished_at,hidden_clip_ids) VALUES ($1,$2,$3,$4,$5,'soft','soft_deleted','soft_deleted',now(),$6)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aba0d5e9676841912825ee7ef77f83561225e58270ec6e4cc5dba65bfd80a6ff"
+}

@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT reason, restored_by, kept FROM recording_restorations WHERE recording_session_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "recording_restorations",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "restored_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_restorations",
+            "name": "restored_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kept",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "recording_restorations",
+            "name": "kept"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "49de821e82c9f390a751878843cce84c0e501ea59c82113d1cf44c0dd07dede3"
+}

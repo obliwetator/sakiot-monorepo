@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE((SELECT kept_recordings FROM guild_limits WHERE guild_id = $1), 0)\n                      AS \"cap!\",\n                  (SELECT count(DISTINCT recording_session_id)\n                     FROM kept_recordings\n                    WHERE guild_id = $1) AS \"kept!\",\n                  (SELECT count(*)\n                     FROM kept_recordings\n                    WHERE guild_id = $1 AND user_id = $2) AS \"used!\",\n                  (SELECT retention_days\n                     FROM guild_recording_policy\n                    WHERE guild_id = $1) AS retention_days",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cap!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "kept!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "used!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "retention_days",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "520f75aceb6bd77580efa8cb060d970732a132c9613262bc9a5fe3e97c761009"
+}

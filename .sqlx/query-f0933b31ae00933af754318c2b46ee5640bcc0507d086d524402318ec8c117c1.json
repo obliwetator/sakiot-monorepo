@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH known AS (\n               SELECT guild_id FROM guilds_present\n               UNION SELECT guild_id FROM guild_limits\n               UNION SELECT DISTINCT guild_id FROM recording_sessions\n           )\n           SELECT k.guild_id AS \"guild_id!\",\n                  COALESCE(g.name, (SELECT ug.name FROM user_guilds ug\n                                     WHERE ug.id = k.guild_id\n                                     ORDER BY ug.user_id LIMIT 1)) AS name,\n                  COALESCE(g.icon, (SELECT ug.icon FROM user_guilds ug\n                                     WHERE ug.id = k.guild_id\n                                     ORDER BY ug.user_id LIMIT 1)) AS icon,\n                  EXISTS (SELECT 1 FROM guilds_present gp WHERE gp.guild_id = k.guild_id)\n                      AS \"present!\",\n                  COALESCE(l.kept_recordings, 0) AS \"kept_recordings_cap!\",\n                  (SELECT count(DISTINCT recording_session_id)\n                     FROM kept_recordings kr\n                    WHERE kr.guild_id = k.guild_id) AS \"kept_recordings!\",\n                  p.retention_days\n             FROM known k\n             LEFT JOIN guilds g ON g.id = k.guild_id\n             LEFT JOIN guild_limits l ON l.guild_id = k.guild_id\n             LEFT JOIN guild_recording_policy p ON p.guild_id = k.guild_id\n            ORDER BY 4 DESC, lower(COALESCE(g.name, '')), k.guild_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guild_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "icon",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "present!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "kept_recordings_cap!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "kept_recordings!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "retention_days",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "guild_recording_policy",
+            "name": "retention_days"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "f0933b31ae00933af754318c2b46ee5640bcc0507d086d524402318ec8c117c1"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT clip_id FROM clips WHERE deleted_at IS NULL ORDER BY clip_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "clip_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "clips",
+            "name": "clip_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d70357eea3bc5b139bcf8f52960989efd0d534dec474f15edabc12ba878c7c39"
+}

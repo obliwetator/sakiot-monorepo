@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.user_id, o.added_at, un.username AS \"username?\"\n                     FROM operators o\n                     LEFT JOIN user_names un ON un.user_id = o.user_id\n                    ORDER BY o.added_at, o.user_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "operators",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "added_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "operators",
+            "name": "added_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "username?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_names",
+            "name": "username"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c7e15c072af01e531977d507a5937c81316bba27ae2dc96ef620a042547525ba"
+}

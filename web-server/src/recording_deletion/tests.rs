@@ -425,3 +425,30 @@ async fn legacy_deletion_errors_are_not_echoed(pool: PgPool) -> TestResult {
     );
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn retention_passes_over_kept_sessions_to_the_rest(pool: PgPool) -> TestResult {
+    sqlx::query("INSERT INTO guild_recording_policy (guild_id,retention_days) VALUES (1,30)")
+        .execute(&pool)
+        .await?;
+    let mut sessions = Vec::new();
+    for index in 0..26 {
+        sessions.push(seed_session(&pool, &format!("expired-{index}")).await?.0);
+    }
+    // A whole sweep's page of kept sessions comes first.
+    sqlx::query(
+        "INSERT INTO kept_recordings (recording_session_id,user_id,guild_id)
+         SELECT id,100,1 FROM unnest($1::bigint[]) id",
+    )
+    .bind(&sessions[..25])
+    .execute(&pool)
+    .await?;
+    enqueue_expired(&pool).await?;
+    let removed: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM recording_sessions WHERE deletion_requested_at IS NOT NULL",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(removed, [sessions[25]]);
+    Ok(())
+}

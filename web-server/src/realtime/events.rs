@@ -214,6 +214,7 @@ pub fn parse(payload: &str) -> Option<Event> {
                 "guild_recording_policy" => Resource::RecordingPolicy,
                 "guild_jam_cooldowns" | "user_jam_cooldown_overrides" => Resource::Cooldowns,
                 "permission_rules" => Resource::PermissionRules,
+                "guild_limits" | "keep_allowances" | "kept_recordings" => Resource::Keeping,
                 _ => return None,
             },
         },
@@ -328,6 +329,17 @@ mod tests {
                 resource: Resource::PermissionRules
             })
         );
+        for table in ["guild_limits", "keep_allowances", "kept_recordings"] {
+            assert_eq!(
+                parse(&format!(
+                    r#"{{"v":1,"k":"settings","g":"1","r":"{table}"}}"#
+                )),
+                Some(Event::Settings {
+                    guild_id: 1,
+                    resource: Resource::Keeping
+                })
+            );
+        }
         assert_eq!(
             parse(r#"{"v":1,"k":"perm","g":"1"}"#),
             Some(Event::Permissions { guild_id: Some(1) })

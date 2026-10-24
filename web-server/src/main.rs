@@ -11,6 +11,7 @@ use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
 };
+use web_server::admin::keep_allowances::{get_keep_allowances, put_keep_allowance};
 use web_server::admin::permission_rules::{
     explain_access, get_permission_rules, put_permission_rule,
 };
@@ -43,6 +44,10 @@ use web_server::fbi_agent_registry::{
     AgentGrpcRegistry, get_agent_grpc_endpoints, register_agent_grpc_endpoints,
 };
 use web_server::health::{HealthState, healthz, livez, readyz, spawn_monitor};
+use web_server::keeping::{
+    get_kept_recordings, get_removed_recordings, keep_recording, release_recording,
+    release_recording_for_everyone,
+};
 use web_server::media_archive::{
     MediaArchive, run_media_command, spawn_archive_worker, spawn_local_cleanup,
 };
@@ -50,11 +55,13 @@ use web_server::media_jobs::{
     get_media_job, get_media_job_result, spawn_worker as spawn_media_worker,
 };
 use web_server::members::{get_guild_roles, get_role_members, get_role_view, search_guild_members};
+use web_server::operators::{get_operator_guilds, put_guild_limits, run_operators_command};
 use web_server::presence::get_voice_presence;
 use web_server::realtime::{Hub, realtime_socket};
 use web_server::recording_deletion::{
     DeletionPolicy, delete_recording, get_erasure, get_recording_deletion, request_clip_erasure,
-    request_session_erasure, spawn_worker as spawn_deletion_worker, undo_erasure,
+    request_session_erasure, restore_recording, spawn_worker as spawn_deletion_worker,
+    undo_erasure,
 };
 use web_server::recording_opt_out::{get_recording_opt_out, put_recording_opt_out};
 use web_server::recording_privacy::{get_recording_privacy, put_recording_privacy};
@@ -117,6 +124,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .unwrap_or(8900);
         init_telemetry(telemetry_port);
         run_media_command(&arguments[1..])
+            .await
+            .map_err(|error| -> Box<dyn Error> { error })?;
+        return Ok(());
+    }
+
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "operators")
+    {
+        init_stderr_logging();
+        run_operators_command(&arguments[1..])
             .await
             .map_err(|error| -> Box<dyn Error> { error })?;
         return Ok(());
@@ -303,7 +321,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(put_recording_policy)
             .service(get_permission_rules)
             .service(put_permission_rule)
-            .service(explain_access);
+            .service(explain_access)
+            .service(get_keep_allowances)
+            .service(put_keep_allowance)
+            .service(get_operator_guilds)
+            .service(put_guild_limits);
         #[cfg(feature = "loadtest")]
         let api_scope = api_scope.service(web_server::loadtest::scope(loadtest_state.clone()));
         let api_scope = api_scope
@@ -313,6 +335,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(request_clip_erasure)
             .service(get_erasure)
             .service(undo_erasure)
+            .service(restore_recording)
+            .service(get_kept_recordings)
+            .service(get_removed_recordings)
+            .service(keep_recording)
+            .service(release_recording)
+            .service(release_recording_for_everyone)
             .service(get_recording_opt_out)
             .service(put_recording_opt_out)
             .service(get_recording_privacy)

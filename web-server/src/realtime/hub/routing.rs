@@ -347,10 +347,12 @@ fn route_names(renamed: Renamed, access: &SubscriptionAccess, routed: &mut Route
 }
 
 /// Who may read a settings resource: the rule editor's holders of
-/// `manage_permissions`, everything else's holders of `manage_settings`.
+/// `manage_permissions`, keeping everyone, everything else's holders of
+/// `manage_settings`.
 fn settings_audience(resource: Resource) -> Capabilities {
     match resource {
         Resource::PermissionRules => Capabilities::MANAGE_PERMISSIONS,
+        Resource::Keeping => Capabilities::empty(),
         _ => Capabilities::MANAGE_SETTINGS,
     }
 }

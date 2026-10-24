@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rs.id,\n                  rs.user_id,\n                  rs.starting_channel_id,\n                  ARRAY(SELECT DISTINCT channel_id\n                          FROM audio_files\n                         WHERE recording_session_id = rs.id) AS \"channels!\",\n                  (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS \"started_at_ms!\",\n                  (EXTRACT(EPOCH FROM rs.ended_at) * 1000)::bigint AS ended_at_ms,\n                  (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                     FROM user_names un\n                     LEFT JOIN user_nicknames nn\n                       ON nn.user_id = un.user_id AND nn.guild_id = rs.guild_id\n                    WHERE un.user_id = rs.user_id) AS speaker_name,\n                  (SELECT c.name FROM channels c\n                    WHERE c.channel_id = rs.starting_channel_id) AS channel_name,\n                  count(*) AS \"keepers!\",\n                  bool_or(k.user_id = $2) AS \"mine!\",\n                  (EXTRACT(EPOCH FROM COALESCE(max(k.kept_at) FILTER (WHERE k.user_id = $2),\n                                               min(k.kept_at))) * 1000)::bigint AS \"kept_at_ms!\"\n             FROM kept_recordings k\n             JOIN recording_sessions rs ON rs.id = k.recording_session_id\n            WHERE k.guild_id = $1\n            GROUP BY rs.id\n            ORDER BY rs.started_at DESC, rs.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "starting_channel_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "starting_channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "channels!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "started_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "ended_at_ms",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "speaker_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "channel_name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "keepers!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "mine!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "kept_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "4512a65bc41a3cfb7ad1420950d940c84a87c188a41128ec14b231c270494fe6"
+}

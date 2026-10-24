@@ -60,6 +60,8 @@ pub struct UserDataForFrontEnd {
     pub username: String,
     pub avatar: String,
     pub is_dev: bool,
+    /// One of the bot's operators, who set every guild's limits.
+    pub is_operator: bool,
 }
 
 #[utoipa::path(
@@ -98,6 +100,7 @@ pub async fn get_current_user(
         username: result.username,
         avatar: result.avatar,
         is_dev,
+        is_operator: crate::operators::is_operator(pool.get_ref(), token_data.user_id).await?,
     };
 
     Ok(HttpResponse::Ok().json(user_data))
@@ -261,9 +264,10 @@ mod tests {
             username,
             avatar,
             is_dev: false,
+            is_operator: false,
         };
         let value = serde_json::to_value(current)?;
-        assert_eq!(value.as_object().unwrap().len(), 4);
+        assert_eq!(value.as_object().unwrap().len(), 5);
         assert!(value.get("email").is_none());
         Ok(())
     }

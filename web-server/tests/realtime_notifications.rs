@@ -316,6 +316,53 @@ async fn permission_rules_reauthorize_the_guild_and_refresh_the_editor(pool: PgP
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn keeping_changes_refresh_the_guild_s_keeping(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let session: i64 = sqlx::query_scalar(
+        "INSERT INTO recording_sessions (guild_id, user_id, starting_channel_id, state, started_at, ended_at)
+         VALUES ($1, $2, $3, 'finalized', now() - interval '2 hours', now() - interval '1 hour')
+         RETURNING id",
+    )
+    .bind(GUILD)
+    .bind(USER)
+    .bind(CHANNEL)
+    .fetch_one(&pool)
+    .await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let statements = [
+        "INSERT INTO guild_limits (guild_id, kept_recordings, updated_by) VALUES ($1, 3, $2)",
+        "INSERT INTO keep_allowances (guild_id, subject_kind, subject_id, allowance, updated_by)
+         VALUES ($1, 'user', $2, 1, $2)",
+        "INSERT INTO kept_recordings (recording_session_id, user_id, guild_id) VALUES ($3, $2, $1)",
+        "DELETE FROM kept_recordings WHERE recording_session_id = $3",
+        "DELETE FROM keep_allowances WHERE guild_id = $1",
+        "UPDATE guild_limits SET kept_recordings = 0 WHERE guild_id = $1",
+    ];
+    for statement in statements {
+        sqlx::query(statement)
+            .bind(GUILD)
+            .bind(USER)
+            .bind(session)
+            .execute(&pool)
+            .await?;
+    }
+    let changed =
+        |table: &str| json!({ "v": 1, "k": "settings", "g": GUILD.to_string(), "r": table });
+    assert_eq!(
+        notifications.drain().await?,
+        [
+            changed("guild_limits"),
+            changed("keep_allowances"),
+            changed("kept_recordings"),
+            changed("kept_recordings"),
+            changed("keep_allowances"),
+            changed("guild_limits"),
+        ]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn a_clip_whose_channels_or_speakers_change_notifies_with_the_old_and_the_new(
     pool: PgPool,
 ) -> TestResult {

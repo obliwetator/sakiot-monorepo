@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_sessions\n            (guild_id, user_id, starting_channel_id, state, started_at, ended_at)\n         VALUES ($1, $2, $3, 'finalized',\n                 now() - make_interval(days => $4 + 1), now() - make_interval(days => $4))\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_sessions",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "57a7d45e5bf2b87bf52bd2996ff1d1475f273d7eb8768901626d5dd5884cdc38"
+}

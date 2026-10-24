@@ -248,6 +248,57 @@ async fn undoing_never_restores_what_the_server_removed(pool: PgPool) -> TestRes
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn erasing_frees_keeps_and_undo_leaves_the_clips_to_the_server_s_removal(
+    pool: PgPool,
+) -> TestResult {
+    let session = seed_session(&pool, SPEAKER, "kept-recording").await?;
+    seed_session_clip(&pool, "kept-cut", session, SPEAKER).await?;
+    sqlx::query(
+        "INSERT INTO kept_recordings (recording_session_id,user_id,guild_id) VALUES ($1,$2,$3)",
+    )
+    .bind(session)
+    .bind(OTHER)
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
+    let id = erase_session(&pool, GUILD, session, SPEAKER).await?;
+    let keeps: i64 = sqlx::query_scalar("SELECT count(*) FROM kept_recordings")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(keeps, 0, "an erased recording is nobody's to keep");
+
+    // Removed by a manager meanwhile: its clip was already hidden.
+    enqueue(
+        &pool,
+        GUILD,
+        session,
+        Some(MANAGER),
+        "manager",
+        DeletionMode::Soft,
+    )
+    .await?;
+    undo(&pool, GUILD, &id, SPEAKER).await?;
+    assert_eq!(hidden_clips(&pool).await?, ["kept-cut"]);
+    // Restoring the session now shows it again.
+    let mut tx = pool.begin().await?;
+    lock_guild(&mut tx, GUILD).await?;
+    let lifecycle = load_lifecycle(&mut tx, GUILD, session).await?;
+    restore_in(
+        &mut tx,
+        GUILD,
+        session,
+        lifecycle.restorable()?,
+        MANAGER,
+        false,
+    )
+    .await?;
+    tx.commit().await?;
+    assert!(!removed(&pool, session).await?);
+    assert!(hidden_clips(&pool).await?.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn undo_after_retention_would_have_expired_leaves_it_to_the_next_sweep(
     pool: PgPool,
 ) -> TestResult {

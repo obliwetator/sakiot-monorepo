@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM kept_recordings WHERE recording_session_id=$1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b2a5af61c847b029d0d5dd7be538d5eaf8d81a13d0be556c741a892173aa7124"
+}

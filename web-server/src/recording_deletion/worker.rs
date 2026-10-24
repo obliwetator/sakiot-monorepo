@@ -31,29 +31,52 @@ pub fn spawn_worker(
     })
 }
 
-pub(super) async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
+/// One retention sweep, which the worker runs every minute: hides finalized
+/// sessions older than their guild's retention period that nobody keeps.
+pub async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
     // One small page per sweep. Retention only hides data; it never authorizes
     // permanent destruction, regardless of the permanent-delete feature flag.
     let rows = sqlx::query!(
-        "SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL ORDER BY rs.ended_at,rs.id LIMIT 25"
+        "SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25"
     )
     .fetch_all(pool)
     .await?;
     for row in rows {
         let (guild_id, session_id) = (row.guild_id, row.id);
-        if let Err(error) = enqueue(
-            pool,
+        if let Err(error) = enqueue_expired_one(pool, guild_id, session_id).await {
+            tracing::warn!(guild_id, session_id, ?error, "retention enqueue skipped");
+        }
+    }
+    Ok(())
+}
+
+/// Removes an expired session, unless someone kept it since the sweep
+/// listed it: keeping takes the guild's lock too.
+async fn enqueue_expired_one(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    session_id: i64,
+) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+    lock_guild(&mut tx, guild_id).await?;
+    let kept = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM kept_recordings WHERE recording_session_id=$1) AS "kept!""#,
+        session_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if !kept {
+        enqueue_in(
+            &mut tx,
             guild_id,
             session_id,
             None,
             "retention",
             DeletionMode::Soft,
         )
-        .await
-        {
-            tracing::warn!(guild_id, session_id, ?error, "retention enqueue skipped");
-        }
+        .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 

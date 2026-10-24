@@ -539,6 +539,36 @@ fn each_admin_event_follows_its_own_capability() {
 }
 
 #[test]
+fn keeping_reaches_every_member_of_the_guild() {
+    let changes = [Event::Settings {
+        guild_id: GUILD,
+        resource: Resource::Keeping,
+    }];
+    for subscription in [
+        holding(Capabilities::empty()),
+        holding(Capabilities::MANAGE_SETTINGS),
+    ] {
+        assert_eq!(
+            route(&changes, &subscription, 9, Some(&HashMap::new())),
+            Routed::from([(Resource::Keeping, None)])
+        );
+    }
+    let elsewhere = [Event::Settings {
+        guild_id: 2,
+        resource: Resource::Keeping,
+    }];
+    assert!(
+        route(
+            &elsewhere,
+            &holding(Capabilities::empty()),
+            9,
+            Some(&HashMap::new())
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn renames_reach_whoever_shows_the_name() {
     let changes = |renamed| {
         [Event::Names {

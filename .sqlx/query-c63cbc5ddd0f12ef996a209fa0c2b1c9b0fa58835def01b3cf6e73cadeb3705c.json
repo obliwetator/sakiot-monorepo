@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO keep_allowances (guild_id, subject_kind, subject_id, allowance, updated_by)\n         VALUES ($1, $2, $3, $4, $5)\n         ON CONFLICT ON CONSTRAINT keep_allowances_one_per_subject\n         DO UPDATE SET allowance = EXCLUDED.allowance,\n                       updated_by = EXCLUDED.updated_by,\n                       updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c63cbc5ddd0f12ef996a209fa0c2b1c9b0fa58835def01b3cf6e73cadeb3705c"
+}

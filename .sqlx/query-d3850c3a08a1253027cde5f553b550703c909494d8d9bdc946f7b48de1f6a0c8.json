@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_deletion_jobs\n                        SET hidden_clip_ids = ARRAY(\n                                SELECT DISTINCT clip_id\n                                  FROM unnest(COALESCE(hidden_clip_ids, '{}')\n                                              || ARRAY(SELECT clip_id FROM clips\n                                                        WHERE guild_id = $2\n                                                          AND clip_id = ANY($3)\n                                                          AND deleted_at IS NOT NULL)) clip_id)\n                      WHERE recording_session_id = $1 AND mode = 'soft'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d3850c3a08a1253027cde5f553b550703c909494d8d9bdc946f7b48de1f6a0c8"
+}

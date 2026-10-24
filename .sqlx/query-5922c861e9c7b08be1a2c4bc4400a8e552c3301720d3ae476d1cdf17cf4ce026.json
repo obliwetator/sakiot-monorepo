@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM keep_allowances\n              WHERE guild_id = $1 AND subject_kind = $2 AND subject_id IS NOT DISTINCT FROM $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5922c861e9c7b08be1a2c4bc4400a8e552c3301720d3ae476d1cdf17cf4ce026"
+}

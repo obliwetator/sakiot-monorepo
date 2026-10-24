@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM kept_recordings\n          WHERE guild_id = $1 AND recording_session_id = $2 AND user_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30e5702b5945d0e18b34b899a3950970733d3ca6decb8cf9b130fc1a32012550"
+}

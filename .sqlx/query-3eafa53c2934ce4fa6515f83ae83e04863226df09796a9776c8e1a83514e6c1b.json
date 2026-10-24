@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.subject_kind, a.subject_id, a.allowance,\n                  CASE a.subject_kind\n                      WHEN 'role' THEN (SELECT r.name FROM roles r\n                                         WHERE r.role_id = a.subject_id\n                                           AND r.guild_id = a.guild_id)\n                      WHEN 'user' THEN (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                                          FROM user_names un\n                                          LEFT JOIN user_nicknames nn\n                                            ON nn.user_id = un.user_id\n                                           AND nn.guild_id = a.guild_id\n                                         WHERE un.user_id = a.subject_id)\n                  END AS name,\n                  a.subject_kind = 'role'\n                  AND NOT EXISTS (SELECT 1 FROM roles r\n                                   WHERE r.role_id = a.subject_id\n                                     AND r.guild_id = a.guild_id) AS \"reaches_nobody!\"\n             FROM keep_allowances a\n            WHERE a.guild_id = $1\n            ORDER BY array_position(ARRAY['everyone', 'role', 'user'], a.subject_kind),\n                     a.subject_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subject_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "keep_allowances",
+            "name": "subject_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "subject_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "keep_allowances",
+            "name": "subject_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "allowance",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "keep_allowances",
+            "name": "allowance"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "reaches_nobody!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "3eafa53c2934ce4fa6515f83ae83e04863226df09796a9776c8e1a83514e6c1b"
+}

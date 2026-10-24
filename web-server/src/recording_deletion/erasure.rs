@@ -206,6 +206,8 @@ pub(super) async fn erase_session(
     let fragments = session_fragments(&mut *tx, session_id).await?;
     let clips = related_clips(&mut tx, guild_id, session_id, &fragments).await?;
     let hidden = hide_clips(&mut tx, guild_id, &clip_ids(&clips)).await?;
+    // Erased, it is nobody's to keep; undoing it does not bring them back.
+    drop_keeps(&mut tx, session_id).await?;
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query!(
         "INSERT INTO recording_erasures
@@ -318,7 +320,7 @@ async fn erase_clip(
 }
 
 /// Soft-deletes the visible ones of `clip_ids`, returning those.
-async fn hide_clips(
+pub(super) async fn hide_clips(
     tx: &mut sqlx::PgConnection,
     guild_id: i64,
     clip_ids: &[String],
@@ -443,6 +445,26 @@ pub(super) async fn undo(
                 .await?;
             }
             restore_clips(&mut tx, guild_id, &erasure.hidden_clip_ids).await?;
+            // Those the server's removal of the session still hides are its
+            // to restore now.
+            if let Some(session_id) = erasure.recording_session_id {
+                sqlx::query!(
+                    "UPDATE recording_deletion_jobs
+                        SET hidden_clip_ids = ARRAY(
+                                SELECT DISTINCT clip_id
+                                  FROM unnest(COALESCE(hidden_clip_ids, '{}')
+                                              || ARRAY(SELECT clip_id FROM clips
+                                                        WHERE guild_id = $2
+                                                          AND clip_id = ANY($3)
+                                                          AND deleted_at IS NOT NULL)) clip_id)
+                      WHERE recording_session_id = $1 AND mode = 'soft'",
+                    session_id,
+                    guild_id,
+                    &erasure.hidden_clip_ids
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         _ => {
             return Err(AppError::Conflict(
@@ -457,7 +479,7 @@ pub(super) async fn undo(
 /// Shows again the clips an erasure hid, except those something else still
 /// hides: a removed session their audio, or a part's, came from, or an open
 /// erasure of one of their parts.
-async fn restore_clips(
+pub(super) async fn restore_clips(
     tx: &mut sqlx::PgConnection,
     guild_id: i64,
     hidden: &[String],
