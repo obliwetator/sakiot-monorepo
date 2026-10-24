@@ -265,6 +265,22 @@ and health-gated web cutover, and prunes old staging releases.
   hosts containing `debug`, `dev`, `staging` or `preview` and always prompts
   for the secret, so the secret never reaches the bundle.
 
+## Operators
+
+The bot's operators set each guild's limits, such as how many recordings it
+keeps past retention, on `/operator`, reached from their account menu. Being
+one is a row in `operators`, per database, which only the server's CLI
+changes. On staging, add the account dev login signs in as (`DEV_ACCOUNT_ID`);
+on production, your Discord user id:
+
+```sh
+sudo -u sakiot /bin/bash -lc "set -a; . /etc/sakiot/staging.env; set +a; \
+  /srv/sakiot-staging/current/web/web_server operators add <discord user id>"
+```
+
+`operators list` and `operators remove <id>` work the same way. Until an
+operator sets a guild's cap, it is 0 and nothing can be kept there.
+
 ## Preview slots
 
 A preview slot runs the web server and frontend for one branch, with no

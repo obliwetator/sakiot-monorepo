@@ -25,7 +25,7 @@ const MAX_CAP = 100_000;
 
 /**
  * What the bot's operators allow each guild, which nobody in a guild can
- * change. Operators are added on the server (`web-server operators add`).
+ * change. Operators are added on the server (`web_server operators add`).
  */
 export function OperatorPage() {
 	const { data: auth } = useGetAuthDetailsQuery();

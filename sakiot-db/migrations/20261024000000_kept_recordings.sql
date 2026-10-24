@@ -2,7 +2,7 @@
 --
 -- `operators` run this Sakiot deployment. Being one is not a Discord role
 -- and nothing a guild can grant: they are added on the server with
--- `web-server operators add <user id>`, and only they set `guild_limits`.
+-- `web_server operators add <user id>`, and only they set `guild_limits`.
 --
 -- `guild_limits.kept_recordings` caps how many distinct recordings a guild
 -- keeps, 0 without a row. Within it, holders of `manage_settings` set how
@@ -32,7 +32,7 @@ CREATE TABLE public.operators (
 );
 
 COMMENT ON TABLE public.operators IS
-    'The people who run this Sakiot deployment: they set every guild''s limits. Managed with `web-server operators`.';
+    'The people who run this Sakiot deployment: they set every guild''s limits. Managed with `web_server operators`.';
 
 CREATE TABLE public.guild_limits (
     guild_id bigint PRIMARY KEY,

@@ -1,5 +1,5 @@
 //! The bot's operators: the people who run this Sakiot deployment. They are
-//! listed in `operators`, which only `web-server operators` on the server
+//! listed in `operators`, which only `web_server operators` on the server
 //! changes, and they alone set what each guild is allowed
 //! (`guild_limits`), which nobody in a guild can change.
 
@@ -158,7 +158,7 @@ type CliResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const USAGE: &str = "usage: web_server operators list | operators add <discord user id> | operators remove <discord user id>";
 
-/// `web-server operators ...`: who may set guilds' limits.
+/// `web_server operators ...`: who may set guilds' limits.
 pub async fn run_operators_command(arguments: &[String]) -> CliResult<()> {
     let pool = PgPoolOptions::new()
         .max_connections(1)

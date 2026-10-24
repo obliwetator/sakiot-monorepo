@@ -536,7 +536,8 @@ Recordings age out of local disk into Backblaze B2:
   stays removed.
 - Members keep recordings past retention (`keeping.rs`, `kept_recordings`).
   The bot's operators (`operators`, managed on the server with
-  `web-server operators list|add|remove`) cap how many distinct recordings
+  `web_server operators list|add|remove`, see
+  [`ops/README.md`](../ops/README.md#operators)) cap how many distinct recordings
   each guild keeps (`guild_limits`, 0 by default) on their own dashboard
   (`/operator`). Within the cap, holders of `manage_settings` set allowances
   (`keep_allowances`): a member's own wins, else the largest of their
