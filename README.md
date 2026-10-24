@@ -81,8 +81,8 @@ git config core.hooksPath .githooks
 The pre-commit hook formats staged Rust and frontend files (only the staged
 hunks) and checks `.sqlx` when migrations or SQLx queries change. The
 pre-push hook runs `cargo fmt --check`, workspace Clippy with warnings denied,
-Biome, and the generated API types check. CI runs all of that plus the tests,
-selecting suites by what changed.
+Biome, the generated API types check, and the frontend tests. CI runs all of
+that plus the Rust and end-to-end tests, selecting suites by what changed.
 
 Database tests create a disposable database per test from
 `SAKIOT_TEST_DATABASE_URL`, and fail with `PoolTimedOut` when PostgreSQL is not
