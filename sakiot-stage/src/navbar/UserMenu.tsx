@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { problemFromError } from "../app/apiError";
 import {
 	type User,
@@ -31,6 +32,7 @@ const ONLY_ME = "only-me";
 const DEVICES = "devices";
 const LOG_OUT = "log-out";
 const LOG_OUT_EVERYWHERE = "log-out-everywhere";
+const OPERATOR = "operator";
 
 export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 	const { user, guild } = props;
@@ -50,10 +52,15 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 	const onlyMe = privacy?.private === true;
 	const [menuError, setMenuError] = useState<string | null>(null);
 	const [devicesOpen, setDevicesOpen] = useState(false);
+	const navigate = useNavigate();
 
 	const handleAction = async (key: string) => {
 		if (key === DEVICES) {
 			setDevicesOpen(true);
+			return;
+		}
+		if (key === OPERATOR) {
+			navigate("/operator");
 			return;
 		}
 		if (key !== LOG_OUT && key !== LOG_OUT_EVERYWHERE) return;
@@ -167,6 +174,9 @@ export function UserMenu(props: { user: User; guild: UserGuilds | null }) {
 							</MenuSection>
 						) : null}
 						<MenuSection aria-label="Account">
+							{user.is_operator && (
+								<MenuItem id={OPERATOR}>Operator dashboard</MenuItem>
+							)}
 							<MenuItem id={DEVICES}>Signed-in devices</MenuItem>
 							<MenuItem id={LOG_OUT}>Log out</MenuItem>
 							<MenuItem id={LOG_OUT_EVERYWHERE}>Log out everywhere</MenuItem>

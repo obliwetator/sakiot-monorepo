@@ -16,6 +16,7 @@ describe("guildPages", () => {
 			"Clips",
 			"Clip Editor",
 			"Stamps",
+			"Kept",
 		]);
 		expect(guildPages(guild(["preview_roles"]))).toContain("Members");
 		expect(guildPages(guild(["preview_roles"]))).not.toContain("Admin");
@@ -24,6 +25,7 @@ describe("guildPages", () => {
 			"Clips",
 			"Clip Editor",
 			"Stamps",
+			"Kept",
 			"Permissions",
 		]);
 	});
@@ -50,6 +52,7 @@ describe("activePage", () => {
 			"Voice Settings",
 		);
 		expect(activePage("/dashboard/123/members")).toBe("Members");
+		expect(activePage("/dashboard/123/kept")).toBe("Kept");
 		expect(activePage("/dashboard/123/admin/permissions")).toBe("Permissions");
 		expect(activePage("/stamps/123")).toBe("Stamps");
 		expect(activePage("/dashboard/123/missing")).toBeNull();

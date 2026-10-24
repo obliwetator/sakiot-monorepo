@@ -7,6 +7,7 @@ import { shouldRevalidateGuildData } from "./guildRouteLoader";
 import {
 	clipsRouteLoader,
 	cooldownsRouteLoader,
+	keptRouteLoader,
 	membersRouteLoader,
 	permissionsRouteLoader,
 	stampsRouteLoader,
@@ -37,6 +38,14 @@ const loadPermissionsRoute = () =>
 	import("../features/admin-permissions").then((m) => ({
 		Component: m.GuildPermissionsPage,
 	}));
+const loadKeptRoute = () =>
+	import("../features/kept-recordings").then((m) => ({
+		Component: m.KeptRecordingsPage,
+	}));
+const loadOperatorRoute = () =>
+	import("../features/operator").then((m) => ({
+		Component: m.OperatorPage,
+	}));
 const loadMembersRoute = () =>
 	import("../features/members").then((m) => ({
 		Component: m.GuildMembers,
@@ -61,6 +70,11 @@ export const appRoutesElement = (
 			<Route index element={<ProtectedLayout />} />
 
 			<Route path="/stamps" lazy={loadStampsRoute} />
+			<Route
+				path="/operator"
+				lazy={loadOperatorRoute}
+				errorElement={<RouteLoadError page="operator page" />}
+			/>
 			<Route
 				path="/stamps/:guild_id"
 				element={<GuildAccessBoundary />}
@@ -121,6 +135,13 @@ export const appRoutesElement = (
 							shouldRevalidate={shouldRevalidateGuildData}
 						/>
 					</Route>
+					<Route
+						path="kept"
+						lazy={loadKeptRoute}
+						loader={keptRouteLoader}
+						shouldRevalidate={shouldRevalidateGuildData}
+						errorElement={<RouteLoadError page="kept recordings page" />}
+					/>
 					<Route
 						path="members"
 						loader={membersRouteLoader}

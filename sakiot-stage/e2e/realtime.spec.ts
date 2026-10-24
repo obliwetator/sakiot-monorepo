@@ -123,6 +123,10 @@ test("a settings refresh keeps the field being edited and updates the rest", asy
 			await json({ pending_cap_seconds: pendingCap, is_default: false });
 			return method === "GET";
 		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/keep-allowances`) {
+			await json({ cap: 0, kept: 0, allowances: [], roles: [] });
+			return method === "GET";
+		}
 		if (path === `/api/admin/guilds/${GUILD_ID}/recording-policy`) {
 			await json({
 				retention_days: retention,

@@ -72,6 +72,15 @@ export const API_ROUTES = {
 	permissionRules: "/api/admin/guilds/{guild_id}/permission-rules",
 	permissionExplanation:
 		"/api/admin/guilds/{guild_id}/permission-rules/explain",
+	keepAllowances: "/api/admin/guilds/{guild_id}/keep-allowances",
+	restoreRecording:
+		"/api/admin/guilds/{guild_id}/recordings/{recording_session_id}/restore",
+	keptRecordingForEveryone:
+		"/api/admin/guilds/{guild_id}/kept-recordings/{recording_session_id}",
+	keptRecordings: "/api/guilds/{guild_id}/kept-recordings",
+	removedRecordings: "/api/guilds/{guild_id}/removed-recordings",
+	operatorGuilds: "/api/operator/guilds",
+	guildLimits: "/api/operator/guilds/{guild_id}/limits",
 	currentUser: "/api/users/current",
 	currentUserGuilds: "/api/users/current/guilds",
 	currentUserSessions: "/api/users/current/sessions",
@@ -82,6 +91,8 @@ export const API_ROUTES = {
 		"/api/users/current/guilds/{guild_id}/recordings/{recording_session_id}/erasure",
 	clipErasure: "/api/users/current/guilds/{guild_id}/clips/{clip_id}/erasure",
 	erasure: "/api/users/current/guilds/{guild_id}/erasures/{erasure_id}",
+	keptRecording:
+		"/api/users/current/guilds/{guild_id}/kept-recordings/{recording_session_id}",
 } satisfies Record<string, keyof paths & string>;
 
 export type ApiRoute = (typeof API_ROUTES)[keyof typeof API_ROUTES];

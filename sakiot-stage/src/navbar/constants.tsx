@@ -1,5 +1,6 @@
 import {
 	ShieldCheck as AdminPanelSettingsIcon,
+	Archive as ArchiveIcon,
 	AudioLines as AudiotrackIcon,
 	Bookmark as BookmarkIcon,
 	Scissors as ContentCutIcon,
@@ -17,12 +18,19 @@ export type PageName =
 	| "Clips"
 	| "Clip Editor"
 	| "Stamps"
+	| "Kept"
 	| "Admin"
 	| "Voice Settings"
 	| "Members"
 	| "Permissions";
 
-export const pages: PageName[] = ["Audio", "Clips", "Clip Editor", "Stamps"];
+export const pages: PageName[] = [
+	"Audio",
+	"Clips",
+	"Clip Editor",
+	"Stamps",
+	"Kept",
+];
 
 /** The admin pages, each shown to holders of the capability it needs. */
 export const adminPages: { page: PageName; capability: Capability }[] = [
@@ -57,6 +65,8 @@ export function activePage(pathname: string): PageName | null {
 			return parts[3] === "editor" ? "Clip Editor" : "Clips";
 		case "members":
 			return "Members";
+		case "kept":
+			return "Kept";
 		case "admin":
 			if (parts[3] === "voice-settings") return "Voice Settings";
 			if (parts[3] === "permissions") return "Permissions";
@@ -74,6 +84,7 @@ export const guildPagePaths: Record<Exclude<PageName, "Stamps">, string> = {
 	Audio: "audio",
 	Clips: "clips",
 	"Clip Editor": "clips/editor",
+	Kept: "kept",
 	Admin: "admin/cooldowns",
 	"Voice Settings": "admin/voice-settings",
 	Members: "members",
@@ -85,6 +96,7 @@ export const pageIcons: Record<PageName, React.ReactElement> = {
 	Clips: <MovieIcon />,
 	"Clip Editor": <ContentCutIcon />,
 	Stamps: <BookmarkIcon />,
+	Kept: <ArchiveIcon />,
 	Admin: <AdminPanelSettingsIcon />,
 	"Voice Settings": <SettingsVoiceIcon />,
 	Members: <GroupsIcon />,

@@ -177,6 +177,15 @@ export type RuleRole = ApiSchema["RuleRole"];
 export type AccessExplanation = ApiSchema["AccessExplanation"];
 export type CapabilityDecision = ApiSchema["CapabilityDecision"];
 
+export type Keeping = ApiSchema["Keeping"];
+export type KeptRecording = ApiSchema["KeptRecording"];
+export type RemovedRecordings = ApiSchema["RemovedRecordings"];
+export type RemovedRecording = ApiSchema["RemovedRecording"];
+export type KeepAllowances = ApiSchema["KeepAllowances"];
+export type KeepAllowance = ApiSchema["KeepAllowance"];
+export type KeepAllowanceChange = ApiSchema["KeepAllowanceChange"];
+export type OperatorGuild = ApiSchema["OperatorGuild"];
+
 /** Two constants, not one: unifying them would change what requests send. */
 const JSON_BODY_HEADERS = { "Content-Type": "application/json" } as const;
 const JSON_HEADERS = {
@@ -208,6 +217,14 @@ const TAG_TYPES = [
 	"PermissionRules",
 	/** What a member or a role holds, and what decided it. */
 	"PermissionExplanation",
+	/** The guild's cap, the viewer's allowance and the kept recordings. */
+	"Keeping",
+	/** Removed recordings the viewer may keep or restore. */
+	"RemovedRecordings",
+	/** How many recordings each member may keep, as managers set it. */
+	"KeepAllowances",
+	/** Every guild's limits, for the bot's operators. */
+	"OperatorGuilds",
 	/** One recording session's manifest and waveform, by session id. */
 	"Session",
 	/**
@@ -777,9 +794,13 @@ export const apiSlice = createApi({
 				method: "DELETE",
 			}),
 			// "Clips" stays untagged: getClips provides the bare tag, which an
-			// id-scoped invalidation would not match.
+			// id-scoped invalidation would not match. A removal frees its keeps.
 			invalidatesTags: (_r, _e, { guild_id }) => [
-				{ type: "Recordings" as const, id: guild_id },
+				...guildScoped("Recordings", "RemovedRecordings", "Keeping")(
+					_r,
+					_e,
+					guild_id,
+				),
 				"Clips" as const,
 			],
 		}),
@@ -798,6 +819,7 @@ export const apiSlice = createApi({
 			invalidatesTags: (_r, _e, { guild_id, recording_session_id }) => [
 				{ type: "Recordings" as const, id: guild_id },
 				{ type: "Stamps" as const, id: guild_id },
+				{ type: "Keeping" as const, id: guild_id },
 				{ type: "Session" as const, id: recording_session_id },
 				"Clips" as const,
 			],
@@ -903,6 +925,131 @@ export const apiSlice = createApi({
 			},
 			providesTags: guildScoped("PermissionExplanation"),
 		}),
+		/** The guild's cap, the viewer's allowance, and what is kept. */
+		getKeeping: builder.query<Keeping, string>({
+			query: (guild_id) => apiUrl(API_ROUTES.keptRecordings, { guild_id }),
+			providesTags: guildScoped("Keeping"),
+		}),
+		/** Removed recordings the viewer may keep or restore, a page at a time. */
+		getRemovedRecordings: builder.infiniteQuery<
+			RemovedRecordings,
+			string,
+			string | null
+		>({
+			infiniteQueryOptions: {
+				initialPageParam: null,
+				getNextPageParam: (page) => page.next ?? undefined,
+			},
+			query: ({ queryArg: guild_id, pageParam }) => {
+				const url = apiUrl(API_ROUTES.removedRecordings, { guild_id });
+				return pageParam
+					? `${url}?before=${encodeURIComponent(pageParam)}`
+					: url;
+			},
+			providesTags: guildScoped("RemovedRecordings"),
+		}),
+		/** Keeps a recording, bringing it back if retention removed it. */
+		keepRecording: builder.mutation<
+			void,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.keptRecording, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "PUT",
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				...guildScoped(
+					"Keeping",
+					"KeepAllowances",
+					"RemovedRecordings",
+					"Recordings",
+				)(_r, _e, guild_id),
+				"Clips" as const,
+			],
+		}),
+		/** The viewer stops keeping a recording. */
+		releaseRecording: builder.mutation<
+			void,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.keptRecording, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "DELETE",
+			}),
+			invalidatesTags: guildScoped("Keeping", "KeepAllowances"),
+		}),
+		/** A manager stops everyone keeping a recording. */
+		releaseRecordingForEveryone: builder.mutation<
+			void,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.keptRecordingForEveryone, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "DELETE",
+			}),
+			invalidatesTags: guildScoped("Keeping", "KeepAllowances"),
+		}),
+		/** A manager brings back a removal within the retention period. */
+		restoreRecording: builder.mutation<
+			void,
+			{ guild_id: string; recording_session_id: string }
+		>({
+			query: ({ guild_id, recording_session_id }) => ({
+				url: apiUrl(API_ROUTES.restoreRecording, {
+					guild_id,
+					recording_session_id,
+				}),
+				method: "POST",
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				...guildScoped("RemovedRecordings", "Recordings")(_r, _e, guild_id),
+				"Clips" as const,
+			],
+		}),
+		getKeepAllowances: builder.query<KeepAllowances, string>({
+			query: (guild_id) => apiUrl(API_ROUTES.keepAllowances, { guild_id }),
+			providesTags: guildScoped("KeepAllowances"),
+		}),
+		/** Sets one allowance; null removes it. */
+		setKeepAllowance: builder.mutation<
+			void,
+			KeepAllowanceChange & { guild_id: string }
+		>({
+			query: ({ guild_id, ...change }) => ({
+				url: apiUrl(API_ROUTES.keepAllowances, { guild_id }),
+				method: "PUT",
+				body: change,
+			}),
+			invalidatesTags: guildScoped("KeepAllowances", "Keeping"),
+		}),
+		getOperatorGuilds: builder.query<OperatorGuild[], void>({
+			query: () => apiUrl(API_ROUTES.operatorGuilds),
+			providesTags: ["OperatorGuilds"],
+		}),
+		/** How many recordings a guild may keep: operators only. */
+		setGuildLimits: builder.mutation<
+			void,
+			{ guild_id: string; kept_recordings: number }
+		>({
+			query: ({ guild_id, kept_recordings }) => ({
+				url: apiUrl(API_ROUTES.guildLimits, { guild_id }),
+				method: "PUT",
+				body: { kept_recordings },
+			}),
+			invalidatesTags: (_r, _e, { guild_id }) => [
+				"OperatorGuilds" as const,
+				...guildScoped("Keeping", "KeepAllowances")(_r, _e, guild_id),
+			],
+		}),
 		getRoleView: builder.query<RoleView, { guild_id: string; role_id: string }>(
 			{
 				query: ({ guild_id, role_id }) =>
@@ -998,4 +1145,14 @@ export const {
 	useGetPermissionRulesQuery,
 	useSetPermissionRuleMutation,
 	useExplainAccessQuery,
+	useGetKeepingQuery,
+	useGetRemovedRecordingsInfiniteQuery,
+	useKeepRecordingMutation,
+	useReleaseRecordingMutation,
+	useReleaseRecordingForEveryoneMutation,
+	useRestoreRecordingMutation,
+	useGetKeepAllowancesQuery,
+	useSetKeepAllowanceMutation,
+	useGetOperatorGuildsQuery,
+	useSetGuildLimitsMutation,
 } = apiSlice;

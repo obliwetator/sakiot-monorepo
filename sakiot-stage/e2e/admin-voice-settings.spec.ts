@@ -70,6 +70,10 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 			await json({ detail: "reset failed" }, 500);
 			return;
 		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/keep-allowances`) {
+			await json({ cap: 0, kept: 0, allowances: [], roles: [] });
+			return;
+		}
 		if (
 			path === `/api/admin/guilds/${GUILD_ID}/recording-policy` &&
 			request.method() === "GET"
@@ -187,6 +191,10 @@ test("server validation and permission failures are explained and input is kept"
 				},
 				400,
 			);
+			return;
+		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/keep-allowances`) {
+			await json({ cap: 0, kept: 0, allowances: [], roles: [] });
 			return;
 		}
 		const policy = `/api/admin/guilds/${GUILD_ID}/recording-policy`;

@@ -25,7 +25,22 @@ const responses: Record<string, unknown> = {
 		channels: [],
 		is_default: true,
 	},
+	[`${adminRoot}/keep-allowances`]: {
+		cap: 0,
+		kept: 0,
+		allowances: [],
+		roles: [],
+	},
 	[`${adminRoot}/roles`]: [],
+	[`/api/guilds/${GUILD_ID}/kept-recordings`]: {
+		cap: 0,
+		kept: 0,
+		allowance: null,
+		used: 0,
+		retention_days: null,
+		recordings: [],
+	},
+	[`/api/guilds/${GUILD_ID}/removed-recordings`]: { recordings: [] },
 };
 
 type RouteCase = {
@@ -69,9 +84,20 @@ const cases: RouteCase[] = [
 	{
 		feature: "admin-voice-settings",
 		path: `${guildRoot}/admin/voice-settings`,
-		queries: [`${adminRoot}/voice-settings`, `${adminRoot}/recording-policy`],
+		queries: [
+			`${adminRoot}/voice-settings`,
+			`${adminRoot}/recording-policy`,
+			`${adminRoot}/keep-allowances`,
+		],
 		ready: (page) =>
 			page.getByRole("heading", { name: "Voice Settings", exact: true }),
+	},
+	{
+		feature: "kept-recordings",
+		path: `${guildRoot}/kept`,
+		queries: [`/api/guilds/${GUILD_ID}/kept-recordings`],
+		ready: (page) =>
+			page.getByRole("heading", { name: "Kept recordings", exact: true }),
 	},
 	{
 		feature: "members",

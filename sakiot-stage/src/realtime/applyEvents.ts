@@ -37,6 +37,9 @@ const GUILD_TAGS: ApiTag[] = [
 	"VoicePresence",
 	"PermissionRules",
 	"PermissionExplanation",
+	"Keeping",
+	"RemovedRecordings",
+	"KeepAllowances",
 ];
 
 function invalidate(ctx: ApplyContext, guildId: string, types: ApiTag[]) {
@@ -114,7 +117,8 @@ function refreshSessions(
 			sessionIds.map((id) => ({ type: "Session" as const, id })),
 		),
 	);
-	invalidate(ctx, guildId, ["LiveStems", "LiveState"]);
+	// Removed or restored, a session leaves or joins the removed list.
+	invalidate(ctx, guildId, ["LiveStems", "LiveState", "RemovedRecordings"]);
 
 	const state = ctx.getState();
 	const args = apiSlice.util
@@ -147,6 +151,7 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 					"LiveState",
 					"Clips",
 					"Stamps",
+					"RemovedRecordings",
 				]);
 				ctx.dispatch(apiSlice.util.invalidateTags(["Session"]));
 			}
@@ -186,6 +191,13 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 			return;
 		case "permission_rules":
 			invalidate(ctx, guildId, ["PermissionRules", "PermissionExplanation"]);
+			return;
+		case "keeping":
+			invalidate(ctx, guildId, [
+				"Keeping",
+				"KeepAllowances",
+				"RemovedRecordings",
+			]);
 			return;
 		case "guilds":
 			// The guild list: a name, an icon, or what the viewer may do.

@@ -12,6 +12,7 @@ import { LoadFailure } from "../../shared/LoadFailure";
 import { SavedValueChanged } from "../../shared/SavedValueChanged";
 import { Button, Notice, TextField } from "../../shared/ui";
 import { sameIds, useDraftField } from "../../shared/useDraftField";
+import { KeepAllowancesPanel } from "./KeepAllowances";
 
 const MIN_PENDING_SECONDS = 60;
 
@@ -306,6 +307,7 @@ export function GuildVoiceSettingsPage() {
 					</div>
 				)}
 			</div>
+			<KeepAllowancesPanel guildId={guildId} />
 		</div>
 	);
 }

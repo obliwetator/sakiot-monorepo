@@ -80,6 +80,10 @@ const PRIVATE_TAGS = [
 	"VoicePresence",
 	"PermissionRules",
 	"PermissionExplanation",
+	"Keeping",
+	"RemovedRecordings",
+	"KeepAllowances",
+	"OperatorGuilds",
 	"Session",
 ] as const;
 

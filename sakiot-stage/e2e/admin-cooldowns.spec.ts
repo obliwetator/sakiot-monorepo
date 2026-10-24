@@ -175,6 +175,13 @@ async function mockApi(
 			return;
 		}
 		if (
+			path === `/admin/guilds/${GUILD_ID}/keep-allowances` &&
+			method === "GET"
+		) {
+			await fulfillJson({ cap: 0, kept: 0, allowances: [], roles: [] });
+			return;
+		}
+		if (
 			path === `/admin/guilds/${GUILD_ID}/recording-policy` &&
 			method === "GET"
 		) {
