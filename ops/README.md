@@ -466,20 +466,23 @@ systemd-analyze security sakiot-web.service
 - PostgreSQL does not answer within two seconds;
 - a media, composition, archive or recording-deletion worker has exited;
 - a media, composition or permanent-deletion lease stays expired for two
-  minutes, or a permanent deletion has exhausted its retries;
+  minutes;
 - the oldest *due* queued job, or due archive work when B2 is enabled, is over
   an hour old. Scheduled retries count only from their retry time.
 
-A missing or conflicted archive object is reported without making the
-instance unready, and paused deletion jobs wait for operator review. The
+A missing or conflicted archive object, or a permanent deletion that has
+exhausted its retries, is reported without making the instance unready: the
+failed job keeps its row, error and stage, and requesting permanent deletion
+again requeues it. Paused deletion jobs wait for operator review. The
 response lists `failed_workers` and `queues`; read it before restarting.
 
 The web process records OTLP gauges every 30 seconds: `web_server_ready`,
 `media_worker_failed`, and per queue `media_queue_queued_jobs`,
 `media_queue_active_processes` and `media_queue_oldest_age_seconds` (the
-deletion queue is labelled `recording_deletion`). Alert on
-`web_server_ready == 0`, `media_worker_failed > 0`, or queue age approaching
-the readiness threshold.
+deletion queue is labelled `recording_deletion`), and
+`recording_deletion_failed_jobs`. Alert on `web_server_ready == 0`,
+`media_worker_failed > 0`, `recording_deletion_failed_jobs > 0`, or queue age
+approaching the readiness threshold.
 
 The API sets CSP, HSTS, frame, MIME, referrer and permissions headers on every
 response, including errors, OAuth, media and CORS preflights. The OAuth

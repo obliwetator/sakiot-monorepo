@@ -43,6 +43,9 @@ pub struct QueueHealth {
 }
 
 impl QueueHealth {
+    // A failed permanent deletion keeps its job row for an operator and is
+    // alerted on through its gauge. It says nothing about whether this
+    // instance can serve, and gating on it would block the deploy that fixes it.
     fn unhealthy(&self, archive_enabled: bool) -> bool {
         self.oldest_media_queued_seconds > MAX_QUEUE_AGE_SECONDS
             || self.oldest_composition_queued_seconds > MAX_QUEUE_AGE_SECONDS
@@ -50,7 +53,6 @@ impl QueueHealth {
             || self.expired_media_leases > 0
             || self.expired_composition_leases > 0
             || self.expired_deletion_leases > 0
-            || self.deletion_failed > 0
             || (archive_enabled && self.oldest_archive_pending_seconds > MAX_ARCHIVE_AGE_SECONDS)
     }
 }
@@ -107,6 +109,7 @@ struct HealthMetrics {
     running: Gauge<u64>,
     oldest_seconds: Gauge<u64>,
     failed_workers: Gauge<u64>,
+    deletion_failed: Gauge<u64>,
     ready: Gauge<u64>,
     /// Always 1, labelled with the running release, so dashboards can mark
     /// deploys where the label changes.
@@ -122,6 +125,7 @@ fn metrics() -> &'static HealthMetrics {
             running: meter.u64_gauge("media_queue_active_processes").build(),
             oldest_seconds: meter.u64_gauge("media_queue_oldest_age_seconds").build(),
             failed_workers: meter.u64_gauge("media_worker_failed").build(),
+            deletion_failed: meter.u64_gauge("recording_deletion_failed_jobs").build(),
             ready: meter.u64_gauge("web_server_ready").build(),
             build_info: meter.u64_gauge("web_server_build_info").build(),
         }
@@ -162,6 +166,8 @@ fn record_metrics(queues: &QueueHealth, failed: &[&'static str], ready: bool) {
         m.oldest_seconds.record(oldest.max(0) as u64, &label);
     }
     m.failed_workers.record(failed.len() as u64, &[]);
+    m.deletion_failed
+        .record(queues.deletion_failed.max(0) as u64, &[]);
     m.ready.record(u64::from(ready), &[]);
 }
 
@@ -265,7 +271,7 @@ mod tests {
         assert!(queues.unhealthy(false));
         queues = QueueHealth::default();
         queues.deletion_failed = 1;
-        assert!(queues.unhealthy(false));
+        assert!(!queues.unhealthy(false));
         queues = QueueHealth::default();
         queues.oldest_archive_pending_seconds = MAX_ARCHIVE_AGE_SECONDS + 1;
         assert!(!queues.unhealthy(false));
