@@ -1894,7 +1894,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fbi-agent"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "chrono",
  "dashmap 6.2.1",
@@ -4780,7 +4780,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sakiot-deploy"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -4798,7 +4798,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-dev"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4819,7 +4819,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-dsp"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "js-sys",
  "libm",
@@ -4828,11 +4828,11 @@ dependencies = [
 
 [[package]]
 name = "sakiot-paths"
-version = "1.11.3"
+version = "1.12.0"
 
 [[package]]
 name = "sakiot-peaks"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "ogg",
  "opus2",
@@ -4841,7 +4841,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-permissions"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "bitflags 2.13.2",
  "proptest",
@@ -4850,11 +4850,11 @@ dependencies = [
 
 [[package]]
 name = "sakiot-process"
-version = "1.11.3"
+version = "1.12.0"
 
 [[package]]
 name = "sakiot-proto"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "prost",
  "tonic",
@@ -4864,7 +4864,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-speakers"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4879,7 +4879,7 @@ dependencies = [
 
 [[package]]
 name = "sakiot-storage"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "aws-sdk-s3",
  "aws-smithy-http-client",
@@ -6832,7 +6832,7 @@ dependencies = [
 
 [[package]]
 name = "web-server"
-version = "1.11.3"
+version = "1.12.0"
 dependencies = [
  "actix-codec",
  "actix-cors",
