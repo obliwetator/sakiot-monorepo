@@ -350,8 +350,8 @@ async fn keep(pool: &Pool<Postgres>, guild: &GuildAccess, session_id: i64) -> Re
         return Err(AppError::Conflict(match allowance {
             0 => "You may not keep recordings in this server.".into(),
             _ => format!(
-                "You already keep {} recordings, all you may keep in this server.",
-                usage.used
+                "You already keep {}, all you may keep in this server.",
+                recordings(usage.used)
             ),
         }));
     }
@@ -360,7 +360,10 @@ async fn keep(pool: &Pool<Postgres>, guild: &GuildAccess, session_id: i64) -> Re
         return Err(AppError::Conflict(match usage.cap {
             0 => "This server may not keep recordings yet: the bot's operators decide how many."
                 .into(),
-            cap => format!("This server already keeps all {cap} recordings it may keep."),
+            _ => format!(
+                "This server already keeps {}, all it may keep.",
+                recordings(usage.kept)
+            ),
         }));
     }
     if let Some(removal) = removal {
@@ -448,6 +451,14 @@ pub async fn release_recording_for_everyone(
     .execute(pool.get_ref())
     .await?;
     Ok(HttpResponse::NoContent().finish())
+}
+
+/// `count` recordings, in words.
+fn recordings(count: i64) -> String {
+    match count {
+        1 => "1 recording".into(),
+        count => format!("{count} recordings"),
+    }
 }
 
 /// How many removed recordings one page lists.

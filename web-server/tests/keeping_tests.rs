@@ -395,7 +395,7 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
         refused["message"],
-        "You already keep 1 recordings, all you may keep in this server."
+        "You already keep 1 recording, all you may keep in this server."
     );
     // Beyond their hearing, it is not there to keep.
     assert_eq!(keep(MEMBER_ID, staff).await?.0, StatusCode::NOT_FOUND);
@@ -440,7 +440,7 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
         refused["message"],
-        "This server already keeps all 2 recordings it may keep."
+        "This server already keeps 2 recordings, all it may keep."
     );
 
     // Letting go: the member's keep, then everyone's, by a manager.
