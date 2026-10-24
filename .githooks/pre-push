@@ -21,3 +21,9 @@ echo "Checking generated OpenAPI types..."
 	cd sakiot-stage
 	bun run check:api-types
 )
+
+echo "Running frontend tests..."
+(
+	cd sakiot-stage
+	bun run test
+)
