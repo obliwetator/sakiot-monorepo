@@ -214,7 +214,8 @@ fn channel_index(guild: usize, channel: i64) -> Option<usize> {
 }
 
 /// `access` as the model has it, from Discord's `discord` answer
-/// (`facts.discord_permissions`, checked against serenity elsewhere).
+/// (`facts.discord_permissions`, checked against serenity elsewhere): each
+/// capability `ruled`, then nothing in a channel the holder does not see.
 fn check_rules(
     world: &World,
     guild: usize,
@@ -262,6 +263,15 @@ fn check_rules(
                 )
             })
             .fold(Capabilities::empty(), |held, capability| held | capability);
+        let seen = if expected.contains(Capabilities::VIEW_PRESENCE) {
+            expected
+        } else {
+            Capabilities::empty()
+        };
+        if seen != expected {
+            coverage.reach(Reached::UnseenTakesTheRest);
+        }
+        let expected = seen;
         let held = access.channels.get(&channel).copied().unwrap_or_default();
         prop_assert_eq!(held, expected, "channel {}", channel);
         if !(expected - granted).is_empty() {
@@ -307,8 +317,12 @@ fn check_explanation(
                 "{:?}",
                 decision
             );
-            if decision.by == Source::Discord {
-                prop_assert_eq!(decision.held, decision.discord, "{:?}", decision);
+            match decision.by {
+                Source::Discord => {
+                    prop_assert_eq!(decision.held, decision.discord, "{:?}", decision);
+                }
+                Source::Unseen | Source::Manager => prop_assert!(!decision.held, "{:?}", decision),
+                Source::Rule { .. } | Source::Owner => {}
             }
         }
         Ok(())
@@ -466,7 +480,13 @@ fn check_viewer(
         );
     }
     for (&channel, &held) in &defaults {
-        prop_assert!(held.contains(Capabilities::STAMP), "channel {}", channel);
+        prop_assert_eq!(held, held.seen(), "channel {} holds unseen", channel);
+        prop_assert_eq!(
+            held.contains(Capabilities::STAMP),
+            held.contains(Capabilities::VIEW_PRESENCE),
+            "channel {}",
+            channel
+        );
         let listens = held.contains(Capabilities::LISTEN_OTHERS);
         prop_assert!(
             !listens || held.contains(Capabilities::VIEW_PRESENCE),
@@ -613,6 +633,13 @@ fn check_preview(
         .explain_role(role)
         .map_err(|RoleNotFound| TestCaseError::fail("a stored role not found to explain"))?;
     check_explanation(&explanation, &role_access, &discord, coverage)?;
+    // Clipped like the preview, the explanation still agrees with it.
+    check_explanation(
+        &explanation.clipped_to(manager),
+        &preview.access,
+        &discord,
+        coverage,
+    )?;
     let joinable = channels_with(&preview.access, Capabilities::LISTEN_OTHERS);
     let defaults = |capability: Capabilities| -> BTreeSet<i64> {
         discord
@@ -701,9 +728,11 @@ enum Reached {
     OwnerKeepsManagement,
     /// A channel's own rule decides a capability.
     ExplainedByChannelRule,
+    /// A rule takes seeing a channel, and everything else there with it.
+    UnseenTakesTheRest,
 }
 
-const EVERY_OUTCOME: [Reached; 21] = [
+const EVERY_OUTCOME: [Reached; 22] = [
     Reached::Owner,
     Reached::Member,
     Reached::Former,
@@ -725,6 +754,7 @@ const EVERY_OUTCOME: [Reached; 21] = [
     Reached::RuleDeniesAdministrator,
     Reached::OwnerKeepsManagement,
     Reached::ExplainedByChannelRule,
+    Reached::UnseenTakesTheRest,
 ];
 
 #[derive(Debug, Default)]

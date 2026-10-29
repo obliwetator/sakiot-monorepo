@@ -120,6 +120,18 @@ describe("describeSource", () => {
 		).toBe("The owner always keeps it");
 		expect(
 			describeSource(
+				decision({ kind: "unseen", channel_id: null, subject: null }, false),
+				data,
+			),
+		).toBe("Taken by not seeing the channel");
+		expect(
+			describeSource(
+				decision({ kind: "manager", channel_id: null, subject: null }, false),
+				data,
+			),
+		).toBe("Left out of the preview: you don't hold it yourself");
+		expect(
+			describeSource(
 				decision({
 					kind: "rule",
 					channel_id: "100",

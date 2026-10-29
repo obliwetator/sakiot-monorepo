@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO clips\n            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,\n             saved_file_name, start_time)\n         VALUES ('lounge-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3,\n                 'lounge/clip.ogg', 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "16252e99d33613b644380c7061e2b6e33ac12cebf4ed00f2bb0d32197b0d48a2"
+}

@@ -21,10 +21,11 @@ export function ViewAsRoleBanner({ guildId }: { guildId: string }) {
 	return (
 		<div className="mb-4">
 			<Notice tone={"info"} announce="status">
-				Viewing as <strong>{roleName ?? `role ${asRole}`}</strong> — every
-				session stays visible: <em>can't listen</em> marks channels this role
-				can see but not join, <em>hidden</em> marks channels it can't see at
-				all. Playing or downloading media still uses your own permissions.
+				Viewing as <strong>{roleName ?? `role ${asRole}`}</strong>, Sakiot's
+				rules included — every session stays visible: <em>can't listen</em>{" "}
+				marks channels this role can see but not listen in, <em>hidden</em>{" "}
+				marks channels it can't see at all. Playing or downloading media still
+				uses your own permissions.
 				<Button variant="primary" size="sm" onPress={exitPreview}>
 					Exit preview
 				</Button>

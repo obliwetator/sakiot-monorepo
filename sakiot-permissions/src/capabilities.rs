@@ -23,7 +23,8 @@ bitflags::bitflags! {
         const DELETE_RECORDINGS = 1 << 3;
         /// Renaming, deleting or overwriting another user's clip.
         const MODERATE_CLIPS = 1 << 4;
-        /// Seeing who is in a voice channel.
+        /// Seeing a voice channel and who is in it. Every other content
+        /// capability takes it (`seen`).
         const VIEW_PRESENCE = 1 << 5;
         /// Hearing other members' voices: recordings, playback, waveforms,
         /// live audio, downloads and mixes.
@@ -71,16 +72,31 @@ impl Capabilities {
     }
 
     /// The content capabilities a member's Discord permissions in one
-    /// channel grant. VIEW_CHANNEL shows who is there; VIEW_CHANNEL and
-    /// CONNECT give access to what was said. Stamping has never been gated.
+    /// channel grant. VIEW_CHANNEL shows who is there and lets them stamp;
+    /// with CONNECT too, they reach what was said. Without VIEW_CHANNEL,
+    /// nothing (`seen`).
     pub fn from_channel_permissions(permissions: Permissions) -> Self {
-        let mut capabilities = Self::STAMP;
-        if permissions.contains(Permissions::VIEW_CHANNEL) {
-            capabilities |= Self::VIEW_PRESENCE;
-        }
-        if permissions.contains(Permissions::VIEW_CHANNEL | Permissions::CONNECT) {
+        let mut capabilities = Self::VIEW_PRESENCE | Self::STAMP;
+        if permissions.contains(Permissions::CONNECT) {
             capabilities |= Self::LISTEN_OTHERS | Self::CREATE_CLIPS | Self::JAM;
         }
-        capabilities
+        if permissions.contains(Permissions::VIEW_CHANNEL) {
+            capabilities
+        } else {
+            Self::empty()
+        }
+    }
+
+    /// What is held in a channel of `self`, once seeing it is settled: all
+    /// of it with `VIEW_PRESENCE`, nothing without, as Discord's
+    /// VIEW_CHANNEL gates everything in a channel. A rule that takes
+    /// seeing a channel takes everything else there with it.
+    #[must_use]
+    pub fn seen(self) -> Self {
+        if self.contains(Self::VIEW_PRESENCE) {
+            self
+        } else {
+            Self::empty()
+        }
     }
 }

@@ -198,7 +198,7 @@ fn capabilities_follow_their_discord_defaults() {
     assert_eq!(owner.guild, Capabilities::MANAGEMENT);
     assert_eq!(owner.channels[&CHANNEL], Capabilities::CONTENT);
 
-    // VIEW_CHANNEL alone shows presence; stamping has never been gated.
+    // VIEW_CHANNEL alone shows presence and lets them stamp.
     let member = facts.access(Viewer::discord(MEMBER)).expect("known");
     assert_eq!(member.guild, Capabilities::empty());
     assert_eq!(
@@ -408,7 +408,7 @@ fn member_holds(facts: &GuildFacts, capability: Capabilities) -> bool {
 
 #[test]
 fn a_sakiot_allow_grants_what_discord_denies() {
-    let mut facts = guild(Permissions::empty());
+    let mut facts = guild(Permissions::VIEW_CHANNEL);
     assert!(!member_holds(&facts, Capabilities::LISTEN_OTHERS));
 
     facts.rules.set(
@@ -419,7 +419,137 @@ fn a_sakiot_allow_grants_what_discord_denies() {
 
     assert!(member_holds(&facts, Capabilities::LISTEN_OTHERS));
     // Only what the rule names.
-    assert!(!member_holds(&facts, Capabilities::VIEW_PRESENCE));
+    assert!(!member_holds(&facts, Capabilities::CREATE_CLIPS));
+}
+
+#[test]
+fn nothing_is_held_in_a_channel_without_seeing_it() {
+    // Discord: CONNECT without VIEW_CHANNEL reaches nothing, stamping
+    // included.
+    let mut facts = guild(Permissions::CONNECT);
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(member.channels[&CHANNEL], Capabilities::empty());
+
+    // A rule granting listening alone does not show the channel.
+    facts.rules.set(
+        None,
+        Subject::Role(ROLE),
+        allow(Capabilities::LISTEN_OTHERS),
+    );
+    assert!(!member_holds(&facts, Capabilities::LISTEN_OTHERS));
+
+    // A rule taking seeing a channel takes everything else there, whatever
+    // Discord or another rule grants, and the explanation says so.
+    let mut facts = guild(VOICE);
+    facts
+        .rules
+        .set(None, Subject::Role(ROLE), allow(Capabilities::JAM));
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::Everyone,
+        deny(Capabilities::VIEW_PRESENCE),
+    );
+    let member = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(member.channels[&CHANNEL], Capabilities::empty());
+    let everyone = facts.role_access(GUILD).expect("@everyone");
+    assert!(!everyone.allows(CHANNEL, Capabilities::LISTEN_OTHERS));
+    let explained = facts.explain_role(GUILD).expect("@everyone");
+    for decision in &explained.channels[&CHANNEL] {
+        assert!(!decision.held, "{decision:?}");
+        assert!(decision.discord, "{decision:?}");
+        let expected = if decision.capability == Capabilities::VIEW_PRESENCE {
+            Source::Rule {
+                channel: Some(CHANNEL),
+                subject: Subject::Everyone,
+            }
+        } else {
+            Source::Unseen
+        };
+        assert_eq!(decision.by, expected, "{decision:?}");
+    }
+}
+
+#[test]
+fn changing_whether_a_channel_is_seen_takes_holding_all_it_carries() {
+    // The editor sees the channel but cannot listen there, so taking seeing
+    // from someone would take listening, which the editor lacks.
+    let mut facts = guild(Permissions::VIEW_CHANNEL);
+    facts.rules.set(
+        None,
+        Subject::User(MEMBER),
+        allow(Capabilities::MANAGE_PERMISSIONS),
+    );
+    let editor = Viewer::discord(MEMBER);
+    let editor_access = facts.access(editor).expect("known");
+    assert!(editor_access.allows(CHANNEL, Capabilities::VIEW_PRESENCE));
+    assert!(
+        !editor_access
+            .editable(Some(CHANNEL))
+            .contains(Capabilities::VIEW_PRESENCE)
+    );
+    assert_eq!(
+        facts.edit_rule(
+            editor,
+            Some(CHANNEL),
+            Subject::Everyone,
+            deny(Capabilities::VIEW_PRESENCE)
+        ),
+        Err(RuleRefused::NotHeld(Capabilities::VIEW_PRESENCE))
+    );
+
+    // Holding everything there, they may.
+    channel(&mut facts).members.insert(
+        MEMBER,
+        overwrite(Permissions::CONNECT, Permissions::empty()),
+    );
+    assert_eq!(
+        facts.edit_rule(
+            editor,
+            Some(CHANNEL),
+            Subject::Role(ROLE + 1),
+            deny(Capabilities::VIEW_PRESENCE)
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_clipped_explanation_names_the_manager_for_what_it_leaves_out() {
+    let mut facts = guild(VOICE);
+    facts.roles.insert(ROLE, Permissions::MANAGE_GUILD);
+    facts.roles.insert(ROLE + 1, Permissions::ADMINISTRATOR);
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::User(MEMBER),
+        deny(Capabilities::JAM),
+    );
+    facts.rules.set(
+        None,
+        Subject::User(MEMBER),
+        deny(Capabilities::MODERATE_CLIPS),
+    );
+    let manager = facts.access(Viewer::discord(MEMBER)).expect("known");
+    let explained = facts
+        .explain_role(ROLE + 1)
+        .expect("the guild's role")
+        .clipped_to(&manager);
+
+    let find = |decisions: &[crate::Decision], capability| {
+        decisions
+            .iter()
+            .find(|decision| decision.capability == capability)
+            .copied()
+            .expect("every capability")
+    };
+    let jam = find(&explained.channels[&CHANNEL], Capabilities::JAM);
+    assert!(!jam.held && jam.discord);
+    assert_eq!(jam.by, Source::Manager);
+    let moderate = find(&explained.guild, Capabilities::MODERATE_CLIPS);
+    assert!(!moderate.held);
+    assert_eq!(moderate.by, Source::Manager);
+    let listen = find(&explained.channels[&CHANNEL], Capabilities::LISTEN_OTHERS);
+    assert!(listen.held);
+    assert_eq!(listen.by, Source::Discord);
 }
 
 #[test]

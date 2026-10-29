@@ -10,6 +10,8 @@ use web_server::admin::permission_rules::{
 };
 use web_server::auth::cookies::ACCESS_TOKEN_COOKIE;
 use web_server::auth::{Access, AccessKeys, AuthKind, AuthMiddleware, Token};
+use web_server::clips::get_clips;
+use web_server::members::get_role_view;
 use web_server::permissions::{GuildAccess, Viewer};
 
 const GUILD_ID: i64 = 1;
@@ -209,8 +211,8 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
     let (status, editor) = get(MODERATOR_ID, "").await?;
     assert_eq!(status, StatusCode::OK);
     // The moderator sees only the lounge, and may change guild-wide only
-    // what reaches no channel they lack: management, and stamping, which
-    // nobody is denied by default.
+    // what reaches no channel they lack: management alone, since everything
+    // in a channel takes seeing it.
     let channels: Vec<&str> = editor["channels"]
         .as_array()
         .into_iter()
@@ -226,7 +228,6 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
             "preview_roles",
             "delete_recordings",
             "moderate_clips",
-            "stamp"
         ])
     );
     assert_eq!(
@@ -498,5 +499,116 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
             .0,
         StatusCode::FORBIDDEN
     );
+    Ok(())
+}
+
+/// Denying `@everyone` the sight of a channel takes everything else there
+/// too, as Discord's View Channel does: its clips leave a preview of
+/// `@everyone`, and the role view says why. The owner, whom the rule
+/// reaches too, still sees the channel in the role view.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_channel_nobody_sees_takes_its_clips_from_a_preview(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed(&pool).await?;
+    sqlx::query!(
+        "INSERT INTO clips
+            (clip_id, guild_id, channel_id, channel_ids, speaker_ids, user_id,
+             saved_file_name, start_time)
+         VALUES ('lounge-clip', $1, $2, ARRAY[$2::bigint], ARRAY[$3::bigint], $3,
+                 'lounge/clip.ogg', 0)",
+        GUILD_ID,
+        LOUNGE_ID,
+        MEMBER_ID,
+    )
+    .execute(&pool)
+    .await?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(put_permission_rule)
+                    .service(get_clips)
+                    .service(get_role_view),
+            ),
+    )
+    .await;
+    let get = async |uri: String| -> Result<Value, Box<dyn std::error::Error>> {
+        let request = test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", access_cookie_for(OWNER_ID)?))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        Ok(test::read_body_json(response).await)
+    };
+    let clips = format!("/api/audio/clips/{GUILD_ID}?as_role={GUILD_ID}");
+    let listed = get(clips.clone()).await?;
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+
+    let request = test::TestRequest::put()
+        .uri(&format!("/api/admin/guilds/{GUILD_ID}/permission-rules"))
+        .insert_header(("Cookie", access_cookie_for(OWNER_ID)?))
+        .insert_header(("X-CSRF-Token", CSRF))
+        .set_json(rule(Some(LOUNGE_ID), everyone(), &[], &["view_presence"]))
+        .to_request();
+    assert!(
+        test::call_service(&app, request)
+            .await
+            .status()
+            .is_success()
+    );
+
+    assert_eq!(get(clips).await?, json!([]));
+    let view = get(format!(
+        "/api/admin/guilds/{GUILD_ID}/roles/{GUILD_ID}/channels"
+    ))
+    .await?;
+    let lounge = view["channels"]
+        .as_array()
+        .and_then(|channels| {
+            channels
+                .iter()
+                .find(|channel| channel["channel_id"] == json!(LOUNGE_ID.to_string()))
+        })
+        .ok_or("the lounge listed")?;
+    let decided = |capability: &str| {
+        lounge["capabilities"]
+            .as_array()
+            .and_then(|decisions| {
+                decisions
+                    .iter()
+                    .find(|decision| decision["capability"] == capability)
+            })
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(
+        decided("view_presence"),
+        json!({
+            "capability": "view_presence",
+            "held": false,
+            "discord": true,
+            "source": {
+                "kind": "rule",
+                "channel_id": LOUNGE_ID.to_string(),
+                "subject": { "kind": "everyone" },
+            },
+        })
+    );
+    for capability in ["listen_others", "create_clips", "jam", "stamp"] {
+        assert_eq!(
+            decided(capability),
+            json!({
+                "capability": capability,
+                "held": false,
+                "discord": true,
+                "source": { "kind": "unseen", "channel_id": null, "subject": null },
+            })
+        );
+    }
     Ok(())
 }

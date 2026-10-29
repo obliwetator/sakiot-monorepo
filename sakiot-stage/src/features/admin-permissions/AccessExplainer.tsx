@@ -1,14 +1,11 @@
-import { Check, X } from "lucide-react";
 import { useState } from "react";
 import {
-	type CapabilityDecision,
 	type PermissionRules,
 	useExplainAccessQuery,
 } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
 import { MemberPicker } from "../../shared/MemberPicker";
 import {
-	cn,
 	Select,
 	SelectItem,
 	Table,
@@ -19,6 +16,7 @@ import {
 	TableRow,
 	Text,
 } from "../../shared/ui";
+import { Held, SourceMark } from "./Decision";
 import { CAPABILITIES, CONTENT, describeSource } from "./rules";
 
 type Target =
@@ -112,7 +110,10 @@ export function AccessExplainer({
 								>
 									<Held decision={decision} />
 									{CAPABILITIES[decision.capability].label}
-									<Source decision={decision} data={data} />
+									<SourceMark
+										decision={decision}
+										description={describeSource(decision, data)}
+									/>
 								</li>
 							))}
 						</ul>
@@ -153,7 +154,10 @@ export function AccessExplainer({
 												>
 													<span className="flex items-center gap-1.5">
 														<Held decision={decision} />
-														<Source decision={decision} data={data} />
+														<SourceMark
+															decision={decision}
+															description={describeSource(decision, data)}
+														/>
 													</span>
 												</TableCell>
 											))}
@@ -171,45 +175,5 @@ export function AccessExplainer({
 				</section>
 			)}
 		</div>
-	);
-}
-
-function Held({ decision }: { decision: CapabilityDecision }) {
-	return decision.held ? (
-		<>
-			<Check aria-hidden="true" className="size-4 text-emerald-300" />
-			<span className="sr-only">Allowed</span>
-		</>
-	) : (
-		<>
-			<X aria-hidden="true" className="size-4 text-rose-300" />
-			<span className="sr-only">Denied</span>
-		</>
-	);
-}
-
-/** A short mark when a rule or the owner's standing decided, not Discord. */
-function Source({
-	decision,
-	data,
-}: {
-	decision: CapabilityDecision;
-	data: PermissionRules;
-}) {
-	if (decision.source.kind === "discord") return null;
-	return (
-		<span
-			className={cn(
-				"rounded px-1 text-[0.65rem] uppercase tracking-wide",
-				decision.source.kind === "owner"
-					? "bg-slate-700 text-slate-200"
-					: "bg-accent/20 text-accent",
-			)}
-		>
-			<span aria-hidden="true">
-				{decision.source.kind === "owner" ? "owner" : "rule"}
-			</span>
-			<span className="sr-only">{describeSource(decision, data)}</span>
-		</span>
 	);
 }

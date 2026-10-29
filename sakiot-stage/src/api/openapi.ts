@@ -2200,8 +2200,11 @@ export interface components {
 		 */
 		ResyncReason: "listener_reconnected" | "queue_overflow" | "permissions";
 		RoleChannel: {
-			can_join: boolean;
-			can_view: boolean;
+			/**
+			 * @description Each content capability a member with only this role holds here,
+			 *     within what the manager holds, and what decided it.
+			 */
+			capabilities: components["schemas"]["CapabilityDecision"][];
 			/** @example 146638124288704513 */
 			channel_id: string;
 			name: string;
@@ -2212,12 +2215,12 @@ export interface components {
 			user_id: string;
 		};
 		RoleView: {
-			/**
-			 * @description What a member with only this role may do across the guild, within
-			 *     what the manager may do.
-			 */
-			capabilities: components["schemas"]["Capability"][];
 			channels: components["schemas"]["RoleChannel"][];
+			/**
+			 * @description Each management capability a member with only this role holds,
+			 *     within what the manager holds, and what decided it.
+			 */
+			guild: components["schemas"]["CapabilityDecision"][];
 		};
 		/** @description One rule as the editor sets it. Allowing and denying nothing deletes it. */
 		RuleChange: {
@@ -2447,7 +2450,7 @@ export interface components {
 			status: string;
 		};
 		/** @enum {string} */
-		SourceKind: "discord" | "rule" | "owner";
+		SourceKind: "discord" | "rule" | "owner" | "unseen" | "manager";
 		StampInfo: {
 			/** Format: int64 */
 			audio_file_id?: number | null;

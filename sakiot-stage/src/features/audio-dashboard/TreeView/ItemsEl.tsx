@@ -21,7 +21,7 @@ export function ItemsEl(props: {
 		access === "visible-only" ? (
 			<span
 				className="ml-1.5 shrink-0 text-xs font-semibold text-amber-300"
-				title="This role can see the channel but cannot join it — playback would be denied"
+				title="This role can see the channel but cannot listen in it — playback would be denied"
 			>
 				🔒 can't listen
 			</span>

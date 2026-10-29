@@ -34,7 +34,8 @@ export const CAPABILITIES: Record<
 	},
 	view_presence: {
 		label: "See who is in voice",
-		description: "The voice presence panel.",
+		description:
+			"The voice presence panel. Without it, nothing else in the channel is held, as with Discord's View Channel.",
 	},
 	listen_others: {
 		label: "Listen to others",
@@ -166,7 +167,8 @@ export function ruleFor(
 
 /**
  * What decided a capability, in words: Discord's permissions, the owner's
- * standing, or a rule and where it applies.
+ * standing, not seeing the channel, the viewer's own access (in a role
+ * preview), or a rule and where it applies.
  */
 export function describeSource(
 	decision: CapabilityDecision,
@@ -174,6 +176,9 @@ export function describeSource(
 ): string {
 	const { source } = decision;
 	if (source.kind === "owner") return "The owner always keeps it";
+	if (source.kind === "unseen") return "Taken by not seeing the channel";
+	if (source.kind === "manager")
+		return "Left out of the preview: you don't hold it yourself";
 	if (source.kind === "discord" || !source.subject)
 		return "Discord's permissions";
 	const whom = subjectName(source.subject, data);

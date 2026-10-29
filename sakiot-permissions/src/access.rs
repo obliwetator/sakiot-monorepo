@@ -86,8 +86,17 @@ impl Access {
     /// (`channel` `None`) or in `channel`: only what they hold there
     /// themselves, as Discord lets a member grant only permissions they
     /// have. A guild-wide content capability reaches every channel, so it
-    /// takes holding it in every one. The owner may change anything.
+    /// takes holding it in every one. Seeing a channel carries everything
+    /// else in it (`Capabilities::seen`), so changing `VIEW_PRESENCE` takes
+    /// holding every content capability. The owner may change anything.
     pub fn editable(&self, channel: Option<i64>) -> Capabilities {
+        let carried = |held: Capabilities| {
+            if held.contains(Capabilities::CONTENT) {
+                held
+            } else {
+                held - Capabilities::VIEW_PRESENCE
+            }
+        };
         match (self.membership, channel) {
             (Membership::Owner, None) => Capabilities::all(),
             (Membership::Owner, Some(_)) => Capabilities::CONTENT,
@@ -96,10 +105,10 @@ impl Access {
                     .channels
                     .values()
                     .fold(Capabilities::CONTENT, |held, channel| held & *channel);
-                self.guild | everywhere
+                self.guild | carried(everywhere)
             }
             (Membership::Member, Some(channel)) => {
-                self.channels.get(&channel).copied().unwrap_or_default()
+                carried(self.channels.get(&channel).copied().unwrap_or_default())
             }
             (Membership::Former | Membership::Outsider, _) => Capabilities::empty(),
         }
@@ -272,8 +281,9 @@ impl GuildFacts {
 
     /// What the viewer may do: Discord's permissions, then the Sakiot
     /// rules for their roles and themselves, then the guards no rule can
-    /// break (the owner keeps every management capability; a former member
-    /// or an outsider holds nothing, whatever the rules say).
+    /// break (the owner keeps every management capability; nothing is held
+    /// in a channel without seeing it; a former member or an outsider holds
+    /// nothing, whatever the rules say).
     pub fn access(&self, viewer: Viewer) -> Result<Access, MembershipUnavailable> {
         let membership = self.membership(viewer)?;
         Ok(self.evaluate(
@@ -339,7 +349,7 @@ impl GuildFacts {
                             layer.rule().within(Capabilities::CONTENT).apply(held)
                         })
                 });
-                (channel, held)
+                (channel, held.seen())
             })
             .collect();
         Access {

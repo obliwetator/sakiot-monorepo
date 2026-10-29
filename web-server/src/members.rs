@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::{As, DisplayFromStr};
 use sqlx::{Pool, Postgres};
 
+use crate::admin::permission_rules::{CapabilityDecision, decision};
 use crate::errors::AppError;
 use crate::permissions::{GuildAccess, request_viewer, require_capability};
 
@@ -196,15 +197,16 @@ pub struct RoleChannel {
     #[schema(value_type = String, example = "146638124288704513")]
     pub channel_id: i64,
     pub name: String,
-    pub can_view: bool,
-    pub can_join: bool,
+    /// Each content capability a member with only this role holds here,
+    /// within what the manager holds, and what decided it.
+    pub capabilities: Vec<CapabilityDecision>,
 }
 
 #[derive(Serialize, Debug, utoipa::ToSchema)]
 pub struct RoleView {
-    /// What a member with only this role may do across the guild, within
-    /// what the manager may do.
-    pub capabilities: Vec<crate::permissions::Capability>,
+    /// Each management capability a member with only this role holds,
+    /// within what the manager holds, and what decided it.
+    pub guild: Vec<CapabilityDecision>,
     pub channels: Vec<RoleChannel>,
 }
 
@@ -239,11 +241,20 @@ pub async fn get_role_view(
         Some(role_id),
     )
     .await?;
-    // Lists the role's access for every voice channel the manager can view
-    // and join themselves, including ones the role cannot see at all; a
-    // preview never shows more than the manager's own view.
-    let preview = access.role_preview()?.ok_or(AppError::InternalError)?;
-    let all_ids: Vec<i64> = preview.listed.iter().copied().collect();
+    // Lists the role's access in every voice channel the manager sees (the
+    // owner every one, as in the rule editor), including ones the role
+    // cannot see at all. What the manager does not hold there themselves is
+    // left out, and says so: a preview never shows more than their own view.
+    let explanation = access
+        .role_preview_explained()?
+        .ok_or(AppError::InternalError)?;
+    let manager = access.require_member()?;
+    let all_ids: Vec<i64> = explanation
+        .channels
+        .keys()
+        .copied()
+        .filter(|&channel| manager.sees_channel(channel))
+        .collect();
     let rows = sqlx::query!(
         "SELECT channel_id, name FROM channels WHERE channel_id = ANY($1)",
         &all_ids
@@ -256,18 +267,17 @@ pub async fn get_role_view(
         .map(|r| RoleChannel {
             channel_id: r.channel_id,
             name: r.name.unwrap_or_default(),
-            can_view: preview
-                .access
-                .allows(r.channel_id, Capabilities::VIEW_PRESENCE),
-            can_join: preview
-                .access
-                .allows(r.channel_id, Capabilities::LISTEN_OTHERS),
+            capabilities: explanation
+                .channels
+                .get(&r.channel_id)
+                .map(|decisions| decisions.iter().filter_map(decision).collect())
+                .unwrap_or_default(),
         })
         .collect();
     channels.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(HttpResponse::Ok().json(RoleView {
-        capabilities: crate::permissions::Capability::named(preview.access.guild),
+        guild: explanation.guild.iter().filter_map(decision).collect(),
         channels,
     }))
 }

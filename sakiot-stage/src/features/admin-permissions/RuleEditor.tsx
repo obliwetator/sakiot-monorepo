@@ -263,7 +263,9 @@ function RuleForm({
 								<p className="text-xs text-muted">
 									{description}
 									{locked &&
-										" You don't hold this here, so you can't change it."}
+										(capability === "view_presence"
+											? " It carries everything else here, so changing it takes holding all of it."
+											: " You don't hold this here, so you can't change it.")}
 								</p>
 							</div>
 							<RadioGroup

@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use sakiot_permissions::{
-    Access, Capabilities, GuildFacts, Membership, MembershipUnavailable, RoleNotFound, RolePreview,
-    Viewer,
+    Access, Capabilities, Explanation, GuildFacts, Membership, MembershipUnavailable, RoleNotFound,
+    RolePreview, Viewer,
 };
 
 use super::facts;
@@ -207,6 +207,20 @@ impl GuildAccess {
             .role_access(role_id)
             .map_err(|RoleNotFound| AppError::RoleNotFound)?;
         Ok(Some(RolePreview::new(self.require_member()?, &role)))
+    }
+
+    /// `role_preview`, explained capability by capability and clipped the
+    /// same way (`Explanation::clipped_to`); `None` when not previewing.
+    pub fn role_preview_explained(&self) -> Result<Option<Explanation>, AppError> {
+        let Some(role_id) = self.as_role else {
+            return Ok(None);
+        };
+        self.require(Capabilities::PREVIEW_ROLES)?;
+        let explanation = self
+            .facts
+            .explain_role(role_id)
+            .map_err(|RoleNotFound| AppError::RoleNotFound)?;
+        Ok(Some(explanation.clipped_to(self.require_member()?)))
     }
 
     /// The channels a listing shows for `capability`: the viewer's own, or

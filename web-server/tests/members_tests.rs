@@ -522,7 +522,7 @@ async fn role_view_lists_every_channel_with_access(
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = test::read_body_json(response).await;
-    assert_eq!(body["capabilities"], json!([]));
+    assert_eq!(held(&body["guild"]), Vec::<String>::new());
     let channels = body["channels"].as_array().unwrap();
     assert_eq!(channels.len(), 3);
     let by_id = |id: i64| -> Value {
@@ -533,14 +533,34 @@ async fn role_view_lists_every_channel_with_access(
             .expect("channel present")
     };
     assert_eq!(by_id(CHANNEL_A)["name"], "public");
-    assert_eq!(by_id(CHANNEL_A)["can_view"], true);
-    assert_eq!(by_id(CHANNEL_A)["can_join"], true);
+    assert_eq!(
+        held(&by_id(CHANNEL_A)["capabilities"]),
+        [
+            "view_presence",
+            "listen_others",
+            "create_clips",
+            "jam",
+            "stamp"
+        ]
+    );
     assert_eq!(by_id(CHANNEL_B)["name"], "restricted");
-    assert_eq!(by_id(CHANNEL_B)["can_view"], true);
-    assert_eq!(by_id(CHANNEL_B)["can_join"], false);
+    assert_eq!(
+        held(&by_id(CHANNEL_B)["capabilities"]),
+        ["view_presence", "stamp"]
+    );
     assert_eq!(by_id(CHANNEL_C)["name"], "secret");
-    assert_eq!(by_id(CHANNEL_C)["can_view"], false);
-    assert_eq!(by_id(CHANNEL_C)["can_join"], false);
+    assert_eq!(
+        held(&by_id(CHANNEL_C)["capabilities"]),
+        Vec::<String>::new()
+    );
+    // Discord decided all of it: no rule is set.
+    assert!(channels.iter().all(|channel| {
+        channel["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|decision| decision["source"]["kind"] == "discord")
+    }));
 
     // Admins: ADMINISTRATOR short-circuits to every voice channel, joinable.
     let request = test::TestRequest::get()
@@ -553,14 +573,14 @@ async fn role_view_lists_every_channel_with_access(
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = test::read_body_json(response).await;
     assert_eq!(
-        body["capabilities"],
-        json!([
+        held(&body["guild"]),
+        [
             "manage_settings",
             "manage_permissions",
             "preview_roles",
             "delete_recordings",
             "moderate_clips",
-        ])
+        ]
     );
     let channel_ids: Vec<String> = body["channels"]
         .as_array()
@@ -575,9 +595,20 @@ async fn role_view_lists_every_channel_with_access(
             .as_array()
             .unwrap()
             .iter()
-            .all(|c| c["can_join"] == true)
+            .all(|c| held(&c["capabilities"]).contains(&"listen_others".to_string()))
     );
     Ok(())
+}
+
+/// The capabilities `decisions` (a role view's) hold, in order.
+fn held(decisions: &Value) -> Vec<String> {
+    decisions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|decision| decision["held"] == true)
+        .filter_map(|decision| decision["capability"].as_str().map(str::to_string))
+        .collect()
 }
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]

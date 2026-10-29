@@ -453,6 +453,11 @@ pub enum SourceKind {
     Rule,
     /// The owner keeps every management capability.
     Owner,
+    /// Not seeing the channel (`view_presence`) takes everything else in
+    /// it.
+    Unseen,
+    /// A role preview leaves out what the viewer does not hold themselves.
+    Manager,
 }
 
 /// What decided a capability.
@@ -581,7 +586,7 @@ fn explained(
 
 /// One decision for the API; every capability the evaluator decides has a
 /// name.
-fn decision(decision: &Decision) -> Option<CapabilityDecision> {
+pub(crate) fn decision(decision: &Decision) -> Option<CapabilityDecision> {
     let source = match decision.by {
         Source::Discord => DecisionSource {
             kind: SourceKind::Discord,
@@ -595,6 +600,16 @@ fn decision(decision: &Decision) -> Option<CapabilityDecision> {
         },
         Source::Owner => DecisionSource {
             kind: SourceKind::Owner,
+            channel_id: None,
+            subject: None,
+        },
+        Source::Unseen => DecisionSource {
+            kind: SourceKind::Unseen,
+            channel_id: None,
+            subject: None,
+        },
+        Source::Manager => DecisionSource {
+            kind: SourceKind::Manager,
             channel_id: None,
             subject: None,
         },

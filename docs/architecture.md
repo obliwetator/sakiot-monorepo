@@ -253,7 +253,10 @@ cooldowns, recording policy and voice settings; `manage_permissions` for the
 rule editor; `preview_roles` for role preview and the roles page;
 `delete_recordings`; and `moderate_clips` for someone else's clip. Per voice
 channel: `view_presence`, `listen_others`, `create_clips`, `jam` (playing a
-clip where the bot is, from `/jam` or the dashboard) and `stamp`.
+clip where the bot is, from `/jam` or the dashboard) and `stamp`. Like
+Discord's View Channel, `view_presence` gates the channel: without it,
+whatever Discord or a rule gives, nothing else there is held
+(`Capabilities::seen`).
 
 Sakiot's own rules (`permission_rules`, `sakiot_permissions::Rules`) sit on
 top of Discord's. A rule allows or denies capabilities to `@everyone`, a role
@@ -263,17 +266,22 @@ Discord in Discord's own order, the most specific last: guild-wide
 then the same in the channel. A guild-wide rule's content capabilities reach
 every channel; management capabilities exist only guild-wide. So a rule can
 grant what Discord denies, and deny even an `ADMINISTRATOR`. Guards no rule
-breaks: the owner keeps every management capability; rules never reach a
-former member or an outsider; and no rule widens listening past a member's
-consent. Holders of `manage_permissions` edit them
+breaks: the owner keeps every management capability (content rules reach
+the owner too, so denying `@everyone` a channel hides it from them unless a
+rule of their own allows it back); rules never reach a former member or an
+outsider; and no rule widens listening past a member's consent. Holders of `manage_permissions` edit them
 (`web-server/src/admin/permission_rules.rs`, `GuildFacts::edit_rule`): they
 see the channels they can see (the owner every one), change only what they
 hold where the rule applies (guild-wide content takes holding it in every
-channel), and never take `manage_permissions` from themselves. Edits run one
+channel, and `view_presence` takes holding every content capability, since
+it carries them), and never take `manage_permissions` from themselves. Edits run one
 at a time per guild. A rule whose role or channel is gone reaches nobody and
 anyone may delete it. The explainer (`.../permission-rules/explain`) shows,
 for a member or a role, each capability and the layer that decided it
-(`GuildFacts::explain`).
+(`GuildFacts::explain`), or that not seeing the channel took it. The Members
+page's role preview (`.../roles/{role_id}/channels`) shows the same decisions
+for the channels the manager sees, clipped to the manager's own access and
+saying so (`Explanation::clipped_to`).
 Membership comes from the agent's roster, not from the guild list Discord
 returned at login (`GuildFacts::membership`):
 

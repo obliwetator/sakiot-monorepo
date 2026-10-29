@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::access::{DiscordPermissions, Membership, MembershipUnavailable, RoleNotFound};
+use crate::access::{Access, DiscordPermissions, Membership, MembershipUnavailable, RoleNotFound};
 use crate::capabilities::Capabilities;
 use crate::facts::{GuildFacts, Viewer};
 use crate::rules::{Layer, Subject};
@@ -21,6 +21,12 @@ pub enum Source {
     },
     /// The owner keeps every management capability, whatever the rules say.
     Owner,
+    /// Not seeing the channel (`VIEW_PRESENCE`) takes everything else in
+    /// it (`Capabilities::seen`).
+    Unseen,
+    /// A role preview leaves out what the manager previewing it does not
+    /// hold themselves (`Explanation::clipped_to`).
+    Manager,
 }
 
 /// One capability, at one scope.
@@ -121,9 +127,26 @@ impl GuildFacts {
                     );
                 }
                 let granted = Capabilities::from_channel_permissions(permissions);
-                let decisions = Capabilities::CONTENT
+                let decisions: Vec<Decision> = Capabilities::CONTENT
                     .iter()
                     .map(|capability| decide(capability, granted, &layers))
+                    .collect();
+                let seen = decisions.iter().any(|decision| {
+                    decision.capability == Capabilities::VIEW_PRESENCE && decision.held
+                });
+                let decisions = decisions
+                    .into_iter()
+                    .map(|decision| {
+                        if seen || !decision.held {
+                            decision
+                        } else {
+                            Decision {
+                                held: false,
+                                by: Source::Unseen,
+                                ..decision
+                            }
+                        }
+                    })
                     .collect();
                 (channel, decisions)
             })
@@ -132,6 +155,39 @@ impl GuildFacts {
             membership,
             guild,
             channels,
+        }
+    }
+}
+
+impl Explanation {
+    /// The explanation of a role preview (`RolePreview`): what the role
+    /// holds and `manager` does not is left out, by `Source::Manager`.
+    #[must_use]
+    pub fn clipped_to(self, manager: &Access) -> Self {
+        let clip = |held: Capabilities| {
+            move |decision: Decision| {
+                if decision.held && !held.contains(decision.capability) {
+                    Decision {
+                        held: false,
+                        by: Source::Manager,
+                        ..decision
+                    }
+                } else {
+                    decision
+                }
+            }
+        };
+        Self {
+            membership: self.membership,
+            guild: self.guild.into_iter().map(clip(manager.guild)).collect(),
+            channels: self
+                .channels
+                .into_iter()
+                .map(|(channel, decisions)| {
+                    let held = manager.channels.get(&channel).copied().unwrap_or_default();
+                    (channel, decisions.into_iter().map(clip(held)).collect())
+                })
+                .collect(),
         }
     }
 }
