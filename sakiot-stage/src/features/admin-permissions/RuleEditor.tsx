@@ -256,11 +256,12 @@ function RuleForm({
 			<Text tone="muted">
 				{channel === null
 					? "Server-wide: applies in every voice channel unless a channel's own rule says otherwise."
-					: "In this channel: overrides every server-wide rule here."}
+					: "In this channel: overrides every server-wide rule here."}{" "}
+				Default leaves it to the other rules, then to Discord.
 			</Text>
 			<ul className="divide-y divide-ui-border rounded-lg border border-ui-border">
 				{capabilities.map((capability) => {
-					const { label, description } = CAPABILITIES[capability];
+					const { label, description, discord } = CAPABILITIES[capability];
 					const locked = !editable.includes(capability);
 					return (
 						<li
@@ -272,6 +273,10 @@ function RuleForm({
 								<p className="text-xs text-muted">
 									{description}
 									{locked && (LOCKED[capability] ?? LOCKED_DEFAULT)}
+								</p>
+								<p className="mt-1 text-xs text-muted">
+									Without a rule: Discord's{" "}
+									<span className="text-fg/80">{discord}</span>.
 								</p>
 							</div>
 							<RadioGroup

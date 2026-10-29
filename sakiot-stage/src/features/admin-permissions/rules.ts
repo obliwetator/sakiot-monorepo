@@ -6,55 +6,75 @@ import type {
 } from "../../app/apiSlice";
 import type { Capability } from "../../shared/permissions";
 
-/** What each capability is called here, and what it covers. */
+// The Discord permissions each capability follows when no rule decides, as
+// `Capabilities::from_guild_permissions` and `from_channel_permissions` map
+// them in sakiot-permissions.
+const MANAGER = "Manage Server or Administrator";
+const VIEWER = "View Channel";
+const LISTENER = "View Channel and Connect";
+
+/**
+ * What each capability is called here, what it covers, and the Discord
+ * permissions that decide it when no rule does.
+ */
 export const CAPABILITIES: Record<
 	Capability,
-	{ label: string; description: string }
+	{ label: string; description: string; discord: string }
 > = {
 	manage_settings: {
 		label: "Manage settings",
 		description: "Jam cooldowns, the recording policy and voice settings.",
+		discord: MANAGER,
 	},
 	manage_permissions: {
 		label: "Edit permissions",
 		description:
 			"These rules, within what they hold themselves. No rule takes anything from them in a channel, though one may give them more.",
+		discord: MANAGER,
 	},
 	preview_roles: {
 		label: "Preview roles",
 		description: "The Members page, and viewing the server as a role.",
+		discord: MANAGER,
 	},
 	delete_recordings: {
 		label: "Delete recordings",
 		description:
 			"Remove recordings from view, and see private ones as redacted entries.",
+		discord: MANAGER,
 	},
 	moderate_clips: {
 		label: "Moderate clips",
 		description: "Rename, delete or overwrite other members' clips.",
+		discord: MANAGER,
 	},
 	view_presence: {
 		label: "See who is in voice",
 		description:
 			"The voice presence panel. Without it, nothing else in the channel is held, as with Discord's View Channel.",
+		discord: VIEWER,
 	},
 	listen_others: {
 		label: "Listen to others",
 		description:
 			"Other members' recordings, live audio, waveforms, downloads and mixes. Never anyone who keeps their recordings private.",
+		discord: LISTENER,
 	},
 	create_clips: {
 		label: "Make clips",
 		description: "Clip and compose recordings they can hear.",
+		discord: LISTENER,
 	},
 	jam: {
 		label: "Play clips in voice",
 		description:
 			"/jam, and playing clips from the dashboard, where the bot is.",
+		discord: LISTENER,
 	},
 	stamp: {
 		label: "Stamp",
 		description: "/stamp, in the voice channel they are in.",
+		discord: VIEWER,
 	},
 };
 

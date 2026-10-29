@@ -195,6 +195,15 @@ test("an editor denies a role a capability in one channel and sees what it decid
 	await page.getByRole("option", { name: "VIP" }).click();
 	const rule = page.getByRole("region", { name: "Rule for @VIP" });
 	await expect(rule).toBeVisible();
+	// Each capability names the Discord permissions that decide it otherwise.
+	await expect(
+		rule.getByText("Without a rule: Discord's View Channel and Connect.", {
+			exact: true,
+		}),
+	).toHaveCount(3);
+	await expect(
+		rule.getByText("Without a rule: Discord's View Channel.", { exact: true }),
+	).toHaveCount(2);
 	// Channels hold content capabilities only.
 	await expect(
 		rule.getByRole("radiogroup", { name: "Manage settings for @VIP" }),
