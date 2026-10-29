@@ -215,7 +215,10 @@ const TAG_TYPES = [
 	"VoicePresence",
 	/** Sakiot's own permission rules, as the rule editor shows them. */
 	"PermissionRules",
-	/** What a member or a role holds, and what decided it. */
+	/**
+	 * What a member or a role holds, and what decided it: the rule
+	 * explainer and the Members page's role preview.
+	 */
 	"PermissionExplanation",
 	/** The guild's cap, the viewer's allowance and the kept recordings. */
 	"Keeping",
@@ -1054,6 +1057,9 @@ export const apiSlice = createApi({
 			{
 				query: ({ guild_id, role_id }) =>
 					apiUrl(API_ROUTES.roleChannels, { guild_id, role_id }),
+				// A role's decisions, like the explainer's: a saved rule or a
+				// roster change must not leave a cached preview behind.
+				providesTags: guildScoped("PermissionExplanation"),
 			},
 		),
 		// Combine all 3 requests into a single query to emulate the existing Promise.all behavior

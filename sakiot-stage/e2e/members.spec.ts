@@ -28,11 +28,24 @@ const held = (capability: string) => ({
 	source: fromDiscord,
 });
 
+const CONTENT = [
+	"view_presence",
+	"listen_others",
+	"create_clips",
+	"jam",
+	"stamp",
+];
+
 /**
  * Plays the members API for a guild whose `@everyone` a Sakiot rule denies
- * seeing General, which Discord lets everyone see and join.
+ * seeing General, which Discord lets everyone see and join, and the rules
+ * API, where saving General's `@everyone` rule replaces it.
  */
 async function mockMembers(page: Page) {
+	const general = {
+		rule: { allow: [] as string[], deny: ["view_presence"] },
+		roleViews: 0,
+	};
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const path = new URL(request.url()).pathname;
@@ -74,7 +87,34 @@ async function mockMembers(page: Page) {
 			]);
 		} else if (path === `${base}/${GUILD_ID}/members`) {
 			await json([]);
+		} else if (path === `/api/admin/guilds/${GUILD_ID}/permission-rules`) {
+			if (request.method() === "PUT") {
+				general.rule = request.postDataJSON();
+				await route.fulfill({ status: 204, headers: corsHeaders });
+				return;
+			}
+			await json({
+				editable: [...OWNER_CAPABILITIES, ...CONTENT],
+				channels: [
+					{ channel_id: GENERAL, name: "General", editable: CONTENT },
+					{ channel_id: LOUNGE, name: "Lounge", editable: CONTENT },
+				],
+				roles: [],
+				rules: [
+					{
+						channel_id: GENERAL,
+						subject: { kind: "everyone" },
+						...general.rule,
+						name: null,
+						reaches_nobody: false,
+						updated_by: "current-user",
+						updated_at: "2026-10-29T10:00:00Z",
+					},
+				],
+			});
 		} else if (path === `${base}/${GUILD_ID}/channels`) {
+			general.roleViews += 1;
+			const hidden = general.rule.deny.includes("view_presence");
 			await json({
 				guild: OWNER_CAPABILITIES.map((capability) => ({
 					capability,
@@ -86,37 +126,33 @@ async function mockMembers(page: Page) {
 					{
 						channel_id: GENERAL,
 						name: "General",
-						capabilities: [
-							{
-								capability: "view_presence",
-								held: false,
-								discord: true,
-								source: {
-									kind: "rule",
-									channel_id: GENERAL,
-									subject: { kind: "everyone" },
-								},
-							},
-							...["listen_others", "create_clips", "jam", "stamp"].map(
-								(capability) => ({
-									capability,
-									held: false,
-									discord: true,
-									source: unseen,
-								}),
-							),
-						],
+						capabilities: hidden
+							? [
+									{
+										capability: "view_presence",
+										held: false,
+										discord: true,
+										source: {
+											kind: "rule",
+											channel_id: GENERAL,
+											subject: { kind: "everyone" },
+										},
+									},
+									...["listen_others", "create_clips", "jam", "stamp"].map(
+										(capability) => ({
+											capability,
+											held: false,
+											discord: true,
+											source: unseen,
+										}),
+									),
+								]
+							: CONTENT.map(held),
 					},
 					{
 						channel_id: LOUNGE,
 						name: "Lounge",
-						capabilities: [
-							"view_presence",
-							"listen_others",
-							"create_clips",
-							"jam",
-							"stamp",
-						].map(held),
+						capabilities: CONTENT.map(held),
 					},
 				],
 			});
@@ -124,6 +160,14 @@ async function mockMembers(page: Page) {
 			await json([]);
 		}
 	});
+	return general;
+}
+
+/** Opens a page from the navigation, as a member would: no reload. */
+async function navigateTo(page: Page, name: string) {
+	const openNavigation = page.getByRole("button", { name: "open navigation" });
+	if (await openNavigation.isVisible()) await openNavigation.click();
+	await page.getByRole("button", { name, exact: true }).click();
 }
 
 test("a role preview says a Sakiot rule hides a channel Discord shows", async ({
@@ -152,4 +196,41 @@ test("a role preview says a Sakiot rule hides a channel Discord shows", async ({
 	await expect(lounge.getByText("Can listen", { exact: true })).toBeVisible();
 	await expect(lounge.getByText(/Sakiot rule/)).toHaveCount(0);
 	await expectAccessibleMediaRoute(page);
+});
+
+test("a rule saved on the Permissions page shows in the next role preview", async ({
+	page,
+}) => {
+	const general = await mockMembers(page);
+	await page.goto(`/dashboard/${GUILD_ID}/members`);
+	await page.getByRole("button", { name: "View as @everyone" }).click();
+	const dialog = page.getByRole("dialog");
+	await expect(
+		dialog
+			.getByRole("listitem", { name: "General" })
+			.getByText("Hidden", { exact: true }),
+	).toBeVisible();
+	await dialog.getByRole("button", { name: "Close" }).click();
+
+	// Allow @everyone to see General again.
+	await navigateTo(page, "Permissions");
+	await page.getByRole("button", { name: /Where/ }).click();
+	await page.getByRole("option", { name: "General" }).click();
+	const rule = page.getByRole("region", { name: "Rule for @everyone" });
+	await rule
+		.getByRole("radiogroup", { name: "See who is in voice for @everyone" })
+		.getByText("Allow", { exact: true })
+		.click();
+	await rule.getByRole("button", { name: "Save rule" }).click();
+	await expect(rule.getByText("Rule saved.")).toBeVisible();
+
+	// Back within the cache's lifetime, the preview asks again.
+	await navigateTo(page, "Members");
+	await page.getByRole("button", { name: "View as @everyone" }).click();
+	await expect(
+		dialog
+			.getByRole("listitem", { name: "General" })
+			.getByText("Can listen", { exact: true }),
+	).toBeVisible();
+	expect(general.roleViews).toBe(2);
 });
