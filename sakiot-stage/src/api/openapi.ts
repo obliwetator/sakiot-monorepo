@@ -2450,7 +2450,7 @@ export interface components {
 			status: string;
 		};
 		/** @enum {string} */
-		SourceKind: "discord" | "rule" | "owner" | "unseen" | "manager";
+		SourceKind: "discord" | "rule" | "owner" | "unseen" | "manager" | "exempt";
 		StampInfo: {
 			/** Format: int64 */
 			audio_file_id?: number | null;

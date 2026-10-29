@@ -24,8 +24,9 @@ export interface Reason {
 /**
  * Why the role holds or lacks what Discord alone does not decide, at one
  * scope (`channel` null: server-wide): one sentence per Sakiot rule's
- * decision, then one for what not seeing the channel takes, then one for
- * what the preview leaves out because the viewer lacks it.
+ * decision, then one for what an editor keeps whatever the rules say, one
+ * for what not seeing the channel takes, and one for what the preview
+ * leaves out because the viewer lacks it.
  */
 export function reasons(
 	decisions: CapabilityDecision[],
@@ -44,8 +45,17 @@ export function reasons(
 			.map((decision) => CAPABILITIES[decision.capability].label);
 	const unseen = of("unseen");
 	const beyond = of("manager");
+	const exempt = of("exempt");
 	return [
 		...ruled,
+		...(exempt.length > 0
+			? [
+					{
+						held: true,
+						text: `${listed(exempt)}: kept, because this role can edit permissions and no Sakiot rule takes anything from it.`,
+					},
+				]
+			: []),
 		...(unseen.length > 0
 			? [
 					{

@@ -173,6 +173,7 @@ const MARK_DESCRIPTION: Record<CapabilityDecision["source"]["kind"], string> = {
 	rule: "decided by a Sakiot rule",
 	unseen: "taken by not seeing the channel",
 	manager: "left out: you don't hold it yourself",
+	exempt: "kept: rules take nothing from whoever can edit permissions",
 };
 
 function Decisions({ decisions }: { decisions: CapabilityDecision[] }) {

@@ -212,7 +212,8 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
     assert_eq!(status, StatusCode::OK);
     // The moderator sees only the lounge, and may change guild-wide only
     // what reaches no channel they lack: management alone, since everything
-    // in a channel takes seeing it.
+    // in a channel takes seeing it, and not who edits rules, since that
+    // lifts every channel rule for whoever it reaches.
     let channels: Vec<&str> = editor["channels"]
         .as_array()
         .into_iter()
@@ -224,7 +225,6 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
         editor["editable"],
         json!([
             "manage_settings",
-            "manage_permissions",
             "preview_roles",
             "delete_recordings",
             "moderate_clips",
@@ -294,19 +294,19 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
         .0,
         StatusCode::NOT_FOUND
     );
-    // Never their own manage_permissions.
+    // Nor who edits rules, while a channel is closed to them.
     let (status, refused) = put(
         MODERATOR_ID,
-        rule(None, role(MODERATOR_ROLE_ID), &[], &["manage_permissions"]),
+        rule(None, role(VIP_ROLE_ID), &["manage_permissions"], &[]),
     )
     .await?;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(
         refused["message"]
             .as_str()
-            .is_some_and(|message| message.contains("your own"))
+            .is_some_and(|message| message.contains("manage_permissions")),
+        "{refused}"
     );
-    assert!(holds(&pool, MODERATOR_ID, None, Capabilities::MANAGE_PERMISSIONS).await?);
     // Malformed rules.
     for invalid in [
         rule(Some(LOUNGE_ID), everyone(), &["manage_settings"], &[]),
@@ -411,17 +411,12 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
             .0,
         StatusCode::NO_CONTENT
     );
-    // Allowing and denying nothing deletes a rule, but only for whoever
-    // still holds what it changes: the moderator's `@everyone` deny took jam
-    // from them too, so undoing it is the owner's.
+    // Allowing and denying nothing deletes a rule. No rule takes from an
+    // editor, so the moderator's `@everyone` deny left them jam, and they
+    // may undo it.
+    assert!(holds(&pool, MODERATOR_ID, Some(LOUNGE_ID), Capabilities::JAM).await?);
     assert_eq!(
         put(MODERATOR_ID, rule(Some(LOUNGE_ID), everyone(), &[], &[]))
-            .await?
-            .0,
-        StatusCode::FORBIDDEN
-    );
-    assert_eq!(
-        put(OWNER_ID, rule(Some(LOUNGE_ID), everyone(), &[], &[]))
             .await?
             .0,
         StatusCode::NO_CONTENT
@@ -499,13 +494,58 @@ async fn an_editor_changes_only_what_they_hold_and_never_their_own_editing(
             .0,
         StatusCode::FORBIDDEN
     );
+
+    // Given the staff channel, the moderator holds everything everywhere and
+    // may change who edits rules, but never take it from themselves.
+    assert_eq!(
+        put(
+            OWNER_ID,
+            rule(
+                Some(STAFF_ID),
+                user(MODERATOR_ID),
+                &[
+                    "view_presence",
+                    "listen_others",
+                    "create_clips",
+                    "jam",
+                    "stamp"
+                ],
+                &[]
+            )
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        put(
+            MODERATOR_ID,
+            rule(None, role(VIP_ROLE_ID), &["manage_permissions"], &[])
+        )
+        .await?
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (status, refused) = put(
+        MODERATOR_ID,
+        rule(None, role(MODERATOR_ROLE_ID), &[], &["manage_permissions"]),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        refused["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("your own")),
+        "{refused}"
+    );
+    assert!(holds(&pool, MODERATOR_ID, None, Capabilities::MANAGE_PERMISSIONS).await?);
     Ok(())
 }
 
 /// Denying `@everyone` the sight of a channel takes everything else there
 /// too, as Discord's View Channel does: its clips leave a preview of
-/// `@everyone`, and the role view says why. The owner, whom the rule
-/// reaches too, still sees the channel in the role view.
+/// `@everyone`, and the role view says why. No rule takes from the owner,
+/// who keeps the channel.
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn a_channel_nobody_sees_takes_its_clips_from_a_preview(
     pool: PgPool,
@@ -563,6 +603,15 @@ async fn a_channel_nobody_sees_takes_its_clips_from_a_preview(
     );
 
     assert_eq!(get(clips).await?, json!([]));
+    assert!(
+        holds(
+            &pool,
+            OWNER_ID,
+            Some(LOUNGE_ID),
+            Capabilities::LISTEN_OTHERS
+        )
+        .await?
+    );
     let view = get(format!(
         "/api/admin/guilds/{GUILD_ID}/roles/{GUILD_ID}/channels"
     ))

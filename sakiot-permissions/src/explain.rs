@@ -27,6 +27,9 @@ pub enum Source {
     /// A role preview leaves out what the manager previewing it does not
     /// hold themselves (`Explanation::clipped_to`).
     Manager,
+    /// A content rule (or not seeing the channel) would take what Discord
+    /// gives, but takes nothing from whoever holds `MANAGE_PERMISSIONS`.
+    Exempt,
 }
 
 /// One capability, at one scope.
@@ -98,7 +101,7 @@ impl GuildFacts {
             .map(|layer| (None, layer))
             .collect();
         let granted = Capabilities::from_guild_permissions(discord.base);
-        let guild = Capabilities::MANAGEMENT
+        let guild: Vec<Decision> = Capabilities::MANAGEMENT
             .iter()
             .map(|capability| {
                 let decision = decide(capability, granted, &guild_wide);
@@ -113,6 +116,9 @@ impl GuildFacts {
                 }
             })
             .collect();
+        let bound = !guild.iter().any(|decision| {
+            decision.capability == Capabilities::MANAGE_PERMISSIONS && decision.held
+        });
         let channels = discord
             .channels
             .iter()
@@ -130,6 +136,21 @@ impl GuildFacts {
                 let decisions: Vec<Decision> = Capabilities::CONTENT
                     .iter()
                     .map(|capability| decide(capability, granted, &layers))
+                    .collect();
+                // An editor keeps what Discord gives, whatever the rules take.
+                let decisions: Vec<Decision> = decisions
+                    .into_iter()
+                    .map(|decision| {
+                        if bound || decision.held || !decision.discord {
+                            decision
+                        } else {
+                            Decision {
+                                held: true,
+                                by: Source::Exempt,
+                                ..decision
+                            }
+                        }
+                    })
                     .collect();
                 let seen = decisions.iter().any(|decision| {
                     decision.capability == Capabilities::VIEW_PRESENCE && decision.held

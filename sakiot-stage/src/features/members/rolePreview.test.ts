@@ -118,6 +118,24 @@ describe("reasons", () => {
 		);
 	});
 
+	test("say what a role that can edit permissions keeps", () => {
+		expect(
+			reasons(
+				[
+					decision("view_presence", true, { kind: "exempt" }),
+					decision("listen_others", true, { kind: "exempt" }),
+				],
+				roles,
+				GENERAL,
+			),
+		).toEqual([
+			{
+				held: true,
+				text: "See who is in voice and Listen to others: kept, because this role can edit permissions and no Sakiot rule takes anything from it.",
+			},
+		]);
+	});
+
 	test("say nothing where Discord decided", () => {
 		expect(
 			reasons(

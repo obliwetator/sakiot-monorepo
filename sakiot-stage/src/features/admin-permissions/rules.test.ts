@@ -132,6 +132,12 @@ describe("describeSource", () => {
 		).toBe("Left out of the preview: you don't hold it yourself");
 		expect(
 			describeSource(
+				decision({ kind: "exempt", channel_id: null, subject: null }),
+				data,
+			),
+		).toBe("Kept: rules take nothing from whoever can edit them");
+		expect(
+			describeSource(
 				decision({
 					kind: "rule",
 					channel_id: "100",

@@ -523,10 +523,11 @@ fn a_clipped_explanation_names_the_manager_for_what_it_leaves_out() {
         Subject::User(MEMBER),
         deny(Capabilities::JAM),
     );
+    // A manager who cannot edit rules, whom the rules therefore bind.
     facts.rules.set(
         None,
         Subject::User(MEMBER),
-        deny(Capabilities::MODERATE_CLIPS),
+        deny(Capabilities::MODERATE_CLIPS | Capabilities::MANAGE_PERMISSIONS),
     );
     let manager = facts.access(Viewer::discord(MEMBER)).expect("known");
     let explained = facts
@@ -553,13 +554,21 @@ fn a_clipped_explanation_names_the_manager_for_what_it_leaves_out() {
 }
 
 #[test]
-fn a_sakiot_deny_holds_even_against_an_administrator() {
+fn content_rules_bind_an_administrator_only_once_they_cannot_edit_rules() {
     let mut facts = guild(Permissions::empty());
     facts.roles.insert(ROLE, Permissions::ADMINISTRATOR);
     facts
         .rules
         .set(Some(CHANNEL), Subject::Everyone, deny(Capabilities::JAM));
+    // ADMINISTRATOR edits rules, so no rule takes from them: they could
+    // undo it.
+    assert!(member_holds(&facts, Capabilities::JAM));
 
+    facts.rules.set(
+        None,
+        Subject::Role(ROLE),
+        deny(Capabilities::MANAGE_PERMISSIONS),
+    );
     assert!(!member_holds(&facts, Capabilities::JAM));
     assert!(member_holds(&facts, Capabilities::LISTEN_OTHERS));
 }
@@ -619,17 +628,22 @@ fn among_roles_an_allow_beats_a_deny() {
 }
 
 #[test]
-fn the_owner_keeps_management_but_not_what_rules_take_from_content() {
+fn no_rule_takes_from_the_owner() {
     let mut facts = guild(VOICE);
     facts.rules.set(
         None,
         Subject::User(OWNER),
         deny(Capabilities::MANAGEMENT | Capabilities::LISTEN_OTHERS),
     );
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::Everyone,
+        deny(Capabilities::VIEW_PRESENCE),
+    );
 
     let owner = facts.access(Viewer::discord(OWNER)).expect("known");
     assert_eq!(owner.guild, Capabilities::MANAGEMENT);
-    assert!(!owner.allows(CHANNEL, Capabilities::LISTEN_OTHERS));
+    assert_eq!(owner.channels[&CHANNEL], Capabilities::CONTENT);
     let explained = facts.explain(Viewer::discord(OWNER)).expect("known");
     assert!(
         explained
@@ -637,6 +651,67 @@ fn the_owner_keeps_management_but_not_what_rules_take_from_content() {
             .iter()
             .all(|decision| decision.held && decision.by == Source::Owner)
     );
+    // What the rules would take, they do not; the rest is Discord's.
+    for decision in &explained.channels[&CHANNEL] {
+        assert!(decision.held, "{decision:?}");
+        let mentioned = matches!(
+            decision.capability,
+            Capabilities::VIEW_PRESENCE | Capabilities::LISTEN_OTHERS
+        );
+        let by = if mentioned {
+            Source::Exempt
+        } else {
+            Source::Discord
+        };
+        assert_eq!(decision.by, by, "{decision:?}");
+    }
+}
+
+#[test]
+fn rules_take_nothing_from_an_editor_but_may_give_more() {
+    let mut facts = guild(Permissions::VIEW_CHANNEL);
+    facts.rules.set(
+        None,
+        Subject::User(MEMBER),
+        allow(Capabilities::MANAGE_PERMISSIONS),
+    );
+    facts.rules.set(
+        Some(CHANNEL),
+        Subject::Everyone,
+        Rule {
+            allow: Capabilities::LISTEN_OTHERS,
+            deny: Capabilities::VIEW_PRESENCE | Capabilities::STAMP,
+        },
+    );
+
+    let editor = facts.access(Viewer::discord(MEMBER)).expect("known");
+    assert_eq!(
+        editor.channels[&CHANNEL],
+        Capabilities::VIEW_PRESENCE | Capabilities::STAMP | Capabilities::LISTEN_OTHERS
+    );
+    let explained = facts.explain(Viewer::discord(MEMBER)).expect("known");
+    let by = |capability| {
+        explained.channels[&CHANNEL]
+            .iter()
+            .find(|decision| decision.capability == capability)
+            .map(|decision| (decision.held, decision.by))
+    };
+    assert_eq!(
+        by(Capabilities::VIEW_PRESENCE),
+        Some((true, Source::Exempt))
+    );
+    assert_eq!(by(Capabilities::STAMP), Some((true, Source::Exempt)));
+    assert_eq!(
+        by(Capabilities::LISTEN_OTHERS),
+        Some((
+            true,
+            Source::Rule {
+                channel: Some(CHANNEL),
+                subject: Subject::Everyone
+            }
+        ))
+    );
+    assert_eq!(by(Capabilities::JAM), Some((false, Source::Discord)));
 }
 
 #[test]
@@ -772,6 +847,21 @@ fn an_editor_changes_only_what_they_hold_and_keeps_editing() {
     assert_eq!(
         facts.rules.get(Some(CHANNEL), Subject::Everyone),
         deny(Capabilities::STAMP)
+    );
+    // `MANAGE_PERMISSIONS` lifts every content rule for whoever holds it,
+    // so changing it takes holding everything in every channel.
+    assert_eq!(
+        change(
+            &mut facts,
+            None,
+            Subject::Role(ROLE),
+            allow(Capabilities::MANAGE_PERMISSIONS)
+        ),
+        Err(RuleRefused::NotHeld(Capabilities::MANAGE_PERMISSIONS))
+    );
+    channel(&mut facts).members.insert(
+        MEMBER,
+        overwrite(Permissions::CONNECT, Permissions::empty()),
     );
     // Never `MANAGE_PERMISSIONS` from themselves.
     assert_eq!(

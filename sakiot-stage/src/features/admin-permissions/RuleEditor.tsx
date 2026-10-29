@@ -39,6 +39,15 @@ import {
 
 const SERVER = "server";
 
+/** Why the editor may not change a capability they cannot change. */
+const LOCKED_DEFAULT = " You don't hold this here, so you can't change it.";
+const LOCKED: Partial<Record<Capability, string>> = {
+	view_presence:
+		" It carries everything else here, so changing it takes holding all of it.",
+	manage_permissions:
+		" Rules take nothing from whoever holds it, so changing it takes holding everything in every channel.",
+};
+
 /** What a refused change says, from the server when it explains why. */
 export function ruleFailure(error: unknown, context: string): string {
 	const problem = problemFromError(error);
@@ -262,10 +271,7 @@ function RuleForm({
 								<p className="text-sm font-medium text-fg">{label}</p>
 								<p className="text-xs text-muted">
 									{description}
-									{locked &&
-										(capability === "view_presence"
-											? " It carries everything else here, so changing it takes holding all of it."
-											: " You don't hold this here, so you can't change it.")}
+									{locked && (LOCKED[capability] ?? LOCKED_DEFAULT)}
 								</p>
 							</div>
 							<RadioGroup

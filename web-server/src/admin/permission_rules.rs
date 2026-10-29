@@ -458,6 +458,9 @@ pub enum SourceKind {
     Unseen,
     /// A role preview leaves out what the viewer does not hold themselves.
     Manager,
+    /// A rule mentions it, but content rules do not bind holders of
+    /// `manage_permissions`, the owner included: Discord decides for them.
+    Exempt,
 }
 
 /// What decided a capability.
@@ -610,6 +613,11 @@ pub(crate) fn decision(decision: &Decision) -> Option<CapabilityDecision> {
         },
         Source::Manager => DecisionSource {
             kind: SourceKind::Manager,
+            channel_id: None,
+            subject: None,
+        },
+        Source::Exempt => DecisionSource {
+            kind: SourceKind::Exempt,
             channel_id: None,
             subject: None,
         },

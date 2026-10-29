@@ -88,7 +88,10 @@ impl Access {
     /// have. A guild-wide content capability reaches every channel, so it
     /// takes holding it in every one. Seeing a channel carries everything
     /// else in it (`Capabilities::seen`), so changing `VIEW_PRESENCE` takes
-    /// holding every content capability. The owner may change anything.
+    /// holding every content capability there; and `MANAGE_PERMISSIONS`
+    /// lifts or applies every content rule for whoever it reaches, so
+    /// changing it takes holding every content capability in every channel.
+    /// The owner may change anything.
     pub fn editable(&self, channel: Option<i64>) -> Capabilities {
         let carried = |held: Capabilities| {
             if held.contains(Capabilities::CONTENT) {
@@ -105,7 +108,12 @@ impl Access {
                     .channels
                     .values()
                     .fold(Capabilities::CONTENT, |held, channel| held & *channel);
-                self.guild | carried(everywhere)
+                let guild = if everywhere.contains(Capabilities::CONTENT) {
+                    self.guild
+                } else {
+                    self.guild - Capabilities::MANAGE_PERMISSIONS
+                };
+                guild | carried(everywhere)
             }
             (Membership::Member, Some(channel)) => {
                 carried(self.channels.get(&channel).copied().unwrap_or_default())
@@ -281,9 +289,12 @@ impl GuildFacts {
 
     /// What the viewer may do: Discord's permissions, then the Sakiot
     /// rules for their roles and themselves, then the guards no rule can
-    /// break (the owner keeps every management capability; nothing is held
-    /// in a channel without seeing it; a former member or an outsider holds
-    /// nothing, whatever the rules say).
+    /// break (the owner keeps every management capability; a content rule
+    /// takes nothing Discord gives from whoever holds `MANAGE_PERMISSIONS`,
+    /// the owner included, so no rule locks an editor out, though one may
+    /// still give them more; nothing is held in a channel without seeing
+    /// it; a former member or an outsider holds nothing, whatever the rules
+    /// say).
     pub fn access(&self, viewer: Viewer) -> Result<Access, MembershipUnavailable> {
         let membership = self.membership(viewer)?;
         Ok(self.evaluate(
@@ -333,14 +344,15 @@ impl GuildFacts {
         if membership == Membership::Owner {
             guild |= Capabilities::MANAGEMENT;
         }
+        let bound = !guild.contains(Capabilities::MANAGE_PERMISSIONS);
         let channels = discord
             .channels
             .iter()
             .map(|(&channel, &permissions)| {
-                let held = guild_wide.iter().fold(
-                    Capabilities::from_channel_permissions(permissions),
-                    |held, rule| rule.within(Capabilities::CONTENT).apply(held),
-                );
+                let granted = Capabilities::from_channel_permissions(permissions);
+                let held = guild_wide.iter().fold(granted, |held, rule| {
+                    rule.within(Capabilities::CONTENT).apply(held)
+                });
                 let held = self.rules.channels.get(&channel).map_or(held, |rules| {
                     rules
                         .layers(roles, user_id)
@@ -349,6 +361,7 @@ impl GuildFacts {
                             layer.rule().within(Capabilities::CONTENT).apply(held)
                         })
                 });
+                let held = if bound { held } else { held | granted };
                 (channel, held.seen())
             })
             .collect();

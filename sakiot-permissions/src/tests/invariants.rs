@@ -215,7 +215,9 @@ fn channel_index(guild: usize, channel: i64) -> Option<usize> {
 
 /// `access` as the model has it, from Discord's `discord` answer
 /// (`facts.discord_permissions`, checked against serenity elsewhere): each
-/// capability `ruled`, then nothing in a channel the holder does not see.
+/// capability `ruled`, then nothing in a channel the holder does not see;
+/// except that a holder of `MANAGE_PERMISSIONS` keeps what Discord gives
+/// in each channel on top.
 fn check_rules(
     world: &World,
     guild: usize,
@@ -226,6 +228,7 @@ fn check_rules(
     coverage: &mut Coverage,
 ) -> Result<(), TestCaseError> {
     let granted = Capabilities::from_guild_permissions(discord.base);
+    let mut edits_rules = owner;
     for capability in Capabilities::MANAGEMENT.iter() {
         let held = ruled(
             world,
@@ -243,6 +246,9 @@ fn check_rules(
         );
         if owner && !held {
             coverage.reach(Reached::OwnerKeepsManagement);
+        }
+        if capability == Capabilities::MANAGE_PERMISSIONS && held {
+            edits_rules = true;
         }
     }
     let administrator = discord.base.contains(Permissions::ADMINISTRATOR);
@@ -263,15 +269,22 @@ fn check_rules(
                 )
             })
             .fold(Capabilities::empty(), |held, capability| held | capability);
-        let seen = if expected.contains(Capabilities::VIEW_PRESENCE) {
+        let kept = if edits_rules {
+            expected | granted
+        } else {
             expected
+        };
+        if kept != expected {
+            coverage.reach(Reached::EditorUnbound);
+        }
+        let expected = if kept.contains(Capabilities::VIEW_PRESENCE) {
+            kept
         } else {
             Capabilities::empty()
         };
-        if seen != expected {
+        if expected != kept {
             coverage.reach(Reached::UnseenTakesTheRest);
         }
-        let expected = seen;
         let held = access.channels.get(&channel).copied().unwrap_or_default();
         prop_assert_eq!(held, expected, "channel {}", channel);
         if !(expected - granted).is_empty() {
@@ -322,6 +335,9 @@ fn check_explanation(
                     prop_assert_eq!(decision.held, decision.discord, "{:?}", decision);
                 }
                 Source::Unseen | Source::Manager => prop_assert!(!decision.held, "{:?}", decision),
+                Source::Exempt => {
+                    prop_assert!(decision.held && decision.discord, "{:?}", decision);
+                }
                 Source::Rule { .. } | Source::Owner => {}
             }
         }
@@ -730,9 +746,12 @@ enum Reached {
     ExplainedByChannelRule,
     /// A rule takes seeing a channel, and everything else there with it.
     UnseenTakesTheRest,
+    /// A content rule would take what Discord gives a holder of
+    /// `MANAGE_PERMISSIONS`, and does not.
+    EditorUnbound,
 }
 
-const EVERY_OUTCOME: [Reached; 22] = [
+const EVERY_OUTCOME: [Reached; 23] = [
     Reached::Owner,
     Reached::Member,
     Reached::Former,
@@ -755,6 +774,7 @@ const EVERY_OUTCOME: [Reached; 22] = [
     Reached::OwnerKeepsManagement,
     Reached::ExplainedByChannelRule,
     Reached::UnseenTakesTheRest,
+    Reached::EditorUnbound,
 ];
 
 #[derive(Debug, Default)]

@@ -266,19 +266,24 @@ Discord in Discord's own order, the most specific last: guild-wide
 then the same in the channel. A guild-wide rule's content capabilities reach
 every channel; management capabilities exist only guild-wide. So a rule can
 grant what Discord denies, and deny even an `ADMINISTRATOR`. Guards no rule
-breaks: the owner keeps every management capability (content rules reach
-the owner too, so denying `@everyone` a channel hides it from them unless a
-rule of their own allows it back); rules never reach a former member or an
-outsider; and no rule widens listening past a member's consent. Holders of `manage_permissions` edit them
+breaks: the owner keeps every management capability; a content rule takes
+nothing Discord gives from whoever holds `manage_permissions`, the owner
+included, since they could undo it, so no rule locks an editor out of a
+channel, though one may give them more; rules never reach a former member or
+an outsider; and no rule widens listening past a member's consent. Holders of `manage_permissions` edit them
 (`web-server/src/admin/permission_rules.rs`, `GuildFacts::edit_rule`): they
 see the channels they can see (the owner every one), change only what they
 hold where the rule applies (guild-wide content takes holding it in every
-channel, and `view_presence` takes holding every content capability, since
-it carries them), and never take `manage_permissions` from themselves. Edits run one
+channel; `view_presence` takes holding every content capability there,
+since it carries them; and `manage_permissions` takes holding every content
+capability in every channel, since it frees whoever it reaches from every
+content rule's denials), and never take `manage_permissions` from
+themselves. Edits run one
 at a time per guild. A rule whose role or channel is gone reaches nobody and
 anyone may delete it. The explainer (`.../permission-rules/explain`) shows,
 for a member or a role, each capability and the layer that decided it
-(`GuildFacts::explain`), or that not seeing the channel took it. The Members
+(`GuildFacts::explain`), that not seeing the channel took it, or that an
+editor kept it despite a rule. The Members
 page's role preview (`.../roles/{role_id}/channels`) shows the same decisions
 for the channels the manager sees, clipped to the manager's own access and
 saying so (`Explanation::clipped_to`).

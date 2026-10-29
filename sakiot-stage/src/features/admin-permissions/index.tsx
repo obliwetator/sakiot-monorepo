@@ -39,8 +39,10 @@ export function GuildPermissionsPage() {
 					here allows or denies more, to @everyone, a role or a member,
 					server-wide or in one voice channel. The most specific rule wins:
 					server-wide @everyone, then roles, then the member; then the same in
-					the channel. The owner always keeps managing the server, and nobody
-					hears a member who keeps their recordings private.
+					the channel. Without “See who is in voice” in a channel, nothing else
+					there is held. No rule takes anything from the owner or from anyone
+					who can edit permissions, and nobody hears a member who keeps their
+					recordings private.
 				</Text>
 			</header>
 

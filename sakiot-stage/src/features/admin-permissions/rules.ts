@@ -17,7 +17,8 @@ export const CAPABILITIES: Record<
 	},
 	manage_permissions: {
 		label: "Edit permissions",
-		description: "These rules, within what they hold themselves.",
+		description:
+			"These rules, within what they hold themselves. No rule takes anything from them in a channel, though one may give them more.",
 	},
 	preview_roles: {
 		label: "Preview roles",
@@ -168,7 +169,8 @@ export function ruleFor(
 /**
  * What decided a capability, in words: Discord's permissions, the owner's
  * standing, not seeing the channel, the viewer's own access (in a role
- * preview), or a rule and where it applies.
+ * preview), a rule that takes nothing from an editor, or a rule and where
+ * it applies.
  */
 export function describeSource(
 	decision: CapabilityDecision,
@@ -179,6 +181,8 @@ export function describeSource(
 	if (source.kind === "unseen") return "Taken by not seeing the channel";
 	if (source.kind === "manager")
 		return "Left out of the preview: you don't hold it yourself";
+	if (source.kind === "exempt")
+		return "Kept: rules take nothing from whoever can edit them";
 	if (source.kind === "discord" || !source.subject)
 		return "Discord's permissions";
 	const whom = subjectName(source.subject, data);

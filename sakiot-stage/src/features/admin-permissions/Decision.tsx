@@ -23,11 +23,13 @@ const MARKS: Record<MarkedKind, { label: string; className: string }> = {
 	rule: { label: "rule", className: "bg-accent/20 text-accent" },
 	unseen: { label: "hidden", className: "bg-accent/20 text-accent" },
 	manager: { label: "you lack", className: "bg-slate-700 text-slate-200" },
+	exempt: { label: "exempt", className: "bg-slate-700 text-slate-200" },
 };
 
 /**
  * A short mark when something other than Discord decided: a rule, the
- * owner's standing, not seeing the channel, or the viewer's own access.
+ * owner's standing, not seeing the channel, the viewer's own access, or a
+ * rule that takes nothing from an editor.
  * `description` says it in full, for screen readers.
  */
 export function SourceMark({
