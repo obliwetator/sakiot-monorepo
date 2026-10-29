@@ -784,3 +784,59 @@ async fn job_progress_reaches_only_the_jobs_viewers_body(pool: PgPool) -> TestRe
     );
     Ok(())
 }
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_discord_permission_change_refreshes_what_managers_see_others_hold(
+    pool: PgPool,
+) -> TestResult {
+    tokio::task::LocalSet::new()
+        .run_until(a_discord_permission_change_refreshes_what_managers_see_others_hold_body(pool))
+        .await
+}
+
+async fn a_discord_permission_change_refreshes_what_managers_see_others_hold_body(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let hub = web::Data::new(Hub::new(pool.clone()));
+    let _tasks = web_server::realtime::spawn_listener(&pool, hub.clone().into_inner());
+    let server = server(&pool, hub);
+    let mut owner = connect(&server, OWNER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    let mut viewer = connect(&server, VIEWER, ORIGIN)
+        .await?
+        .map_err(|s| format!("{s}"))?;
+    subscribe(&mut owner).await?;
+    subscribe(&mut viewer).await?;
+    wait_for_listener(&pool, &mut viewer).await?;
+    let warm_up = insert_session(&pool, PUBLIC, &[]).await?;
+    while expect(&mut owner).await? != changed("recordings", Some(&[warm_up])) {}
+    while expect(&mut viewer).await? != changed("recordings", Some(&[warm_up])) {}
+
+    // Discord takes CONNECT in the private channel from the insiders' role:
+    // neither the owner's access nor the viewer's changes, but what the
+    // owner would see the role hold does.
+    sqlx::query(
+        "UPDATE channel_permissions SET allow = $1, deny = $2
+          WHERE channel_id = $3 AND target_id = $4",
+    )
+    .bind(VIEW_CHANNEL)
+    .bind(CONNECT)
+    .bind(PRIVATE)
+    .bind(INSIDER_ROLE)
+    .execute(&pool)
+    .await?;
+    assert_eq!(expect(&mut owner).await?, changed("permissions", None));
+    // The viewer, who sees no one else's access, hears nothing of it.
+    let marker = insert_session(&pool, PUBLIC, &[]).await?;
+    assert_eq!(
+        expect(&mut viewer).await?,
+        changed("recordings", Some(&[marker]))
+    );
+    assert_eq!(
+        expect(&mut owner).await?,
+        changed("recordings", Some(&[marker]))
+    );
+    Ok(())
+}

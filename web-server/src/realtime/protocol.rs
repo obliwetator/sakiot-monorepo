@@ -46,6 +46,12 @@ pub enum Resource {
     /// Sakiot's permission rules, with the names of the channels and roles
     /// they show (holders of `manage_permissions` only).
     PermissionRules,
+    /// What members and roles hold, and what decided it: the rule
+    /// explainer and the members page's role preview. Sent when Discord's
+    /// permissions, the roster or the rules change, to holders of
+    /// `preview_roles` or `manage_permissions` whose own access did not
+    /// (whose did get `access_changed`).
+    Permissions,
     /// Keeping recordings: the server's cap and the members' allowances,
     /// and who keeps what. Removed recordings come and go with
     /// `recordings`.

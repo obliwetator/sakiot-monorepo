@@ -394,7 +394,8 @@ impl Hub {
     /// Routes one coalesced batch of database events. Permission changes are
     /// applied first, so no event in the batch reaches a viewer on the
     /// strength of access they just lost. Only a viewer whose access changed
-    /// is told so.
+    /// is told so; those who see what others hold hear that it may have
+    /// changed.
     pub async fn dispatch(&self, events: Vec<Event>) {
         let mut resync_everyone = false;
         let mut permission_guilds = HashSet::new();
@@ -444,7 +445,24 @@ impl Hub {
                             guild_id: guild_id.to_string(),
                         });
                     }
-                    Reauthorized::Unchanged => {}
+                    // Their own access held, but what they may see others
+                    // hold may not have.
+                    Reauthorized::Unchanged => {
+                        let explains = connection.subscription().is_some_and(|subscription| {
+                            subscription
+                                .access
+                                .as_ref()
+                                .is_some_and(SubscriptionAccess::sees_explanations)
+                        });
+                        if explains {
+                            connection.push(ServerMessage::Changed {
+                                v: PROTOCOL_VERSION,
+                                guild_id: guild_id.to_string(),
+                                resource: Resource::Permissions,
+                                ids: None,
+                            });
+                        }
+                    }
                 }
             }
         }

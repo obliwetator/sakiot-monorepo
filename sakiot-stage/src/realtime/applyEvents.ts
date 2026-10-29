@@ -192,6 +192,11 @@ export function applyChanged(ctx: ApplyContext, message: ChangedMessage): void {
 		case "permission_rules":
 			invalidate(ctx, guildId, ["PermissionRules", "PermissionExplanation"]);
 			return;
+		case "permissions":
+			// Discord's permissions, the roster or a rule changed what members
+			// and roles hold: the role preview and the rule explainer.
+			invalidate(ctx, guildId, ["PermissionExplanation"]);
+			return;
 		case "keeping":
 			invalidate(ctx, guildId, [
 				"Keeping",

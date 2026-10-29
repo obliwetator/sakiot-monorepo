@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, WebSocketRoute } from "@playwright/test";
 import { expectAccessibleMediaRoute } from "./axe";
 import {
 	expect,
@@ -8,6 +8,7 @@ import {
 } from "./fixtures";
 
 const API_ORIGIN = "http://127.0.0.1:4174";
+const SOCKET_URL = "ws://127.0.0.1:4174/api/realtime";
 const GUILD_ID = "guild-123";
 const GENERAL = "100";
 const LOUNGE = "200";
@@ -233,4 +234,59 @@ test("a rule saved on the Permissions page shows in the next role preview", asyn
 			.getByText("Can listen", { exact: true }),
 	).toBeVisible();
 	expect(general.roleViews).toBe(2);
+});
+
+test("a Discord permission change refreshes an open role preview", async ({
+	page,
+}) => {
+	const general = await mockMembers(page);
+	let socket: WebSocketRoute | null = null;
+	await page.routeWebSocket(SOCKET_URL, (ws) => {
+		socket = ws;
+		const now = Date.now();
+		ws.send(
+			JSON.stringify({
+				type: "ready",
+				v: 1,
+				user_id: "current-user",
+				server_time: now,
+				token_expires_at: now + 15 * 60_000,
+			}),
+		);
+		ws.onMessage((raw) => {
+			const message = JSON.parse(String(raw)) as {
+				type: string;
+				guild_id?: string;
+			};
+			if (message.type !== "set_scope") return;
+			ws.send(
+				JSON.stringify({
+					type: "subscribed",
+					v: 1,
+					guild_id: message.guild_id,
+				}),
+			);
+		});
+	});
+	await page.goto(`/dashboard/${GUILD_ID}/members`);
+	await page.getByRole("button", { name: "View as @everyone" }).click();
+	const generalRow = page
+		.getByRole("dialog")
+		.getByRole("listitem", { name: "General" });
+	await expect(generalRow.getByText("Hidden", { exact: true })).toBeVisible();
+	await expect.poll(() => socket !== null).toBe(true);
+
+	// Discord now shows General to everyone; the server says so.
+	general.rule = { allow: [], deny: [] };
+	(socket as unknown as WebSocketRoute).send(
+		JSON.stringify({
+			type: "changed",
+			v: 1,
+			guild_id: GUILD_ID,
+			resource: "permissions",
+		}),
+	);
+	await expect(
+		generalRow.getByText("Can listen", { exact: true }),
+	).toBeVisible();
 });

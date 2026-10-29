@@ -95,4 +95,12 @@ impl SubscriptionAccess {
     pub fn sees_members(&self) -> bool {
         self.guild.intersects(crate::members::MEMBER_SEARCH)
     }
+
+    /// Who sees what members and roles hold, and why: the members page's
+    /// role preview (`PREVIEW_ROLES`) and the rule editor's explainer
+    /// (`MANAGE_PERMISSIONS`).
+    pub fn sees_explanations(&self) -> bool {
+        self.guild
+            .intersects(Capabilities::PREVIEW_ROLES | Capabilities::MANAGE_PERMISSIONS)
+    }
 }

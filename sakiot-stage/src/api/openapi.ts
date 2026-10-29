@@ -2189,6 +2189,7 @@ export interface components {
 			| "recording_policy"
 			| "cooldowns"
 			| "permission_rules"
+			| "permissions"
 			| "keeping"
 			| "presence"
 			| "members"

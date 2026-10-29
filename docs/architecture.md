@@ -401,7 +401,11 @@ voice presence).
   other events in the batch are routed. One statement loads the facts of
   every affected guild for all their subscribers; each scope is evaluated in
   memory, and only a viewer whose access changed gets `access_changed`. A
-  member joining or a role changing hands sends nothing to anyone else.
+  member joining or a role changing hands sends nothing to anyone else,
+  except that holders of `preview_roles` or `manage_permissions` whose own
+  access held get `changed` `permissions`: what they see others hold (the
+  role preview, the rule explainer) may have changed, Discord's side
+  included.
   Ids go only to viewers the HTTP listing would show the item to; a clip
   payload carries the clip's channels for that, and a change of channels
   (an overwritten composition) is sent with the old ones too. A viewer
