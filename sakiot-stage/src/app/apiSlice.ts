@@ -254,6 +254,26 @@ const guildScoped =
 const withAsRole = (url: string, as_role?: string): string =>
 	`${url}${as_role ? `?as_role=${as_role}` : ""}`;
 
+const sameSubject = (a: RuleSubject, b: RuleSubject) =>
+	a.kind === b.kind && (a.id ?? null) === (b.id ?? null);
+
+/**
+ * Replaces the entry `matches` finds with what `write` makes of it (adding
+ * one when none matches), or removes it when `write` gives null.
+ */
+function writeEntry<T>(
+	list: T[],
+	matches: (entry: T) => boolean,
+	write: (entry: T | undefined) => T | null,
+) {
+	const at = list.findIndex(matches);
+	const next = write(at === -1 ? undefined : list[at]);
+	if (at === -1) {
+		if (next) list.push(next);
+	} else if (next) list[at] = next;
+	else list.splice(at, 1);
+}
+
 export const apiSlice = createApi({
 	reducerPath: "api",
 	baseQuery: baseQueryWithReauth,
@@ -903,7 +923,11 @@ export const apiSlice = createApi({
 			query: (guild_id) => apiUrl(API_ROUTES.permissionRules, { guild_id }),
 			providesTags: guildScoped("PermissionRules"),
 		}),
-		/** Sets one rule; allowing and denying nothing deletes it. */
+		/**
+		 * Sets one rule; allowing and denying nothing deletes it. The cached
+		 * rules take the change as it is sent, so an editor that drops its draft
+		 * once saved shows the saved rule, not the old one until the refetch.
+		 */
 		setPermissionRule: builder.mutation<
 			void,
 			RuleChange & { guild_id: string }
@@ -913,6 +937,36 @@ export const apiSlice = createApi({
 				method: "PUT",
 				body: rule,
 			}),
+			onQueryStarted({ guild_id, ...change }, api) {
+				const channel = change.channel_id ?? null;
+				const user = apiSlice.endpoints.getAuthDetails.select()(api.getState())
+					.data?.user;
+				const patch = api.dispatch(
+					apiSlice.util.updateQueryData(
+						"getPermissionRules",
+						guild_id,
+						({ rules }) =>
+							writeEntry(
+								rules,
+								(rule) =>
+									(rule.channel_id ?? null) === channel &&
+									sameSubject(rule.subject, change.subject),
+								(rule) =>
+									change.allow.length === 0 && change.deny.length === 0
+										? null
+										: {
+												name: null,
+												reaches_nobody: false,
+												...rule,
+												...change,
+												updated_by: user?.user_id ?? "",
+												updated_at: new Date().toISOString(),
+											},
+							),
+					),
+				);
+				api.queryFulfilled.catch(patch.undo);
+			},
 			invalidatesTags: guildScoped("PermissionRules", "PermissionExplanation"),
 		}),
 		/** What a member (`user_id`) or a role (`role_id`) holds, and why. */
@@ -1022,7 +1076,7 @@ export const apiSlice = createApi({
 			query: (guild_id) => apiUrl(API_ROUTES.keepAllowances, { guild_id }),
 			providesTags: guildScoped("KeepAllowances"),
 		}),
-		/** Sets one allowance; null removes it. */
+		/** Sets one allowance; null removes it. Cached as sent, like a rule. */
 		setKeepAllowance: builder.mutation<
 			void,
 			KeepAllowanceChange & { guild_id: string }
@@ -1032,13 +1086,37 @@ export const apiSlice = createApi({
 				method: "PUT",
 				body: change,
 			}),
+			onQueryStarted({ guild_id, subject, allowance }, api) {
+				const patch = api.dispatch(
+					apiSlice.util.updateQueryData(
+						"getKeepAllowances",
+						guild_id,
+						({ allowances }) =>
+							writeEntry(
+								allowances,
+								(entry) => sameSubject(entry.subject, subject),
+								(entry) =>
+									allowance == null
+										? null
+										: {
+												name: null,
+												reaches_nobody: false,
+												...entry,
+												subject,
+												allowance,
+											},
+							),
+					),
+				);
+				api.queryFulfilled.catch(patch.undo);
+			},
 			invalidatesTags: guildScoped("KeepAllowances", "Keeping"),
 		}),
 		getOperatorGuilds: builder.query<OperatorGuild[], void>({
 			query: () => apiUrl(API_ROUTES.operatorGuilds),
 			providesTags: ["OperatorGuilds"],
 		}),
-		/** How many recordings a guild may keep: operators only. */
+		/** How many recordings a guild may keep: operators only. Cached as sent. */
 		setGuildLimits: builder.mutation<
 			void,
 			{ guild_id: string; kept_recordings: number }
@@ -1048,6 +1126,19 @@ export const apiSlice = createApi({
 				method: "PUT",
 				body: { kept_recordings },
 			}),
+			onQueryStarted({ guild_id, kept_recordings }, api) {
+				const patch = api.dispatch(
+					apiSlice.util.updateQueryData(
+						"getOperatorGuilds",
+						undefined,
+						(guilds) => {
+							const guild = guilds.find((g) => g.guild_id === guild_id);
+							if (guild) guild.kept_recordings_cap = kept_recordings;
+						},
+					),
+				);
+				api.queryFulfilled.catch(patch.undo);
+			},
 			invalidatesTags: (_r, _e, { guild_id }) => [
 				"OperatorGuilds" as const,
 				...guildScoped("Keeping", "KeepAllowances")(_r, _e, guild_id),

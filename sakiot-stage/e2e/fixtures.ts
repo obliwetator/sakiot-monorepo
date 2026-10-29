@@ -117,3 +117,21 @@ export async function fulfillSharedRoutes(
 	});
 	return true;
 }
+
+/**
+ * Stalls a mock's reads as a slow refetch would: after `hold()`, `passed()`
+ * waits until `release()`.
+ */
+export function heldReads() {
+	let gate = Promise.resolve();
+	let open = () => {};
+	return {
+		hold() {
+			gate = new Promise((resolve) => {
+				open = resolve;
+			});
+		},
+		release: () => open(),
+		passed: () => gate,
+	};
+}

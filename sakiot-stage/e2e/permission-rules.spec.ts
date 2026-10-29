@@ -3,6 +3,7 @@ import { expectAccessibleMediaRoute } from "./axe";
 import {
 	expect,
 	fulfillSharedRoutes,
+	heldReads,
 	OWNER_CAPABILITIES,
 	test,
 } from "./fixtures";
@@ -29,8 +30,9 @@ interface Rule {
 
 /**
  * Plays the rules API: the editor holds everything in the lounge and
- * nothing in the staff channel; saved rules come back on the next read, and
- * `refusals` answer the next PUTs instead of saving them.
+ * nothing in the staff channel; saved rules come back on the next read,
+ * which `reads` may hold, and `refusals` answer the next PUTs instead of
+ * saving them.
  */
 async function mockRules(
 	page: Page,
@@ -47,6 +49,7 @@ async function mockRules(
 	];
 	const saved: Rule[] = [];
 	const explained: string[] = [];
+	const reads = heldReads();
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const url = new URL(request.url());
@@ -80,6 +83,7 @@ async function mockRules(
 		}
 		const base = `/api/admin/guilds/${GUILD_ID}/permission-rules`;
 		if (path === base && request.method() === "GET") {
+			await reads.passed();
 			await json({
 				editable: [...OWNER_CAPABILITIES, "stamp"],
 				channels: [
@@ -172,7 +176,7 @@ async function mockRules(
 			404,
 		);
 	});
-	return { saved, explained };
+	return { saved, explained, reads };
 }
 
 test("an editor denies a role a capability in one channel and sees what it decides", async ({
@@ -227,6 +231,37 @@ test("an editor denies a role a capability in one channel and sees what it decid
 	).toBeVisible();
 	expect(explained).toEqual([`?role_id=${VIP}`]);
 	await expectAccessibleMediaRoute(page);
+});
+
+test("a saved rule shows as saved while the page reads it back", async ({
+	page,
+}) => {
+	const { reads } = await mockRules(page);
+	await page.goto(`/dashboard/${GUILD_ID}/admin/permissions`);
+	await page.getByRole("button", { name: /Where/ }).click();
+	await page.getByRole("option", { name: "lounge" }).click();
+	const rule = page.getByRole("region", { name: "Rule for @everyone" });
+	const jam = rule.getByRole("radiogroup", {
+		name: "Play clips in voice for @everyone",
+	});
+	const everyone = page
+		.getByRole("list", { name: "Rules here" })
+		.getByRole("button", { name: "@everyone" });
+	await jam.getByText("Deny", { exact: true }).click();
+	await rule.getByRole("button", { name: "Save rule" }).click();
+	await expect(everyone).not.toContainText("no rule");
+
+	// Back to the default, while the read that would confirm it is slow.
+	reads.hold();
+	await jam.getByText("Default", { exact: true }).click();
+	await rule.getByRole("button", { name: "Save rule" }).click();
+	await expect(rule.getByText("Rule saved.")).toBeVisible();
+	// The draft is gone, and what shows is the rule just saved.
+	await expect(rule.getByRole("button", { name: "Save rule" })).toBeDisabled();
+	await expect(jam.getByRole("radio", { name: "Default" })).toBeChecked();
+	await expect(everyone).toContainText("no rule");
+	reads.release();
+	await expect(jam.getByRole("radio", { name: "Default" })).toBeChecked();
 });
 
 test("what the editor lacks stays locked, and refusals and stale rules are explained", async ({

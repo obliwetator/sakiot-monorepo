@@ -3,6 +3,7 @@ import { expectAccessibleMediaRoute } from "./axe";
 import {
 	expect,
 	fulfillSharedRoutes,
+	heldReads,
 	OWNER_CAPABILITIES,
 	test,
 } from "./fixtures";
@@ -371,6 +372,7 @@ test("a manager shares the server's cap out in allowances", async ({
 	page,
 }) => {
 	const saved: unknown[] = [];
+	const reads = heldReads();
 	let allowances = [
 		{
 			subject: { kind: "everyone" },
@@ -420,6 +422,7 @@ test("a manager shares the server's cap out in allowances", async ({
 		}
 		const allowancesPath = `/api/admin/guilds/${GUILD_ID}/keep-allowances`;
 		if (path === allowancesPath && request.method() === "GET") {
+			await reads.passed();
 			await json({
 				cap: 10,
 				kept: 3,
@@ -476,9 +479,16 @@ test("a manager shares the server's cap out in allowances", async ({
 	).toBeVisible();
 	const everyone = panel.getByRole("spinbutton", { name: "@everyone" });
 	await expect(everyone).toHaveValue("2");
+	// Saved, it shows what was saved while the read confirming it is slow.
+	reads.hold();
 	await everyone.fill("3");
 	await panel.getByRole("button", { name: "Save" }).first().click();
 	await expect(panel.getByText("Allowance saved.")).toBeVisible();
+	await expect(
+		panel.getByRole("button", { name: "Save" }).first(),
+	).toBeDisabled();
+	await expect(everyone).toHaveValue("3");
+	reads.release();
 
 	await page.getByRole("button", { name: /Add a role/ }).click();
 	await page.getByRole("option", { name: "VIP" }).click();
@@ -512,6 +522,7 @@ test("an operator sets how many recordings a server may keep", async ({
 	page,
 }) => {
 	const limits: unknown[] = [];
+	const reads = heldReads();
 	let cap = 0;
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
@@ -538,6 +549,7 @@ test("an operator sets how many recordings a server may keep", async ({
 			return;
 		}
 		if (path === "/api/operator/guilds") {
+			await reads.passed();
 			await json([
 				{
 					guild_id: GUILD_ID,
@@ -594,10 +606,14 @@ test("an operator sets how many recordings a server may keep", async ({
 			"Below what it keeps: those stay kept, and nothing more can be until it is under the cap.",
 		),
 	).toBeVisible();
+	reads.hold();
 	await field.fill("25");
 	await guild.getByRole("button", { name: "Save" }).click();
 	await expect(guild.getByText("Saved.")).toBeVisible();
+	await expect(guild.getByRole("button", { name: "Save" })).toBeDisabled();
+	await expect(field).toHaveValue("25");
 	await expect(guild.getByText(/^Keeps 4 of 25 recordings/)).toBeVisible();
+	reads.release();
 	expect(limits).toEqual([{ kept_recordings: 25 }]);
 	await expectAccessibleMediaRoute(page);
 
