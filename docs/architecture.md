@@ -14,12 +14,15 @@ is the map that sits above them.
 | `sakiot-stage` | React SPA | The user interface. Talks only to `web-server`'s HTTP API. |
 | `sakiot-db` | Migrations | Sole owner of the PostgreSQL schema. Neither service migrates at startup. |
 | `sakiot-paths` | Rust crate | The filesystem and URL layout, shared so both services agree on where media lives. |
+| `sakiot-peaks` | Rust crate | The waveform peaks format. `fbi-agent` writes peaks while recording; `web-server` reads them, and decodes audio that has none. |
 | `sakiot-permissions` | Rust crate | The permission evaluator: guild facts in, capabilities out, with no I/O. Used by `web-server` and `fbi-agent`. |
+| `sakiot-process` | Rust crate | This process's CPU, memory and I/O from `/proc/self`, for both services' metrics. |
 | `sakiot-proto` | Rust crate | The gRPC contract (`fbi_agent.proto`) and its generated types. |
 | `sakiot-storage` | Rust crate | Backblaze B2 archive configuration and S3 client. |
 | `sakiot-dsp` | Rust crate → native + WASM | Audio effects, compiled both into `web-server` and to WASM for the browser. |
 | `ops/sakiot-dev` | Rust CLI | Local development orchestration (`cargo dev`). |
 | `ops/sakiot-deploy` | Rust CLI | The deployment engine that runs on the VPS. |
+| `ops/sakiot-speakers` | Rust CLI | Bot accounts that talk in a voice channel, to measure the real bot's recording cost. |
 
 ## System shape
 

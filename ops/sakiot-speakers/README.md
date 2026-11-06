@@ -2,8 +2,8 @@
 
 Bot accounts that talk in a voice channel, to measure what recording costs the
 real bot: Discord's voice servers, UDP, decryption, decoding, the recorder and
-its writes. The k6 suite in `load_testing` covers the web server and the disk
-with a simulated recorder; this covers the bot.
+its writes. The k6 suite in the separate `load_testing` repository covers the
+web server and the disk with a simulated recorder; this covers the bot.
 
 Each token is its own Discord application. The run steps through how many bots
 talk at once (default 0, 1, 2, 4, 8, five minutes each), each looping the same
