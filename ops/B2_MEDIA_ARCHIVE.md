@@ -14,8 +14,10 @@ environment, and moving media back to local disk.
    - `sakiot-media-staging-<random>`
    - `sakiot-db-backups-<random>`
 3. Enable default SSE-B2 (AES-256) before uploading anything; it applies only
-   to later uploads. Keep Object Lock disabled and leave lifecycle rules unset:
-   recording deletion removes versions itself.
+   to later uploads. Keep Object Lock disabled. Leave lifecycle rules unset on
+   the media buckets, because recording deletion removes versions itself. The
+   backup bucket needs one, because nothing else deletes from it: see
+   [expiring dumps](../sakiot-db/ops/backup/README.md#expiring-dumps).
 4. From a trusted administrator workstation, create bucket-restricted keys.
    Media keys need delete; the backup key must not have it:
 

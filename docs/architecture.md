@@ -580,7 +580,11 @@ Recordings age out of local disk into Backblaze B2:
   permanent job (reason `speaker`), upgrading an existing soft job in
   place; a clip's job purges the clip and every clip composed from it.
   Permanent purging runs only with
-  `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED`.
+  `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED`. A purge cannot reach the
+  encrypted database backups: dumps taken before it keep the rows it removed,
+  which say who spoke, where and when but hold no audio, until they
+  [expire](../sakiot-db/ops/backup/README.md#expiring-dumps) a little over 100
+  days after upload.
 
 The archive is disabled by default locally. An enabled deployment requires
 every `SAKIOT_MEDIA_S3_*` value and fails startup on partial configuration

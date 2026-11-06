@@ -39,6 +39,28 @@ SAKIOT_ENV_FILE=/etc/sakiot/production.env sakiot-db/ops/backup/backup.sh hourly
 SAKIOT_ENV_FILE=/etc/sakiot/production.env sakiot-db/ops/backup/restore-test.sh
 ```
 
+## Expiring dumps
+
+The scripts never delete from B2, and the backup key cannot. A lifecycle rule
+on the bucket expires dumps instead, which also limits how long erased data
+survives in them (see
+[media lifecycle](../../../docs/architecture.md#media-lifecycle)). Set it from
+an administrator workstation, with a key that may change the bucket
+(`writeBuckets`). The backup key must not have that capability:
+
+```sh
+rclone backend lifecycle b2:sakiot-db-backups-<random> \
+  -o daysFromUploadingToHiding=100 -o daysFromHidingToDeleting=1
+rclone backend lifecycle b2:sakiot-db-backups-<random>   # prints the rule
+```
+
+B2 applies rules once a day, so a dump is gone a little over 100 days after its
+upload. The first run removes every dump already past that age, for good.
+
+Keep the first number above every local retention in `backup.sh`. rclone does
+not list a hidden dump, so `rclone copy` would upload a local copy that outlived
+it again, for another full term.
+
 ## Scripts
 
 Each script loads `SAKIOT_ENV_FILE` (default: the monorepo root `.env`) and
@@ -53,7 +75,7 @@ fails fast when a required variable is unset.
 3. Writes to a `.partial` file and renames it only on success; with
    `pipefail`, a dump that dies mid-stream is deleted, never promoted.
 4. `rclone copy`s every completed dump. An upload or checksum failure fails the
-   run; the remote is never synchronized or deleted from.
+   run. The script never synchronizes the remote or deletes from it.
 5. Prunes local dumps past their label's retention (hourly 7 days, nightly and
    pre-migrate 90).
 6. Pings `HEALTHCHECK_URL` on success, if set (a dead-man switch).
@@ -89,7 +111,8 @@ production migrations.
   and leaking it exposes all data. Keep an access-restricted copy off the host
   and prove it with a restore.
 - The B2 key is restricted to the backup bucket and deliberately cannot
-  delete. Never use the account master key.
+  delete or change the bucket's lifecycle rule, so a stolen key cannot shorten
+  the history. Never use the account master key.
 - Always `rclone copy`, never `rclone sync`: local retention must not delete
   remote history.
 - `.env`, `*.dump` and `*.dump.age` are git-ignored; never commit them.
