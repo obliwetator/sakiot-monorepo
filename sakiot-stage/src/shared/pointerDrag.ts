@@ -34,12 +34,12 @@ export function usePointerDrag<G>(options: PointerDragOptions<G>) {
 		optionsRef.current = options;
 	});
 
-	const begin = useCallback((origin: G, pointerX: number, pointerY: number) => {
+	const begin = (origin: G, pointerX: number, pointerY: number) => {
 		const next = { origin, ghost: origin, pointerX, pointerY };
 		snapshotRef.current = next;
 		setSnapshot(next);
 		setDragging(true);
-	}, []);
+	};
 
 	const cancel = useCallback(() => {
 		const current = snapshotRef.current;

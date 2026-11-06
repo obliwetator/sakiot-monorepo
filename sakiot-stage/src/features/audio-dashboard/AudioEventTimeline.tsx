@@ -1,12 +1,5 @@
 import { ChevronDown as ExpandMoreIcon } from "lucide-react";
-import {
-	type RefObject,
-	useEffect,
-	useId,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { type RefObject, useEffect, useId, useRef, useState } from "react";
 import { fractionInTarget } from "../../shared/geometry";
 import { palette } from "../../shared/palette";
 import {
@@ -247,19 +240,12 @@ export function AudioEventTimeline(props: {
 		cluster: TimelinePointCluster;
 	} | null>(null);
 	const clusterTriggerRef = useRef<HTMLElement | null>(null);
-	const model = useMemo(
-		() => buildEventTimelineModel(props.events, props.durationMs),
-		[props.durationMs, props.events],
-	);
-	const clusters = useMemo(
-		() =>
-			clusterTimelinePoints(
-				model.lanes.flatMap((lane) => lane.points),
-				props.durationMs,
-				plotWidth,
-				CLUSTER_DISTANCE_PX,
-			),
-		[model.lanes, plotWidth, props.durationMs],
+	const model = buildEventTimelineModel(props.events, props.durationMs);
+	const clusters = clusterTimelinePoints(
+		model.lanes.flatMap((lane) => lane.points),
+		props.durationMs,
+		plotWidth,
+		CLUSTER_DISTANCE_PX,
 	);
 	const intervalCount = model.lanes.reduce(
 		(count, lane) => count + lane.intervals.length,

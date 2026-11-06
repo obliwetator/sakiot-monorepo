@@ -79,12 +79,6 @@ export function useSessionSelectionController(
 	});
 
 	useEffect(() => {
-		selectionRef.current = selection;
-	}, [selection]);
-	useEffect(() => {
-		loopSelectionRef.current = loopSelection;
-	}, [loopSelection]);
-	useEffect(() => {
 		if (!selectionHint) return;
 		const timeout = globalThis.setTimeout(() => setSelectionHint(null), 4_000);
 		return () => globalThis.clearTimeout(timeout);
@@ -297,13 +291,10 @@ export function useSessionSelectionController(
 		);
 	}, [activePosition, setSelectionEdgeFromPlayhead]);
 
-	const changeSelection = useCallback(
-		(next: SessionSelection) => {
-			setSelectionHint(null);
-			storeActiveSelection(next);
-		},
-		[storeActiveSelection],
-	);
+	const changeSelection = (next: SessionSelection) => {
+		setSelectionHint(null);
+		storeActiveSelection(next);
+	};
 
 	const resetSelection = useCallback(() => {
 		const active =
@@ -355,54 +346,48 @@ export function useSessionSelectionController(
 		target.toggle();
 	}, [lastPlaybackRef, playbackTargetFor, rememberPlayback]);
 
-	const toggleActivePreview = useCallback(() => {
+	const toggleActivePreview = () => {
 		const active =
 			playbackTabRef.current === "silence" ? options.silence : options.normal;
 		active.togglePreview(selectionRef.current, loopSelectionRef.current);
-	}, [options.normal, options.silence]);
+	};
 
-	const changeLoopSelection = useCallback(
-		(enabled: boolean) => {
-			if (enabled && selectionRef.current[1] <= selectionRef.current[0]) return;
-			loopSelectionRef.current = enabled;
-			setLoopSelection(enabled);
-			const active =
-				playbackTabRef.current === "silence" ? options.silence : options.normal;
-			active.updateLoop(enabled, selectionRef.current);
-		},
-		[options.normal, options.silence],
-	);
+	const changeLoopSelection = (enabled: boolean) => {
+		if (enabled && selectionRef.current[1] <= selectionRef.current[0]) return;
+		loopSelectionRef.current = enabled;
+		setLoopSelection(enabled);
+		const active =
+			playbackTabRef.current === "silence" ? options.silence : options.normal;
+		active.updateLoop(enabled, selectionRef.current);
+	};
 
 	useEffect(() => {
 		const active = playbackTab === "silence" ? options.silence : options.normal;
 		active.syncBound(selection, loopSelection);
 	}, [loopSelection, options.normal, options.silence, playbackTab, selection]);
 
-	const selectPlaybackTab = useCallback(
-		(nextTab: "normal" | "silence") => {
-			if (nextTab === playbackTabRef.current) return;
-			setSelectionHint(null);
-			disableLoop();
-			if (nextTab === "silence") options.normal.stop();
-			else options.silence.stop();
-			// The remembered shortcut target belonged to the player that is now
-			// hidden, so Space and the arrow keys would keep driving a paused,
-			// invisible player. Forget it; the shortcuts fall back to the
-			// newly visible tab's player.
-			lastPlaybackRef.current = null;
-			playbackTabRef.current = nextTab;
-			const next =
-				nextTab === "silence"
-					? (silenceSelectionRef.current ??
-						resetClipSelection(options.silence.durationMs))
-					: normalSelectionRef.current;
-			if (nextTab === "silence") silenceSelectionRef.current = next;
-			selectionRef.current = next;
-			setSelection(next);
-			setPlaybackTab(nextTab);
-		},
-		[disableLoop, lastPlaybackRef, options.normal, options.silence],
-	);
+	const selectPlaybackTab = (nextTab: "normal" | "silence") => {
+		if (nextTab === playbackTabRef.current) return;
+		setSelectionHint(null);
+		disableLoop();
+		if (nextTab === "silence") options.normal.stop();
+		else options.silence.stop();
+		// The remembered shortcut target belonged to the player that is now
+		// hidden, so Space and the arrow keys would keep driving a paused,
+		// invisible player. Forget it; the shortcuts fall back to the
+		// newly visible tab's player.
+		lastPlaybackRef.current = null;
+		playbackTabRef.current = nextTab;
+		const next =
+			nextTab === "silence"
+				? (silenceSelectionRef.current ??
+					resetClipSelection(options.silence.durationMs))
+				: normalSelectionRef.current;
+		if (nextTab === "silence") silenceSelectionRef.current = next;
+		selectionRef.current = next;
+		setSelection(next);
+		setPlaybackTab(nextTab);
+	};
 
 	useEffect(() => {
 		const handleShortcut = (event: KeyboardEvent) => {

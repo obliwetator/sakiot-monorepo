@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { WaveformEnvelope } from "../audio-dashboard/waveformPeaks";
 import type { TimelineSegment } from "./model";
 
@@ -98,17 +98,13 @@ export function useProcessedSegmentWaveform(
 		};
 	}, [guildId, renderKey, segment]);
 
-	return useMemo(
-		() =>
-			resolveSegmentWaveform(
-				rendered,
-				{
-					key: renderKey,
-					sourceId: segment.sourceId,
-					reverse: segment.effects.reverse,
-				},
-				fallback,
-			),
-		[fallback, renderKey, rendered, segment.effects.reverse, segment.sourceId],
+	return resolveSegmentWaveform(
+		rendered,
+		{
+			key: renderKey,
+			sourceId: segment.sourceId,
+			reverse: segment.effects.reverse,
+		},
+		fallback,
 	);
 }

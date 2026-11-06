@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import {
 	createHistoryState,
 	type HistoryState,
@@ -21,29 +21,29 @@ export function useEditHistory(initial: ClipEdit) {
 		createHistoryState(initial),
 	);
 
-	const preview = useCallback((updater: (edit: ClipEdit) => ClipEdit) => {
+	const preview = (updater: (edit: ClipEdit) => ClipEdit) => {
 		setState((current) => historyPreview(current, updater));
-	}, []);
+	};
 
-	const flush = useCallback(() => {
+	const flush = () => {
 		setState((current) => historyFlush(current));
-	}, []);
+	};
 
-	const apply = useCallback((updater: (edit: ClipEdit) => ClipEdit) => {
+	const apply = (updater: (edit: ClipEdit) => ClipEdit) => {
 		setState((current) => historyApply(current, updater));
-	}, []);
+	};
 
-	const undo = useCallback(() => {
+	const undo = () => {
 		setState((current) => historyUndo(current));
-	}, []);
+	};
 
-	const redo = useCallback(() => {
+	const redo = () => {
 		setState((current) => historyRedo(current));
-	}, []);
+	};
 
-	const reset = useCallback((edit: ClipEdit) => {
+	const reset = (edit: ClipEdit) => {
 		setState(createHistoryState(edit));
-	}, []);
+	};
 
 	return {
 		edit: state.present,

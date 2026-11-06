@@ -149,23 +149,20 @@ export function useCompositionExport(guildId: string) {
 		}
 	}, [active?.jobId, status, pollError, storageKey, dispatch]);
 
-	const begin = useCallback(
-		(body: Body) => {
-			if (!storageKey || starting || active?.jobId) return;
-			const request = active ?? { key: crypto.randomUUID(), body, jobId: null };
-			persist(storageKey, request);
-			setPending(request);
-			void submit(request);
-		},
-		[active, starting, storageKey, submit],
-	);
+	const begin = (body: Body) => {
+		if (!storageKey || starting || active?.jobId) return;
+		const request = active ?? { key: crypto.randomUUID(), body, jobId: null };
+		persist(storageKey, request);
+		setPending(request);
+		void submit(request);
+	};
 
 	const pollProblem = pollError ? problemFromQueryError(pollError) : null;
 
-	const resetMessage = useCallback(() => {
+	const resetMessage = () => {
 		setError(null);
 		setDone(false);
-	}, []);
+	};
 	return {
 		begin,
 		starting,

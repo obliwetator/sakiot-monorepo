@@ -6,18 +6,35 @@ import reactCompiler, { type LoggerEvent } from "babel-plugin-react-compiler";
 
 /**
  * The React Compiler skips a function it cannot compile without failing the
- * build, which silently drops its memoization. These hooks carry no manual
- * useCallback/useMemo: they rely on being compiled.
+ * build, which silently drops its memoization. These files rely on being
+ * compiled: they keep useCallback only for a function an effect depends on,
+ * because Biome's dependency check cannot see the compiler.
  */
 const COMPILED_HOOKS = [
+	"ClipEditor.tsx",
+	"SegmentWaveform.tsx",
+	"Timeline.tsx",
 	"useClipEditor.ts",
+	"useCompositionExport.ts",
 	"useDraftPersistence.ts",
+	"useEditHistory.ts",
 	"usePlaybackTransport.ts",
+	"useProcessedSegmentWaveform.ts",
 	"useSourceBuffers.ts",
 	"useTimelineViewport.ts",
-	"../../shared/useDraftField.ts",
 	"../../shared/MemberPicker.tsx",
+	"../../shared/pointerDrag.ts",
+	"../../shared/useDraftField.ts",
+	"../audio-dashboard/AudioEventTimeline.tsx",
+	"../audio-dashboard/ChannelMixPlayer.tsx",
+	"../audio-dashboard/LogicalSessionPlayer.tsx",
+	"../audio-dashboard/RangeSlider/useRangeSliderState.ts",
+	"../audio-dashboard/TreeView/index.tsx",
 	"../audio-dashboard/VoicePresencePanel.tsx",
+	"../audio-dashboard/useChannelMixDraft.ts",
+	"../audio-dashboard/useClipRangeViewport.ts",
+	"../audio-dashboard/useSessionManifest.ts",
+	"../audio-dashboard/useSessionSelectionController.ts",
 ];
 
 describe("React Compiler coverage", () => {

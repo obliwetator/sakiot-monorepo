@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import {
 	useGetAuthDetailsQuery,
@@ -77,10 +77,7 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	// Or that its speaker keeps it private, listed to a manager only to
 	// remove it: the manifest is refused then too.
 	const redacted = sessionRedacted(tree, props.sessionId);
-	const deepLink = useMemo(
-		() => parseSessionDeepLink(location.search),
-		[location.search],
-	);
+	const deepLink = parseSessionDeepLink(location.search);
 	const deepLinkedPositionMs = deepLink?.positionMs ?? null;
 	const stampClipRequested = deepLink?.fromStamp === true;
 	const {
@@ -95,59 +92,39 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
 		null,
 	);
-	const normalizedSegments = useMemo(
-		() => (manifest ? normalizeSessionSegments(manifest) : []),
-		[manifest],
+	const normalizedSegments = manifest ? normalizeSessionSegments(manifest) : [];
+	const physicalFragments = normalizedSegments.filter(
+		(segment) => segment.kind !== "silence" && segment.audio_file_id != null,
 	);
-	const physicalFragments = useMemo(
-		() =>
-			normalizedSegments.filter(
-				(segment) =>
-					segment.kind !== "silence" && segment.audio_file_id != null,
-			),
-		[normalizedSegments],
-	);
-	const channelIds = useMemo(
-		() =>
-			Array.from(
-				new Set(
-					physicalFragments
-						.map((fragment) => fragment.channel_id)
-						.filter((channelId): channelId is string => Boolean(channelId)),
-				),
-			),
-		[physicalFragments],
+	const channelIds = Array.from(
+		new Set(
+			physicalFragments
+				.map((fragment) => fragment.channel_id)
+				.filter((channelId): channelId is string => Boolean(channelId)),
+		),
 	);
 	const effectiveChannelId =
 		selectedChannelId && channelIds.includes(selectedChannelId)
 			? selectedChannelId
 			: null;
-	const segments = useMemo(
-		() => isolateSessionChannel(normalizedSegments, effectiveChannelId),
-		[effectiveChannelId, normalizedSegments],
+	const segments = isolateSessionChannel(
+		normalizedSegments,
+		effectiveChannelId,
 	);
-	const displayedFragments = useMemo(
-		() =>
-			effectiveChannelId
-				? physicalFragments.filter(
-						(fragment) => fragment.channel_id === effectiveChannelId,
-					)
-				: physicalFragments,
-		[effectiveChannelId, physicalFragments],
-	);
+	const displayedFragments = effectiveChannelId
+		? physicalFragments.filter(
+				(fragment) => fragment.channel_id === effectiveChannelId,
+			)
+		: physicalFragments;
 	const manifestRecordingSessionId = manifest?.recording_session_id;
 	const manifestDurationMs = manifest?.duration_ms;
-	const selectionManifest = useMemo(
-		() =>
-			manifestRecordingSessionId !== undefined &&
-			manifestDurationMs !== undefined
-				? {
-						recordingSessionId: manifestRecordingSessionId,
-						durationMs: manifestDurationMs,
-					}
-				: null,
-		[manifestDurationMs, manifestRecordingSessionId],
-	);
+	const selectionManifest =
+		manifestRecordingSessionId !== undefined && manifestDurationMs !== undefined
+			? {
+					recordingSessionId: manifestRecordingSessionId,
+					durationMs: manifestDurationMs,
+				}
+			: null;
 
 	const [volume, setVolume] = useState(1);
 	const [playbackRate, setPlaybackRate] = useState(1);
@@ -155,17 +132,17 @@ export function LogicalSessionPlayer(props: { sessionId: string }) {
 	const loopDisableRef = useRef<() => void>(() => {});
 	const mixStopRef = useRef<() => void>(() => {});
 	const lastPlaybackRef = useRef<PlaybackShortcutTarget | null>(null);
-	const rememberLastPlayback = useCallback((target: PlaybackShortcutTarget) => {
+	const rememberLastPlayback = (target: PlaybackShortcutTarget) => {
 		lastPlaybackRef.current = target;
-	}, []);
-	const clearLastPlayback = useCallback((targetId: string) => {
+	};
+	const clearLastPlayback = (targetId: string) => {
 		if (lastPlaybackRef.current?.id === targetId) {
 			lastPlaybackRef.current = null;
 		}
-	}, []);
-	const registerMixStop = useCallback((stop: () => void) => {
+	};
+	const registerMixStop = (stop: () => void) => {
 		mixStopRef.current = stop;
-	}, []);
+	};
 	const selectionControllerRef = useRef<{
 		selectPlaybackTab: (tab: "normal" | "silence") => void;
 	} | null>(null);

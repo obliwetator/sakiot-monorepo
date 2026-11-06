@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { alpha, palette } from "../../shared/palette";
 import { drawSessionWaveform } from "../audio-dashboard/sessionWaveformCanvas";
 import type { WaveformEnvelope } from "../audio-dashboard/waveformPeaks";
@@ -52,17 +52,13 @@ export function SegmentWaveform(props: {
 }) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const { peaks, selected } = props;
-	const fractions = useMemo(
-		() =>
-			props.processed
-				? { startFraction: 0, endFraction: 1 }
-				: waveformWindowFractions(
-						props.sourceIn,
-						props.sourceOut,
-						props.durationSec,
-					),
-		[props.durationSec, props.processed, props.sourceIn, props.sourceOut],
-	);
+	const fractions = props.processed
+		? { startFraction: 0, endFraction: 1 }
+		: waveformWindowFractions(
+				props.sourceIn,
+				props.sourceOut,
+				props.durationSec,
+			);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiSlice, useGetCurrentGuildDirsQuery } from "../../../app/apiSlice";
 import { useAsRole } from "../../../app/useAsRole";
@@ -88,39 +88,24 @@ export default function RecordingTree(
 				? 10_000
 				: 30_000,
 	});
-	const liveSet = useMemo(() => new Set(liveStems ?? []), [liveStems]);
+	const liveSet = new Set(liveStems ?? []);
 
-	const data = useMemo(
-		() => (channelsData ? transform_to_months(channelsData) : null),
-		[channelsData],
-	);
+	const data = channelsData ? transform_to_months(channelsData) : null;
 
 	// Resolve the current URL against the loaded tree. This handles both legacy
 	// physical-file routes and logical-session routes used by stamps.
-	const routeState = useMemo(
-		() =>
-			data
-				? audioTreeRouteState(data, {
-						channel_id: params.channel_id,
-						file_name: params.file_name,
-						month: params.month,
-						session_id: params.session_id,
-						year: params.year,
-					})
-				: { expandedItems: [], selectedItemId: null },
-		[
-			data,
-			params.channel_id,
-			params.file_name,
-			params.month,
-			params.session_id,
-			params.year,
-		],
-	);
-	const itemRoutes = useMemo(
-		() => (data ? recordingTreeRoutes(data, params.guild_id ?? "") : new Map()),
-		[data, params.guild_id],
-	);
+	const routeState = data
+		? audioTreeRouteState(data, {
+				channel_id: params.channel_id,
+				file_name: params.file_name,
+				month: params.month,
+				session_id: params.session_id,
+				year: params.year,
+			})
+		: { expandedItems: [], selectedItemId: null };
+	const itemRoutes = data
+		? recordingTreeRoutes(data, params.guild_id ?? "")
+		: new Map();
 	const requiredItems = routeState.expandedItems;
 	const requiredKey = requiredItems.join(",");
 	React.useEffect(() => {
@@ -130,10 +115,7 @@ export default function RecordingTree(
 		);
 	}, [requiredKey]);
 
-	const visibleData = useMemo(
-		() => (data ? filterTree(data, searchQuery) : []),
-		[data, searchQuery],
-	);
+	const visibleData = data ? filterTree(data, searchQuery) : [];
 	if (isError) {
 		const status =
 			typeof dirsError === "object" && dirsError && "status" in dirsError

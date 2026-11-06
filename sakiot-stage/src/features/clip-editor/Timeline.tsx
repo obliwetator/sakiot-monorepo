@@ -493,66 +493,53 @@ export function Timeline(props: {
 	const lastPointerRef = useRef<{ clientX: number; clientY: number } | null>(
 		null,
 	);
-	const updatePasteTargetAtPoint = useCallback(
-		(clientX: number, clientY: number) => {
-			const container = tracksRef.current;
-			const containerBounds = container?.getBoundingClientRect();
-			const plotBounds = currentPlotBounds();
-			if (
-				!containerBounds ||
-				clientY < containerBounds.top ||
-				clientY > containerBounds.bottom ||
-				clientX < plotBounds.left ||
-				clientX > plotBounds.left + plotBounds.width
-			) {
-				setPasteTarget(null);
-				return;
-			}
-			const track = findTrackAtY(clientY);
-			if (track === null) {
-				setPasteTarget(null);
-				return;
-			}
-			const fractionOfWidth = fractionInRect(clientX, plotBounds);
-			const startSec = Math.max(
-				0,
-				editor.viewStartSec + fractionOfWidth * editor.viewWidthSec,
-			);
-			const overSegment = editor.edit.segments.some(
-				(segment) =>
-					segment.track === track &&
-					segment.timelineStart <= startSec &&
-					segmentEnd(segment) > startSec,
-			);
-			setPasteTarget(overSegment ? null : { startSec, track });
-		},
-		[
-			currentPlotBounds,
-			editor.edit.segments,
-			setPasteTarget,
-			editor.viewStartSec,
-			editor.viewWidthSec,
-			findTrackAtY,
-		],
-	);
-	const handleTracksPointerMove = useCallback(
-		(event: ReactPointerEvent<HTMLElement>) => {
-			lastPointerRef.current = {
-				clientX: event.clientX,
-				clientY: event.clientY,
-			};
-			updatePasteTargetAtPoint(event.clientX, event.clientY);
-		},
-		[updatePasteTargetAtPoint],
-	);
-	const clearPasteTarget = useCallback(() => {
+	const updatePasteTargetAtPoint = (clientX: number, clientY: number) => {
+		const container = tracksRef.current;
+		const containerBounds = container?.getBoundingClientRect();
+		const plotBounds = currentPlotBounds();
+		if (
+			!containerBounds ||
+			clientY < containerBounds.top ||
+			clientY > containerBounds.bottom ||
+			clientX < plotBounds.left ||
+			clientX > plotBounds.left + plotBounds.width
+		) {
+			setPasteTarget(null);
+			return;
+		}
+		const track = findTrackAtY(clientY);
+		if (track === null) {
+			setPasteTarget(null);
+			return;
+		}
+		const fractionOfWidth = fractionInRect(clientX, plotBounds);
+		const startSec = Math.max(
+			0,
+			editor.viewStartSec + fractionOfWidth * editor.viewWidthSec,
+		);
+		const overSegment = editor.edit.segments.some(
+			(segment) =>
+				segment.track === track &&
+				segment.timelineStart <= startSec &&
+				segmentEnd(segment) > startSec,
+		);
+		setPasteTarget(overSegment ? null : { startSec, track });
+	};
+	const handleTracksPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+		lastPointerRef.current = {
+			clientX: event.clientX,
+			clientY: event.clientY,
+		};
+		updatePasteTargetAtPoint(event.clientX, event.clientY);
+	};
+	const clearPasteTarget = () => {
 		lastPointerRef.current = null;
 		setPasteTarget(null);
-	}, [setPasteTarget]);
-	const handleTracksScroll = useCallback(() => {
+	};
+	const handleTracksScroll = () => {
 		const point = lastPointerRef.current;
 		if (point) updatePasteTargetAtPoint(point.clientX, point.clientY);
-	}, [updatePasteTargetAtPoint]);
+	};
 
 	const handleTimelineWheel = useCallback(
 		(event: WheelEvent) => {

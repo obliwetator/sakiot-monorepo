@@ -98,17 +98,14 @@ export function ClipEditor(props: {
 	const [baseline, setBaseline] = useState<ClipEdit | null>(() =>
 		drafts.restored || !sourceClipId ? drafts.initialEdit : null,
 	);
-	const replaceEdit = useCallback(
-		(next: ClipEdit) => {
-			editor.apply(() => next);
-			editor.select(null);
-			void editor.preloadSources(
-				props.guildId,
-				next.segments.map((segment) => segment.sourceId),
-			);
-		},
-		[editor, props.guildId],
-	);
+	const replaceEdit = (next: ClipEdit) => {
+		editor.apply(() => next);
+		editor.select(null);
+		void editor.preloadSources(
+			props.guildId,
+			next.segments.map((segment) => segment.sourceId),
+		);
+	};
 	const draft = useDraftPersistence({
 		session: drafts,
 		edit: editor.edit,
@@ -150,28 +147,25 @@ export function ClipEditor(props: {
 		);
 	};
 
-	const updateEffectLimits = useCallback((limits: EffectLimits) => {
+	const updateEffectLimits = (limits: EffectLimits) => {
 		setEffectLimits(limits);
 		saveEffectLimits(limits);
-	}, []);
+	};
 
-	const updateOptions = useCallback((next: EditorOptions) => {
+	const updateOptions = (next: EditorOptions) => {
 		setOptions(next);
 		saveEditorOptions(next);
-	}, []);
+	};
 
 	const closeCompose = () => {
 		setComposeOpen(false);
 		exportJob.resetMessage();
 	};
 
-	const clipName = useCallback(
-		(sourceId: string) => {
-			if (sourceId.startsWith("session")) return sourceId;
-			return clips?.find((c) => c.clip_id === sourceId)?.name ?? sourceId;
-		},
-		[clips],
-	);
+	const clipName = (sourceId: string) => {
+		if (sourceId.startsWith("session")) return sourceId;
+		return clips?.find((c) => c.clip_id === sourceId)?.name ?? sourceId;
+	};
 
 	// The selection sticks: nothing else on the page clears it. Escape (see
 	// useKeyboardShortcuts) is the only way to deselect without picking
@@ -241,117 +235,113 @@ export function ClipEditor(props: {
 
 	// Rebuilds the clip's original version on demand; apply (not reset) keeps
 	// the restore undoable, and the draft save picks up the change.
-	const restoreOriginal = useCallback(() => {
+	const restoreOriginal = () => {
 		const original = originalEdit();
 		if (typeof original === "string") return;
 		replaceEdit(original);
-	}, [originalEdit, replaceEdit]);
+	};
 
-	const completeMobileBinLoad = useCallback(
-		(success: boolean) => {
-			binDragStateRef.current = "idle";
-			if (!isDesktop && !success) setClipBinOpen(true);
-		},
-		[isDesktop],
-	);
+	const completeMobileBinLoad = (success: boolean) => {
+		binDragStateRef.current = "idle";
+		if (!isDesktop && !success) setClipBinOpen(true);
+	};
 
-	const handleDropClip = useCallback(
-		(clipId: string, lengthSec: number, track: number, startSec: number) => {
-			if (!isDesktop) binDragStateRef.current = "accepted";
-			void editor
-				.loadClip(props.guildId, clipId, lengthSec, track, startSec)
-				.then(completeMobileBinLoad);
-		},
-		[completeMobileBinLoad, editor, isDesktop, props.guildId],
-	);
+	const handleDropClip = (
+		clipId: string,
+		lengthSec: number,
+		track: number,
+		startSec: number,
+	) => {
+		if (!isDesktop) binDragStateRef.current = "accepted";
+		void editor
+			.loadClip(props.guildId, clipId, lengthSec, track, startSec)
+			.then(completeMobileBinLoad);
+	};
 
-	const handleAddFromBin = useCallback(
-		(clip: ClipData) => {
-			if (!isDesktop) {
-				binDragStateRef.current = "accepted";
-				setClipBinOpen(false);
-			}
-			void editor
-				.loadClip(
-					props.guildId,
-					clip.clip_id,
-					clip.length ?? 1,
-					editor.activeTrack,
-				)
-				.then(completeMobileBinLoad);
-		},
-		[completeMobileBinLoad, editor, isDesktop, props.guildId],
-	);
+	const handleAddFromBin = (clip: ClipData) => {
+		if (!isDesktop) {
+			binDragStateRef.current = "accepted";
+			setClipBinOpen(false);
+		}
+		void editor
+			.loadClip(
+				props.guildId,
+				clip.clip_id,
+				clip.length ?? 1,
+				editor.activeTrack,
+			)
+			.then(completeMobileBinLoad);
+	};
 
-	const handleBinDragStart = useCallback(() => {
+	const handleBinDragStart = () => {
 		if (isDesktop) return;
 		binDragStateRef.current = "dragging";
 		setBinGestureActive(true);
 		setClipBinOpen(false);
-	}, [isDesktop]);
+	};
 
-	const handleBinDragEnd = useCallback(() => {
+	const handleBinDragEnd = () => {
 		setBinGestureActive(false);
 		if (binDragStateRef.current !== "dragging") return;
 		binDragStateRef.current = "idle";
 		if (!isDesktop) setClipBinOpen(true);
-	}, [isDesktop]);
+	};
 
-	const handleTouchDragStart = useCallback(
-		(clip: ClipData, clientX: number, clientY: number) => {
-			binDragStateRef.current = "dragging";
-			setBinGestureActive(true);
-			if (!isDesktop) setClipBinOpen(false);
-			setMobileDragGhost({
-				name: clip.name || "Unnamed clip",
-				clipId: clip.clip_id,
-				lengthSec: clip.length ?? 0,
-				clientX,
-				clientY,
-			});
-		},
-		[isDesktop],
-	);
+	const handleTouchDragStart = (
+		clip: ClipData,
+		clientX: number,
+		clientY: number,
+	) => {
+		binDragStateRef.current = "dragging";
+		setBinGestureActive(true);
+		if (!isDesktop) setClipBinOpen(false);
+		setMobileDragGhost({
+			name: clip.name || "Unnamed clip",
+			clipId: clip.clip_id,
+			lengthSec: clip.length ?? 0,
+			clientX,
+			clientY,
+		});
+	};
 
-	const handleTouchDragMove = useCallback(
-		(_clip: ClipData, clientX: number, clientY: number) => {
-			setMobileDragGhost((current) =>
-				current ? { ...current, clientX, clientY } : current,
-			);
-		},
-		[],
-	);
+	const handleTouchDragMove = (
+		_clip: ClipData,
+		clientX: number,
+		clientY: number,
+	) => {
+		setMobileDragGhost((current) =>
+			current ? { ...current, clientX, clientY } : current,
+		);
+	};
 
-	const handleTouchDrop = useCallback(
-		(clip: ClipData, clientX: number, clientY: number) => {
-			setBinGestureActive(false);
-			setClipBinOpen(false);
-			mobileDropIdRef.current += 1;
-			setMobileBinDrop({
-				id: mobileDropIdRef.current,
-				clipId: clip.clip_id,
-				lengthSec: clip.length ?? 0,
-				clientX,
-				clientY,
-			});
-			setMobileDragGhost(null);
-		},
-		[],
-	);
+	const handleTouchDrop = (
+		clip: ClipData,
+		clientX: number,
+		clientY: number,
+	) => {
+		setBinGestureActive(false);
+		setClipBinOpen(false);
+		mobileDropIdRef.current += 1;
+		setMobileBinDrop({
+			id: mobileDropIdRef.current,
+			clipId: clip.clip_id,
+			lengthSec: clip.length ?? 0,
+			clientX,
+			clientY,
+		});
+		setMobileDragGhost(null);
+	};
 
-	const handleTouchDragCancel = useCallback(() => {
+	const handleTouchDragCancel = () => {
 		setBinGestureActive(false);
 		setMobileDragGhost(null);
 		handleBinDragEnd();
-	}, [handleBinDragEnd]);
+	};
 
-	const handleMobileBinDropHandled = useCallback(
-		(id: number, accepted: boolean) => {
-			setMobileBinDrop((current) => (current?.id === id ? null : current));
-			if (!accepted) handleBinDragEnd();
-		},
-		[handleBinDragEnd],
-	);
+	const handleMobileBinDropHandled = (id: number, accepted: boolean) => {
+		setMobileBinDrop((current) => (current?.id === id ? null : current));
+		if (!accepted) handleBinDragEnd();
+	};
 
 	useClipEditorKeyboardShortcuts(
 		editor,

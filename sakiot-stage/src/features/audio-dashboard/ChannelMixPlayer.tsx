@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API_ROUTES, apiUrl } from "../../api/routes";
 import { problemFromError } from "../../app/apiError";
 import type {
@@ -98,7 +98,7 @@ export function ChannelMixPlayer(props: {
 	});
 	const shortcutTargetId = `channel-mix:${props.sessionId}`;
 	const { onPlaybackUse } = props;
-	const registerPlayback = useCallback(() => {
+	const registerPlayback = () => {
 		onPlaybackUse({
 			id: shortcutTargetId,
 			toggle: () => {
@@ -134,7 +134,7 @@ export function ChannelMixPlayer(props: {
 					? generatedRef.current.positionMs
 					: previewRef.current.positionMs,
 		});
-	}, [onPlaybackUse, shortcutTargetId]);
+	};
 
 	useEffect(
 		() => () => props.onPlaybackClear(shortcutTargetId),
@@ -153,16 +153,11 @@ export function ChannelMixPlayer(props: {
 		setGeneratedPosition(generated.positionMs);
 	}, [generated.positionMs]);
 
-	const settingByUser = useMemo(
-		() => new Map(props.settings.map((setting) => [setting.user_id, setting])),
-		[props.settings],
+	const settingByUser = new Map(
+		props.settings.map((setting) => [setting.user_id, setting]),
 	);
-	const hasLiveSources = useMemo(
-		() =>
-			props.mix.tracks.some((track) =>
-				track.segments.some((segment) => segment.live),
-			),
-		[props.mix.tracks],
+	const hasLiveSources = props.mix.tracks.some((track) =>
+		track.segments.some((segment) => segment.live),
 	);
 	const renderedSettings = props.mix.generation_settings?.participants;
 	const renderedOutdated =

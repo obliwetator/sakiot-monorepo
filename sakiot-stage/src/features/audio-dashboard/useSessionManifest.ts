@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useGetSessionManifestQuery } from "../../app/apiSlice";
 import { extendActiveManifest } from "./logicalSessionTimeline";
 
@@ -36,12 +36,9 @@ export function useSessionManifest(sessionId: string, skip = false) {
 	}, [active]);
 	const fetched = query.data;
 	const fetchedAt = query.fulfilledTimeStamp;
-	const data = useMemo(
-		() =>
-			fetched && fetchedAt !== undefined
-				? extendActiveManifest(fetched, now - fetchedAt)
-				: fetched,
-		[fetched, fetchedAt, now],
-	);
+	const data =
+		fetched && fetchedAt !== undefined
+			? extendActiveManifest(fetched, now - fetchedAt)
+			: fetched;
 	return { ...query, data };
 }

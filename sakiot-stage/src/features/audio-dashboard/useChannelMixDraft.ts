@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
 	ChannelMixParticipantSettings,
 	ChannelMixResponse,
@@ -15,10 +15,7 @@ export function useChannelMixDraft(
 ) {
 	const tracks = mix?.tracks ?? [];
 	const serverSettings = mix?.generation_settings?.participants;
-	const trackKey = useMemo(
-		() => tracks.map((track) => track.user_id).join(","),
-		[tracks],
-	);
+	const trackKey = tracks.map((track) => track.user_id).join(",");
 	const [settings, setSettings] = useState<ChannelMixParticipantSettings[]>([]);
 
 	useEffect(() => {
