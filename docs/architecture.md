@@ -586,8 +586,8 @@ Recordings age out of local disk into Backblaze B2:
   `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED`. A purge cannot reach the
   encrypted database backups: dumps taken before it keep the rows it removed,
   which say who spoke, where and when but hold no audio, until they
-  [expire](../sakiot-db/ops/backup/README.md#expiring-dumps) a little over 100
-  days after upload.
+  [expire](../sakiot-db/ops/backup/README.md#expiring-dumps) a little over a
+  year after upload.
 
 The archive is disabled by default locally. An enabled deployment requires
 every `SAKIOT_MEDIA_S3_*` value and fails startup on partial configuration

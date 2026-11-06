@@ -44,22 +44,21 @@ SAKIOT_ENV_FILE=/etc/sakiot/production.env sakiot-db/ops/backup/restore-test.sh
 The scripts never delete from B2, and the backup key cannot. A lifecycle rule
 on the bucket expires dumps instead, which also limits how long erased data
 survives in them (see
-[media lifecycle](../../../docs/architecture.md#media-lifecycle)). Set it from
-an administrator workstation, with a key that may change the bucket
-(`writeBuckets`). The backup key must not have that capability:
+[media lifecycle](../../../docs/architecture.md#media-lifecycle)). Each dump
+holds the whole database, so the rule covers every guild at once.
 
-```sh
-rclone backend lifecycle b2:sakiot-db-backups-<random> \
-  -o daysFromUploadingToHiding=100 -o daysFromHidingToDeleting=1
-rclone backend lifecycle b2:sakiot-db-backups-<random>   # prints the rule
-```
+Set it in the Backblaze web console, as a custom lifecycle rule with a blank
+file name prefix: hide files 365 days after upload, and delete them 1 day after
+hiding. A lifecycle rule is a bucket setting, which takes `writeBuckets`, and B2
+does not allow that on a key restricted to a bucket. So no key on the server can
+change it, and a stolen one cannot shorten the history.
 
-B2 applies rules once a day, so a dump is gone a little over 100 days after its
+B2 applies rules once a day, so a dump is gone a little over a year after its
 upload. The first run removes every dump already past that age, for good.
 
-Keep the first number above every local retention in `backup.sh`. rclone does
-not list a hidden dump, so `rclone copy` would upload a local copy that outlived
-it again, for another full term.
+Keep the hiding age above every local retention in `backup.sh`. rclone does not
+list a hidden dump, so `rclone copy` would upload a local copy that outlived it
+again, for another full term.
 
 ## Scripts
 
