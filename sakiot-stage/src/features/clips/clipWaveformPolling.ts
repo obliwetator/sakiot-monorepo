@@ -2,6 +2,20 @@
 export const CLIP_WAVEFORM_MAX_POLL_ERRORS = 5;
 
 /**
+ * Whether a request not yet counted has finished. This goes by its id rather
+ * than by watching `isFetching` fall: RTK Query tells subscribers about a
+ * request on the next animation frame, so a response that beats it, as a
+ * network failing instantly does, never shows as in flight.
+ */
+export function pollSettled(
+	requestId: string | undefined,
+	countedRequestId: string | undefined,
+	isFetching: boolean,
+): boolean {
+	return !isFetching && requestId !== countedRequestId;
+}
+
+/**
  * The failure streak after a poll settles. Only completed requests count: a
  * refetch clears RTK Query's `isError` while it is in flight, so a counter
  * driven by `isError` alone would reset on every poll and never reach the cap.

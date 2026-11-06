@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	CLIP_WAVEFORM_MAX_POLL_ERRORS,
 	nextPollErrorCount,
+	pollSettled,
 	shouldKeepPollingClipWaveform,
 } from "./clipWaveformPolling";
 
@@ -30,6 +31,24 @@ describe("shouldKeepPollingClipWaveform", () => {
 		expect(
 			shouldKeepPollingClipWaveform(40, CLIP_WAVEFORM_MAX_POLL_ERRORS + 3),
 		).toBe(false);
+	});
+});
+
+describe("pollSettled", () => {
+	test("a request that started and finished between renders still counts", () => {
+		expect(pollSettled("second", "first", false)).toBe(true);
+	});
+
+	test("a request counts once", () => {
+		expect(pollSettled("first", "first", false)).toBe(false);
+	});
+
+	test("a request in flight has not settled", () => {
+		expect(pollSettled("second", "first", true)).toBe(false);
+	});
+
+	test("no request has nothing to settle", () => {
+		expect(pollSettled(undefined, undefined, false)).toBe(false);
 	});
 });
 

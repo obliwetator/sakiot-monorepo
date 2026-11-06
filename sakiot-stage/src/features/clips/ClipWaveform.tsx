@@ -7,6 +7,7 @@ import { WaveformStatusOverlay } from "../audio-dashboard/WaveformStatusOverlay"
 import { useDecodedPeaks } from "../audio-dashboard/waveformPeaks";
 import {
 	nextPollErrorCount,
+	pollSettled,
 	shouldKeepPollingClipWaveform,
 } from "./clipWaveformPolling";
 
@@ -26,6 +27,7 @@ export function ClipWaveform(props: {
 		currentData: data,
 		isError,
 		isFetching,
+		requestId,
 	} = useGetClipWaveformQuery(
 		{
 			guild_id: props.guildId,
@@ -38,14 +40,14 @@ export function ClipWaveform(props: {
 	);
 
 	// A poll can fail while the build is still in flight, so transport errors
-	// are retried rather than ending the loop. Only settled requests count:
-	// `isError` is cleared while a refetch is pending, so counting it directly
-	// would reset the streak on every poll.
+	// are retried rather than ending the loop. Each request counts once, when
+	// it settles: `isError` is cleared while a refetch is pending, so counting
+	// it directly would reset the streak on every poll.
 	const pollErrors = useRef(0);
-	const wasFetching = useRef(false);
+	const countedRequest = useRef<string | undefined>(undefined);
 	useEffect(() => {
-		const settled = wasFetching.current && !isFetching;
-		wasFetching.current = isFetching;
+		const settled = pollSettled(requestId, countedRequest.current, isFetching);
+		if (settled) countedRequest.current = requestId;
 		pollErrors.current = nextPollErrorCount(
 			settled,
 			isError,
@@ -60,7 +62,7 @@ export function ClipWaveform(props: {
 		) {
 			setGenerating(false);
 		}
-	}, [data?.error, data?.progress, isError, isFetching]);
+	}, [data?.error, data?.progress, isError, isFetching, requestId]);
 
 	const peaks = useDecodedPeaks(data?.data);
 
@@ -103,7 +105,6 @@ export function ClipWaveform(props: {
 					isDisabled={generating}
 					onPress={() => {
 						pollErrors.current = 0;
-						wasFetching.current = false;
 						setGenerating(true);
 						setRequestKey(Date.now());
 					}}

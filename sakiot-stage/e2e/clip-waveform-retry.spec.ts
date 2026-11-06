@@ -73,3 +73,35 @@ test("manual retry resumes waveform polling after exhausted errors", async ({
 		.poll(() => requests, { timeout: 8_000 })
 		.toBeGreaterThanOrEqual(7);
 });
+
+test("failed polls count even when each settles within a frame", async ({
+	page,
+	consoleAudit,
+}) => {
+	consoleAudit.allow(
+		/status of 500.*\/api\/audio\/clips\/waveform\/guild-123\/working-source/,
+	);
+	// RTK Query tells subscribers about a request on the next animation frame.
+	// With slow frames a response always beats it, so a component never sees
+	// the request in flight: what a network failing instantly looks like.
+	await page.addInitScript(() => {
+		const nextFrame = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) =>
+			window.setTimeout(() => nextFrame(callback), 200);
+	});
+	await mockClipEditorApi(page);
+	await page.route(
+		"**/api/audio/clips/waveform/guild-123/working-source*",
+		async (route) => {
+			await route.fulfill({
+				status: 500,
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "temporary failure" }),
+			});
+		},
+	);
+	await page.goto(`/dashboard/${GUILD_ID}/clips/working-source`);
+	await expect(
+		page.getByRole("button", { name: "Retry waveform" }),
+	).toBeEnabled({ timeout: 20_000 });
+});
