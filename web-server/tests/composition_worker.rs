@@ -80,6 +80,7 @@ fn run(
     let start = std::time::Instant::now();
     while child.try_wait()?.is_none() {
         if start.elapsed() > Duration::from_secs(30) {
+            // SAFETY: kill only sends a signal; no memory is involved.
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
@@ -139,6 +140,7 @@ async fn killed_worker_can_restart_with_a_new_attempt(pool: PgPool) -> TestResul
         .await?;
     let mut child = command(&pool, root.path(), &id, &token).spawn()?;
     tokio::time::sleep(Duration::from_millis(100)).await;
+    // SAFETY: kill only sends a signal; no memory is involved.
     unsafe {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }

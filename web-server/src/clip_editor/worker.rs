@@ -57,6 +57,7 @@ impl Drop for ProcessGroup {
     fn drop(&mut self) {
         // The child is started in its own process group. Also stop descendants
         // on normal exit, cancellation, or a lost lease.
+        // SAFETY: kill only sends a signal; no memory is involved.
         unsafe {
             libc::kill(-self.0, libc::SIGKILL);
         }
@@ -143,6 +144,7 @@ pub(super) fn apply_resource_limits() -> std::io::Result<()> {
             rlim_cur: value,
             rlim_max: value,
         };
+        // SAFETY: `limit` is valid for the call, which only reads it.
         if unsafe { libc::setrlimit(resource, &limit) } != 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -162,6 +164,7 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
             "Expected job id and attempt token".into(),
         ));
     }
+    // SAFETY: both only read this process's ids and cannot fail.
     if unsafe { libc::getpgrp() != libc::getpid() } {
         return Err(AppError::BadRequest(
             "Composition workers must run in their own process group".into(),
@@ -172,12 +175,16 @@ pub async fn run_compose_worker_command(arguments: &[String]) -> Result<(), AppE
     apply_resource_limits()?;
     // This thread still runs if a DSP blocking task stalls the async executor.
     // It also prevents descendants surviving an abruptly terminated supervisor.
+    // SAFETY: getppid only reads this process's parent id and cannot fail.
     let parent = unsafe { libc::getppid() };
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
         loop {
             std::thread::sleep(Duration::from_secs(1));
+            // SAFETY: getppid only reads this process's parent id and cannot
+            // fail.
             if started.elapsed() > ATTEMPT_TIMEOUT || unsafe { libc::getppid() } != parent {
+                // SAFETY: kill only sends a signal; no memory is involved.
                 unsafe {
                     libc::kill(0, libc::SIGKILL);
                 }
@@ -543,6 +550,8 @@ mod tests {
         command
             .arg(temp.path().join("render.ogg"))
             .env(MALLOC_ARENA_MAX.0, MALLOC_ARENA_MAX.1);
+        // SAFETY: between fork and exec, `apply_resource_limits` only makes
+        // setrlimit system calls and allocates nothing.
         unsafe {
             command.as_std_mut().pre_exec(apply_resource_limits);
         }
