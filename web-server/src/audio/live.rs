@@ -507,9 +507,7 @@ pub async fn live_segment(
     let key = RecordingKey::new(guild_id, channel_id, year, month, stem);
     mark_cache_access(&key.live_dir(&recording_path())).await;
     let path = key.live_segment_path(&recording_path(), &seg);
-    let f = NamedFile::open_async(&path)
-        .await
-        .map_err(|_| AppError::FileNotFound)?;
+    let f = NamedFile::open(&path).map_err(|_| AppError::FileNotFound)?;
     let mut resp = f.into_response(&req);
     let cache = if seg.starts_with("seg_") {
         "public, max-age=31536000, immutable"

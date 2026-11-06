@@ -557,7 +557,7 @@ pub async fn get_session_channel_mix_media(
         return Err(AppError::FileNotFound);
     }
     mark_cache_access(&plan.cache_dir).await;
-    let file = NamedFile::open_async(cache_file).await.map_err(|error| {
+    let file = NamedFile::open(cache_file).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::FileNotFound
         } else {

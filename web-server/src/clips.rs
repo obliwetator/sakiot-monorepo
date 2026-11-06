@@ -114,7 +114,7 @@ pub async fn get_clip(
     let saved_file_name = row.saved_file_name.ok_or(AppError::ClipNotFound)?;
     let full_path = crate::media_archive::clip_local_path(&saved_file_name)?;
 
-    let file = match NamedFile::open_async(&full_path).await {
+    let file = match NamedFile::open(&full_path) {
         Ok(file) => file,
         Err(_) => {
             return media

@@ -380,9 +380,7 @@ pub async fn get_media_job_result(
         return Err(AppError::FileNotFound);
     }
     let result_path = row.result_path.ok_or(AppError::FileNotFound)?;
-    let file = NamedFile::open_async(Path::new(&result_path))
-        .await
-        .map_err(AppError::IoError)?;
+    let file = NamedFile::open(Path::new(&result_path)).map_err(AppError::IoError)?;
     Ok(file
         .set_content_disposition(actix_web::http::header::ContentDisposition {
             disposition: actix_web::http::header::DispositionType::Attachment,

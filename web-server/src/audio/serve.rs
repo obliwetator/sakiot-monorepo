@@ -110,7 +110,7 @@ pub async fn get_audio(
         .recording_dir(&root)
         .join(leaf);
 
-    if let Ok(f) = NamedFile::open_async(&path).await {
+    if let Ok(f) = NamedFile::open(&path) {
         return Ok(f.into_response(&req));
     }
     if query_param.wants_silence_free() {
@@ -206,7 +206,7 @@ pub async fn download_audio(
         path.display(),
         is_silence
     );
-    if let Ok(file) = actix_files::NamedFile::open_async(&path).await {
+    if let Ok(file) = actix_files::NamedFile::open(&path) {
         return Ok(file
             .use_last_modified(true)
             .set_content_disposition(ContentDisposition {

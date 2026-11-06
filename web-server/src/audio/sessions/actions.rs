@@ -165,7 +165,7 @@ pub async fn get_session_silence_free(
     } else {
         actix_web::http::header::DispositionType::Inline
     };
-    let file = NamedFile::open_async(output).await.map_err(|error| {
+    let file = NamedFile::open(output).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::FileNotFound
         } else {

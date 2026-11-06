@@ -32,15 +32,25 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "pinned by serenity 0.12.5; only Discord's gateway certificate is validated" },
     { id = "RUSTSEC-2026-0099", reason = "pinned by serenity 0.12.5; only Discord's gateway certificate is validated" },
     { id = "RUSTSEC-2026-0104", reason = "pinned by serenity 0.12.5; no CRLs are parsed" },
-    # libcrux: davey 0.1.4 (the latest; Discord's voice end-to-end
-    # encryption, used by songbird) pins openmls_rust_crypto 0.5, which pins
-    # hpke-rs 0.6 and libcrux-sha3 0.0.8. Fixed in libcrux-sha3 0.0.10.
+    { id = "RUSTSEC-2026-0382", reason = "pinned by serenity 0.12.5; only Discord's gateway certificate is validated" },
+    # rustls 0.22: the same pin through tokio-tungstenite 0.21.
+    { id = "RUSTSEC-2026-0346", reason = "pinned by serenity 0.12.5; only a custom ClientSessionStore logs these values, and none exists" },
+    { id = "RUSTSEC-2026-0349", reason = "pinned by serenity 0.12.5; rustls 0.22 has no post-quantum key exchange to lose" },
+    # libcrux: davey 0.1 (Discord's voice end-to-end encryption; songbird
+    # 0.6.1, the latest, requires this series, and 0.1.5 changes nothing here)
+    # pins openmls_rust_crypto 0.5, which pins hpke-rs 0.6 and libcrux-sha3
+    # 0.0.8. Fixed in libcrux-sha3 0.0.10.
     { id = "RUSTSEC-2026-0207", reason = "pinned by davey 0.1.4 via openmls_rust_crypto 0.5 and hpke-rs 0.6" },
     { id = "RUSTSEC-2026-0208", reason = "pinned by davey 0.1.4 via openmls_rust_crypto 0.5 and hpke-rs 0.6" },
     { id = "RUSTSEC-2026-0212", reason = "affects aarch64 only; the VPS is x86_64; pinned by davey 0.1.4" },
+    # crypto-bigint 0.5: timing side channels, fixed only in 0.7. elliptic-curve
+    # 0.13 pins it, reached from davey through openmls and hpke-rs. jsonwebtoken
+    # also compiles it, but sessions use HS256 only (see the rsa entry above).
+    { id = "RUSTSEC-2026-0387", reason = "pinned by davey 0.1.4 via elliptic-curve 0.13; a timing leak needs precise measurement of the bot's voice keys" },
     # Unmaintained, no known vulnerability.
     { id = "RUSTSEC-2024-0388", reason = "derivative is a derive macro used by songbird 0.6.1, the latest" },
-    { id = "RUSTSEC-2024-0384", reason = "instant comes from openmls via davey 0.1.4, the latest" },
+    { id = "RUSTSEC-2024-0384", reason = "instant comes from openmls via davey 0.1.4" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils comes from the AWS SDK and openmls; 0.1.1 is its final release" },
 ]
 
 [licenses]

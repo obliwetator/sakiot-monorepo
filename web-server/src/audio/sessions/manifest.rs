@@ -87,7 +87,7 @@ pub async fn get_session_segment(
     require_session_access(&pool, session_id, token.viewer()).await?;
     let fragment = load_fragment(&pool, session_id, audio_file_id).await?;
     let path = fragment_path(&fragment);
-    if let Ok(file) = NamedFile::open_async(path).await {
+    if let Ok(file) = NamedFile::open(path) {
         return Ok(file.into_response(&req));
     }
     media
@@ -187,9 +187,7 @@ pub async fn session_live_segment(
     let key = fragment_key(&fragment);
     super::super::live::mark_cache_access(&key.live_dir(&recording_path())).await;
     let path = key.live_segment_path(&recording_path(), &segment);
-    let file = NamedFile::open_async(path)
-        .await
-        .map_err(|_| AppError::FileNotFound)?;
+    let file = NamedFile::open(path).map_err(|_| AppError::FileNotFound)?;
     let mut response = file.into_response(&req);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
