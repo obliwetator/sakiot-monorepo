@@ -48,17 +48,20 @@ survives in them (see
 holds the whole database, so the rule covers every guild at once.
 
 Set it in the Backblaze web console, as a custom lifecycle rule with a blank
-file name prefix: hide files 365 days after upload, and delete them 1 day after
-hiding. A lifecycle rule is a bucket setting, which takes `writeBuckets`, and B2
+file name prefix: hide files 30 days after upload, and delete them 1 day after
+hiding. Only ever on this bucket: on a media bucket, it would delete recordings
+the database still lists. A lifecycle rule is a bucket setting, which takes `writeBuckets`, and B2
 does not allow that on a key restricted to a bucket. So no key on the server can
 change it, and a stolen one cannot shorten the history.
 
-B2 applies rules once a day, so a dump is gone a little over a year after its
-upload. The first run removes every dump already past that age, for good.
+B2 applies rules once a day, so a dump is gone a little over 30 days after its
+upload, which makes that the oldest restore point. The first run removes every
+dump already past that age, for good.
 
-Keep the hiding age above every local retention in `backup.sh`. rclone does not
-list a hidden dump, so `rclone copy` would upload a local copy that outlived it
-again, for another full term.
+Keep the hiding age above every local retention in `backup.sh`, and lower local
+retention first when shortening it. rclone does not list a hidden dump, so
+`rclone copy` would upload a local copy that outlived it again, for another full
+term.
 
 ## Scripts
 
@@ -76,7 +79,8 @@ fails fast when a required variable is unset.
 4. `rclone copy`s every completed dump. An upload or checksum failure fails the
    run. The script never synchronizes the remote or deletes from it.
 5. Prunes local dumps past their label's retention (hourly 7 days, nightly and
-   pre-migrate 90).
+   pre-migrate 25), which `HOURLY_RETENTION_DAYS`, `NIGHTLY_RETENTION_DAYS` and
+   `PREMIGRATE_RETENTION_DAYS` override.
 6. Pings `HEALTHCHECK_URL` on success, if set (a dead-man switch).
 
 Dumps are `chmod 600` and `BACKUP_DIR` is `chmod 700`.
