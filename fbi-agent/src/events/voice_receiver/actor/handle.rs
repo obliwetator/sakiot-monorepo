@@ -14,7 +14,13 @@ use tracing::warn;
 use super::{RecorderActor, RecorderEnv};
 use crate::events::voice_receiver::recordings::{RecorderStats, Recordings};
 
-const COMMAND_CAPACITY: usize = 256;
+/// Commands waiting for the actor, nearly all of them voice ticks. Its
+/// database calls run on its own loop, so a stalled one holds up every tick,
+/// and a tick that does not fit is lost audio. This holds about 41 s of ticks,
+/// longer than a call can wait for a connection (`ACQUIRE_TIMEOUT`). Waiting
+/// ticks cost a few hundred bytes per speaker, and are written only after the
+/// stalled check has answered, so a stall never records against a stale policy.
+pub(super) const COMMAND_CAPACITY: usize = 2048;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]

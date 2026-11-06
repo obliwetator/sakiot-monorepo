@@ -7,11 +7,16 @@
 //! costs the request that triggers it a TLS and authentication round trip.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Pool, Postgres};
+
+/// How long a query waits for a free connection before it fails. The
+/// recorder's command queue is sized to outlast this.
+pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn opened() -> &'static Counter<u64> {
     static OPENED: OnceLock<Counter<u64>> = OnceLock::new();
@@ -25,12 +30,14 @@ fn opened() -> &'static Counter<u64> {
 
 /// Pool options that count every connection the pool opens.
 pub fn pool_options() -> PgPoolOptions {
-    PgPoolOptions::new().after_connect(|_connection, _metadata| {
-        Box::pin(async {
-            opened().add(1, &[]);
-            Ok(())
+    PgPoolOptions::new()
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .after_connect(|_connection, _metadata| {
+            Box::pin(async {
+                opened().add(1, &[]);
+                Ok(())
+            })
         })
-    })
 }
 
 /// Reports `pool`'s open and idle connections and its limit on every export.

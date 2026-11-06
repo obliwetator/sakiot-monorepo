@@ -18,7 +18,9 @@ use serenity::{
     prelude::{RwLock, TypeMap},
 };
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use tokio::sync::{mpsc, watch};
 
+use super::handle::COMMAND_CAPACITY;
 use super::{RecorderActor, RecorderCommand, RecorderEnv, RecorderHandle};
 use crate::events::ogg_opus_writer::OggOpusWriter;
 use crate::events::recording_writer::RecordingWriter;
@@ -782,6 +784,126 @@ async fn peaks_stay_in_step_with_the_audio_through_packets_and_silence() {
     );
     assert_eq!(audio_packet_count(&audio), 6);
     assert_eq!(metrics.waveform_peaks_failures.load(Ordering::Relaxed), 0);
+}
+
+/// A pool of one connection, which a test can hold to stall the actor while
+/// its own queries go through `pool`.
+async fn one_connection_pool(pool: &PgPool) -> PgPool {
+    PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap()
+}
+
+/// An actor running its real loop, with ticks of audio queued for it.
+struct RunningActor {
+    tx: mpsc::Sender<RecorderCommand>,
+    shutdown_tx: watch::Sender<Option<i64>>,
+    terminated_rx: watch::Receiver<bool>,
+}
+
+impl RunningActor {
+    /// Runs `actor` with `ticks` of `ssrc`'s audio queued.
+    fn start(actor: RecorderActor, ssrc: u32, ticks: usize) -> Self {
+        let (tx, rx) = mpsc::channel(COMMAND_CAPACITY);
+        let (shutdown_tx, shutdown_rx) = watch::channel(None);
+        let (terminated_tx, terminated_rx) = watch::channel(false);
+        tokio::spawn(actor.run(rx, shutdown_rx, terminated_tx));
+        let at_ms = chrono::Utc::now().timestamp_millis();
+        for tick in 0..ticks {
+            tx.try_send(RecorderCommand::VoiceTick {
+                at_ms: at_ms + i64::try_from(tick).unwrap() * 20,
+                packets: vec![super::VoicePacket {
+                    ssrc,
+                    opus: vec![1, 2, 3],
+                    peak: sakiot_peaks::FramePeak::SILENT,
+                }],
+                silence_ticks: 0,
+            })
+            .expect("the queue holds every tick of the stall");
+        }
+        Self {
+            tx,
+            shutdown_tx,
+            terminated_rx,
+        }
+    }
+
+    /// Lets the actor work through the queue, then stops it, which closes its
+    /// files.
+    async fn finish(mut self) {
+        wait_until(|| self.tx.capacity() == COMMAND_CAPACITY).await;
+        self.shutdown_tx
+            .send_replace(Some(chrono::Utc::now().timestamp_millis()));
+        self.terminated_rx.wait_for(|done| *done).await.unwrap();
+    }
+}
+
+/// A stalled database holds up the actor, not the audio: the ticks wait in
+/// the queue behind the stalled call, however long a connection can take, and
+/// are all written once it answers.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_stalled_database_delays_audio_without_losing_any(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 17;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    const TICK_MS: u128 = 20;
+    let ticks = usize::try_from(crate::metrics::db_pool::ACQUIRE_TIMEOUT.as_millis() / TICK_MS)
+        .expect("a tick count fits usize");
+    let dir = tempfile::tempdir().unwrap();
+    let (audio, peaks) = (dir.path().join("a.ogg"), dir.path().join("a.peaks"));
+    let stalled = one_connection_pool(&pool).await;
+    let held = stalled.acquire().await.unwrap();
+    let mut actor = detached_actor(
+        GUILD,
+        Arc::new(crate::BotMetrics::default()),
+        stalled.clone(),
+    );
+    actor
+        .recordings
+        .insert_active(USER, SSRC, recording_writing_to(&audio, &peaks, USER, SSRC));
+
+    let running = RunningActor::start(actor, SSRC, ticks);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(
+        running.tx.capacity(),
+        COMMAND_CAPACITY - (ticks - 1),
+        "the actor must be stalled on its first tick, with the rest still queued"
+    );
+    drop(held);
+    running.finish().await;
+
+    assert_eq!(audio_packet_count(&audio), ticks);
+}
+
+/// The ticks a stall queues wait behind the policy check, so an opt-out made
+/// meanwhile reaches none of them: the web server can write it while the bot's
+/// own connections are stuck.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn opting_out_during_a_stall_keeps_the_queued_audio_off_disk(pool: PgPool) {
+    const GUILD: u64 = GUILD_BASE + 18;
+    const USER: u64 = 42;
+    const SSRC: u32 = 7;
+    let root = tempfile::tempdir().unwrap();
+    let stalled = one_connection_pool(&pool).await;
+    let mut actor = detached_actor(
+        GUILD,
+        Arc::new(crate::BotMetrics::default()),
+        stalled.clone(),
+    );
+    let handle = open_tracked_recording(&pool, &mut actor, GUILD, USER, SSRC, root.path()).await;
+    let held = stalled.acquire().await.unwrap();
+
+    let running = RunningActor::start(actor, SSRC, 100);
+    crate::database::opt_outs::set_opted_out(&pool, GUILD as i64, USER as i64, true)
+        .await
+        .unwrap();
+    drop(held);
+    running.finish().await;
+
+    let audio = format!("{}.ogg", handle.path);
+    assert_eq!(audio_packet_count(std::path::Path::new(&audio)), 0);
 }
 
 /// A peaks file that fails costs the waveform, never the recording.
