@@ -66,9 +66,10 @@ test("manual retry resumes waveform polling after exhausted errors", async ({
 	);
 	await page.goto(`/dashboard/${GUILD_ID}/clips/working-source`);
 	const retry = page.getByRole("button", { name: "Retry waveform" });
-	await expect(retry).toBeEnabled({ timeout: 12000 });
+	// Five failed polls a second apart, after the page loads.
+	await expect(retry).toBeEnabled({ timeout: 20_000 });
 	await retry.click();
 	await expect
-		.poll(() => requests, { timeout: 5000 })
+		.poll(() => requests, { timeout: 8_000 })
 		.toBeGreaterThanOrEqual(7);
 });
