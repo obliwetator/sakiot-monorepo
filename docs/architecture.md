@@ -557,6 +557,9 @@ Recordings age out of local disk into Backblaze B2:
   unless something else still hides a clip, the job is deleted and
   `recording_restorations` keeps its audit. A removal its speaker is erasing
   stays removed.
+- Retention hides a finalized session, with its clips, a period after it ends.
+  The bot's operators set that period per guild (`guild_limits.retention_days`,
+  1–3650 days) on their dashboard, and it is 365 days until they do.
 - Members keep recordings past retention (`keeping.rs`, `kept_recordings`).
   The bot's operators (`operators`, managed on the server with
   `web_server operators list|add|remove`, see

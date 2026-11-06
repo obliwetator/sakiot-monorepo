@@ -71,7 +71,8 @@ pub(crate) async fn load_lifecycle(
                   ARRAY(SELECT DISTINCT channel_id
                           FROM audio_files
                          WHERE recording_session_id = rs.id) AS "channels!",
-                  COALESCE(rs.ended_at < now() - p.retention_days * interval '1 day', FALSE)
+                  COALESCE(rs.ended_at < now()
+                               - COALESCE(l.retention_days, $3) * interval '1 day', FALSE)
                       AS "past_retention!",
                   j.id AS "job_id?",
                   j.reason AS "reason?",
@@ -81,12 +82,13 @@ pub(crate) async fn load_lifecycle(
                            WHERE e.recording_session_id = rs.id
                              AND e.state <> 'cancelled') AS "erasing!"
              FROM recording_sessions rs
-             LEFT JOIN guild_recording_policy p ON p.guild_id = rs.guild_id
+             LEFT JOIN guild_limits l ON l.guild_id = rs.guild_id
              LEFT JOIN recording_deletion_jobs j ON j.recording_session_id = rs.id
             WHERE rs.guild_id = $1 AND rs.id = $2
               FOR UPDATE OF rs"#,
         guild_id,
-        session_id
+        session_id,
+        crate::operators::DEFAULT_RETENTION_DAYS
     )
     .fetch_optional(&mut *tx)
     .await?

@@ -81,7 +81,7 @@ struct Usage {
     kept: i64,
     /// How many the member keeps.
     used: i64,
-    retention_days: Option<i32>,
+    retention_days: i32,
 }
 
 async fn usage<'e>(
@@ -99,11 +99,11 @@ async fn usage<'e>(
                   (SELECT count(*)
                      FROM kept_recordings
                     WHERE guild_id = $1 AND user_id = $2) AS "used!",
-                  (SELECT retention_days
-                     FROM guild_recording_policy
-                    WHERE guild_id = $1) AS retention_days"#,
+                  COALESCE((SELECT retention_days FROM guild_limits WHERE guild_id = $1), $3)
+                      AS "retention_days!""#,
         guild_id,
-        user_id
+        user_id,
+        crate::operators::DEFAULT_RETENTION_DAYS
     )
     .fetch_one(executor)
     .await?)
@@ -121,9 +121,8 @@ pub struct Keeping {
     pub allowance: Option<i32>,
     /// How many the viewer keeps.
     pub used: i64,
-    /// After how many days retention removes a recording; absent when it
-    /// never does.
-    pub retention_days: Option<i32>,
+    /// After how many days retention removes a recording.
+    pub retention_days: i32,
     /// The kept recordings the viewer may hear, newest first, and the
     /// viewer's own keeps they may no longer hear (`audible: false`).
     pub recordings: Vec<KeptRecording>,
@@ -563,7 +562,8 @@ pub async fn get_removed_recordings(
                   (EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint AS "removed_at_ms!",
                   j.reason,
                   j.requested_by,
-                  COALESCE(rs.ended_at < now() - p.retention_days * interval '1 day', FALSE)
+                  COALESCE(rs.ended_at < now()
+                               - COALESCE(l.retention_days, $5) * interval '1 day', FALSE)
                       AS "past_retention!",
                   (SELECT COALESCE(nn.nickname, un.global_name, un.username)
                      FROM user_names un
@@ -574,7 +574,7 @@ pub async fn get_removed_recordings(
                     WHERE c.channel_id = rs.starting_channel_id) AS channel_name
              FROM recording_deletion_jobs j
              JOIN recording_sessions rs ON rs.id = j.recording_session_id
-             LEFT JOIN guild_recording_policy p ON p.guild_id = rs.guild_id
+             LEFT JOIN guild_limits l ON l.guild_id = rs.guild_id
             WHERE j.guild_id = $1
               AND j.mode = 'soft' AND j.state = 'soft_deleted'
               AND (j.reason = 'retention' OR ($2 AND j.reason = 'manager'))
@@ -588,7 +588,8 @@ pub async fn get_removed_recordings(
         guild_id,
         manager,
         before_ms,
-        before_id
+        before_id,
+        crate::operators::DEFAULT_RETENTION_DAYS
     )
     .fetch_all(pool.get_ref())
     .await?;

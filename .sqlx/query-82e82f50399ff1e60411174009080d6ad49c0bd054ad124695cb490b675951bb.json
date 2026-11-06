@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO guild_limits (guild_id, retention_days, updated_by) VALUES ($1, 30, 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "82e82f50399ff1e60411174009080d6ad49c0bd054ad124695cb490b675951bb"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25",
+  "query": "SELECT rs.guild_id,rs.id FROM recording_sessions rs LEFT JOIN guild_limits l ON l.guild_id=rs.guild_id WHERE rs.state='finalized' AND rs.ended_at < now() - (COALESCE(l.retention_days,$1) * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,14 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int4"
+      ]
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "2695cda033f7690859cac89b0ac1095db18cadb827c06581dfedeae60b27e070"
+  "hash": "f6aa7a09fc26bf01bb0e7312a80702611dba1ed47dc1d60663f5dc4dc00fcd90"
 }

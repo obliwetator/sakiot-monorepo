@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT rs.id,\n                  rs.user_id,\n                  rs.starting_channel_id,\n                  ARRAY(SELECT DISTINCT channel_id\n                          FROM audio_files\n                         WHERE recording_session_id = rs.id) AS \"channels!\",\n                  (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS \"started_at_ms!\",\n                  (EXTRACT(EPOCH FROM rs.ended_at) * 1000)::bigint AS ended_at_ms,\n                  (EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint AS \"removed_at_ms!\",\n                  j.reason,\n                  j.requested_by,\n                  COALESCE(rs.ended_at < now() - p.retention_days * interval '1 day', FALSE)\n                      AS \"past_retention!\",\n                  (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                     FROM user_names un\n                     LEFT JOIN user_nicknames nn\n                       ON nn.user_id = un.user_id AND nn.guild_id = rs.guild_id\n                    WHERE un.user_id = rs.user_id) AS speaker_name,\n                  (SELECT c.name FROM channels c\n                    WHERE c.channel_id = rs.starting_channel_id) AS channel_name\n             FROM recording_deletion_jobs j\n             JOIN recording_sessions rs ON rs.id = j.recording_session_id\n             LEFT JOIN guild_recording_policy p ON p.guild_id = rs.guild_id\n            WHERE j.guild_id = $1\n              AND j.mode = 'soft' AND j.state = 'soft_deleted'\n              AND (j.reason = 'retention' OR ($2 AND j.reason = 'manager'))\n              AND NOT EXISTS (SELECT 1\n                                FROM recording_erasures e\n                               WHERE e.recording_session_id = rs.id\n                                 AND e.state <> 'cancelled')\n              AND ($3::bigint IS NULL\n                   OR ((EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint, rs.id) < ($3, $4))\n            ORDER BY \"removed_at_ms!\" DESC, rs.id DESC",
+  "query": "SELECT rs.id,\n                  rs.user_id,\n                  rs.starting_channel_id,\n                  ARRAY(SELECT DISTINCT channel_id\n                          FROM audio_files\n                         WHERE recording_session_id = rs.id) AS \"channels!\",\n                  (EXTRACT(EPOCH FROM rs.started_at) * 1000)::bigint AS \"started_at_ms!\",\n                  (EXTRACT(EPOCH FROM rs.ended_at) * 1000)::bigint AS ended_at_ms,\n                  (EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint AS \"removed_at_ms!\",\n                  j.reason,\n                  j.requested_by,\n                  COALESCE(rs.ended_at < now()\n                               - COALESCE(l.retention_days, $5) * interval '1 day', FALSE)\n                      AS \"past_retention!\",\n                  (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                     FROM user_names un\n                     LEFT JOIN user_nicknames nn\n                       ON nn.user_id = un.user_id AND nn.guild_id = rs.guild_id\n                    WHERE un.user_id = rs.user_id) AS speaker_name,\n                  (SELECT c.name FROM channels c\n                    WHERE c.channel_id = rs.starting_channel_id) AS channel_name\n             FROM recording_deletion_jobs j\n             JOIN recording_sessions rs ON rs.id = j.recording_session_id\n             LEFT JOIN guild_limits l ON l.guild_id = rs.guild_id\n            WHERE j.guild_id = $1\n              AND j.mode = 'soft' AND j.state = 'soft_deleted'\n              AND (j.reason = 'retention' OR ($2 AND j.reason = 'manager'))\n              AND NOT EXISTS (SELECT 1\n                                FROM recording_erasures e\n                               WHERE e.recording_session_id = rs.id\n                                 AND e.state <> 'cancelled')\n              AND ($3::bigint IS NULL\n                   OR ((EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint, rs.id) < ($3, $4))\n            ORDER BY \"removed_at_ms!\" DESC, rs.id DESC",
   "describe": {
     "columns": [
       {
@@ -106,7 +106,8 @@
         "Int8",
         "Bool",
         "Int8",
-        "Int8"
+        "Int8",
+        "Int4"
       ]
     },
     "nullable": [
@@ -124,5 +125,5 @@
       null
     ]
   },
-  "hash": "67edbb9b92565688d565ce9aaccf7eed858e4a35310e4887dbeaba526f16b3ac"
+  "hash": "aa43c6fadc3f45a7f3b18a849e453ab3dbc375c9e34b9149f6d8291124644e4c"
 }

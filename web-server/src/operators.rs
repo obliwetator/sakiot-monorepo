@@ -1,7 +1,8 @@
 //! The bot's operators: the people who run this Sakiot deployment. They are
 //! listed in `operators`, which only `web_server operators` on the server
 //! changes, and they alone set what each guild is allowed
-//! (`guild_limits`), which nobody in a guild can change.
+//! (`guild_limits`), which nobody in a guild can change: how many recordings
+//! it may keep, and how long its recordings stay.
 
 use std::error::Error;
 
@@ -13,6 +14,12 @@ use crate::admin::keep_allowances::MAX_KEPT;
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 use crate::snowflake_serde::SnowflakeAsStr;
+
+/// After how many days retention removes a recording, until an operator sets
+/// otherwise for its guild.
+pub const DEFAULT_RETENTION_DAYS: i32 = 365;
+/// The longest an operator may set.
+const MAX_RETENTION_DAYS: i32 = 3650;
 
 pub async fn is_operator<'e>(
     executor: impl sqlx::PgExecutor<'e>,
@@ -52,9 +59,10 @@ pub struct OperatorGuild {
     pub kept_recordings_cap: i32,
     /// How many it keeps.
     pub kept_recordings: i64,
-    /// After how many days its retention removes a recording; absent when
-    /// it never does.
+    /// After how many days retention removes its recordings, when an
+    /// operator set that. Otherwise `default_retention_days` applies.
     pub retention_days: Option<i32>,
+    pub default_retention_days: i32,
 }
 
 #[utoipa::path(
@@ -95,12 +103,13 @@ pub async fn get_operator_guilds(
                   (SELECT count(DISTINCT recording_session_id)
                      FROM kept_recordings kr
                     WHERE kr.guild_id = k.guild_id) AS "kept_recordings!",
-                  p.retention_days
+                  l.retention_days,
+                  $1::int AS "default_retention_days!"
              FROM known k
              LEFT JOIN guilds g ON g.id = k.guild_id
              LEFT JOIN guild_limits l ON l.guild_id = k.guild_id
-             LEFT JOIN guild_recording_policy p ON p.guild_id = k.guild_id
-            ORDER BY 4 DESC, lower(COALESCE(g.name, '')), k.guild_id"#
+            ORDER BY 4 DESC, lower(COALESCE(g.name, '')), k.guild_id"#,
+        DEFAULT_RETENTION_DAYS
     )
     .fetch_all(pool.get_ref())
     .await?;
@@ -111,6 +120,9 @@ pub async fn get_operator_guilds(
 pub struct GuildLimits {
     /// How many recordings the guild may keep past retention.
     pub kept_recordings: i32,
+    /// After how many days retention removes its recordings. Null means the
+    /// default.
+    pub retention_days: Option<i32>,
 }
 
 #[utoipa::path(
@@ -140,13 +152,24 @@ pub async fn put_guild_limits(
             "A guild may keep between 0 and {MAX_KEPT} recordings."
         )));
     }
+    if body
+        .retention_days
+        .is_some_and(|days| !(1..=MAX_RETENTION_DAYS).contains(&days))
+    {
+        return Err(AppError::BadRequest(format!(
+            "Retention must be between 1 and {MAX_RETENTION_DAYS} days, or empty for the default."
+        )));
+    }
     sqlx::query!(
-        "INSERT INTO guild_limits (guild_id, kept_recordings, updated_by) VALUES ($1, $2, $3)
+        "INSERT INTO guild_limits (guild_id, kept_recordings, retention_days, updated_by)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (guild_id) DO UPDATE SET kept_recordings = EXCLUDED.kept_recordings,
+                                              retention_days = EXCLUDED.retention_days,
                                               updated_by = EXCLUDED.updated_by,
                                               updated_at = now()",
         guild_id,
         body.kept_recordings,
+        body.retention_days,
         user_id
     )
     .execute(pool.get_ref())

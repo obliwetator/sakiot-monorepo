@@ -1,21 +1,10 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT retention_days, excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
+  "query": "SELECT excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "retention_days",
-        "type_info": "Int4",
-        "origin": {
-          "Table": {
-            "table": "guild_recording_policy",
-            "name": "retention_days"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
         "name": "excluded_channel_ids",
         "type_info": "Int8Array",
         "origin": {
@@ -32,9 +21,8 @@
       ]
     },
     "nullable": [
-      true,
       false
     ]
   },
-  "hash": "4037995355d87609cc708d0be7c0c7bff51fb4319b40c234b29b50705d9e34ee"
+  "hash": "41b9b6a303629d10413ab4d4e7763bd74b5e28086742c3ab566886e7104dff23"
 }

@@ -20,7 +20,6 @@ const responses: Record<string, unknown> = {
 		is_default: true,
 	},
 	[`${adminRoot}/recording-policy`]: {
-		retention_days: null,
 		excluded_channel_ids: [],
 		channels: [],
 		is_default: true,
@@ -37,7 +36,7 @@ const responses: Record<string, unknown> = {
 		kept: 0,
 		allowance: null,
 		used: 0,
-		retention_days: null,
+		retention_days: 365,
 		recordings: [],
 	},
 	[`/api/guilds/${GUILD_ID}/removed-recordings`]: { recordings: [] },

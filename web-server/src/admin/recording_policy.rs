@@ -7,7 +7,6 @@ use crate::{errors::AppError, permissions::require_capability};
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct GuildRecordingPolicy {
-    pub retention_days: Option<i32>,
     pub excluded_channel_ids: Vec<String>,
     pub channels: Vec<VoiceChannel>,
     pub is_default: bool,
@@ -41,22 +40,10 @@ async fn voice_channels(
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct GuildRecordingPolicyBody {
-    /// Null disables automatic deletion. Existing recordings are untouched by default.
-    pub retention_days: Option<i32>,
     pub excluded_channel_ids: Vec<String>,
 }
 
-/// Shown to managers when retention is out of range.
-pub const RETENTION_RANGE_MESSAGE: &str =
-    "Retention must be between 1 and 3650 days, or empty to keep recordings indefinitely.";
-
 fn validate(body: &GuildRecordingPolicyBody) -> Result<Vec<i64>, AppError> {
-    if body
-        .retention_days
-        .is_some_and(|days| !(1..=3650).contains(&days))
-    {
-        return Err(AppError::BadRequest(RETENTION_RANGE_MESSAGE.into()));
-    }
     if body.excluded_channel_ids.len() > 100 {
         return Err(AppError::BadRequest(
             "No more than 100 channels may be excluded".into(),
@@ -97,17 +84,15 @@ pub async fn get_recording_policy(
     let guild_id = path.into_inner();
     require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     let channels = voice_channels(&pool, guild_id).await?;
-    let row = sqlx::query!(
-        "SELECT retention_days, excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
+    let row = sqlx::query_scalar!(
+        "SELECT excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
         guild_id
     )
     .fetch_optional(pool.get_ref())
     .await?;
     let policy = match row {
-        Some(row) => GuildRecordingPolicy {
-            retention_days: row.retention_days,
-            excluded_channel_ids: row
-                .excluded_channel_ids
+        Some(excluded_channel_ids) => GuildRecordingPolicy {
+            excluded_channel_ids: excluded_channel_ids
                 .into_iter()
                 .map(|id| id.to_string())
                 .collect(),
@@ -115,7 +100,6 @@ pub async fn get_recording_policy(
             is_default: false,
         },
         None => GuildRecordingPolicy {
-            retention_days: None,
             excluded_channel_ids: Vec::new(),
             channels,
             is_default: true,
@@ -132,7 +116,7 @@ pub async fn get_recording_policy(
     request_body = GuildRecordingPolicyBody,
     responses(
         (status = 200, description = "Updated recording policy", body = GuildRecordingPolicy),
-        (status = 400, description = "Invalid retention or channel policy", body = crate::errors::ApiError),
+        (status = 400, description = "Invalid channel policy", body = crate::errors::ApiError),
         (status = 403, description = "Manage Guild required", body = crate::errors::ApiError),
     ),
     security(("access_token" = []), ("csrf_token" = [])),
@@ -168,9 +152,8 @@ pub async fn put_recording_policy(
         ));
     }
     sqlx::query!(
-        "INSERT INTO guild_recording_policy (guild_id,retention_days,excluded_channel_ids,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (guild_id) DO UPDATE SET retention_days=EXCLUDED.retention_days,excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()",
+        "INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids,updated_by) VALUES ($1,$2,$3) ON CONFLICT (guild_id) DO UPDATE SET excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()",
         guild_id,
-        body.retention_days,
         &ids,
         user_id
     )
@@ -178,7 +161,6 @@ pub async fn put_recording_policy(
     .await?;
     tx.commit().await?;
     Ok(HttpResponse::Ok().json(GuildRecordingPolicy {
-        retention_days: body.retention_days,
         excluded_channel_ids: ids.into_iter().map(|id| id.to_string()).collect(),
         channels: voice_channels(&pool, guild_id).await?,
         is_default: false,
@@ -190,24 +172,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_invalid_retention_and_duplicate_channel_ids() {
+    fn rejects_duplicate_channel_ids() {
         assert!(
             validate(&GuildRecordingPolicyBody {
-                retention_days: Some(0),
-                excluded_channel_ids: vec![]
-            })
-            .is_err()
-        );
-        assert!(
-            validate(&GuildRecordingPolicyBody {
-                retention_days: None,
                 excluded_channel_ids: vec!["1".into(), "1".into()]
             })
             .is_err()
         );
         assert_eq!(
             validate(&GuildRecordingPolicyBody {
-                retention_days: Some(30),
                 excluded_channel_ids: vec!["1".into()]
             })
             .unwrap(),

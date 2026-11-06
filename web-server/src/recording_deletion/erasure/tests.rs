@@ -304,7 +304,7 @@ async fn undo_after_retention_would_have_expired_leaves_it_to_the_next_sweep(
 ) -> TestResult {
     let session = seed_session(&pool, SPEAKER, "expiring-recording").await?;
     let id = erase_session(&pool, GUILD, session, SPEAKER).await?;
-    sqlx::query("INSERT INTO guild_recording_policy (guild_id,retention_days) VALUES ($1,30)")
+    sqlx::query("INSERT INTO guild_limits (guild_id,retention_days,updated_by) VALUES ($1,30,1)")
         .bind(GUILD)
         .execute(&pool)
         .await?;

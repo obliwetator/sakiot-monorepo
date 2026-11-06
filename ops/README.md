@@ -267,9 +267,9 @@ and health-gated web cutover, and prunes old staging releases.
 
 ## Operators
 
-The bot's operators set each guild's limits, such as how many recordings it
-keeps past retention, on `/operator`, reached from their account menu. Being
-one is a row in `operators`, per database, which only the server's CLI
+The bot's operators set each guild's limits, how long its recordings stay and
+how many it keeps past that, on `/operator`, reached from their account menu.
+Being one is a row in `operators`, per database, which only the server's CLI
 changes. On staging, add the account dev login signs in as (`DEV_ACCOUNT_ID`);
 on production, your Discord user id:
 
@@ -279,7 +279,8 @@ sudo -u sakiot /bin/bash -lc "set -a; . /etc/sakiot/staging.env; set +a; \
 ```
 
 `operators list` and `operators remove <id>` work the same way. Until an
-operator sets a guild's cap, it is 0 and nothing can be kept there.
+operator sets them, a guild's cap is 0, so nothing can be kept there, and its
+retention is 365 days.
 
 ## Preview slots
 

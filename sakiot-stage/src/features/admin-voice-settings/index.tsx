@@ -45,38 +45,18 @@ export function GuildVoiceSettingsPage() {
 	} = useGetGuildRecordingPolicyQuery(guildId, { skip: !guildId });
 	const [saveRecordingPolicy, recordingSaveState] =
 		useSetGuildRecordingPolicyMutation();
-	const retentionDays = useDraftField(
-		recordingPolicy
-			? (recordingPolicy.retention_days?.toString() ?? "")
-			: undefined,
-		guildId,
-	);
 	const excludedChannels = useDraftField(
 		recordingPolicy?.excluded_channel_ids,
 		guildId,
 		sameIds,
 	);
-	const [recordingValidation, setRecordingValidation] = useState<string | null>(
-		null,
-	);
 
 	const handleRecordingPolicySave = async () => {
-		const retention = retentionDays.value ?? "";
-		const days = retention.trim() === "" ? null : Number(retention);
-		if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) {
-			setRecordingValidation(
-				"Retention must be blank or between 1 and 3650 days.",
-			);
-			return;
-		}
-		setRecordingValidation(null);
 		try {
 			await saveRecordingPolicy({
 				guild_id: guildId,
-				retention_days: days,
 				excluded_channel_ids: excludedChannels.value ?? [],
 			}).unwrap();
-			retentionDays.markSaved();
 			excludedChannels.markSaved();
 		} catch {
 			// recordingSaveState.isError renders the failure; drafts are kept.
@@ -211,13 +191,10 @@ export function GuildVoiceSettingsPage() {
 			</div>
 			<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-6">
 				<h6 className="font-medium tracking-[0.001em] text-xl mb-2">
-					Recording privacy and retention
+					Recording privacy
 				</h6>
 				<p className="leading-6 text-muted mb-4">
-					Retention is off by default. When enabled, finalized recordings older
-					than the chosen period are hidden from view, along with their clips.
-					Media and metadata are retained. Excluded voice channels will not
-					start new recordings.
+					Excluded voice channels will not start new recordings.
 				</p>
 				{recordingPolicyError && (
 					<LoadFailure
@@ -228,22 +205,6 @@ export function GuildVoiceSettingsPage() {
 				)}
 				{recordingPolicy && (
 					<div className="flex flex-col gap-4">
-						<TextField
-							label="Hide recordings after (days)"
-							type="number"
-							value={retentionDays.value ?? ""}
-							onChange={retentionDays.edit}
-							description="Leave blank to keep recordings indefinitely."
-							min={1}
-							max={3650}
-						/>
-						{retentionDays.savedUpdate && (
-							<SavedValueChanged
-								onTakeSaved={retentionDays.takeSaved}
-								onSaveMine={() => void handleRecordingPolicySave()}
-								isSaving={recordingSaveState.isLoading}
-							/>
-						)}
 						<fieldset className="space-y-2">
 							<legend className="font-medium">
 								Channels excluded from recording
@@ -286,11 +247,6 @@ export function GuildVoiceSettingsPage() {
 						>
 							Save recording policy
 						</Button>
-						{recordingValidation && (
-							<Notice tone="warning" announce="status">
-								{recordingValidation}
-							</Notice>
-						)}
 						{recordingSaveState.isSuccess && (
 							<Notice tone="success" announce="status">
 								Recording policy saved.

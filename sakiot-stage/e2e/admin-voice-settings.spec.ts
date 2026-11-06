@@ -19,10 +19,7 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 	page,
 	consoleAudit,
 }) => {
-	let savedPolicy: {
-		retention_days: number;
-		excluded_channel_ids: string[];
-	} | null = null;
+	let savedPolicy: { excluded_channel_ids: string[] } | null = null;
 	consoleAudit.allow(
 		/status of 500.*\/api\/admin\/guilds\/guild-123\/voice-settings/,
 	);
@@ -79,7 +76,6 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 			request.method() === "GET"
 		) {
 			await json({
-				retention_days: null,
 				excluded_channel_ids: [],
 				channels: [{ id: "channel-321", name: "Private voice" }],
 				is_default: true,
@@ -115,16 +111,13 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 	await expect(page.getByRole("alert")).toHaveText(
 		"The six-hour default was not restored. The server had a problem (HTTP 500). Try again later.",
 	);
-	await page
-		.getByRole("spinbutton", { name: "Hide recordings after (days)" })
-		.fill("30");
+	await expect(
+		page.getByRole("spinbutton", { name: /recordings after/ }),
+	).toHaveCount(0);
 	await page.getByRole("checkbox", { name: "Private voice" }).check();
 	await page.getByRole("button", { name: "Save recording policy" }).click();
 	await expect(page.getByText("Recording policy saved.")).toBeVisible();
-	expect(savedPolicy).toEqual({
-		retention_days: 30,
-		excluded_channel_ids: ["channel-321"],
-	});
+	expect(savedPolicy).toEqual({ excluded_channel_ids: ["channel-321"] });
 });
 
 test("server validation and permission failures are explained and input is kept", async ({
@@ -200,7 +193,6 @@ test("server validation and permission failures are explained and input is kept"
 		const policy = `/api/admin/guilds/${GUILD_ID}/recording-policy`;
 		if (path === policy && request.method() === "GET") {
 			await json({
-				retention_days: null,
 				excluded_channel_ids: [],
 				channels: [{ id: "channel-321", name: "Private voice" }],
 				is_default: true,
@@ -227,10 +219,6 @@ test("server validation and permission failures are explained and input is kept"
 		page.getByRole("spinbutton", { name: "Pending cap (seconds)" }),
 	).toHaveValue("600");
 
-	const retention = page.getByRole("spinbutton", {
-		name: "Hide recordings after (days)",
-	});
-	await retention.fill("30");
 	await page.getByRole("checkbox", { name: "Private voice" }).check();
 	const save = page.getByRole("button", { name: "Save recording policy" });
 	await save.click();
@@ -245,7 +233,6 @@ test("server validation and permission failures are explained and input is kept"
 	await expect(policyAlert).toHaveText(
 		"The recording policy was not saved. This requires the Manage Server permission.",
 	);
-	await expect(retention).toHaveValue("30");
 	await expect(
 		page.getByRole("checkbox", { name: "Private voice" }),
 	).toBeChecked();

@@ -128,7 +128,7 @@ async fn seed(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query!(
-        "INSERT INTO guild_recording_policy (guild_id, retention_days) VALUES ($1, 30)",
+        "INSERT INTO guild_limits (guild_id, retention_days, updated_by) VALUES ($1, 30, 1)",
         GUILD_ID
     )
     .execute(pool)
@@ -301,7 +301,7 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
         "This server may not keep recordings yet: the bot's operators decide how many."
     );
     let limits = format!("/api/operator/guilds/{GUILD_ID}/limits");
-    let cap = |count: i32| Some(json!({ "kept_recordings": count }));
+    let cap = |count: i32| Some(json!({ "kept_recordings": count, "retention_days": 30 }));
     for user_id in [OWNER_ID, MODERATOR_ID] {
         let (status, _) = call(Method::PUT, user_id, limits.clone(), cap(2)).await?;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -313,6 +313,11 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     assert!(is_operator(&pool, OPERATOR_ID).await?);
     let (status, _) = call(Method::PUT, OPERATOR_ID, limits.clone(), cap(-1)).await?;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    for days in [0, 3651] {
+        let limit = Some(json!({ "kept_recordings": 2, "retention_days": days }));
+        let (status, _) = call(Method::PUT, OPERATOR_ID, limits.clone(), limit).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
     let (status, _) = call(Method::PUT, OPERATOR_ID, limits.clone(), cap(2)).await?;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, guilds) = call(
@@ -326,6 +331,10 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     assert_eq!(guilds[0]["guild_id"], GUILD_ID.to_string());
     assert_eq!(guilds[0]["kept_recordings_cap"], 2);
     assert_eq!(guilds[0]["retention_days"], 30);
+    assert_eq!(
+        guilds[0]["default_retention_days"],
+        web_server::operators::DEFAULT_RETENTION_DAYS
+    );
     let (status, _) = call(Method::GET, MEMBER_ID, "/api/operator/guilds".into(), None).await?;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
@@ -481,9 +490,8 @@ async fn managers_restore_their_removals_within_retention_and_keep_older_ones(
 ) -> TestResult {
     seed(&pool).await?;
     sqlx::query!(
-        "INSERT INTO guild_limits (guild_id, kept_recordings, updated_by) VALUES ($1, 5, $2)",
-        GUILD_ID,
-        OPERATOR_ID
+        "UPDATE guild_limits SET kept_recordings = 5 WHERE guild_id = $1",
+        GUILD_ID
     )
     .execute(&pool)
     .await?;

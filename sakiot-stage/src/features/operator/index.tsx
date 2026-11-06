@@ -22,6 +22,8 @@ import { recordings } from "../kept-recordings/keeping";
 
 /** The server's `MAX_KEPT`. */
 const MAX_CAP = 100_000;
+/** The server's `MAX_RETENTION_DAYS`. */
+const MAX_RETENTION_DAYS = 3650;
 
 /**
  * What the bot's operators allow each guild, which nobody in a guild can
@@ -74,6 +76,7 @@ export function OperatorPage() {
 
 function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 	const [draft, setDraft] = useState<string | null>(null);
+	const [retentionDraft, setRetentionDraft] = useState<string | null>(null);
 	const [setLimits, state] = useSetGuildLimitsMutation();
 	const name = guild.name ?? `Server ${guild.guild_id}`;
 	const value = draft ?? String(guild.kept_recordings_cap);
@@ -83,7 +86,18 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 		Number.isInteger(parsed) &&
 		parsed >= 0 &&
 		parsed <= MAX_CAP;
-	const dirty = draft !== null && parsed !== guild.kept_recordings_cap;
+	const saved = guild.retention_days ?? null;
+	const retentionValue = retentionDraft ?? saved?.toString() ?? "";
+	const retention =
+		retentionValue.trim() === "" ? null : Number(retentionValue);
+	const retentionValid =
+		retention === null ||
+		(Number.isInteger(retention) &&
+			retention >= 1 &&
+			retention <= MAX_RETENTION_DAYS);
+	const dirty =
+		(draft !== null && parsed !== guild.kept_recordings_cap) ||
+		(retentionDraft !== null && retention !== saved);
 
 	const save = async () => {
 		state.reset();
@@ -91,8 +105,10 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 			await setLimits({
 				guild_id: guild.guild_id,
 				kept_recordings: parsed,
+				retention_days: retention,
 			}).unwrap();
 			setDraft(null);
+			setRetentionDraft(null);
 		} catch {
 			// The failure shows below; the draft stays.
 		}
@@ -113,10 +129,8 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 			</div>
 			<p className="text-xs text-muted">
 				Keeps {guild.kept_recordings} of {recordings(guild.kept_recordings_cap)}
-				.{" "}
-				{guild.retention_days
-					? `Retention removes recordings after ${guild.retention_days} days.`
-					: "Retention is off."}
+				. Retention removes recordings after{" "}
+				{saved ?? guild.default_retention_days} days.
 			</p>
 			<div className="flex flex-col gap-2 min-[600px]:flex-row min-[600px]:items-end">
 				<TextField
@@ -134,9 +148,24 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 					}
 					className="min-[600px]:w-64"
 				/>
+				<TextField
+					label="Remove recordings after (days)"
+					type="number"
+					min={1}
+					max={MAX_RETENTION_DAYS}
+					value={retentionValue}
+					onChange={setRetentionDraft}
+					error={
+						retentionValid
+							? undefined
+							: `A whole number from 1 to ${MAX_RETENTION_DAYS}, or blank.`
+					}
+					description={`Blank uses the default of ${guild.default_retention_days} days.`}
+					className="min-[600px]:w-64"
+				/>
 				<Button
 					variant="primary"
-					isDisabled={!dirty || !valid}
+					isDisabled={!dirty || !valid || !retentionValid}
 					isPending={state.isLoading}
 					onPress={() => void save()}
 					className="min-[600px]:mb-px"
@@ -151,7 +180,7 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 			)}
 			{state.isError && (
 				<Notice tone="error" announce="alert">
-					The limit was not saved. {problemFromError(state.error).message}
+					The limits were not saved. {problemFromError(state.error).message}
 				</Notice>
 			)}
 		</li>

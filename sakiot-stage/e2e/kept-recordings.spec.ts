@@ -81,7 +81,7 @@ interface State {
 		kept: number;
 		allowance: number | null;
 		used: number;
-		retention_days: number | null;
+		retention_days: number;
 		recordings: Kept[];
 	};
 	/** Each page of removed recordings, in order. */
@@ -521,9 +521,11 @@ test("a manager shares the server's cap out in allowances", async ({
 test("an operator sets how many recordings a server may keep", async ({
 	page,
 }) => {
-	const limits: unknown[] = [];
+	type Limits = { kept_recordings: number; retention_days: number | null };
+	const limits: Limits[] = [];
 	const reads = heldReads();
 	let cap = 0;
+	let retention: number | null = 30;
 	await page.route(`${API_ORIGIN}/**`, async (route) => {
 		const request = route.request();
 		const path = new URL(request.url()).pathname;
@@ -558,7 +560,8 @@ test("an operator sets how many recordings a server may keep", async ({
 					present: true,
 					kept_recordings_cap: cap,
 					kept_recordings: 4,
-					retention_days: 30,
+					retention_days: retention,
+					default_retention_days: 365,
 				},
 				{
 					guild_id: "guild-gone",
@@ -568,14 +571,16 @@ test("an operator sets how many recordings a server may keep", async ({
 					kept_recordings_cap: 0,
 					kept_recordings: 0,
 					retention_days: null,
+					default_retention_days: 365,
 				},
 			]);
 			return;
 		}
 		if (path === `/api/operator/guilds/${GUILD_ID}/limits`) {
-			const body = request.postDataJSON() as { kept_recordings: number };
+			const body = request.postDataJSON() as Limits;
 			limits.push(body);
 			cap = body.kept_recordings;
+			retention = body.retention_days;
 			await route.fulfill({ status: 204, headers: corsHeaders });
 			return;
 		}
@@ -614,8 +619,24 @@ test("an operator sets how many recordings a server may keep", async ({
 	await expect(field).toHaveValue("25");
 	await expect(guild.getByText(/^Keeps 4 of 25 recordings/)).toBeVisible();
 	reads.release();
-	expect(limits).toEqual([{ kept_recordings: 25 }]);
+	expect(limits).toEqual([{ kept_recordings: 25, retention_days: 30 }]);
 	await expectAccessibleMediaRoute(page);
+
+	// Retention takes a number of days, or blank for the default.
+	await expect(guild.getByText(/after 30 days\.$/)).toBeVisible();
+	const days = guild.getByRole("spinbutton", {
+		name: "Remove recordings after (days)",
+	});
+	await expect(days).toHaveValue("30");
+	await days.fill("0");
+	await expect(
+		guild.getByText("A whole number from 1 to 3650, or blank."),
+	).toBeVisible();
+	await expect(guild.getByRole("button", { name: "Save" })).toBeDisabled();
+	await days.fill("");
+	await guild.getByRole("button", { name: "Save" }).click();
+	await expect(guild.getByText(/after 365 days\.$/)).toBeVisible();
+	expect(limits.at(-1)).toEqual({ kept_recordings: 25, retention_days: null });
 
 	// Operators reach the page from their account menu.
 	await page.getByRole("button", { name: "Open user menu" }).click();

@@ -181,7 +181,7 @@ async fn deletion_tombstones_then_removes_sources_derivatives_and_audit_survives
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn retention_and_fencing_prevent_late_publication(pool: PgPool) -> TestResult {
     let (session_id, _) = seed_session(&pool, "retention-recording").await?;
-    sqlx::query("INSERT INTO guild_recording_policy (guild_id,retention_days) VALUES (1,30)")
+    sqlx::query("INSERT INTO guild_limits (guild_id,retention_days,updated_by) VALUES (1,30,1)")
         .execute(&pool)
         .await?;
     enqueue_expired(&pool).await?;
@@ -428,7 +428,7 @@ async fn legacy_deletion_errors_are_not_echoed(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn retention_passes_over_kept_sessions_to_the_rest(pool: PgPool) -> TestResult {
-    sqlx::query("INSERT INTO guild_recording_policy (guild_id,retention_days) VALUES (1,30)")
+    sqlx::query("INSERT INTO guild_limits (guild_id,retention_days,updated_by) VALUES (1,30,1)")
         .execute(&pool)
         .await?;
     let mut sessions = Vec::new();
@@ -450,5 +450,59 @@ async fn retention_passes_over_kept_sessions_to_the_rest(pool: PgPool) -> TestRe
     .fetch_all(&pool)
     .await?;
     assert_eq!(removed, [sessions[25]]);
+    Ok(())
+}
+
+/// A finalized session of `guild` that ended `days` ago.
+async fn ended_session(pool: &PgPool, guild: i64, days: i32) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, state, started_at, ended_at)
+         VALUES ($1, 100, 10, 'finalized',
+                 now() - ($2 + 1) * interval '1 day', now() - $2 * interval '1 day')
+         RETURNING id",
+    )
+    .bind(guild)
+    .bind(days)
+    .fetch_one(pool)
+    .await
+}
+
+/// Every guild gets the default until an operator sets otherwise, shorter or
+/// longer.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn retention_is_the_default_until_an_operator_sets_it(pool: PgPool) -> TestResult {
+    const UNSET: i64 = 1;
+    const SHORTER: i64 = 2;
+    const LONGER: i64 = 3;
+    sqlx::query(
+        "INSERT INTO guild_limits (guild_id,retention_days,updated_by)
+         VALUES ($1,30,1), ($2,3000,1)",
+    )
+    .bind(SHORTER)
+    .bind(LONGER)
+    .execute(&pool)
+    .await?;
+    let past_default = crate::operators::DEFAULT_RETENTION_DAYS + 1;
+    let within_default = crate::operators::DEFAULT_RETENTION_DAYS - 1;
+    let expired = [
+        ended_session(&pool, UNSET, past_default).await?,
+        ended_session(&pool, SHORTER, 31).await?,
+    ];
+    let kept = [
+        ended_session(&pool, UNSET, within_default).await?,
+        ended_session(&pool, SHORTER, 29).await?,
+        ended_session(&pool, LONGER, past_default).await?,
+    ];
+
+    enqueue_expired(&pool).await?;
+
+    let removed: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM recording_sessions WHERE deletion_requested_at IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(removed, expired);
+    assert!(kept.iter().all(|session| !removed.contains(session)));
     Ok(())
 }

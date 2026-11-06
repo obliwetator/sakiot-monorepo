@@ -186,7 +186,6 @@ async function mockApi(
 			method === "GET"
 		) {
 			await fulfillJson({
-				retention_days: null,
 				excluded_channel_ids: [],
 				channels: [],
 				is_default: true,

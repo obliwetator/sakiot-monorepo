@@ -37,7 +37,8 @@ pub async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
     // One small page per sweep. Retention only hides data; it never authorizes
     // permanent destruction, regardless of the permanent-delete feature flag.
     let rows = sqlx::query!(
-        "SELECT rs.guild_id,rs.id FROM recording_sessions rs JOIN guild_recording_policy p ON p.guild_id=rs.guild_id WHERE p.retention_days IS NOT NULL AND rs.state='finalized' AND rs.ended_at < now() - (p.retention_days * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25"
+        "SELECT rs.guild_id,rs.id FROM recording_sessions rs LEFT JOIN guild_limits l ON l.guild_id=rs.guild_id WHERE rs.state='finalized' AND rs.ended_at < now() - (COALESCE(l.retention_days,$1) * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25",
+        crate::operators::DEFAULT_RETENTION_DAYS
     )
     .fetch_all(pool)
     .await?;

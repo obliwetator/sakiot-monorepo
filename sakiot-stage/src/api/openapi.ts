@@ -1766,6 +1766,12 @@ export interface components {
 			 * @description How many recordings the guild may keep past retention.
 			 */
 			kept_recordings: number;
+			/**
+			 * Format: int32
+			 * @description After how many days retention removes its recordings. Null means the
+			 *     default.
+			 */
+			retention_days?: number | null;
 		};
 		GuildMember: {
 			is_bot: boolean;
@@ -1779,16 +1785,9 @@ export interface components {
 			channels: components["schemas"]["VoiceChannel"][];
 			excluded_channel_ids: string[];
 			is_default: boolean;
-			/** Format: int32 */
-			retention_days?: number | null;
 		};
 		GuildRecordingPolicyBody: {
 			excluded_channel_ids: string[];
-			/**
-			 * Format: int32
-			 * @description Null disables automatic deletion. Existing recordings are untouched by default.
-			 */
-			retention_days?: number | null;
 		};
 		GuildRole: {
 			/**
@@ -1916,10 +1915,9 @@ export interface components {
 			recordings: components["schemas"]["KeptRecording"][];
 			/**
 			 * Format: int32
-			 * @description After how many days retention removes a recording; absent when it
-			 *     never does.
+			 * @description After how many days retention removes a recording.
 			 */
-			retention_days?: number | null;
+			retention_days: number;
 			/**
 			 * Format: int64
 			 * @description How many the viewer keeps.
@@ -1983,6 +1981,8 @@ export interface components {
 			next_offset?: number | null;
 		};
 		OperatorGuild: {
+			/** Format: int32 */
+			default_retention_days: number;
 			/** @example 146638124288704513 */
 			guild_id: string;
 			icon?: string | null;
@@ -2001,8 +2001,8 @@ export interface components {
 			present: boolean;
 			/**
 			 * Format: int32
-			 * @description After how many days its retention removes a recording; absent when
-			 *     it never does.
+			 * @description After how many days retention removes its recordings, when an
+			 *     operator set that. Otherwise `default_retention_days` applies.
 			 */
 			retention_days?: number | null;
 		};
@@ -3343,7 +3343,7 @@ export interface operations {
 					"application/json": components["schemas"]["GuildRecordingPolicy"];
 				};
 			};
-			/** @description Invalid retention or channel policy */
+			/** @description Invalid channel policy */
 			400: {
 				headers: {
 					[name: string]: unknown;

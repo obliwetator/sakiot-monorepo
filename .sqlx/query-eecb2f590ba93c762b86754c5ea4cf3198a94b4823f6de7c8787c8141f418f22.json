@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE guild_limits SET kept_recordings = 5 WHERE guild_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eecb2f590ba93c762b86754c5ea4cf3198a94b4823f6de7c8787c8141f418f22"
+}

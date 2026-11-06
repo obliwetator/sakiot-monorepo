@@ -61,11 +61,13 @@ export function KeptRecordingsPage() {
 		<Page className="space-y-5">
 			<header className="space-y-1">
 				<PageTitle>Kept recordings</PageTitle>
-				<Text tone="muted">
-					{data?.retention_days
-						? `Retention removes recordings ${data.retention_days} days after they end. A kept recording stays, for everyone who may hear it, until nobody keeps it.`
-						: "Retention is off in this server: no recording is removed for its age. A kept recording stays if it is ever turned on."}
-				</Text>
+				{data && (
+					<Text tone="muted">
+						Retention removes recordings {data.retention_days} days after they
+						end. A kept recording stays, for everyone who may hear it, until
+						nobody keeps it.
+					</Text>
+				)}
 			</header>
 
 			{keeping.isLoading && <Text aria-live="polite">Loading…</Text>}

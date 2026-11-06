@@ -97,10 +97,11 @@ termination and recovery, against disposable databases and media roots.
 
 ## Recording lifecycle
 
-Guild managers set retention and excluded voice channels at
-`/api/admin/guilds/{guild_id}/recording-policy` (the Voice Settings page).
-Retention is 1–3650 days, or off, which is the default. Any member can opt out
-of being recorded in a server at
+Guild managers set excluded voice channels at
+`/api/admin/guilds/{guild_id}/recording-policy` (the Voice Settings page). The
+bot's operators set retention, at `/api/operator/guilds/{guild_id}/limits` (the
+operator page): 1–3650 days, or blank for the default of 365. Any member can opt
+out of being recorded in a server at
 `/api/users/current/guilds/{guild_id}/recording-opt-out`, the same table the
 bot's `/recording` command writes. Opting out keeps earlier recordings.
 

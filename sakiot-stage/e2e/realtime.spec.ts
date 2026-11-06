@@ -116,7 +116,7 @@ test("a settings refresh keeps the field being edited and updates the rest", asy
 	page,
 }) => {
 	let pendingCap = 21_600;
-	let retention: number | null = null;
+	let excluded: string[] = [];
 	await mockApi(page, async (path, route, json) => {
 		const method = route.request().method();
 		if (path === `/api/admin/guilds/${GUILD_ID}/voice-settings`) {
@@ -129,10 +129,9 @@ test("a settings refresh keeps the field being edited and updates the rest", asy
 		}
 		if (path === `/api/admin/guilds/${GUILD_ID}/recording-policy`) {
 			await json({
-				retention_days: retention,
-				excluded_channel_ids: [],
-				channels: [],
-				is_default: retention === null,
+				excluded_channel_ids: excluded,
+				channels: [{ id: "channel-321", name: "Private voice" }],
+				is_default: excluded.length === 0,
 			});
 			return method === "GET";
 		}
@@ -152,14 +151,14 @@ test("a settings refresh keeps the field being edited and updates the rest", asy
 
 	// Another admin saves both settings; the server pushes the change.
 	pendingCap = 7_200;
-	retention = 45;
+	excluded = ["channel-321"];
 	const ws = socket as unknown as WebSocketRoute;
 	ws.send(changed("voice_settings"));
 	ws.send(changed("recording_policy"));
 
 	await expect(
-		page.getByRole("spinbutton", { name: "Hide recordings after (days)" }),
-	).toHaveValue("45");
+		page.getByRole("checkbox", { name: "Private voice" }),
+	).toBeChecked();
 	await expect(cap).toHaveValue("3600");
 	await expect(
 		page.getByText("Someone else saved this while you were editing."),

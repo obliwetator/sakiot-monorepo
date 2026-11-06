@@ -764,14 +764,13 @@ export const apiSlice = createApi({
 			GuildRecordingPolicy,
 			{
 				guild_id: string;
-				retention_days: number | null;
 				excluded_channel_ids: string[];
 			}
 		>({
-			query: ({ guild_id, retention_days, excluded_channel_ids }) => ({
+			query: ({ guild_id, excluded_channel_ids }) => ({
 				url: apiUrl(API_ROUTES.guildRecordingPolicy, { guild_id }),
 				method: "PUT",
-				body: { retention_days, excluded_channel_ids },
+				body: { excluded_channel_ids },
 			}),
 			invalidatesTags: guildScoped("GuildRecordingPolicy"),
 		}),
@@ -1119,21 +1118,27 @@ export const apiSlice = createApi({
 		/** How many recordings a guild may keep: operators only. Cached as sent. */
 		setGuildLimits: builder.mutation<
 			void,
-			{ guild_id: string; kept_recordings: number }
+			{
+				guild_id: string;
+				kept_recordings: number;
+				retention_days: number | null;
+			}
 		>({
-			query: ({ guild_id, kept_recordings }) => ({
+			query: ({ guild_id, kept_recordings, retention_days }) => ({
 				url: apiUrl(API_ROUTES.guildLimits, { guild_id }),
 				method: "PUT",
-				body: { kept_recordings },
+				body: { kept_recordings, retention_days },
 			}),
-			onQueryStarted({ guild_id, kept_recordings }, api) {
+			onQueryStarted({ guild_id, kept_recordings, retention_days }, api) {
 				const patch = api.dispatch(
 					apiSlice.util.updateQueryData(
 						"getOperatorGuilds",
 						undefined,
 						(guilds) => {
 							const guild = guilds.find((g) => g.guild_id === guild_id);
-							if (guild) guild.kept_recordings_cap = kept_recordings;
+							if (!guild) return;
+							guild.kept_recordings_cap = kept_recordings;
+							guild.retention_days = retention_days;
 						},
 					),
 				);
