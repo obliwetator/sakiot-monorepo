@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// How long a recording stays hidden past retention before it is deleted for
+/// good, so members can keep it and a wrong limit can be put right.
+pub const RETENTION_GRACE_DAYS: i32 = 30;
+
 pub fn spawn_worker(
     pool: Pool<Postgres>,
     media: MediaArchive,
@@ -19,6 +23,13 @@ pub fn spawn_worker(
                     if let Err(error) = convert_due_erasures(&pool).await {
                         tracing::error!(?error, "erasure sweep failed");
                     }
+                    // Without the policy nothing purges, so a removal stays
+                    // restorable rather than waiting as a permanent job.
+                    if policy.allow_permanent
+                        && let Err(error) = purge_expired(&pool).await
+                    {
+                        tracing::error!(?error, "retention purge sweep failed");
+                    }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
@@ -34,8 +45,8 @@ pub fn spawn_worker(
 /// One retention sweep, which the worker runs every minute: hides finalized
 /// sessions older than their guild's retention period that nobody keeps.
 pub async fn enqueue_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
-    // One small page per sweep. Retention only hides data; it never authorizes
-    // permanent destruction, regardless of the permanent-delete feature flag.
+    // One small page per sweep. This only hides: `purge_expired` deletes,
+    // after the grace period.
     let rows = sqlx::query!(
         "SELECT rs.guild_id,rs.id FROM recording_sessions rs LEFT JOIN guild_limits l ON l.guild_id=rs.guild_id WHERE rs.state='finalized' AND rs.ended_at < now() - (COALESCE(l.retention_days,$1) * interval '1 day') AND rs.deletion_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM kept_recordings k WHERE k.recording_session_id=rs.id) ORDER BY rs.ended_at,rs.id LIMIT 25",
         crate::operators::DEFAULT_RETENTION_DAYS
@@ -81,6 +92,85 @@ async fn enqueue_expired_one(
     Ok(())
 }
 
+/// A removed session of `guild_id`.
+struct Expired {
+    guild_id: i64,
+    session_id: i64,
+}
+
+/// Removed sessions due for deletion, or just `session` if given and due. A
+/// session's period has run out by its guild's current retention, so raising
+/// that stops a purge, and it has been hidden for the whole grace period
+/// whatever the retention was when it was hidden. Nothing kept is due, nor
+/// anything being erased, which ends in a purge of its own or is undone.
+async fn due_for_purge(
+    executor: impl sqlx::PgExecutor<'_>,
+    session: Option<i64>,
+) -> Result<Vec<Expired>, sqlx::Error> {
+    sqlx::query_as!(
+        Expired,
+        r#"SELECT rs.guild_id, rs.id AS session_id
+             FROM recording_deletion_jobs j
+             JOIN recording_sessions rs ON rs.id = j.recording_session_id
+             LEFT JOIN guild_limits l ON l.guild_id = rs.guild_id
+            WHERE j.mode = 'soft'
+              AND j.state = 'soft_deleted'
+              AND j.created_at < now() - make_interval(days => $2)
+              AND rs.ended_at < now()
+                      - make_interval(days => COALESCE(l.retention_days, $1) + $2)
+              AND ($3::bigint IS NULL OR rs.id = $3)
+              AND NOT EXISTS (SELECT 1 FROM kept_recordings k
+                               WHERE k.recording_session_id = rs.id)
+              AND NOT EXISTS (SELECT 1 FROM recording_erasures e
+                               WHERE e.recording_session_id = rs.id
+                                 AND e.state <> 'cancelled')
+            ORDER BY rs.ended_at, rs.id
+            LIMIT 25"#,
+        crate::operators::DEFAULT_RETENTION_DAYS,
+        RETENTION_GRACE_DAYS,
+        session
+    )
+    .fetch_all(executor)
+    .await
+}
+
+/// Turns removals past retention into permanent deletion, once their grace
+/// period is over. Nobody asked for these, which is how the purge knows to
+/// leave the recording's clips.
+pub async fn purge_expired(pool: &Pool<Postgres>) -> Result<(), AppError> {
+    for expired in due_for_purge(pool, None).await? {
+        let (guild_id, session_id) = (expired.guild_id, expired.session_id);
+        if let Err(error) = purge_expired_one(pool, guild_id, session_id).await {
+            tracing::warn!(guild_id, session_id, ?error, "retention purge skipped");
+        }
+    }
+    Ok(())
+}
+
+/// Queues the purge, unless someone kept or restored the session since the
+/// sweep listed it, which takes the guild's lock too.
+pub(super) async fn purge_expired_one(
+    pool: &Pool<Postgres>,
+    guild_id: i64,
+    session_id: i64,
+) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+    lock_guild(&mut tx, guild_id).await?;
+    if !due_for_purge(&mut *tx, Some(session_id)).await?.is_empty() {
+        enqueue_in(
+            &mut tx,
+            guild_id,
+            session_id,
+            None,
+            "retention",
+            DeletionMode::Permanent,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// What a deletion job removes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Subject {
@@ -95,12 +185,16 @@ pub(super) struct Claimed {
     pub(super) subject: Subject,
     pub(super) guild_id: i64,
     pub(super) token: String,
+    /// Nobody asked for this purge: retention's grace period ran out.
+    pub(super) scheduled: bool,
+    /// The clips its removal hid.
+    pub(super) hidden_clip_ids: Vec<String>,
 }
 
 pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppError> {
     let token = uuid::Uuid::new_v4().to_string();
     let row = sqlx::query!(
-        "WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.clip_id,j.guild_id",
+        "WITH candidate AS (SELECT id FROM recording_deletion_jobs WHERE mode='permanent' AND attempts < $1 AND ((state='queued' AND retry_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY retry_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE recording_deletion_jobs j SET state='running',stage='checking',attempts=attempts+1,attempt_token=$2,lease_expires_at=now()+interval '5 minutes',updated_at=now() FROM candidate WHERE j.id=candidate.id RETURNING j.id,j.recording_session_id,j.clip_id,j.guild_id,j.permanent_requested_by,j.hidden_clip_ids",
         MAX_ATTEMPTS,
         token
     )
@@ -120,6 +214,8 @@ pub(super) async fn claim(pool: &Pool<Postgres>) -> Result<Option<Claimed>, AppE
         subject,
         guild_id: row.guild_id,
         token,
+        scheduled: row.permanent_requested_by.is_none(),
+        hidden_clip_ids: row.hidden_clip_ids.unwrap_or_default(),
     }))
 }
 

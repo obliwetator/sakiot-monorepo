@@ -1915,9 +1915,14 @@ export interface components {
 			recordings: components["schemas"]["KeptRecording"][];
 			/**
 			 * Format: int32
-			 * @description After how many days retention removes a recording.
+			 * @description After how many days retention hides a recording.
 			 */
 			retention_days: number;
+			/**
+			 * Format: int32
+			 * @description How many days after that it is deleted, unless someone keeps it.
+			 */
+			retention_grace_days: number;
 			/**
 			 * Format: int64
 			 * @description How many the viewer keeps.
@@ -2005,6 +2010,11 @@ export interface components {
 			 *     operator set that. Otherwise `default_retention_days` applies.
 			 */
 			retention_days?: number | null;
+			/**
+			 * Format: int32
+			 * @description How many days after retention hides a recording it is deleted.
+			 */
+			retention_grace_days: number;
 		};
 		/** @description One rule, as stored. */
 		PermissionRule: {

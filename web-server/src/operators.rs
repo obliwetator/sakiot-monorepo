@@ -63,6 +63,8 @@ pub struct OperatorGuild {
     /// operator set that. Otherwise `default_retention_days` applies.
     pub retention_days: Option<i32>,
     pub default_retention_days: i32,
+    /// How many days after retention hides a recording it is deleted.
+    pub retention_grace_days: i32,
 }
 
 #[utoipa::path(
@@ -104,12 +106,14 @@ pub async fn get_operator_guilds(
                      FROM kept_recordings kr
                     WHERE kr.guild_id = k.guild_id) AS "kept_recordings!",
                   l.retention_days,
-                  $1::int AS "default_retention_days!"
+                  $1::int AS "default_retention_days!",
+                  $2::int AS "retention_grace_days!"
              FROM known k
              LEFT JOIN guilds g ON g.id = k.guild_id
              LEFT JOIN guild_limits l ON l.guild_id = k.guild_id
             ORDER BY 4 DESC, lower(COALESCE(g.name, '')), k.guild_id"#,
-        DEFAULT_RETENTION_DAYS
+        DEFAULT_RETENTION_DAYS,
+        crate::recording_deletion::RETENTION_GRACE_DAYS
     )
     .fetch_all(pool.get_ref())
     .await?;

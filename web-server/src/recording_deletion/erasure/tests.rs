@@ -3,7 +3,7 @@ use std::time::Duration;
 use sqlx::PgPool;
 
 use super::*;
-use crate::recording_deletion::worker::{Subject, claim, enqueue_expired};
+use crate::recording_deletion::worker::{Subject, claim, enqueue_expired, purge_expired};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -578,5 +578,70 @@ async fn a_clip_already_purged_with_its_session_finishes_at_once(pool: PgPool) -
             .as_deref(),
         Some("ready")
     );
+    Ok(())
+}
+
+/// A recording retention removed, with a clip of it, which retention left
+/// alone.
+async fn seed_retention_removed(pool: &PgPool, file_name: &str) -> Result<i64, sqlx::Error> {
+    let session = seed_session(pool, SPEAKER, file_name).await?;
+    seed_session_clip(pool, "lasting-clip", session, SPEAKER).await?;
+    sqlx::query("INSERT INTO guild_limits (guild_id,retention_days,updated_by) VALUES ($1,5,1)")
+        .bind(GUILD)
+        .execute(pool)
+        .await?;
+    enqueue_expired(pool)
+        .await
+        .map_err(|_| sqlx::Error::RowNotFound)?;
+    Ok(session)
+}
+
+/// Clips outlive retention, not their speaker's erasure.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn erasing_a_recording_retention_removed_takes_its_clips(pool: PgPool) -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let roots = DataRoots::new(temp.path());
+    let session = seed_retention_removed(&pool, "erased-recording").await?;
+    assert!(hidden_clips(&pool).await?.is_empty());
+
+    let id = erase_session(&pool, GUILD, session, SPEAKER).await?;
+    assert_eq!(hidden_clips(&pool).await?, ["lasting-clip"]);
+
+    // Retention leaves it to the erasure, which the speaker may still undo.
+    sqlx::query("UPDATE recording_deletion_jobs SET created_at=now()-interval '31 days'")
+        .execute(&pool)
+        .await?;
+    purge_expired(&pool).await?;
+    assert!(claim(&pool).await?.is_none());
+
+    make_due(&pool, &id).await?;
+    convert_due_erasures(&pool).await?;
+    let job = claim(&pool).await?.unwrap();
+    assert!(!job.scheduled);
+    process_with_roots(&pool, &MediaArchive::disabled(), &job, &roots).await?;
+    let clips: i64 = sqlx::query_scalar("SELECT count(*) FROM clips")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(clips, 0);
+    Ok(())
+}
+
+/// Undoing puts the clips back, though retention keeps the recording hidden,
+/// and leaves its removal holding no clips to take with it.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn undoing_that_erasure_shows_the_clips_again(pool: PgPool) -> TestResult {
+    let session = seed_retention_removed(&pool, "undone-recording").await?;
+    let id = erase_session(&pool, GUILD, session, SPEAKER).await?;
+    undo(&pool, GUILD, &id, SPEAKER).await?;
+
+    assert!(hidden_clips(&pool).await?.is_empty());
+    assert!(removed(&pool, session).await?);
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT unnest(hidden_clip_ids) FROM recording_deletion_jobs WHERE recording_session_id=$1",
+    )
+    .bind(session)
+    .fetch_all(&pool)
+    .await?;
+    assert!(held.is_empty());
     Ok(())
 }

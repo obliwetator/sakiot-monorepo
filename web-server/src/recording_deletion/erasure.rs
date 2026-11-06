@@ -457,7 +457,9 @@ pub(super) async fn undo(
                                                         WHERE guild_id = $2
                                                           AND clip_id = ANY($3)
                                                           AND deleted_at IS NOT NULL)) clip_id)
-                      WHERE recording_session_id = $1 AND mode = 'soft'",
+                      WHERE recording_session_id = $1
+                        AND mode = 'soft'
+                        AND reason <> 'retention'",
                     session_id,
                     guild_id,
                     &erasure.hidden_clip_ids
@@ -498,22 +500,31 @@ pub(super) async fn restore_clips(
                           CASE WHEN jsonb_typeof(h.composition -> 'segments') = 'array'
                                THEN h.composition -> 'segments' ELSE '[]'::jsonb END
                       ) segment
+           ), hiding AS (
+               -- Retention's removal leaves clips alone, unless the session
+               -- is also being erased.
+               SELECT rs.id
+                 FROM recording_sessions rs
+                WHERE rs.guild_id = $1
+                  AND rs.deletion_requested_at IS NOT NULL
+                  AND (NOT EXISTS (SELECT 1 FROM recording_deletion_jobs j
+                                    WHERE j.recording_session_id = rs.id
+                                      AND j.reason = 'retention')
+                       OR EXISTS (SELECT 1 FROM recording_erasures e
+                                   WHERE e.recording_session_id = rs.id
+                                     AND e.state <> 'cancelled'))
            ), covered AS (
                SELECT p.hidden_id
                  FROM parts p
                  JOIN clips part ON part.clip_id = p.part_id AND part.guild_id = $1
-                WHERE EXISTS (
-                          SELECT 1 FROM recording_sessions rs
-                           WHERE rs.id = part.recording_session_id
-                             AND rs.deletion_requested_at IS NOT NULL)
+                WHERE part.recording_session_id IN (SELECT id FROM hiding)
                    OR EXISTS (
                           SELECT 1
                             FROM audio_files af
-                            JOIN recording_sessions rs ON rs.id = af.recording_session_id
-                           WHERE af.guild_id = part.guild_id
+                           WHERE af.recording_session_id IN (SELECT id FROM hiding)
+                             AND af.guild_id = part.guild_id
                              AND af.channel_id = part.channel_id
-                             AND af.file_name = part.original_file_name
-                             AND rs.deletion_requested_at IS NOT NULL)
+                             AND af.file_name = part.original_file_name)
                    OR EXISTS (
                           SELECT 1 FROM recording_erasures e
                            WHERE e.clip_id = part.clip_id AND e.state <> 'cancelled')

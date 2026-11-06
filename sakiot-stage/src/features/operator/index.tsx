@@ -129,8 +129,9 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 			</div>
 			<p className="text-xs text-muted">
 				Keeps {guild.kept_recordings} of {recordings(guild.kept_recordings_cap)}
-				. Retention removes recordings after{" "}
-				{saved ?? guild.default_retention_days} days.
+				. Retention hides recordings after{" "}
+				{saved ?? guild.default_retention_days} days and deletes them{" "}
+				{guild.retention_grace_days} days later. Clips stay.
 			</p>
 			<div className="flex flex-col gap-2 min-[600px]:flex-row min-[600px]:items-end">
 				<TextField
@@ -149,7 +150,7 @@ function GuildLimitsRow({ guild }: { guild: OperatorGuild }) {
 					className="min-[600px]:w-64"
 				/>
 				<TextField
-					label="Remove recordings after (days)"
+					label="Hide recordings after (days)"
 					type="number"
 					min={1}
 					max={MAX_RETENTION_DAYS}

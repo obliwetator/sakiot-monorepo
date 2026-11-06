@@ -557,9 +557,13 @@ Recordings age out of local disk into Backblaze B2:
   unless something else still hides a clip, the job is deleted and
   `recording_restorations` keeps its audit. A removal its speaker is erasing
   stays removed.
-- Retention hides a finalized session, with its clips, a period after it ends.
-  The bot's operators set that period per guild (`guild_limits.retention_days`,
-  1–3650 days) on their dashboard, and it is 365 days until they do.
+- Retention hides a finalized session a period after it ends, then deletes it
+  for good 30 days later, unless someone keeps it. The bot's operators set that
+  period per guild (`guild_limits.retention_days`, 1–3650 days) on their
+  dashboard, and it is 365 days until they do. Raising it stops a deletion: a
+  session must be past the current period by the whole 30 days. Clips outlive
+  retention, which neither hides nor deletes them, so they lose only their link
+  to the recording.
 - Members keep recordings past retention (`keeping.rs`, `kept_recordings`).
   The bot's operators (`operators`, managed on the server with
   `web_server operators list|add|remove`, see
@@ -585,7 +589,7 @@ Recordings age out of local disk into Backblaze B2:
   recording. Then the deletion worker's sweep converts the erasure into a
   permanent job (reason `speaker`), upgrading an existing soft job in
   place; a clip's job purges the clip and every clip composed from it.
-  Permanent purging runs only with
+  Permanent purging, this and retention's, runs only with
   `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED`. A purge cannot reach the
   encrypted database backups: dumps taken before it keep the rows it removed,
   which say who spoke, where and when but hold no audio, until they

@@ -82,6 +82,7 @@ interface State {
 		allowance: number | null;
 		used: number;
 		retention_days: number;
+		retention_grace_days: number;
 		recordings: Kept[];
 	};
 	/** Each page of removed recordings, in order. */
@@ -231,6 +232,7 @@ test("a member keeps a recording retention removed, within their allowance", asy
 			allowance: 1,
 			used: 0,
 			retention_days: 30,
+			retention_grace_days: 30,
 			recordings: [],
 		},
 		pages: [[removed("11", "Ada")], [removed("12", "Grace")]],
@@ -242,7 +244,7 @@ test("a member keeps a recording retention removed, within their allowance", asy
 	).toBeVisible();
 	await expect(
 		page.getByText(
-			"Retention removes recordings 30 days after they end. A kept recording stays, for everyone who may hear it, until nobody keeps it.",
+			"Retention hides recordings 30 days after they end, and deletes them for good 30 days later. Clips stay. A kept recording stays, for everyone who may hear it, until nobody keeps it.",
 		),
 	).toBeVisible();
 	await expect(
@@ -302,6 +304,7 @@ test("a manager restores a removal, and a refused keep says why", async ({
 			allowance: null,
 			used: 0,
 			retention_days: 30,
+			retention_grace_days: 30,
 			recordings: [
 				{
 					recording_session_id: "31",
@@ -414,6 +417,7 @@ test("a manager shares the server's cap out in allowances", async ({
 		if (path === `/api/admin/guilds/${GUILD_ID}/recording-policy`) {
 			await json({
 				retention_days: 30,
+				retention_grace_days: 30,
 				excluded_channel_ids: [],
 				channels: [],
 				is_default: false,
@@ -562,6 +566,7 @@ test("an operator sets how many recordings a server may keep", async ({
 					kept_recordings: 4,
 					retention_days: retention,
 					default_retention_days: 365,
+					retention_grace_days: 30,
 				},
 				{
 					guild_id: "guild-gone",
@@ -572,6 +577,7 @@ test("an operator sets how many recordings a server may keep", async ({
 					kept_recordings: 0,
 					retention_days: null,
 					default_retention_days: 365,
+					retention_grace_days: 30,
 				},
 			]);
 			return;
@@ -623,9 +629,9 @@ test("an operator sets how many recordings a server may keep", async ({
 	await expectAccessibleMediaRoute(page);
 
 	// Retention takes a number of days, or blank for the default.
-	await expect(guild.getByText(/after 30 days\.$/)).toBeVisible();
+	await expect(guild.getByText(/after 30 days and deletes/)).toBeVisible();
 	const days = guild.getByRole("spinbutton", {
-		name: "Remove recordings after (days)",
+		name: "Hide recordings after (days)",
 	});
 	await expect(days).toHaveValue("30");
 	await days.fill("0");
@@ -635,7 +641,7 @@ test("an operator sets how many recordings a server may keep", async ({
 	await expect(guild.getByRole("button", { name: "Save" })).toBeDisabled();
 	await days.fill("");
 	await guild.getByRole("button", { name: "Save" }).click();
-	await expect(guild.getByText(/after 365 days\.$/)).toBeVisible();
+	await expect(guild.getByText(/after 365 days and deletes/)).toBeVisible();
 	expect(limits.at(-1)).toEqual({ kept_recordings: 25, retention_days: null });
 
 	// Operators reach the page from their account menu.

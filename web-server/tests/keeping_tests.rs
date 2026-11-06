@@ -375,8 +375,8 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     assert_eq!(allowances["allowances"][0]["subject"], everyone);
     assert_eq!(allowances["allowances"][1]["name"], "VIP");
 
-    // Keeping brings the recording back, with the clips its removal hid
-    // and only those.
+    // Keeping brings the recording back. Its clips were never hidden, and
+    // one deleted before stays deleted.
     assert_eq!(keep(MEMBER_ID, mine).await?.0, StatusCode::NO_CONTENT);
     assert!(!removed(&pool, mine).await?);
     let visible =
@@ -475,12 +475,12 @@ async fn members_keep_recordings_retention_removed_within_allowances_and_the_cap
     );
     enqueue_expired(&pool).await?;
     assert!(removed(&pool, mine).await?);
-    // Removed again, its clip went with it.
+    // Removed again, its clip stays: clips outlive retention.
     let visible: i64 =
         sqlx::query_scalar!(r#"SELECT count(*) AS "count!" FROM clips WHERE deleted_at IS NULL"#)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(visible, 0);
+    assert_eq!(visible, 1);
     Ok(())
 }
 

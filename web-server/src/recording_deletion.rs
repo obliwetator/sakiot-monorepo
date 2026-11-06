@@ -1,5 +1,6 @@
-//! Audited recording removal. Soft deletion is immediate and retains all data;
-//! permanent purging needs an explicit request and an enabled server policy.
+//! Audited recording removal. Soft deletion is immediate and retains all data.
+//! Permanent purging needs an enabled server policy, and either an explicit
+//! request or retention's grace period running out.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -24,7 +25,7 @@ mod worker;
 
 pub use erasure::*;
 pub use restore::*;
-pub use worker::{enqueue_expired, spawn_worker};
+pub use worker::{RETENTION_GRACE_DAYS, enqueue_expired, purge_expired, spawn_worker};
 
 use files::*;
 use process::*;
@@ -257,8 +258,13 @@ async fn enqueue_in(
         )
         .execute(&mut *tx)
         .await?;
-        // Restoring the session reverts exactly these.
-        let hidden = hide_clips(&mut *tx, guild_id, &clip_ids(&clips)).await?;
+        // Restoring the session reverts exactly these. Clips outlive
+        // retention, which leaves them alone.
+        let hidden = if reason == "retention" {
+            Vec::new()
+        } else {
+            hide_clips(&mut *tx, guild_id, &clip_ids(&clips)).await?
+        };
         // Only visible sessions are kept: removing one frees its keeps.
         drop_keeps(&mut *tx, session_id).await?;
         match mode {

@@ -506,3 +506,210 @@ async fn retention_is_the_default_until_an_operator_sets_it(pool: PgPool) -> Tes
     assert!(kept.iter().all(|session| !removed.contains(session)));
     Ok(())
 }
+
+/// A clip of `session_id`, saved under its own name.
+async fn seed_clip(pool: &PgPool, clip_id: &str, session_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO clips (clip_id,guild_id,channel_id,channel_ids,speaker_ids,user_id,start_time,original_file_name,saved_file_name,recording_session_id)
+         VALUES ($1,1,10,'{10}','{100}',100,0,'session:1','2026/09/' || $1 || '.ogg',$2)",
+    )
+    .bind(clip_id)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn set_retention(pool: &PgPool, days: i32) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO guild_limits (guild_id,retention_days,updated_by) VALUES (1,$1,1)
+         ON CONFLICT (guild_id) DO UPDATE SET retention_days=EXCLUDED.retention_days",
+    )
+    .bind(days)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Moves every removal back past the grace period.
+async fn end_grace_periods(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE recording_deletion_jobs SET created_at=now()-interval '31 days'")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn job_mode(pool: &PgPool, session_id: i64) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT mode FROM recording_deletion_jobs WHERE recording_session_id=$1")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn retention_hides_then_deletes_a_recording_and_its_clips_stay(pool: PgPool) -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let roots = DataRoots::new(temp.path());
+    let (session_id, audio_id) = seed_session(&pool, "expiring-recording").await?;
+    seed_clip(&pool, "lasting-clip", session_id).await?;
+    let recording = RecordingKey::new(1, 10, 2026, 9, "expiring-recording")
+        .recording_path(&roots.recordings_str());
+    let clip = roots.clips.join("2026/09/lasting-clip.ogg");
+    for path in [&recording, &clip] {
+        tokio::fs::create_dir_all(path.parent().unwrap()).await?;
+        tokio::fs::write(path, b"test-media").await?;
+    }
+    sqlx::query("INSERT INTO media_objects (clip_id) VALUES ('lasting-clip')")
+        .execute(&pool)
+        .await?;
+    set_retention(&pool, 5).await?;
+
+    enqueue_expired(&pool).await?;
+    let hidden: bool = sqlx::query_scalar(
+        "SELECT deletion_requested_at IS NOT NULL FROM recording_sessions WHERE id=$1",
+    )
+    .bind(session_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(hidden);
+    let clip_hidden: bool =
+        sqlx::query_scalar("SELECT deleted_at IS NOT NULL FROM clips WHERE clip_id='lasting-clip'")
+            .fetch_one(&pool)
+            .await?;
+    assert!(!clip_hidden, "retention must not hide a clip");
+
+    // The grace period is still running.
+    purge_expired(&pool).await?;
+    assert_eq!(job_mode(&pool, session_id).await?.as_deref(), Some("soft"));
+    assert!(claim(&pool).await?.is_none());
+
+    end_grace_periods(&pool).await?;
+    purge_expired(&pool).await?;
+    assert_eq!(
+        job_mode(&pool, session_id).await?.as_deref(),
+        Some("permanent")
+    );
+    let job = claim(&pool).await?.unwrap();
+    assert!(job.scheduled);
+    process_with_roots(&pool, &MediaArchive::disabled(), &job, &roots).await?;
+
+    assert!(!recording.exists(), "the recording must be deleted");
+    assert!(clip.exists(), "the clip's audio must stay");
+    let recordings: i64 = sqlx::query_scalar("SELECT count(*) FROM audio_files WHERE id=$1")
+        .bind(audio_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(recordings, 0);
+    let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM recording_sessions WHERE id=$1")
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(sessions, 0);
+    let (hidden, source): (bool, Option<i64>) = sqlx::query_as(
+        "SELECT deleted_at IS NOT NULL, recording_session_id FROM clips WHERE clip_id='lasting-clip'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!((hidden, source), (false, None));
+    let archived: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM media_objects WHERE clip_id='lasting-clip'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(archived, 1);
+    Ok(())
+}
+
+/// A wrong limit can be put right: the deletion goes by the guild's current
+/// retention, and always leaves a full grace period past it.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn raising_retention_stops_a_deletion(pool: PgPool) -> TestResult {
+    // Ended 39 days ago.
+    let (session_id, _) = seed_session(&pool, "mistaken-recording").await?;
+    set_retention(&pool, 5).await?;
+    enqueue_expired(&pool).await?;
+    end_grace_periods(&pool).await?;
+
+    set_retention(&pool, 300).await?;
+    purge_expired(&pool).await?;
+    assert_eq!(job_mode(&pool, session_id).await?.as_deref(), Some("soft"));
+
+    // Past this retention, but not by a whole grace period.
+    set_retention(&pool, 20).await?;
+    purge_expired(&pool).await?;
+    assert_eq!(job_mode(&pool, session_id).await?.as_deref(), Some("soft"));
+
+    set_retention(&pool, 5).await?;
+    purge_expired(&pool).await?;
+    assert_eq!(
+        job_mode(&pool, session_id).await?.as_deref(),
+        Some("permanent")
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn what_someone_keeps_or_restores_is_not_deleted(pool: PgPool) -> TestResult {
+    let (kept, _) = seed_session(&pool, "kept-recording").await?;
+    let (restored, _) = seed_session(&pool, "restored-recording").await?;
+    set_retention(&pool, 5).await?;
+    enqueue_expired(&pool).await?;
+    end_grace_periods(&pool).await?;
+    sqlx::query(
+        "INSERT INTO kept_recordings (recording_session_id,user_id,guild_id) VALUES ($1,100,1)",
+    )
+    .bind(kept)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM recording_deletion_jobs WHERE recording_session_id=$1")
+        .bind(restored)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE recording_sessions SET deletion_requested_at=NULL WHERE id=$1")
+        .bind(restored)
+        .execute(&pool)
+        .await?;
+
+    purge_expired(&pool).await?;
+    assert_eq!(job_mode(&pool, kept).await?.as_deref(), Some("soft"));
+    // Restored after the sweep listed it: this must not start a new purge.
+    purge_expired_one(&pool, 1, restored).await?;
+    assert_eq!(job_mode(&pool, restored).await?, None);
+    Ok(())
+}
+
+/// A manager's removal hid the clips, and nothing can restore them once the
+/// recording is gone, so they go with it. Anything else stays.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn a_removal_past_retention_takes_only_the_clips_it_hid(pool: PgPool) -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let roots = DataRoots::new(temp.path());
+    let (session_id, _) = seed_session(&pool, "removed-recording").await?;
+    seed_clip(&pool, "hidden-clip", session_id).await?;
+    seed_clip(&pool, "shown-clip", session_id).await?;
+    enqueue(
+        &pool,
+        1,
+        session_id,
+        Some(200),
+        "manager",
+        DeletionMode::Soft,
+    )
+    .await?;
+    // Shown again by something other than this removal.
+    sqlx::query("UPDATE clips SET deleted_at=NULL WHERE clip_id='shown-clip'")
+        .execute(&pool)
+        .await?;
+    set_retention(&pool, 5).await?;
+    end_grace_periods(&pool).await?;
+
+    purge_expired(&pool).await?;
+    let job = claim(&pool).await?.unwrap();
+    assert!(job.scheduled);
+    process_with_roots(&pool, &MediaArchive::disabled(), &job, &roots).await?;
+
+    let clips: Vec<String> = sqlx::query_scalar("SELECT clip_id FROM clips")
+        .fetch_all(&pool)
+        .await?;
+    assert_eq!(clips, ["shown-clip"]);
+    Ok(())
+}

@@ -180,7 +180,9 @@ pub async fn get_clips(
         c.guild_id,
         c.channel_id,
         c.start_time,
-        c.recording_session_id,
+        -- Clips outlive retention: a removed recording cannot be opened.
+        CASE WHEN rs.deletion_requested_at IS NULL THEN c.recording_session_id END
+            AS recording_session_id,
         c.silence_free,
         c.composition,
         c.speaker_ids,
@@ -188,6 +190,7 @@ pub async fn get_clips(
         e.state AS "erasure_state?",
         (EXTRACT(EPOCH FROM e.purge_at) * 1000)::bigint AS "purge_at_ms?"
         FROM clips c
+        LEFT JOIN recording_sessions rs ON rs.id = c.recording_session_id
         -- The viewer's own erasure: they alone still see the clip.
         LEFT JOIN recording_erasures e
           ON e.clip_id = c.clip_id AND e.state <> 'cancelled' AND e.speaker_id = $3

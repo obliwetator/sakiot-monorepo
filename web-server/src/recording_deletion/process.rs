@@ -67,7 +67,11 @@ async fn process_session(
         session.starting_channel_id,
     );
     let fragments = session_fragments(pool, session_id).await?;
-    let clips = {
+    // Clips outlive retention. What a manager's removal hid goes with it, as
+    // it cannot be restored once the recording is gone.
+    let clips = if job.scheduled {
+        clips_hidden_by(pool, job).await?
+    } else {
         let mut connection = pool.acquire().await?;
         related_clips(&mut connection, job.guild_id, session_id, &fragments).await?
     };
@@ -146,6 +150,25 @@ async fn process_session(
     .execute(&mut *tx)
     .await?;
     finish(tx, job).await
+}
+
+/// The clips `job`'s removal hid that are still hidden.
+async fn clips_hidden_by(pool: &Pool<Postgres>, job: &Claimed) -> Result<Vec<Clip>, sqlx::Error> {
+    let rows = sqlx::query!(
+        "SELECT clip_id, saved_file_name FROM clips
+          WHERE guild_id = $1 AND clip_id = ANY($2) AND deleted_at IS NOT NULL",
+        job.guild_id,
+        &job.hidden_clip_ids
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| Clip {
+            id: row.clip_id,
+            saved: row.saved_file_name,
+        })
+        .collect())
 }
 
 /// A clip a speaker erased: its archived versions, local file and cached

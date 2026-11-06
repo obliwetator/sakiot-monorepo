@@ -63,9 +63,10 @@ export function KeptRecordingsPage() {
 				<PageTitle>Kept recordings</PageTitle>
 				{data && (
 					<Text tone="muted">
-						Retention removes recordings {data.retention_days} days after they
-						end. A kept recording stays, for everyone who may hear it, until
-						nobody keeps it.
+						Retention hides recordings {data.retention_days} days after they
+						end, and deletes them for good {data.retention_grace_days} days
+						later. Clips stay. A kept recording stays, for everyone who may hear
+						it, until nobody keeps it.
 					</Text>
 				)}
 			</header>

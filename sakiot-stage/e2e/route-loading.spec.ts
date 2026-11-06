@@ -37,6 +37,7 @@ const responses: Record<string, unknown> = {
 		allowance: null,
 		used: 0,
 		retention_days: 365,
+		retention_grace_days: 30,
 		recordings: [],
 	},
 	[`/api/guilds/${GUILD_ID}/removed-recordings`]: { recordings: [] },

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH hidden AS (\n               SELECT clip_id, composition\n                 FROM clips\n                WHERE guild_id = $1 AND clip_id = ANY($2) AND deleted_at IS NOT NULL\n           ), parts AS (\n               SELECT clip_id AS hidden_id, clip_id AS part_id FROM hidden\n               UNION ALL\n               SELECT h.clip_id, segment ->> 'source_id'\n                 FROM hidden h,\n                      jsonb_array_elements(\n                          CASE WHEN jsonb_typeof(h.composition -> 'segments') = 'array'\n                               THEN h.composition -> 'segments' ELSE '[]'::jsonb END\n                      ) segment\n           ), hiding AS (\n               -- Retention's removal leaves clips alone, unless the session\n               -- is also being erased.\n               SELECT rs.id\n                 FROM recording_sessions rs\n                WHERE rs.guild_id = $1\n                  AND rs.deletion_requested_at IS NOT NULL\n                  AND (NOT EXISTS (SELECT 1 FROM recording_deletion_jobs j\n                                    WHERE j.recording_session_id = rs.id\n                                      AND j.reason = 'retention')\n                       OR EXISTS (SELECT 1 FROM recording_erasures e\n                                   WHERE e.recording_session_id = rs.id\n                                     AND e.state <> 'cancelled'))\n           ), covered AS (\n               SELECT p.hidden_id\n                 FROM parts p\n                 JOIN clips part ON part.clip_id = p.part_id AND part.guild_id = $1\n                WHERE part.recording_session_id IN (SELECT id FROM hiding)\n                   OR EXISTS (\n                          SELECT 1\n                            FROM audio_files af\n                           WHERE af.recording_session_id IN (SELECT id FROM hiding)\n                             AND af.guild_id = part.guild_id\n                             AND af.channel_id = part.channel_id\n                             AND af.file_name = part.original_file_name)\n                   OR EXISTS (\n                          SELECT 1 FROM recording_erasures e\n                           WHERE e.clip_id = part.clip_id AND e.state <> 'cancelled')\n           )\n           UPDATE clips c\n              SET deleted_at = NULL\n             FROM hidden h\n            WHERE c.clip_id = h.clip_id\n              AND h.clip_id NOT IN (SELECT hidden_id FROM covered)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ce8746cb358e9aa055d06fe985ff61880bc7b24b2da1fd35c21627de78f068ad"
+}

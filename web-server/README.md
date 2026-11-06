@@ -106,7 +106,12 @@ out of being recorded in a server at
 bot's `/recording` command writes. Opting out keeps earlier recordings.
 
 Retention looks only at finalized sessions, by `ended_at`, and soft-deletes at
-most 25 expired sessions per minute.
+most 25 expired sessions per minute, leaving their clips alone. Thirty days
+later it purges them for good, recordings a manager removed included, but only
+if they are still past the guild's current retention by those 30 days, so
+raising it stops a deletion. It skips anything kept or being erased. Clips
+outlive the purge, except those a manager's removal hid, which can no longer be
+restored; their link to the recording goes, and so do its stamps.
 
 `DELETE /api/admin/guilds/{guild_id}/recordings/{recording_session_id}` needs a
 live Manage Guild grant and returns `202` with a stable, manager-only
@@ -118,10 +123,12 @@ the stage and the outcome. Restoring a session a manager removed has no UI
 yet; its speaker still sees it, as removed by the server, and may only erase
 it.
 
-Permanent purging needs both `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`
-and an explicit request: a manager's `?mode=permanent`, or a speaker's erasure
-once its grace period is over; the flag alone never upgrades earlier soft
-deletions. The fenced worker removes every B2 version and delete marker under
+Permanent purging needs `SAKIOT_RECORDING_PERMANENT_DELETE_ENABLED=true`, and
+either retention's grace period running out or an explicit request: a manager's
+`?mode=permanent`, or a speaker's erasure once its grace period is over. Without
+the flag nothing is purged, and removals stay restorable. An explicit purge
+takes every clip made from the recording. The fenced worker removes every B2
+version and delete marker under
 each source prefix, the local originals and derivatives, then the database
 rows, and records who authorized it and when. It is irreversible, and offered
 in the UI only as the speaker's erasure. A failed or `paused` permanent job

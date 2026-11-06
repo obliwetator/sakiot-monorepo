@@ -121,8 +121,10 @@ pub struct Keeping {
     pub allowance: Option<i32>,
     /// How many the viewer keeps.
     pub used: i64,
-    /// After how many days retention removes a recording.
+    /// After how many days retention hides a recording.
     pub retention_days: i32,
+    /// How many days after that it is deleted, unless someone keeps it.
+    pub retention_grace_days: i32,
     /// The kept recordings the viewer may hear, newest first, and the
     /// viewer's own keeps they may no longer hear (`audible: false`).
     pub recordings: Vec<KeptRecording>,
@@ -255,6 +257,7 @@ pub async fn get_kept_recordings(
         allowance,
         used: usage.used,
         retention_days: usage.retention_days,
+        retention_grace_days: crate::recording_deletion::RETENTION_GRACE_DAYS,
         recordings,
     }))
 }

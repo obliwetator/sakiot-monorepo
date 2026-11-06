@@ -387,6 +387,8 @@ export function ClipPlayer(props: {
 								</RouterLink>
 							) : isComposedClip(props.clip) ? (
 								"Composition"
+							) : props.clip.original_file_name?.startsWith("session:") ? (
+								"No longer available"
 							) : (
 								props.clip.original_file_name || "Unknown"
 							)
