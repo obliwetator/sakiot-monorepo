@@ -204,19 +204,17 @@ fn print_bot_units(config: &Config, admin: &dyn AdminApi) -> Result<()> {
     Ok(())
 }
 
-#[allow(deprecated)]
-fn bot_role_label(status: &DrainStatus) -> &str {
+fn bot_role_label(status: &DrainStatus) -> &'static str {
     match status.bot_role() {
-        BotRole::Unspecified => &status.role,
+        BotRole::Unspecified => "unspecified",
         BotRole::Active => "active",
         BotRole::Drain => "drain",
     }
 }
 
-#[allow(deprecated)]
-fn voice_presence_label(status: &DrainStatus) -> &str {
+fn voice_presence_label(status: &DrainStatus) -> &'static str {
     match status.voice_presence() {
-        VoicePresence::Unspecified => &status.voice_state,
+        VoicePresence::Unspecified => "unspecified",
         VoicePresence::Empty => "empty",
         VoicePresence::Connected => "connected",
     }
@@ -228,15 +226,10 @@ mod tests {
     use sakiot_proto::fbi_agent::{BotRole, DrainStatus, VoicePresence};
 
     #[test]
-    #[allow(deprecated)]
-    fn typed_status_values_win_with_legacy_fallbacks() {
-        let mut status = DrainStatus {
-            role: "legacy-role".into(),
-            voice_state: "legacy-voice".into(),
-            ..DrainStatus::default()
-        };
-        assert_eq!(bot_role_label(&status), "legacy-role");
-        assert_eq!(voice_presence_label(&status), "legacy-voice");
+    fn status_labels_name_the_typed_values() {
+        let mut status = DrainStatus::default();
+        assert_eq!(bot_role_label(&status), "unspecified");
+        assert_eq!(voice_presence_label(&status), "unspecified");
 
         status.bot_role = BotRole::Drain as i32;
         status.voice_presence = VoicePresence::Connected as i32;
