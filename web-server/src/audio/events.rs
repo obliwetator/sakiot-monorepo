@@ -6,6 +6,7 @@ use sqlx::{Pool, Postgres};
 use crate::auth::{Access, Token};
 use crate::errors::AppError;
 
+use super::bot_deafen::bot_deafen_events;
 use super::util::is_valid_file_segment;
 
 fn validate_stem(s: &str) -> Result<(), AppError> {
@@ -20,9 +21,10 @@ fn validate_stem(s: &str) -> Result<(), AppError> {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct VoiceEventDto {
     pub offset_ms: i64,
-    #[serde_as(as = "DisplayFromStr")]
-    #[schema(value_type = String)]
-    pub user_id: i64,
+    /// Null for an event about the bot.
+    #[serde_as(as = "Option<DisplayFromStr>")]
+    #[schema(value_type = Option<String>)]
+    pub user_id: Option<i64>,
     #[serde_as(as = "Option<DisplayFromStr>")]
     #[schema(value_type = Option<String>)]
     pub channel_id: Option<i64>,
@@ -30,7 +32,7 @@ pub struct VoiceEventDto {
 }
 
 /// Voice state events (mute/deafen/etc.) overlapping the recording window for
-/// `{stem}`. Frontend uses `offset_ms` against the audio element's currentTime
+/// `{stem}`, and when the bot was deafened. Frontend uses `offset_ms` against the audio element's currentTime
 /// to render markers / current-state badges on the timeline.
 ///
 /// Bounds: [start_ts, COALESCE(end_ts, now())]. start_ts/end_ts are stored as
@@ -118,15 +120,27 @@ pub async fn get_recording_events(
     .fetch_all(pool.get_ref())
     .await?;
 
-    let dto: Vec<VoiceEventDto> = events
+    let mut dto: Vec<VoiceEventDto> = events
         .into_iter()
         .map(|r| VoiceEventDto {
             offset_ms: r.offset_ms,
-            user_id: r.user_id,
+            user_id: Some(r.user_id),
             channel_id: r.channel_id,
             event_type: r.event_type,
         })
         .collect();
+    dto.extend(
+        bot_deafen_events(pool.get_ref(), guild_id, start_ts, end_ts)
+            .await?
+            .into_iter()
+            .map(|event| VoiceEventDto {
+                offset_ms: event.offset_ms,
+                user_id: None,
+                channel_id: None,
+                event_type: event.event_type.to_owned(),
+            }),
+    );
+    dto.sort_by_key(|event| event.offset_ms);
 
     Ok(HttpResponse::Ok().json(dto))
 }

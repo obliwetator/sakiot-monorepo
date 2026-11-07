@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+	"/api/admin/guilds/{guild_id}/bot-log": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get: operations["get_bot_log"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/guilds/{guild_id}/cooldown": {
 		parameters: {
 			query?: never;
@@ -381,7 +397,7 @@ export interface paths {
 		};
 		/**
 		 * Voice state events (mute/deafen/etc.) overlapping the recording window for
-		 *     `{stem}`. Frontend uses `offset_ms` against the audio element's currentTime
+		 *     `{stem}`, and when the bot was deafened. Frontend uses `offset_ms` against the audio element's currentTime
 		 *     to render markers / current-state badges on the timeline.
 		 * @description Bounds: [start_ts, COALESCE(end_ts, now())]. start_ts/end_ts are stored as
 		 *     epoch-ms BIGINTs on `audio_files`; voice_state_events.occurred_at is
@@ -1327,6 +1343,33 @@ export interface components {
 			 */
 			retry_after_seconds?: number | null;
 		};
+		/**
+		 * @description How far to trust `actor_id`.
+		 * @enum {string}
+		 */
+		BotLogAttribution: "exact" | "likely" | "unknown" | "no_access";
+		BotLogEntry: {
+			actor_id?: string | null;
+			/** @description Null for nobody, or a user never seen. */
+			actor_name?: string | null;
+			attribution: components["schemas"]["BotLogAttribution"];
+			/** @description Null for a channel that no longer exists. */
+			channel_name?: string | null;
+			/** Format: int64 */
+			id: number;
+			kind: components["schemas"]["BotLogKind"];
+			/** Format: int64 */
+			occurred_at_ms: number;
+			/** @description Where a move put the bot; null otherwise, or if it no longer exists. */
+			to_channel_name?: string | null;
+		};
+		/** @enum {string} */
+		BotLogKind:
+			| "deafened"
+			| "undeafened"
+			| "moved"
+			| "disconnected"
+			| "deafen_clear_failed";
 		/**
 		 * @description One of Sakiot's capabilities. Guild-wide ones: `manage_settings`
 		 *     (cooldowns, recording policy, voice settings), `manage_permissions`,
@@ -2550,7 +2593,8 @@ export interface components {
 			event_type: string;
 			/** Format: int64 */
 			offset_ms: number;
-			user_id: string;
+			/** @description Null for an event about the bot. */
+			user_id?: string | null;
 		};
 		VoicePresence: {
 			/**
@@ -2573,6 +2617,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+	get_bot_log: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				/** @description Discord guild id */
+				guild_id: number;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description What others did to the bot in voice, newest first */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["BotLogEntry"][];
+				};
+			};
+			/** @description Manage settings required */
+			403: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["ApiError"];
+				};
+			};
+		};
+	};
 	get_guild_cooldown: {
 		parameters: {
 			query?: never;

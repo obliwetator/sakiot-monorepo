@@ -13,6 +13,7 @@ use sakiot_proto::fbi_agent::{JamData, JamResponse};
 use serde_json::json;
 use sqlx::PgPool;
 use tokio::sync::RwLock;
+use web_server::admin::bot_log::get_bot_log;
 use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
@@ -392,6 +393,178 @@ async fn traversal_file_names_are_rejected_by_every_audio_handler(
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn the_bot_log_names_who_it_can_for_managers_only(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS | (1_i64 << 5))
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO user_names (user_id, username) VALUES ($1, 'mod')")
+        .bind(OTHER_USER_ID)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO bot_voice_log
+            (guild_id, kind, channel_id, to_channel_id, actor_id, attribution, occurred_at)
+         VALUES ($1, 'deafened', $3, NULL, $4, 'exact', now() - interval '3 minutes'),
+                ($1, 'moved', $3, 999, $4, 'likely', now() - interval '2 minutes'),
+                ($1, 'disconnected', $3, NULL, NULL, 'no_access', now() - interval '1 minute'),
+                ($2, 'disconnected', $5, NULL, NULL, 'unknown', now())",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(FORBIDDEN_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(OTHER_USER_ID)
+    .bind(FORBIDDEN_CHANNEL_ID)
+    .execute(&pool)
+    .await?;
+    let cookie = access_cookie_value()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(web::scope("/api").wrap(AuthMiddleware).service(get_bot_log)),
+    )
+    .await;
+    let uri = format!("/api/admin/guilds/{ALLOWED_GUILD_ID}/bot-log");
+
+    let request = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie.clone()))
+        .to_request();
+    let log: serde_json::Value = test::call_and_read_body_json(&app, request).await;
+    let kinds: Vec<_> = log
+        .as_array()
+        .ok_or("the log is a list")?
+        .iter()
+        .map(|entry| entry["kind"].as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        [Some("disconnected"), Some("moved"), Some("deafened")],
+        "newest first, and only this server's"
+    );
+    assert_eq!(log[0]["attribution"], "no_access");
+    assert_eq!(log[0]["actor_name"], serde_json::Value::Null);
+    assert_eq!(log[1]["attribution"], "likely");
+    assert_eq!(log[1]["channel_name"], "allowed");
+    assert_eq!(
+        log[1]["to_channel_name"],
+        serde_json::Value::Null,
+        "a channel that's gone has no name"
+    );
+    assert_eq!(log[2]["actor_name"], "mod");
+    assert_eq!(log[2]["actor_id"], OTHER_USER_ID.to_string());
+
+    sqlx::query("UPDATE roles SET permission = $1 WHERE role_id = $2")
+        .bind(BASE_VOICE_PERMISSIONS)
+        .bind(ALLOWED_GUILD_ID)
+        .execute(&pool)
+        .await?;
+    let request = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Cookie", cookie))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, request).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn both_timelines_show_when_the_bot_was_deafened(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    seed_authorization_data(&pool).await?;
+    let session_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO recording_sessions
+            (guild_id, user_id, starting_channel_id, current_channel_id, state,
+             started_at, ended_at, end_reason, last_segment_index)
+         VALUES ($1, $2, $3, $3, 'finalized',
+                 to_timestamp(100), to_timestamp(200), 'test', 0)
+         RETURNING id",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(USER_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO audio_files
+            (file_name, guild_id, channel_id, user_id, year, month,
+             start_ts, end_ts, recording_session_id, segment_index)
+         VALUES ('deafened-file', $1, $2, $3, 1970, 1, 100000, 200000, $4, 0)",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(USER_ID)
+    .bind(session_id)
+    .execute(&pool)
+    .await?;
+    // Already deafened when the session began, and undeafened 20 s into it.
+    let actor_id = 777_777_i64;
+    sqlx::query(
+        "INSERT INTO bot_voice_log
+            (guild_id, kind, channel_id, actor_id, attribution, occurred_at)
+         VALUES ($1, 'deafened', $2, $3, 'exact', to_timestamp(90)),
+                ($1, 'undeafened', $2, $3, 'exact', to_timestamp(120))",
+    )
+    .bind(ALLOWED_GUILD_ID)
+    .bind(ALLOWED_CHANNEL_ID)
+    .bind(actor_id)
+    .execute(&pool)
+    .await?;
+    let cookie = access_cookie_value()?;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(access_keys()))
+            .service(
+                web::scope("/api")
+                    .wrap(AuthMiddleware)
+                    .service(get_session_events)
+                    .service(get_recording_events),
+            ),
+    )
+    .await;
+
+    for uri in [
+        format!("/api/audio/sessions/{session_id}/events"),
+        format!("/api/audio/events/{ALLOWED_GUILD_ID}/{ALLOWED_CHANNEL_ID}/1970/1/deafened-file"),
+    ] {
+        let request = test::TestRequest::get()
+            .uri(&uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .to_request();
+        let events: serde_json::Value = test::call_and_read_body_json(&app, request).await;
+        let spans: Vec<_> = events
+            .as_array()
+            .ok_or("events are a list")?
+            .iter()
+            .map(|event| (event["event_type"].as_str(), event["offset_ms"].as_i64()))
+            .filter(|(event_type, _)| event_type.is_some_and(|name| name.starts_with("bot_")))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                (Some("bot_deafened"), Some(0)),
+                (Some("bot_undeafened"), Some(20_000))
+            ],
+            "{uri}"
+        );
+        assert!(
+            !events.to_string().contains(&actor_id.to_string()),
+            "who did it stays in the managers' log: {events}"
+        );
+    }
     Ok(())
 }
 

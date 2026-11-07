@@ -191,6 +191,7 @@ pub(crate) async fn teardown_voice_session_with_operation(
     let from_channel = current_songbird_channel(call_before.clone()).await;
     let had_call = call_before.is_some();
     let remove_error = if had_call {
+        intend_channel(data, guild_id, None).await;
         manager.remove(guild_id).await.err().map(|err| {
             warn!(
                 guild_id = guild_id.get(),
@@ -500,7 +501,7 @@ async fn switch_channel(
         );
     };
 
-    match issue_join(&call, target_channel).await {
+    match issue_join(ctx, guild_id, &call, target_channel).await {
         Ok(()) => {
             update_lease_after_handoff(pool, runtime, guild_id, target_channel).await;
             crate::events::voice_receiver::complete_handoff(
@@ -557,7 +558,7 @@ async fn switch_channel(
                     operation.pending_cap_seconds,
                 )
                 .await;
-                match issue_join(&call, old_channel).await {
+                match issue_join(ctx, guild_id, &call, old_channel).await {
                     Ok(()) => {
                         update_lease_after_handoff(pool, runtime, guild_id, old_channel).await;
                         crate::events::voice_receiver::complete_handoff(
@@ -633,6 +634,7 @@ async fn retain_or_release_after_failure(
     actual_channel: Option<ChannelId>,
     operation: &VoiceOperation,
 ) {
+    intend_channel(&ctx.data, guild_id, actual_channel).await;
     if let Some(actual_channel) = actual_channel {
         update_lease_after_handoff(pool, runtime, guild_id, actual_channel).await;
         crate::events::voice_receiver::complete_handoff(
@@ -712,7 +714,7 @@ async fn join_fresh(
         register_voice_receiver(&mut handler, pool.clone(), ctx, guild_id, channel_id, true).await;
     }
 
-    match issue_join(&call, channel_id).await {
+    match issue_join(ctx, guild_id, &call, channel_id).await {
         Ok(()) => {
             crate::events::voice_receiver::complete_handoff(
                 ctx,
@@ -747,10 +749,25 @@ async fn join_fresh(
     }
 }
 
+/// Notes where the bot is putting itself, before it asks Discord, so the voice
+/// state that follows isn't mistaken for someone else's doing.
+async fn intend_channel(
+    data: &Arc<RwLock<TypeMap>>,
+    guild_id: GuildId,
+    channel_id: Option<ChannelId>,
+) {
+    if let Some(registry) = super::coordinator_registry(data).await {
+        registry.guild(guild_id).intend_channel(channel_id);
+    }
+}
+
 async fn issue_join(
+    ctx: &Context,
+    guild_id: GuildId,
     call: &Arc<tokio::sync::Mutex<songbird::Call>>,
     channel_id: ChannelId,
 ) -> Result<(), String> {
+    intend_channel(&ctx.data, guild_id, Some(channel_id)).await;
     let join = {
         let mut handler = call.lock().await;
         handler
@@ -787,6 +804,7 @@ async fn cleanup_failed_fresh_join(
     manager: &Arc<songbird::Songbird>,
     guild_id: GuildId,
 ) {
+    intend_channel(data, guild_id, None).await;
     if let Err(remove_err) = manager.remove(guild_id).await {
         error!("failed to clean up failed voice join: {}", remove_err);
     }

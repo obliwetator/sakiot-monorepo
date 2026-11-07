@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.id, l.kind, l.attribution, l.actor_id,\n                  (EXTRACT(EPOCH FROM l.occurred_at) * 1000)::bigint AS \"occurred_at_ms!\",\n                  (SELECT c.name FROM channels c\n                    WHERE c.guild_id = l.guild_id AND c.channel_id = l.channel_id)\n                      AS channel_name,\n                  (SELECT c.name FROM channels c\n                    WHERE c.guild_id = l.guild_id AND c.channel_id = l.to_channel_id)\n                      AS to_channel_name,\n                  (SELECT COALESCE(nn.nickname, un.global_name, un.username)\n                     FROM user_names un\n                     LEFT JOIN user_nicknames nn\n                       ON nn.user_id = un.user_id AND nn.guild_id = l.guild_id\n                    WHERE un.user_id = l.actor_id) AS actor_name\n             FROM bot_voice_log l\n            WHERE l.guild_id = $1\n            ORDER BY l.occurred_at DESC, l.id DESC\n            LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bot_voice_log",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bot_voice_log",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "attribution",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bot_voice_log",
+            "name": "attribution"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "actor_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bot_voice_log",
+            "name": "actor_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "occurred_at_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "channel_name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "to_channel_name",
+        "type_info": "Varchar",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "actor_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "f39caae0bdff9d63497d7523c28bf4521cb674426557a94ad145e39aa9682251"
+}

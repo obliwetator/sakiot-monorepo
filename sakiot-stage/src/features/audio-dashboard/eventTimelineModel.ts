@@ -13,7 +13,7 @@ export interface AudioTimelineEvent {
 	offset_ms: number;
 	event_type: string;
 	source?: string;
-	user_id?: string;
+	user_id?: string | null;
 	channel_id?: string | null;
 	previous_channel_id?: string | null;
 	details?: unknown;
@@ -122,6 +122,9 @@ const LABELS: Record<string, string> = {
 	self_unmute: "Unmuted",
 	self_deafen: "Deafened",
 	self_undeafen: "Undeafened",
+	bot_deafened: "Bot deafened",
+	bot_undeafened: "Bot undeafened",
+	bot_deafen_clear_failed: "Bot still deafened",
 	suppress_on: "Suppressed",
 	suppress_off: "Unsuppressed",
 	stream_start: "Stream started",
@@ -156,6 +159,17 @@ const SESSION_PAUSE = {
 	laneId: "recording",
 	track: 0,
 	color: palette.orange500,
+} as const;
+
+// A deafened bot hears nobody. The server carries a deafen that began before
+// this window in, so an unmatched undeafen is only the bot clearing a leftover
+// as it joined, not a span back to 00:00:00.
+const BOT_DEAFEN = {
+	stateKey: "bot-deafen",
+	laneId: "deafen",
+	track: 2,
+	label: "Bot deafened (no audio)",
+	color: palette.red500,
 } as const;
 
 /**
@@ -200,6 +214,9 @@ const STATE_TRANSITIONS: Record<string, StateTransition> = {
 		label: "Deafened",
 		color: palette.purple400,
 	}),
+	...pair("bot_deafened", "bot_undeafened", BOT_DEAFEN),
+	// Joining still deafened and failing to clear it leaves the bot deaf.
+	bot_deafen_clear_failed: { ...BOT_DEAFEN, phase: "start" },
 	...pair("suppress_on", "suppress_off", {
 		stateKey: "suppress",
 		laneId: "suppress",

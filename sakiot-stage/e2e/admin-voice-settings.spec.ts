@@ -237,3 +237,104 @@ test("server validation and permission failures are explained and input is kept"
 		page.getByRole("checkbox", { name: "Private voice" }),
 	).toBeChecked();
 });
+
+test("the bot log says who did what, and how sure it is", async ({ page }) => {
+	await page.route(`${API_ORIGIN}/**`, async (route) => {
+		const request = route.request();
+		const path = new URL(request.url()).pathname;
+		if (request.method() === "OPTIONS") {
+			await route.fulfill({ status: 204, headers: corsHeaders });
+			return;
+		}
+		const json = async (body: unknown) => {
+			await route.fulfill({
+				status: 200,
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+		};
+		const entry = {
+			occurred_at_ms: 1_794_000_000_000,
+			channel_name: "General",
+			to_channel_name: null,
+			actor_id: "600",
+			actor_name: "kavliara",
+		};
+		if (path === `/api/admin/guilds/${GUILD_ID}/bot-log`) {
+			await json([
+				{ ...entry, id: 3, kind: "deafened", attribution: "exact" },
+				{
+					...entry,
+					id: 2,
+					kind: "moved",
+					to_channel_name: "Music",
+					attribution: "likely",
+				},
+				{
+					...entry,
+					id: 1,
+					kind: "disconnected",
+					actor_id: null,
+					actor_name: null,
+					attribution: "no_access",
+				},
+			]);
+			return;
+		}
+		if (await fulfillSharedRoutes(route, corsHeaders)) return;
+		if (path === "/api/users/current") {
+			await json({
+				avatar: "",
+				is_dev: false,
+				user_id: "current-user",
+				username: "Test Admin",
+			});
+			return;
+		}
+		if (path === "/api/users/current/guilds") {
+			await json([
+				{
+					id: GUILD_ID,
+					icon: null,
+					name: "Test Guild",
+					capabilities: OWNER_CAPABILITIES,
+				},
+			]);
+			return;
+		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/voice-settings`) {
+			await json({ pending_cap_seconds: 21_600, is_default: true });
+			return;
+		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/keep-allowances`) {
+			await json({ cap: 0, kept: 0, allowances: [], roles: [] });
+			return;
+		}
+		if (path === `/api/admin/guilds/${GUILD_ID}/recording-policy`) {
+			await json({
+				excluded_channel_ids: [],
+				channels: [],
+				is_default: true,
+			});
+			return;
+		}
+		await json({});
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/admin/voice-settings`);
+	const log = page.getByRole("list", { name: "Bot log" });
+	await expect(log.getByRole("listitem")).toHaveCount(3);
+	await expect(log.getByRole("listitem").nth(0)).toContainText(
+		"Deafened in General",
+	);
+	await expect(log.getByRole("listitem").nth(0)).toContainText("By kavliara");
+	await expect(log.getByRole("listitem").nth(1)).toContainText(
+		"Moved from General to Music",
+	);
+	await expect(log.getByRole("listitem").nth(1)).toContainText(
+		"Probably by kavliara",
+	);
+	await expect(log.getByRole("listitem").nth(2)).toContainText(
+		"the bot needs the View Audit Log permission",
+	);
+});

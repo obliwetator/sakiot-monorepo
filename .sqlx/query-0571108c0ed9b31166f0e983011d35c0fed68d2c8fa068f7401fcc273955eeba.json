@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT kind,\n                  ((EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint - $2) AS \"offset_ms!\"\n             FROM bot_voice_log\n            WHERE guild_id = $1\n              AND kind IN ('deafened', 'undeafened', 'deafen_clear_failed')\n              AND occurred_at >= to_timestamp($2::double precision / 1000.0)\n              AND occurred_at <= COALESCE(to_timestamp($3::double precision / 1000.0), now())\n            ORDER BY occurred_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bot_voice_log",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "offset_ms!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "0571108c0ed9b31166f0e983011d35c0fed68d2c8fa068f7401fcc273955eeba"
+}

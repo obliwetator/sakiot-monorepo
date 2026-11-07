@@ -72,6 +72,7 @@ export const API_ROUTES = {
 	permissionRules: "/api/admin/guilds/{guild_id}/permission-rules",
 	permissionExplanation:
 		"/api/admin/guilds/{guild_id}/permission-rules/explain",
+	botLog: "/api/admin/guilds/{guild_id}/bot-log",
 	keepAllowances: "/api/admin/guilds/{guild_id}/keep-allowances",
 	restoreRecording:
 		"/api/admin/guilds/{guild_id}/recordings/{recording_session_id}/restore",

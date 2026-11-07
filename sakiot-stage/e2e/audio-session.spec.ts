@@ -432,6 +432,18 @@ async function mockAudioApi(page: Page, options: MockAudioOptions = {}) {
 						offset_ms: 10_000,
 						source: "voice_state",
 					},
+					{
+						details: {},
+						event_type: "bot_deafened",
+						offset_ms: 12_000,
+						source: "bot",
+					},
+					{
+						details: {},
+						event_type: "bot_undeafened",
+						offset_ms: 20_000,
+						source: "bot",
+					},
 				],
 				guild_id: GUILD_ID,
 				recording_session_id: SESSION_ID,
@@ -821,6 +833,11 @@ test("a short multi-file session keeps its draft inside the clip window", async 
 	await expect(mutedInterval).toBeVisible();
 	await mutedInterval.hover();
 	await expect(page.getByRole("tooltip")).toContainText("Server muted");
+	await expect(
+		page.getByRole("button", {
+			name: "Bot deafened (no audio), 00:00:12 to 00:00:20",
+		}),
+	).toBeVisible();
 	const inPoint = page.getByRole("slider", { name: "Clip in point" });
 	const outPoint = page.getByRole("slider", { name: "Clip out point" });
 	await expect(inPoint).toHaveAttribute("aria-valuenow", "0");

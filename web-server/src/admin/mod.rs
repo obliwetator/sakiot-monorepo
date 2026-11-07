@@ -1,3 +1,4 @@
+pub mod bot_log;
 pub mod cooldowns;
 pub mod keep_allowances;
 pub mod permission_rules;

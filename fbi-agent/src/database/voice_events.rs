@@ -49,6 +49,37 @@ pub async fn insert_voice_state_event(
     Ok(())
 }
 
+/// One row of the log of what others did to the bot in voice.
+#[derive(Debug)]
+pub struct BotVoiceLogEntry {
+    pub guild_id: i64,
+    pub kind: &'static str,
+    pub channel_id: i64,
+    pub to_channel_id: Option<i64>,
+    pub actor_id: Option<i64>,
+    pub attribution: &'static str,
+    pub occurred_at_ms: i64,
+}
+
+pub async fn insert_bot_voice_log(pool: &Pool<Postgres>, entry: BotVoiceLogEntry) -> DbResult<()> {
+    sqlx::query!(
+        "INSERT INTO bot_voice_log
+            (guild_id, kind, channel_id, to_channel_id, actor_id, attribution, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
+        entry.guild_id,
+        entry.kind,
+        entry.channel_id,
+        entry.to_channel_id,
+        entry.actor_id,
+        entry.attribution,
+        entry.occurred_at_ms as f64
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct VoiceConnectionEvent<'a> {
     pub operation_id: &'a str,

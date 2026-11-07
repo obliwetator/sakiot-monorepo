@@ -1,3 +1,4 @@
+mod bot_deafen;
 pub mod events;
 pub mod listing;
 pub mod live;

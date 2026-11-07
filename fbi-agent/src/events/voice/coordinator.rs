@@ -1,10 +1,11 @@
+use std::num::NonZeroU64;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use dashmap::DashMap;
-use serenity::model::id::GuildId;
+use serenity::model::id::{ChannelId, GuildId};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -34,6 +35,9 @@ pub(crate) struct GuildVoiceCoordinator {
     empty_generation: AtomicU64,
     retry_running: AtomicBool,
     operation_counter: AtomicU64,
+    /// The channel the bot last put itself in, 0 for none. A voice state that
+    /// disagrees was someone else's doing.
+    intended_channel: AtomicU64,
 }
 
 impl GuildVoiceCoordinator {
@@ -67,6 +71,15 @@ impl GuildVoiceCoordinator {
         self.retry_running.store(false, Ordering::SeqCst);
     }
 
+    pub(crate) fn intend_channel(&self, channel: Option<ChannelId>) {
+        self.intended_channel
+            .store(channel.map_or(0, ChannelId::get), Ordering::SeqCst);
+    }
+
+    pub(crate) fn intended_channel(&self) -> Option<ChannelId> {
+        NonZeroU64::new(self.intended_channel.load(Ordering::SeqCst)).map(ChannelId::from)
+    }
+
     pub(crate) fn operation_id(
         &self,
         instance_id: &str,
@@ -86,7 +99,19 @@ impl GuildVoiceCoordinator {
 
 #[cfg(test)]
 mod tests {
+    use serenity::model::id::ChannelId;
+
     use super::GuildVoiceCoordinator;
+
+    #[test]
+    fn the_intended_channel_starts_empty_and_can_be_cleared() {
+        let coordinator = GuildVoiceCoordinator::default();
+        assert_eq!(coordinator.intended_channel(), None);
+        coordinator.intend_channel(Some(ChannelId::new(7)));
+        assert_eq!(coordinator.intended_channel(), Some(ChannelId::new(7)));
+        coordinator.intend_channel(None);
+        assert_eq!(coordinator.intended_channel(), None);
+    }
 
     #[test]
     fn empty_timer_tokens_coalesce_stale_signals() {

@@ -39,6 +39,9 @@ export const voiceSettingsRouteLoader = guildRouteLoader(({ guild_id }) => {
 	void store.dispatch(
 		apiSlice.endpoints.getKeepAllowances.initiate(guild_id, routeQueryOptions),
 	);
+	void store.dispatch(
+		apiSlice.endpoints.getBotLog.initiate(guild_id, routeQueryOptions),
+	);
 });
 
 export const permissionsRouteLoader = guildRouteLoader(({ guild_id }) => {

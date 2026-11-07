@@ -30,6 +30,7 @@ const responses: Record<string, unknown> = {
 		allowances: [],
 		roles: [],
 	},
+	[`${adminRoot}/bot-log`]: [],
 	[`${adminRoot}/roles`]: [],
 	[`/api/guilds/${GUILD_ID}/kept-recordings`]: {
 		cap: 0,
@@ -88,6 +89,7 @@ const cases: RouteCase[] = [
 			`${adminRoot}/voice-settings`,
 			`${adminRoot}/recording-policy`,
 			`${adminRoot}/keep-allowances`,
+			`${adminRoot}/bot-log`,
 		],
 		ready: (page) =>
 			page.getByRole("heading", { name: "Voice Settings", exact: true }),

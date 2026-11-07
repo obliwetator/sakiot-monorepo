@@ -146,6 +146,46 @@ describe("buildEventTimelineModel", () => {
 	});
 });
 
+describe("the bot's deafen", () => {
+	const deafenLane = (events: AudioTimelineEvent[]) =>
+		buildEventTimelineModel(events, 240_000).lanes.find(
+			(lane) => lane.id === "deafen",
+		);
+
+	it("draws a span on its own track", () => {
+		const lane = deafenLane([
+			event("bot_deafened", 60_000, { source: "bot" }),
+			event("bot_undeafened", 180_000, { source: "bot" }),
+			event("self_deafen", 70_000),
+			event("self_undeafen", 80_000),
+		]);
+		expect(lane?.trackCount).toBe(3);
+		expect(lane?.intervals).toMatchObject([
+			{ track: 2, startMs: 60_000, endMs: 180_000 },
+			{ track: 1, startMs: 70_000, endMs: 80_000 },
+		]);
+		expect(lane?.intervals[0]?.label).toBe("Bot deafened (no audio)");
+	});
+
+	it("runs to the end while the bot stays deafened", () => {
+		expect(deafenLane([event("bot_deafened", 0)])?.intervals).toMatchObject([
+			{ startMs: 0, endMs: 240_000, endsAtBoundary: true },
+		]);
+	});
+
+	it("opens a span when a leftover deafen could not be cleared", () => {
+		expect(
+			deafenLane([event("bot_deafen_clear_failed", 1_000)])?.intervals,
+		).toMatchObject([{ startMs: 1_000, endMs: 240_000 }]);
+	});
+
+	it("marks a clear that follows no deafen, without a span from the start", () => {
+		const lane = deafenLane([event("bot_undeafened", 500)]);
+		expect(lane?.intervals).toEqual([]);
+		expect(lane?.points).toMatchObject([{ label: "Bot undeafened" }]);
+	});
+});
+
 describe("clusterTimelinePoints", () => {
 	it("clusters only milestones that collide in screen space", () => {
 		const model = buildEventTimelineModel(

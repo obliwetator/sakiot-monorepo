@@ -7,6 +7,7 @@ use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
 use web_server::openapi::ApiDoc;
 
+use web_server::admin::bot_log::get_bot_log;
 use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
     set_user_override,
@@ -322,6 +323,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_permission_rules)
             .service(put_permission_rule)
             .service(explain_access)
+            .service(get_bot_log)
             .service(get_keep_allowances)
             .service(put_keep_allowance)
             .service(get_operator_guilds)

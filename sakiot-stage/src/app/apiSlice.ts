@@ -181,6 +181,7 @@ export type Keeping = ApiSchema["Keeping"];
 export type KeptRecording = ApiSchema["KeptRecording"];
 export type RemovedRecordings = ApiSchema["RemovedRecordings"];
 export type RemovedRecording = ApiSchema["RemovedRecording"];
+export type BotLogEntry = ApiSchema["BotLogEntry"];
 export type KeepAllowances = ApiSchema["KeepAllowances"];
 export type KeepAllowance = ApiSchema["KeepAllowance"];
 export type KeepAllowanceChange = ApiSchema["KeepAllowanceChange"];
@@ -1071,6 +1072,9 @@ export const apiSlice = createApi({
 				"Clips" as const,
 			],
 		}),
+		getBotLog: builder.query<BotLogEntry[], string>({
+			query: (guild_id) => apiUrl(API_ROUTES.botLog, { guild_id }),
+		}),
 		getKeepAllowances: builder.query<KeepAllowances, string>({
 			query: (guild_id) => apiUrl(API_ROUTES.keepAllowances, { guild_id }),
 			providesTags: guildScoped("KeepAllowances"),
@@ -1253,6 +1257,7 @@ export const {
 	useReleaseRecordingMutation,
 	useReleaseRecordingForEveryoneMutation,
 	useRestoreRecordingMutation,
+	useGetBotLogQuery,
 	useGetKeepAllowancesQuery,
 	useSetKeepAllowanceMutation,
 	useGetOperatorGuildsQuery,

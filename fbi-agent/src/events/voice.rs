@@ -11,6 +11,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 use tracing::{error, warn};
 
+mod bot_log;
 pub(crate) mod coordinator;
 mod session;
 mod store;
@@ -157,6 +158,9 @@ pub async fn voice_state_update(
             .await;
     }
 
+    if is_own_bot {
+        bot_log::own_voice_state(handler, &ctx, old_state.as_ref(), &new_state).await;
+    }
     if !should_process_voice_transition(is_own_bot, is_bot) {
         return;
     }

@@ -73,6 +73,7 @@ const RECORDING_OPT_OUT_PATH =
 	/\/api\/users\/current\/guilds\/[^/]+\/recording-opt-out$/;
 const RECORDING_PRIVACY_PATH =
 	/\/api\/users\/current\/guilds\/[^/]+\/recording-privacy$/;
+const BOT_LOG_PATH = /^\/api\/admin\/guilds\/[^/]+\/bot-log$/;
 const VOICE_PRESENCE_PATH = /\/api\/current\/[^/]+\/voice-presence$/;
 
 /**
@@ -97,6 +98,10 @@ export async function fulfillSharedRoutes(
 			headers: json,
 			body: JSON.stringify({ available: true, channels: [] }),
 		});
+		return true;
+	}
+	if (BOT_LOG_PATH.test(path)) {
+		await route.fulfill({ status: 200, headers: json, body: "[]" });
 		return true;
 	}
 	const initial = RECORDING_OPT_OUT_PATH.test(path)

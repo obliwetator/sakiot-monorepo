@@ -541,6 +541,31 @@ applies, and suspends recording when it cannot read them. Opting out keeps
 earlier recordings. Who may hear them is a separate choice, listening
 consent (see "Authentication and authorization").
 
+### When someone else acts on the bot
+
+A server-deafened bot hears nothing, so a recording goes silent with no sign of
+why. The bot logs each time someone else deafens, undeafens, moves or
+disconnects it (`fbi-agent/src/events/voice/bot_log.rs`, `bot_voice_log`), and
+Voice Settings lists the latest 100 for holders of `manage_settings`. A change
+is someone else's when it disagrees with the channel the bot last put itself in
+(`GuildVoiceCoordinator::intended_channel`).
+
+Timelines draw each deafen as a span in the Deafen lane, for anyone who can open
+the recording; who did it stays in the log. Sessions are per member, so a member
+who joins a deafened bot gets a span from their first moment
+(`web-server/src/audio/bot_deafen.rs`).
+
+Who did it comes from Discord's audit log, which needs the bot's **View Audit
+Log** permission. A deafen entry names the bot, so that answer is exact. Discord
+merges a moderator's repeated moves or disconnects into one entry and fires no
+event for the repeats, so those answers are only likely, and past five minutes
+the bot names nobody rather than guess.
+
+A server deafen outlives the voice session, and Discord refuses to change it
+for a member who isn't in voice. So the bot clears a leftover deafen when it
+next joins, which needs **Deafen Members**, and that shows up as an undeafen by
+the bot. Moving between channels keeps it.
+
 ## Media lifecycle
 
 Recordings age out of local disk into Backblaze B2:

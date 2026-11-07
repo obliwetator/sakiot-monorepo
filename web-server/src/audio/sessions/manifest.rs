@@ -468,6 +468,23 @@ pub(super) async fn load_events(
             }),
         });
     }
+    for event in crate::audio::bot_deafen::bot_deafen_events(
+        pool.get_ref(),
+        access.guild_id,
+        access.started_at_ms,
+        Some(timeline_end_ms),
+    )
+    .await?
+    {
+        events.push(SessionTimelineEventDto {
+            source: "bot".to_string(),
+            event_type: event.event_type.to_string(),
+            offset_ms: event.offset_ms,
+            channel_id: None,
+            previous_channel_id: None,
+            details: serde_json::json!({}),
+        });
+    }
     events.sort_by_key(|event| event.offset_ms);
     Ok(events)
 }
