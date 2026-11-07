@@ -1,5 +1,6 @@
 import { useGetBotLogQuery } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
+import { ScrollRegion } from "../../shared/ui";
 import { when } from "../kept-recordings/keeping";
 import { culprit, happened } from "./describeBotLog";
 
@@ -28,20 +29,22 @@ export function BotLogPanel({ guildId }: { guildId: string }) {
 					{query.data.length === 0 ? (
 						<p className="leading-6 text-muted">Nothing yet.</p>
 					) : (
-						<ul aria-label="Bot log" className="flex flex-col gap-3">
-							{query.data.map((entry) => {
-								const who = culprit(entry);
-								return (
-									<li key={entry.id} className="flex flex-col">
-										<span>{happened(entry)}</span>
-										<span className="text-sm text-muted">
-											{when(entry.occurred_at_ms)}
-											{who && ` · ${who}`}
-										</span>
-									</li>
-								);
-							})}
-						</ul>
+						<ScrollRegion aria-label="Bot log, scrollable">
+							<ul aria-label="Bot log" className="flex flex-col gap-3">
+								{query.data.map((entry) => {
+									const who = culprit(entry);
+									return (
+										<li key={entry.id} className="flex flex-col">
+											<span>{happened(entry)}</span>
+											<span className="text-sm text-muted">
+												{when(entry.occurred_at_ms)}
+												{who && ` · ${who}`}
+											</span>
+										</li>
+									);
+								})}
+							</ul>
+						</ScrollRegion>
 					)}
 				</div>
 			)}

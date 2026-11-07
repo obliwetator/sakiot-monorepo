@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../app/apiSlice";
 import { setGuildSelected } from "../reducers/appSlice";
 import { RouteState } from "../routes/RouteState";
+import { Page } from "../shared/ui";
 
 /** The dashboard index is a usable server picker, never a placeholder page. */
 export function ProtectedLayout() {
@@ -21,8 +22,7 @@ export function ProtectedLayout() {
 		return <RouteState kind="empty" />;
 	}
 	return (
-		<main className="mx-auto max-w-5xl px-6 py-10">
-			<h1 className="mb-2 text-2xl font-semibold">Choose a server</h1>
+		<Page title="Choose a server">
 			<p className="mb-6 text-muted">
 				Open its audio dashboard to browse recordings and clips.
 			</p>
@@ -46,6 +46,6 @@ export function ProtectedLayout() {
 					</button>
 				))}
 			</div>
-		</main>
+		</Page>
 	);
 }

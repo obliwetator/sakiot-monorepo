@@ -6,6 +6,7 @@ import {
 import { LoadFailure } from "../../shared/LoadFailure";
 import { MemberPicker } from "../../shared/MemberPicker";
 import {
+	ScrollRegion,
 	Select,
 	SelectItem,
 	Table,
@@ -119,13 +120,9 @@ export function AccessExplainer({
 						</ul>
 					)}
 					{explained.channels.length > 0 && (
-						// Wider than a phone: the region scrolls, so keyboards must
-						// reach it.
-						<section
+						<ScrollRegion
 							aria-label={`${target.name} in each voice channel`}
-							// biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must be focusable to scroll by keyboard.
-							tabIndex={0}
-							className="w-full overflow-x-auto rounded-lg border border-ui-border focus-visible:outline-2 focus-visible:outline-focus"
+							className="w-full rounded-lg border border-ui-border"
 						>
 							<Table>
 								<caption className="sr-only">
@@ -165,7 +162,7 @@ export function AccessExplainer({
 									))}
 								</TableBody>
 							</Table>
-						</section>
+						</ScrollRegion>
 					)}
 					<Text tone="muted" className="text-xs">
 						Hover a capability to see what decided it. Listening also needs each

@@ -61,7 +61,7 @@ export function Inspector(props: {
 			aria-label="Inspector"
 			data-testid="clip-inspector"
 			className={cn(
-				"w-full min-[900px]:w-65 min-[900px]:[max-height:none] min-[900px]:flex-none min-h-0 min-w-0 overflow-y-auto overflow-x-hidden border-l-0 min-[900px]:border-l border-t min-[900px]:border-t-0 border-ui-border p-2 min-[900px]:p-4",
+				"relative w-full min-[900px]:w-65 min-[900px]:[max-height:none] min-[900px]:flex-none min-h-0 min-w-0 overflow-y-auto overflow-x-hidden border-l-0 min-[900px]:border-l border-t min-[900px]:border-t-0 border-ui-border p-2 min-[900px]:p-4",
 				segment ? "[max-height:33.333%]" : "[max-height:none]",
 				segment ? "[flex:0_0_33.333%]" : "flex-none",
 			)}

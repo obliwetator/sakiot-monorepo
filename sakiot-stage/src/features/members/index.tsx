@@ -10,6 +10,7 @@ import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Badge,
 	Button,
+	ScrollRegion,
 	Table,
 	TableBody,
 	TableCell,
@@ -56,8 +57,8 @@ export function GuildMembers() {
 	if (!gid) return <div className="p-4">Missing guild id.</div>;
 
 	return (
-		<div className="p-4">
-			<h5 className="font-semibold tracking-tight text-2xl mb-2">
+		<div className="flex h-full min-h-0 flex-col p-4">
+			<h5 className="font-semibold tracking-tight text-2xl mb-2 shrink-0">
 				Members &amp; roles
 			</h5>
 
@@ -70,8 +71,11 @@ export function GuildMembers() {
 					onRetry={() => void refetchRoles()}
 				/>
 			) : (
-				<div className="flex items-stretch flex-col min-[900px]:flex-row gap-4">
-					<div className="rounded-md border border-ui-border bg-surface text-fg shadow-none min-[900px]:min-w-70">
+				<div className="flex min-h-0 flex-1 flex-col gap-4 min-[900px]:flex-row">
+					<ScrollRegion
+						aria-label="Roles"
+						className="max-h-[35dvh] shrink-0 rounded-md border border-ui-border bg-surface text-fg shadow-none min-[900px]:max-h-full min-[900px]:min-w-70 min-[900px]:self-start"
+					>
 						<div className="flex flex-col gap-1">
 							{(roles ?? []).map((role) => (
 								<div key={role.role_id} className="relative flex items-center">
@@ -113,11 +117,11 @@ export function GuildMembers() {
 								</div>
 							)}
 						</div>
-					</div>
+					</ScrollRegion>
 
-					<div className="w-full overflow-x-auto flex-1">
+					<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
 						{selectedRole && (
-							<h6 className="text-base p-4">
+							<h6 className="text-base p-4 shrink-0">
 								<span style={{ ...roleTextStyle(selectedRole) }}>
 									{selectedRole.name}
 								</span>{" "}
@@ -135,35 +139,37 @@ export function GuildMembers() {
 								onRetry={() => void refetchMembers()}
 							/>
 						) : (
-							<Table>
-								<TableHeader>
-									<TableRow>
-										<TableHead>Name</TableHead>
-										<TableHead>User ID</TableHead>
-									</TableRow>
-								</TableHeader>
-								<TableBody>
-									{(members ?? []).map((member) => (
-										<TableRow key={member.user_id}>
-											<TableCell>
-												{member.name ?? <em>unknown user</em>}
-											</TableCell>
-											<TableCell>{member.user_id}</TableCell>
-										</TableRow>
-									))}
-									{(!members || members.length === 0) && (
+							<ScrollRegion fill aria-label="Members">
+								<Table>
+									<TableHeader>
 										<TableRow>
-											<TableCell colSpan={2}>
-												<p className="text-muted text-sm">
-													{selectedRole
-														? "No members hold this role."
-														: "Select a role to see its members."}
-												</p>
-											</TableCell>
+											<TableHead>Name</TableHead>
+											<TableHead>User ID</TableHead>
 										</TableRow>
-									)}
-								</TableBody>
-							</Table>
+									</TableHeader>
+									<TableBody>
+										{(members ?? []).map((member) => (
+											<TableRow key={member.user_id}>
+												<TableCell>
+													{member.name ?? <em>unknown user</em>}
+												</TableCell>
+												<TableCell>{member.user_id}</TableCell>
+											</TableRow>
+										))}
+										{(!members || members.length === 0) && (
+											<TableRow>
+												<TableCell colSpan={2}>
+													<p className="text-muted text-sm">
+														{selectedRole
+															? "No members hold this role."
+															: "Select a role to see its members."}
+													</p>
+												</TableCell>
+											</TableRow>
+										)}
+									</TableBody>
+								</Table>
+							</ScrollRegion>
 						)}
 					</div>
 				</div>

@@ -2,7 +2,7 @@ import { Pause as PauseIcon, Play as PlayArrowIcon } from "lucide-react";
 import { Button, cn, Slider } from "../../shared/ui";
 
 const ROW =
-	"flex items-center flex-row gap-2 min-[900px]:gap-4 mt-2 min-w-0 overflow-x-auto";
+	"relative flex items-center flex-row gap-2 min-[900px]:gap-4 mt-2 min-w-0 overflow-x-auto";
 const FIELD = "min-w-24 min-[900px]:min-w-45 [flex:1_1_0%]";
 
 export function PlaybackControls(props: {

@@ -339,7 +339,7 @@ function ClipsLayout(props: {
 						id={"combined"}
 					>{`Combined${composedClips.length > 0 ? ` (${composedClips.length})` : ""}`}</Tab>
 				</TabList>
-				<TabPanel id="clips" className="overflow-auto min-h-0 flex-1">
+				<TabPanel id="clips" className="relative overflow-auto min-h-0 flex-1">
 					{pureClips.length === 0 && (
 						<p className="text-muted text-sm p-4">
 							{isSearching
@@ -354,7 +354,10 @@ function ClipsLayout(props: {
 						guildSelected={props.guildSelected}
 					/>
 				</TabPanel>
-				<TabPanel id="combined" className="overflow-auto min-h-0 flex-1">
+				<TabPanel
+					id="combined"
+					className="relative overflow-auto min-h-0 flex-1"
+				>
 					{composedClips.length === 0 && (
 						<p className="text-muted text-sm p-4">
 							{isSearching
@@ -427,7 +430,7 @@ function ClipsLayout(props: {
 					</Drawer>
 				</div>
 			)}
-			<div className="flex-1 min-w-0 min-h-0 overflow-auto">
+			<div className="relative flex-1 min-w-0 min-h-0 overflow-auto">
 				{selectedClip && (
 					<ClipPlayer
 						key={selectedClip.clip_id}

@@ -12,8 +12,8 @@ import {
 	Button,
 	Notice,
 	Page,
-	PageTitle,
 	Panel,
+	ScrollRegion,
 	SectionTitle,
 	Text,
 	TextField,
@@ -35,15 +35,12 @@ export function OperatorPage() {
 	const guilds = useGetOperatorGuildsQuery(undefined, { skip: !operator });
 
 	return (
-		<Page className="space-y-5">
-			<header className="space-y-1">
-				<PageTitle>Operator</PageTitle>
-				<Text tone="muted">
-					Limits for every server the bot is in or holds recordings of. Only the
-					bot's operators see this page; nobody in a server can change what is
-					set here.
-				</Text>
-			</header>
+		<Page title="Operator" className="space-y-5">
+			<Text tone="muted">
+				Limits for every server the bot is in or holds recordings of. Only the
+				bot's operators see this page; nobody in a server can change what is set
+				here.
+			</Text>
 			{auth && !operator && (
 				<Notice tone="warning">
 					Only the bot's operators can open this page.
@@ -62,11 +59,13 @@ export function OperatorPage() {
 					{guilds.data.length === 0 ? (
 						<Text tone="muted">The bot knows no servers yet.</Text>
 					) : (
-						<ul aria-label="Servers" className="flex flex-col gap-3">
-							{guilds.data.map((guild) => (
-								<GuildLimitsRow key={guild.guild_id} guild={guild} />
-							))}
-						</ul>
+						<ScrollRegion aria-label="Servers, scrollable">
+							<ul aria-label="Servers" className="flex flex-col gap-3">
+								{guilds.data.map((guild) => (
+									<GuildLimitsRow key={guild.guild_id} guild={guild} />
+								))}
+							</ul>
+						</ScrollRegion>
 					)}
 				</Panel>
 			)}

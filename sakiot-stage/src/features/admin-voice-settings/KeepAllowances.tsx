@@ -13,6 +13,7 @@ import {
 	Button,
 	IconButton,
 	Notice,
+	ScrollRegion,
 	Select,
 	SelectItem,
 	TextField,
@@ -117,15 +118,17 @@ export function KeepAllowancesPanel({ guildId }: { guildId: string }) {
 						else the largest of their roles', else @everyone's. With none,
 						members keep until the cap is reached.
 					</p>
-					<ul aria-label="Allowances" className="flex flex-col gap-3">
-						{listed.map((entry) => (
-							<AllowanceRow
-								key={subjectKey(entry.subject)}
-								guildId={guildId}
-								entry={entry}
-							/>
-						))}
-					</ul>
+					<ScrollRegion aria-label="Allowances, scrollable">
+						<ul aria-label="Allowances" className="flex flex-col gap-3">
+							{listed.map((entry) => (
+								<AllowanceRow
+									key={subjectKey(entry.subject)}
+									guildId={guildId}
+									entry={entry}
+								/>
+							))}
+						</ul>
+					</ScrollRegion>
 					<div className="grid gap-3 sm:grid-cols-2">
 						{unlistedRoles.length > 0 && (
 							<Select

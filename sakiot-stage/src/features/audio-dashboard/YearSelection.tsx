@@ -58,7 +58,7 @@ export function YearSelection() {
 	);
 
 	return (
-		<div className="flex flex-col w-full min-[900px]:h-full overflow-hidden">
+		<div className="flex flex-col w-full h-full overflow-hidden">
 			{!isDesktop && (
 				<div className="p-2 shrink-0">
 					<Button
@@ -84,11 +84,11 @@ export function YearSelection() {
 				<FormerMemberBanner guildId={params.guild_id ?? ""} />
 				<ViewAsRoleBanner guildId={params.guild_id ?? ""} />
 			</div>
-			<div className="flex flex-col min-[900px]:flex-row w-full min-w-0 flex-1 min-h-0 min-[900px]:h-full">
+			<div className="flex flex-col min-[900px]:flex-row w-full min-w-0 flex-1 min-h-0">
 				{isDesktop && (
 					<div
 						className={
-							"[flex:0_0_20%] min-w-55 max-w-80 h-full overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+							"relative [flex:0_0_20%] min-w-55 max-w-80 h-full overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
 						}
 					>
 						{tree}
@@ -97,7 +97,7 @@ export function YearSelection() {
 
 				<div
 					className={
-						"flex-1 min-w-0 w-full min-[900px]:w-auto px-2 min-[900px]:px-4 pb-8 min-[900px]:h-full min-[900px]:overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+						"relative flex-1 min-w-0 min-h-0 w-full min-[900px]:w-auto px-2 min-[900px]:px-4 pb-8 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
 					}
 				>
 					{params.session_id ? (

@@ -43,12 +43,13 @@ function AuthenticatedApp() {
 	if (isLoading || !isLoggedIn) {
 		content = (
 			<BrowserRouter>
-				<LayoutsWithNavbar />
-				<div className="p-4">
-					{!isLoggedIn && !isLoading
-						? "You are not logged in or you are not authorized to view this content"
-						: "Loading Site"}
-				</div>
+				<LayoutsWithNavbar>
+					<div className="p-4">
+						{!isLoggedIn && !isLoading
+							? "You are not logged in or you are not authorized to view this content"
+							: "Loading Site"}
+					</div>
+				</LayoutsWithNavbar>
 				<BundleUpdatePrompt />
 			</BrowserRouter>
 		);

@@ -16,6 +16,12 @@
 - Report viewport, failing assertion, expected/actual difference, artifact paths, and whether the evidence indicates a regression, stale baseline, or environment issue.
 - Preserve `test-results/` and traces long enough for review. They are generated artifacts and must not be committed.
 
+## Scrolling
+
+- The page never scrolls: the frame under the navbar clips, and each component scrolls in a window of its own. Every e2e test fails if content overflows the frame or the document.
+- Build pages on `Page`, which pins the title and gives the rest its own window. Give any list or table that can grow a `ScrollRegion`.
+- Anything hand-written with `overflow-auto` must also be `relative`. Otherwise the hidden inputs of radios and switches escape into the document and focusing one moves the whole app.
+
 ## Common commands
 
 ```bash

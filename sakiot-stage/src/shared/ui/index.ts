@@ -18,8 +18,11 @@ export { Disclosure, DisclosurePanel, DisclosureTrigger } from "./Disclosure";
 export { IconButton, type IconButtonProps } from "./IconButton";
 export {
 	Page,
+	type PageProps,
 	PageTitle,
 	Panel,
+	ScrollRegion,
+	type ScrollRegionProps,
 	SectionTitle,
 	Text,
 	type TextProps,

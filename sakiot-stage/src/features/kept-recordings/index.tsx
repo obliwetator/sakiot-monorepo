@@ -20,8 +20,8 @@ import {
 	Button,
 	Notice,
 	Page,
-	PageTitle,
 	Panel,
+	ScrollRegion,
 	SectionTitle,
 	Text,
 } from "../../shared/ui";
@@ -50,7 +50,7 @@ export function KeptRecordingsPage() {
 
 	if (!gid) {
 		return (
-			<Page>
+			<Page title="Kept recordings">
 				<Notice tone="error">Missing guild id.</Notice>
 			</Page>
 		);
@@ -58,18 +58,15 @@ export function KeptRecordingsPage() {
 
 	const data = keeping.data;
 	return (
-		<Page className="space-y-5">
-			<header className="space-y-1">
-				<PageTitle>Kept recordings</PageTitle>
-				{data && (
-					<Text tone="muted">
-						Retention hides recordings {data.retention_days} days after they
-						end, and deletes them for good {data.retention_grace_days} days
-						later. Clips stay. A kept recording stays, for everyone who may hear
-						it, until nobody keeps it.
-					</Text>
-				)}
-			</header>
+		<Page title="Kept recordings" className="space-y-5">
+			{data && (
+				<Text tone="muted">
+					Retention hides recordings {data.retention_days} days after they end,
+					and deletes them for good {data.retention_grace_days} days later.
+					Clips stay. A kept recording stays, for everyone who may hear it,
+					until nobody keeps it.
+				</Text>
+			)}
 
 			{keeping.isLoading && <Text aria-live="polite">Loading…</Text>}
 			{keeping.isError && (
@@ -115,16 +112,18 @@ function KeptList({
 	if (keeping.recordings.length === 0)
 		return <Text tone="muted">Nothing is kept yet.</Text>;
 	return (
-		<ul aria-label="Kept recordings" className="flex flex-col gap-2">
-			{keeping.recordings.map((recording) => (
-				<KeptRow
-					key={recording.recording_session_id}
-					guildId={guildId}
-					recording={recording}
-					manager={manager}
-				/>
-			))}
-		</ul>
+		<ScrollRegion aria-label="Kept recordings, scrollable">
+			<ul aria-label="Kept recordings" className="flex flex-col gap-2">
+				{keeping.recordings.map((recording) => (
+					<KeptRow
+						key={recording.recording_session_id}
+						guildId={guildId}
+						recording={recording}
+						manager={manager}
+					/>
+				))}
+			</ul>
+		</ScrollRegion>
 	);
 }
 
@@ -244,16 +243,18 @@ function RemovedPanel({
 				(recordings.length === 0 ? (
 					<Text tone="muted">Nothing removed that you could bring back.</Text>
 				) : (
-					<ul aria-label="Removed recordings" className="flex flex-col gap-2">
-						{recordings.map((recording) => (
-							<RemovedRow
-								key={recording.recording_session_id}
-								guildId={guildId}
-								recording={recording}
-								blocked={blocked}
-							/>
-						))}
-					</ul>
+					<ScrollRegion aria-label="Removed recordings, scrollable">
+						<ul aria-label="Removed recordings" className="flex flex-col gap-2">
+							{recordings.map((recording) => (
+								<RemovedRow
+									key={recording.recording_session_id}
+									guildId={guildId}
+									recording={recording}
+									blocked={blocked}
+								/>
+							))}
+						</ul>
+					</ScrollRegion>
 				))}
 			{removed.hasNextPage && (
 				<Button

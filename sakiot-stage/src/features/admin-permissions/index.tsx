@@ -1,14 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useGetPermissionRulesQuery } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
-import {
-	Notice,
-	Page,
-	PageTitle,
-	Panel,
-	SectionTitle,
-	Text,
-} from "../../shared/ui";
+import { Notice, Page, Panel, SectionTitle, Text } from "../../shared/ui";
 import { AccessExplainer } from "./AccessExplainer";
 import { RuleEditor, StaleRules } from "./RuleEditor";
 
@@ -24,27 +17,24 @@ export function GuildPermissionsPage() {
 
 	if (!gid) {
 		return (
-			<Page>
+			<Page title="Permissions">
 				<Notice tone="error">Missing guild id.</Notice>
 			</Page>
 		);
 	}
 
 	return (
-		<Page className="space-y-5">
-			<header className="space-y-1">
-				<PageTitle>Permissions</PageTitle>
-				<Text tone="muted">
-					Everyone starts with what their Discord permissions give them. A rule
-					here allows or denies more, to @everyone, a role or a member,
-					server-wide or in one voice channel. The most specific rule wins:
-					server-wide @everyone, then roles, then the member; then the same in
-					the channel. Without “See who is in voice” in a channel, nothing else
-					there is held. No rule takes anything from the owner or from anyone
-					who can edit permissions, and nobody hears a member who keeps their
-					recordings private.
-				</Text>
-			</header>
+		<Page title="Permissions" className="space-y-5">
+			<Text tone="muted">
+				Everyone starts with what their Discord permissions give them. A rule
+				here allows or denies more, to @everyone, a role or a member,
+				server-wide or in one voice channel. The most specific rule wins:
+				server-wide @everyone, then roles, then the member; then the same in the
+				channel. Without “See who is in voice” in a channel, nothing else there
+				is held. No rule takes anything from the owner or from anyone who can
+				edit permissions, and nobody hears a member who keeps their recordings
+				private.
+			</Text>
 
 			{rulesQuery.isLoading && <Text aria-live="polite">Loading rules…</Text>}
 			{rulesQuery.isError && (

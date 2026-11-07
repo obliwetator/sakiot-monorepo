@@ -11,8 +11,17 @@ export function Table({ className, ...props }: ComponentProps<"table">) {
 		/>
 	);
 }
-export function TableHeader(props: ComponentProps<"thead">) {
-	return <thead {...props} />;
+/**
+ * Opaque, because in a ScrollRegion the rows scroll underneath it. It sticks a
+ * pixel past the edge so that rounding at fractional positions leaves no seam.
+ */
+export function TableHeader({ className, ...props }: ComponentProps<"thead">) {
+	return (
+		<thead
+			{...props}
+			className={cn("sticky -top-px z-1 bg-surface", className)}
+		/>
+	);
 }
 export function TableBody(props: ComponentProps<"tbody">) {
 	return <tbody {...props} />;

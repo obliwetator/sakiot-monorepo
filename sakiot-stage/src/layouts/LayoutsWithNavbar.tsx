@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useDispatch } from "react-redux";
 import { Outlet } from "react-router-dom";
 import { useGetAuthDetailsQuery } from "../app/apiSlice";
@@ -8,7 +9,7 @@ import type { UserGuilds } from "../Constants";
 import ResponsiveAppBar from "../navbar";
 import { setGuildSelected } from "../reducers/appSlice";
 
-export function LayoutsWithNavbar() {
+export function LayoutsWithNavbar({ children }: { children?: ReactNode }) {
 	const dispatch = useDispatch();
 	const guildSelected = useAppSelector((state) => state.app.guildSelected);
 	const { data: authData, isError } = useGetAuthDetailsQuery(undefined, {
@@ -43,8 +44,14 @@ export function LayoutsWithNavbar() {
 				userGuilds={userGuilds}
 				user={authData?.user ?? null}
 			/>
-			<div className="flex-1 min-h-0 overflow-auto">
-				<Outlet />
+			{/* Never scrolls, and clips so that focus or scrollIntoView cannot
+			    move it either: pages fill it and scroll in their own windows.
+			    Relative so that nothing absolute escapes into the document. */}
+			<div
+				data-testid="page-frame"
+				className="relative flex-1 min-h-0 overflow-clip"
+			>
+				{children ?? <Outlet />}
 			</div>
 		</div>
 	);

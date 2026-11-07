@@ -44,6 +44,17 @@ body,
 	font-family: "Inter Variable", system-ui, sans-serif;
 }
 
+/* The page never scrolls: each component scrolls in a window of its own, so
+   a page fills the space under the navbar (see Page and ScrollRegion). */
+html,
+body {
+	overflow: hidden;
+}
+
+html {
+	scrollbar-color: var(--color-ui-border) transparent;
+}
+
 body {
 	margin: 0;
 }

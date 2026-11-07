@@ -14,12 +14,11 @@ import { MemberPicker } from "../../shared/MemberPicker";
 import { SavedValueChanged } from "../../shared/SavedValueChanged";
 import {
 	Button,
-	cn,
 	IconButton,
 	Notice,
 	Page,
-	PageTitle,
 	Panel,
+	ScrollRegion,
 	SectionTitle,
 	Table,
 	TableBody,
@@ -144,20 +143,17 @@ export function GuildAdminCooldowns() {
 
 	if (!gid) {
 		return (
-			<Page>
+			<Page title="Jam cooldowns">
 				<Notice tone="error">Missing guild id.</Notice>
 			</Page>
 		);
 	}
 
 	return (
-		<Page className="space-y-5">
-			<header className="space-y-1">
-				<PageTitle>Jam cooldowns</PageTitle>
-				<Text tone="muted">
-					Control how often members can send a clip to the voice channel.
-				</Text>
-			</header>
+		<Page title="Jam cooldowns" className="space-y-5">
+			<Text tone="muted">
+				Control how often members can send a clip to the voice channel.
+			</Text>
 
 			<Panel aria-labelledby="guild-default-heading" className="space-y-4">
 				<div className="space-y-1">
@@ -335,11 +331,9 @@ export function GuildAdminCooldowns() {
 						onRetry={() => void overridesQuery.refetch()}
 					/>
 				) : (
-					<div
-						className={cn(
-							"w-full overflow-x-auto",
-							"rounded-lg border border-slate-800",
-						)}
+					<ScrollRegion
+						aria-label="User overrides"
+						className="w-full rounded-lg border border-slate-800"
 					>
 						<Table>
 							<caption className="sr-only">Per-user cooldown overrides</caption>
@@ -403,7 +397,7 @@ export function GuildAdminCooldowns() {
 								)}
 							</TableBody>
 						</Table>
-					</div>
+					</ScrollRegion>
 				)}
 			</Panel>
 		</Page>

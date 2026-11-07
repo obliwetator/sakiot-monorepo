@@ -47,7 +47,7 @@ export function ClipBin(props: {
 						: "Drag onto a track, or double-click to append"}
 				</span>
 			</div>
-			<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+			<div className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
 				<div className="flex flex-col gap-1 px-2 pb-2">
 					{filtered.map((clip) => (
 						<ClipBinItem

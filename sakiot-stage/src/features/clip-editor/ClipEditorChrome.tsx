@@ -38,7 +38,7 @@ export function ClipEditorToolbar(props: {
 }) {
 	const { editor } = props;
 	return (
-		<div className="flex items-center gap-1 min-[600px]:gap-2 px-2 min-[600px]:px-4 py-2 border-b border-ui-border overflow-x-auto flex-none">
+		<div className="relative flex items-center gap-1 min-[600px]:gap-2 px-2 min-[600px]:px-4 py-2 border-b border-ui-border overflow-x-auto flex-none">
 			<h6 className="font-medium tracking-[0.001em] text-xl truncate flex-1 min-w-0">
 				Clip Editor
 			</h6>

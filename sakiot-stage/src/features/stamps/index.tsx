@@ -6,6 +6,7 @@ import { useFallbackPolling } from "../../realtime/status";
 import { LoadFailure } from "../../shared/LoadFailure";
 import {
 	Button,
+	ScrollRegion,
 	Table,
 	TableBody,
 	TableCell,
@@ -82,7 +83,7 @@ export function Stamps() {
 	const rows = data ?? [];
 
 	return (
-		<div className="p-3 min-[900px]:p-6 max-w-350">
+		<div className="flex h-full min-h-0 max-w-350 flex-col p-3 min-[900px]:p-6">
 			<FormerMemberBanner guildId={guildId} />
 			<ViewAsRoleBanner guildId={guildId} />
 			<h4 className="leading-6 font-semibold tracking-tight mb-2">
@@ -97,7 +98,7 @@ export function Stamps() {
 			{rows.length === 0 ? (
 				<p className="leading-6 text-muted">No stamps yet.</p>
 			) : (
-				<div className="w-full overflow-x-auto">
+				<ScrollRegion fill aria-label="Stamps">
 					<Table>
 						<TableHeader>
 							<TableRow>
@@ -218,7 +219,7 @@ export function Stamps() {
 							})}
 						</TableBody>
 					</Table>
-				</div>
+				</ScrollRegion>
 			)}
 		</div>
 	);

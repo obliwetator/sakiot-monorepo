@@ -22,7 +22,7 @@ const copy = {
 export function RouteState({ kind }: { kind: RouteStateKind }) {
 	const { title, message } = copy[kind];
 	return (
-		<main className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-start justify-center gap-4 px-6 py-12">
+		<main className="mx-auto flex max-h-full min-h-[60vh] max-w-xl flex-col items-start justify-center gap-4 overflow-y-auto px-6 py-12">
 			<h1 className="text-2xl font-semibold">{title}</h1>
 			<p className="text-muted">{message}</p>
 			{kind === "empty" ? (

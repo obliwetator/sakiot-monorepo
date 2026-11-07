@@ -27,8 +27,31 @@ const MACHINE_SPEED_WARNINGS = [
 
 export const test = base.extend<{
 	consoleAudit: ConsoleAudit;
+	pageFrameAudit: undefined;
 	realtimeSocket: undefined;
 }>({
+	// The page never scrolls, so anything taller than the frame under the navbar
+	// is clipped and out of reach, and anything that escapes it stretches the
+	// document, where focus can scroll the whole app with no way back. Pages
+	// scroll in their own windows instead.
+	pageFrameAudit: [
+		async ({ page }, use) => {
+			await use(undefined);
+			const overflow = await page
+				.evaluate(() => {
+					const frame = document.querySelector("[data-testid=page-frame]");
+					const root = document.documentElement;
+					return {
+						frame: frame ? frame.scrollHeight - frame.clientHeight : 0,
+						document: root.scrollHeight - root.clientHeight,
+					};
+				})
+				.catch(() => ({ frame: 0, document: 0 })); // The page closed or left.
+			expect(overflow.frame, "Taller than the page frame").toBeLessThan(2);
+			expect(overflow.document, "Escaped into the document").toBeLessThan(2);
+		},
+		{ auto: true },
+	],
 	// Every logged-in page opens the realtime socket. Unless a test plays the
 	// server side itself (its own `page.routeWebSocket` takes precedence),
 	// the socket opens but the server never sends `ready`: realtime stays
