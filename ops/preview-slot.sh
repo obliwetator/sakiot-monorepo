@@ -421,7 +421,8 @@ elif [[ "$ACTION" = remove ]]; then
     log "removed per-slot roots"
 
     # ---- B2 objects uploaded by the slot -----------------------------------
-    # Purges automatically whenever a delete-capable key is configured:
+    # Purges automatically whenever a purge key is configured (hiding needs
+    # writeFiles, not deleteFiles; see ops/README.md for its capabilities):
     # /etc/sakiot/preview-b2-purge.env (root-only, holds B2_PURGE_KEY_ID and
     # B2_PURGE_KEY_SECRET) or B2_PURGE_KEY_ID/SECRET env vars. This optional
     # root-only key keeps preview teardown independent of the web process's

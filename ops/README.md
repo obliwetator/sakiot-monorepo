@@ -352,11 +352,14 @@ and `--remove` to tear it down.
   is rendered once, at provisioning, so re-render older slots after the
   template changes.
 - **Removal.** `--remove` deletes the slot's DNS record, certificate, vhost,
-  unit, database and local media copies. With a delete-capable key in the
-  root-only `/etc/sakiot/preview-b2-purge.env` (`B2_PURGE_KEY_ID`,
-  `B2_PURGE_KEY_SECRET`), it also hides the B2 objects the slot created: keys in
-  the slot's `media_objects` that staging's lacks. Retained versions stay
-  recoverable. Without the key, the B2 purge is skipped with a warning.
+  unit, database and local media copies. With a key in the root-only
+  `/etc/sakiot/preview-b2-purge.env` (`B2_PURGE_KEY_ID`, `B2_PURGE_KEY_SECRET`),
+  it also hides the B2 objects the slot created: keys in the slot's
+  `media_objects` that staging's lacks. Retained versions stay recoverable.
+  Without the key, the B2 purge is skipped with a warning. Hiding is a write, so
+  the key needs no `deleteFiles`: restrict it to the staging bucket with
+  `listBuckets,listFiles,readFiles,writeFiles`, as checked 2026-11-07 by
+  uploading and hiding a test object with `rclone`.
 
 A `preview-ci` deploy loads the shared `preview.env` and rewrites these tokens
 per slot. It writes the resulting port, origins and `DISCORD_REDIRECT_URI` into
