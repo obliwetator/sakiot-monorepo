@@ -1828,9 +1828,11 @@ export interface components {
 			channels: components["schemas"]["VoiceChannel"][];
 			excluded_channel_ids: string[];
 			is_default: boolean;
+			notice_delivery: components["schemas"]["NoticeDelivery"];
 		};
 		GuildRecordingPolicyBody: {
 			excluded_channel_ids: string[];
+			notice_delivery?: null | components["schemas"]["NoticeDelivery"];
 		};
 		GuildRole: {
 			/**
@@ -2028,6 +2030,12 @@ export interface components {
 			/** Format: int64 */
 			next_offset?: number | null;
 		};
+		/**
+		 * @description How members are told, once per guild, that they are recorded. The other
+		 *     route is the fallback when this one is refused.
+		 * @enum {string}
+		 */
+		NoticeDelivery: "dm" | "channel";
 		OperatorGuild: {
 			/** Format: int32 */
 			default_retention_days: number;

@@ -5,9 +5,38 @@ use sqlx::{Pool, Postgres};
 
 use crate::{errors::AppError, permissions::require_capability};
 
+/// How members are told, once per guild, that they are recorded. The other
+/// route is the fallback when this one is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeDelivery {
+    /// A direct message from the bot.
+    Dm,
+    /// A message in the text chat of the voice channel being recorded.
+    Channel,
+}
+
+impl NoticeDelivery {
+    fn from_db(value: &str) -> Self {
+        if value == "channel" {
+            Self::Channel
+        } else {
+            Self::Dm
+        }
+    }
+
+    fn as_db(self) -> &'static str {
+        match self {
+            Self::Dm => "dm",
+            Self::Channel => "channel",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct GuildRecordingPolicy {
     pub excluded_channel_ids: Vec<String>,
+    pub notice_delivery: NoticeDelivery,
     pub channels: Vec<VoiceChannel>,
     pub is_default: bool,
 }
@@ -41,6 +70,9 @@ async fn voice_channels(
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 pub struct GuildRecordingPolicyBody {
     pub excluded_channel_ids: Vec<String>,
+    /// Left out, the guild keeps its current choice.
+    #[serde(default)]
+    pub notice_delivery: Option<NoticeDelivery>,
 }
 
 fn validate(body: &GuildRecordingPolicyBody) -> Result<Vec<i64>, AppError> {
@@ -84,23 +116,26 @@ pub async fn get_recording_policy(
     let guild_id = path.into_inner();
     require_capability(&req, &pool, guild_id, Capabilities::MANAGE_SETTINGS).await?;
     let channels = voice_channels(&pool, guild_id).await?;
-    let row = sqlx::query_scalar!(
-        "SELECT excluded_channel_ids FROM guild_recording_policy WHERE guild_id=$1",
+    let row = sqlx::query!(
+        "SELECT excluded_channel_ids, notice_delivery FROM guild_recording_policy WHERE guild_id=$1",
         guild_id
     )
     .fetch_optional(pool.get_ref())
     .await?;
     let policy = match row {
-        Some(excluded_channel_ids) => GuildRecordingPolicy {
-            excluded_channel_ids: excluded_channel_ids
+        Some(row) => GuildRecordingPolicy {
+            excluded_channel_ids: row
+                .excluded_channel_ids
                 .into_iter()
                 .map(|id| id.to_string())
                 .collect(),
+            notice_delivery: NoticeDelivery::from_db(&row.notice_delivery),
             channels: channels.clone(),
             is_default: false,
         },
         None => GuildRecordingPolicy {
             excluded_channel_ids: Vec::new(),
+            notice_delivery: NoticeDelivery::Dm,
             channels,
             is_default: true,
         },
@@ -151,17 +186,19 @@ pub async fn put_recording_policy(
             "Excluded channels must be voice channels in this server".into(),
         ));
     }
-    sqlx::query!(
-        "INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids,updated_by) VALUES ($1,$2,$3) ON CONFLICT (guild_id) DO UPDATE SET excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,updated_at=now()",
+    let notice_delivery = sqlx::query_scalar!(
+        "INSERT INTO guild_recording_policy (guild_id,excluded_channel_ids,updated_by,notice_delivery) VALUES ($1,$2,$3,COALESCE($4,'dm')) ON CONFLICT (guild_id) DO UPDATE SET excluded_channel_ids=EXCLUDED.excluded_channel_ids,updated_by=EXCLUDED.updated_by,notice_delivery=COALESCE($4,guild_recording_policy.notice_delivery),updated_at=now() RETURNING notice_delivery",
         guild_id,
         &ids,
-        user_id
+        user_id,
+        body.notice_delivery.map(NoticeDelivery::as_db)
     )
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(HttpResponse::Ok().json(GuildRecordingPolicy {
         excluded_channel_ids: ids.into_iter().map(|id| id.to_string()).collect(),
+        notice_delivery: NoticeDelivery::from_db(&notice_delivery),
         channels: voice_channels(&pool, guild_id).await?,
         is_default: false,
     }))
@@ -175,13 +212,15 @@ mod tests {
     fn rejects_duplicate_channel_ids() {
         assert!(
             validate(&GuildRecordingPolicyBody {
-                excluded_channel_ids: vec!["1".into(), "1".into()]
+                excluded_channel_ids: vec!["1".into(), "1".into()],
+                notice_delivery: None,
             })
             .is_err()
         );
         assert_eq!(
             validate(&GuildRecordingPolicyBody {
-                excluded_channel_ids: vec!["1".into()]
+                excluded_channel_ids: vec!["1".into()],
+                notice_delivery: None,
             })
             .unwrap(),
             vec![1]

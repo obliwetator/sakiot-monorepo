@@ -766,12 +766,13 @@ export const apiSlice = createApi({
 			{
 				guild_id: string;
 				excluded_channel_ids: string[];
+				notice_delivery: GuildRecordingPolicy["notice_delivery"];
 			}
 		>({
-			query: ({ guild_id, excluded_channel_ids }) => ({
+			query: ({ guild_id, excluded_channel_ids, notice_delivery }) => ({
 				url: apiUrl(API_ROUTES.guildRecordingPolicy, { guild_id }),
 				method: "PUT",
-				body: { excluded_channel_ids },
+				body: { excluded_channel_ids, notice_delivery },
 			}),
 			invalidatesTags: guildScoped("GuildRecordingPolicy"),
 		}),

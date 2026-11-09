@@ -201,6 +201,7 @@ use utoipa::{
         crate::keeping::RemovedRecordings,
         crate::operators::GuildLimits,
         crate::operators::OperatorGuild,
+        crate::admin::recording_policy::NoticeDelivery,
         crate::recording_opt_out::RecordingOptOut,
         crate::recording_privacy::RecordingPrivacy,
         crate::realtime::protocol::ClientMessage,

@@ -18,6 +18,7 @@ pub mod heartbeat;
 pub mod media_archive;
 mod permissions;
 mod projections;
+mod recording_notice;
 pub mod runtime;
 mod shutdown;
 pub mod telemetry;

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT excluded_channel_ids, notice_delivery FROM guild_recording_policy WHERE guild_id=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "excluded_channel_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "guild_recording_policy",
+            "name": "excluded_channel_ids"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "notice_delivery",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "guild_recording_policy",
+            "name": "notice_delivery"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "717bf5a7e941cd14343ba4ae261a2e303fcb188b7b15e40b6fb24496eafca285"
+}

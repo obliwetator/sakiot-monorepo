@@ -77,6 +77,7 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 		) {
 			await json({
 				excluded_channel_ids: [],
+				notice_delivery: "dm",
 				channels: [{ id: "channel-321", name: "Private voice" }],
 				is_default: true,
 			});
@@ -115,9 +116,13 @@ test("a failed restore reports an error and recording policy can be saved", asyn
 		page.getByRole("spinbutton", { name: /recordings after/ }),
 	).toHaveCount(0);
 	await page.getByRole("checkbox", { name: "Private voice" }).check();
+	await page.getByText("Message in the voice channel's chat").click();
 	await page.getByRole("button", { name: "Save recording policy" }).click();
 	await expect(page.getByText("Recording policy saved.")).toBeVisible();
-	expect(savedPolicy).toEqual({ excluded_channel_ids: ["channel-321"] });
+	expect(savedPolicy).toEqual({
+		excluded_channel_ids: ["channel-321"],
+		notice_delivery: "channel",
+	});
 });
 
 test("server validation and permission failures are explained and input is kept", async ({

@@ -10,7 +10,14 @@ import {
 } from "../../app/apiSlice";
 import { LoadFailure } from "../../shared/LoadFailure";
 import { SavedValueChanged } from "../../shared/SavedValueChanged";
-import { Button, Notice, ScrollRegion, TextField } from "../../shared/ui";
+import {
+	Button,
+	Notice,
+	Radio,
+	RadioGroup,
+	ScrollRegion,
+	TextField,
+} from "../../shared/ui";
 import { sameIds, useDraftField } from "../../shared/useDraftField";
 import { BotLogPanel } from "./BotLog";
 import { KeepAllowancesPanel } from "./KeepAllowances";
@@ -51,14 +58,20 @@ export function GuildVoiceSettingsPage() {
 		guildId,
 		sameIds,
 	);
+	const noticeDelivery = useDraftField(
+		recordingPolicy?.notice_delivery,
+		guildId,
+	);
 
 	const handleRecordingPolicySave = async () => {
 		try {
 			await saveRecordingPolicy({
 				guild_id: guildId,
 				excluded_channel_ids: excludedChannels.value ?? [],
+				notice_delivery: noticeDelivery.value ?? "dm",
 			}).unwrap();
 			excludedChannels.markSaved();
+			noticeDelivery.markSaved();
 		} catch {
 			// recordingSaveState.isError renders the failure; drafts are kept.
 		}
@@ -236,9 +249,40 @@ export function GuildVoiceSettingsPage() {
 										</label>
 									))}
 								</fieldset>
+								<fieldset className="space-y-2">
+									<legend className="font-medium">
+										How members are told they are recorded
+									</legend>
+									<RadioGroup
+										aria-label="How members are told they are recorded"
+										value={noticeDelivery.value ?? "dm"}
+										onChange={(value) =>
+											noticeDelivery.edit(
+												value === "channel" ? "channel" : "dm",
+											)
+										}
+									>
+										<Radio value="dm">Direct message</Radio>
+										<Radio value="channel">
+											Message in the voice channel's chat
+										</Radio>
+									</RadioGroup>
+									<p className="text-muted">
+										Each member is told once in this server, the first time they
+										are recorded here. If this way fails, the bot tries the
+										other.
+									</p>
+								</fieldset>
 								{excludedChannels.savedUpdate && (
 									<SavedValueChanged
 										onTakeSaved={excludedChannels.takeSaved}
+										onSaveMine={() => void handleRecordingPolicySave()}
+										isSaving={recordingSaveState.isLoading}
+									/>
+								)}
+								{noticeDelivery.savedUpdate && (
+									<SavedValueChanged
+										onTakeSaved={noticeDelivery.takeSaved}
 										onSaveMine={() => void handleRecordingPolicySave()}
 										isSaving={recordingSaveState.isLoading}
 									/>

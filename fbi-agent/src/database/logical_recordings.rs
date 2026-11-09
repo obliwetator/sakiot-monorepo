@@ -127,6 +127,8 @@ pub async fn create_fragment_in(
     if crate::database::opt_outs::is_opted_out(&mut *tx, guild_id, user_id).await? {
         return Err(DbError::RecordingOptedOut);
     }
+    // In this transaction, so nobody is recorded without a notice on its way.
+    crate::database::recording_notices::queue(&mut *tx, guild_id, channel_id, user_id).await?;
     lock_user_session(&mut tx, guild_id, user_id).await?;
     expire_user_pending_in_tx(&mut tx, guild_id, user_id, now_ms).await?;
 

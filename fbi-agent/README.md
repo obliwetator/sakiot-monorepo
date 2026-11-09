@@ -9,7 +9,14 @@ gRPC services. How it fits with the other components is in
 Recording is on by default. A member stops it for themselves in one server
 with `/recording opt-out` (or the web app's account menu) and resumes with
 `/recording opt-in`; open recordings close within a second and earlier ones are
-kept.
+kept. Each member is told once per server, the first time they are recorded
+there (see "Recording controls" in [architecture](../docs/architecture.md)).
+
+Every `/recording` subcommand takes an optional `server`, offered from the
+servers the member shares with the bot, so the command also works in a direct
+message. Left empty it means the server it was typed in. A change aimed at any
+other server asks for confirmation first. `private`, `shared` and `status` also
+offer servers the member has left, where recordings of them remain.
 
 ## Configuration
 

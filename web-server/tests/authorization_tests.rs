@@ -703,6 +703,7 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     )
     .await;
     assert_eq!(default["is_default"], true);
+    assert_eq!(default["notice_delivery"], "dm");
     assert!(
         default["channels"]
             .as_array()
@@ -741,6 +742,30 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
     assert_eq!(forged.status(), StatusCode::FORBIDDEN);
     let forged: serde_json::Value = test::read_body_json(forged).await;
     assert_eq!(forged["kind"], "csrf_rejected");
+
+    let channel_notice: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        test::TestRequest::put()
+            .uri(&policy_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({"excluded_channel_ids":[],"notice_delivery":"channel"}))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(channel_notice["notice_delivery"], "channel");
+    // A client that doesn't send the route leaves the guild's choice alone.
+    let kept: serde_json::Value = test::call_and_read_body_json(
+        &app,
+        test::TestRequest::put()
+            .uri(&policy_uri)
+            .insert_header(("Cookie", cookie.clone()))
+            .insert_header(("X-CSRF-Token", CSRF))
+            .set_json(json!({"excluded_channel_ids":[]}))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(kept["notice_delivery"], "channel");
 
     let updated: serde_json::Value = test::call_and_read_body_json(
         &app,

@@ -1,6 +1,8 @@
 use crate::cast::ToI64;
 use serenity::{
-    all::{ButtonStyle, CommandDataOptionValue, CommandInteraction, Interaction},
+    all::{
+        ButtonStyle, CommandDataOptionValue, CommandInteraction, ComponentInteraction, Interaction,
+    },
     builder::{
         AutocompleteChoice, CreateActionRow, CreateAutocompleteResponse, CreateButton,
         CreateInteractionResponse, CreateInteractionResponseFollowup,
@@ -90,13 +92,15 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                     )
                 }
                 "recording" => {
-                    response_msg = response_msg.content(
-                        crate::commands::recording::handle_recording(
-                            &application_command,
-                            &_self.database,
-                        )
-                        .await,
+                    let reply = crate::commands::recording::handle_recording(
+                        &application_command,
+                        &ctx.cache,
+                        &_self.database,
                     )
+                    .await;
+                    response_msg = response_msg
+                        .content(reply.content)
+                        .components(reply.components);
                 }
                 other => {
                     response_msg = response_msg.content(format!(
@@ -150,6 +154,45 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                 {
                     warn!("Cannot send replay followup: {}", why);
                 }
+            } else if let Some(guild_id) = component
+                .data
+                .custom_id
+                .strip_prefix(crate::recording_notice::OPT_OUT_BUTTON_PREFIX)
+            {
+                let content = crate::commands::recording::opt_out_from_notice(
+                    &_self.database,
+                    guild_id,
+                    component.user.id.to_i64(),
+                )
+                .await;
+                if let Err(why) = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(content)
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await
+                {
+                    warn!("Cannot answer the recording opt-out button: {}", why);
+                }
+            } else if let Some(payload) = component
+                .data
+                .custom_id
+                .strip_prefix(crate::commands::recording::CONFIRM_BUTTON_PREFIX)
+            {
+                let content = crate::commands::recording::confirm_from_button(
+                    &ctx.cache,
+                    &_self.database,
+                    payload,
+                    component.user.id,
+                )
+                .await;
+                close_prompt(&ctx, &component, content).await;
+            } else if component.data.custom_id == crate::commands::recording::CANCEL_BUTTON_ID {
+                close_prompt(&ctx, &component, "Cancelled. Nothing changed.".to_string()).await;
             } else {
                 warn!(
                     "Unhandled interaction type: Component (id={})",
@@ -158,14 +201,14 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
             }
         }
         Interaction::Autocomplete(autocomplete) => {
-            if autocomplete.data.name == "jam" {
-                let focused_value = autocomplete
-                    .data
-                    .autocomplete()
-                    .map(|a| a.value)
-                    .unwrap_or("");
+            let focused_value = autocomplete
+                .data
+                .autocomplete()
+                .map(|a| a.value)
+                .unwrap_or("");
 
-                let choices = match autocomplete.guild_id {
+            let choices = match autocomplete.data.name.as_str() {
+                "jam" => match autocomplete.guild_id {
                     Some(guild_id) => {
                         get_clip_choices(
                             focused_value,
@@ -177,24 +220,38 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
                         .await
                     }
                     None => Vec::new(),
-                };
-
-                if let Err(why) = autocomplete
-                    .create_response(
-                        &ctx.http,
-                        CreateInteractionResponse::Autocomplete(
-                            CreateAutocompleteResponse::new().set_choices(choices),
-                        ),
+                },
+                "recording" => {
+                    crate::commands::recording::server_choices(
+                        &ctx.cache,
+                        &_self.database,
+                        autocomplete.user.id,
+                        autocomplete.guild_id,
+                        autocomplete
+                            .data
+                            .options
+                            .first()
+                            .map(|option| option.name.as_str()),
+                        focused_value,
                     )
                     .await
-                {
-                    warn!("Cannot respond to autocomplete: {}", why);
                 }
-            } else {
-                warn!(
-                    "Unhandled interaction type: Autocomplete (name={})",
-                    autocomplete.data.name
-                );
+                other => {
+                    warn!("Unhandled interaction type: Autocomplete (name={})", other);
+                    return;
+                }
+            };
+
+            if let Err(why) = autocomplete
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Autocomplete(
+                        CreateAutocompleteResponse::new().set_choices(choices),
+                    ),
+                )
+                .await
+            {
+                warn!("Cannot respond to autocomplete: {}", why);
             }
         }
         Interaction::Modal(modal) => {
@@ -206,6 +263,24 @@ pub async fn interaction_create(_self: &Handler, ctx: Context, interaction: Inte
         _ => {
             warn!("Unhandled unknown interaction type");
         }
+    }
+}
+
+/// Replaces a confirmation prompt with its outcome, taking the buttons away so
+/// it can't be answered twice.
+async fn close_prompt(ctx: &Context, component: &ComponentInteraction, content: String) {
+    if let Err(why) = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content(content)
+                    .components(Vec::new()),
+            ),
+        )
+        .await
+    {
+        warn!("Cannot answer the recording confirmation: {}", why);
     }
 }
 

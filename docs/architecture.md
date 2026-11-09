@@ -541,6 +541,39 @@ applies, and suspends recording when it cannot read them. Opting out keeps
 earlier recordings. Who may hear them is a separate choice, listening
 consent (see "Authentication and authorization").
 
+### Telling members they are recorded
+
+Each member is told once per server, so opting out or being told in one server
+says nothing about another. `create_fragment_in` queues the notice in
+`recording_notices` in the same transaction that opens the recording, so nobody
+is recorded without one. A worker in the bot (`fbi-agent/src/recording_notice.rs`)
+sends one every two seconds, and the row stays as the record of what was sent,
+when and how.
+
+Voice Settings chooses a direct message or the voice channel's text chat; the
+default is a direct message, which members can't lose to a moderator deleting
+it. If Discord refuses that route, the bot tries the other. Transient failures
+retry for about two hours; a notice that fails is queued again if the member is
+still being recorded a day later. Bots and members who have already opted out
+are skipped. An undelivered notice never stops a recording.
+
+The message explains that recording is opt-out and points to the web app's
+account menu, using `CORS_ALLOWED_ORIGIN` as the site's address. Its **Stop
+recording me** button carries the server's id, because a direct message has no
+server.
+
+`/recording` takes an optional `server`, so it works in a direct message and
+from one server about another. Its choices come from the gateway cache, and
+because Discord lets people type anything into such a field, the value is
+checked against that same list when the command runs. Left empty it means the
+server it was typed in. A change aimed at any other server, which includes every
+change made in a direct message, needs a press of Confirm; `status` doesn't.
+
+As on the web, someone who has left a server keeps a say over who hears their
+voice there. `private`, `shared` and `status` also offer servers holding the
+member's recordings that they are no longer in; `opt-out` and `opt-in` don't,
+since nobody is recorded in a server they have left.
+
 ### When someone else acts on the bot
 
 A server-deafened bot hears nothing, so a recording goes silent with no sign of

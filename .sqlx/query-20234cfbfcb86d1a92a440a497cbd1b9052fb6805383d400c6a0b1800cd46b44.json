@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recording_notices (guild_id, user_id, channel_id)\n         VALUES ($1, $2, $3)\n         ON CONFLICT (guild_id, user_id) DO UPDATE\n            SET status = 'pending',\n                channel_id = EXCLUDED.channel_id,\n                attempts = 0,\n                next_attempt_at = now()\n          WHERE recording_notices.status = 'failed'\n            AND recording_notices.next_attempt_at < now() - interval '1 day'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "20234cfbfcb86d1a92a440a497cbd1b9052fb6805383d400c6a0b1800cd46b44"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE recording_notices\n            SET status = 'sent', sent_at = now(), delivered_via = $3, message_id = $4,\n                last_error = NULL\n          WHERE guild_id = $1 AND user_id = $2 AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ddc56ebdf5d097a14e28190bdf47731a28bd1eafddd2ac855b05790eaa696838"
+}

@@ -35,6 +35,22 @@ pub async fn set_private(
     Ok(result.rows_affected() > 0)
 }
 
+/// The guilds holding recordings of `user_id`, with their names. Someone who
+/// has left a guild still decides who hears their voice there.
+pub async fn recorded_guilds(pool: &Pool<Postgres>, user_id: i64) -> DbResult<Vec<(i64, String)>> {
+    let rows = sqlx::query!(
+        r#"SELECT g.id, COALESCE(g.name, g.id::text) AS "name!"
+             FROM guilds g
+            WHERE EXISTS (SELECT 1
+                            FROM recording_sessions rs
+                           WHERE rs.guild_id = g.id AND rs.user_id = $1)"#,
+        user_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.id, row.name)).collect())
+}
+
 pub async fn is_private(pool: &Pool<Postgres>, guild_id: i64, user_id: i64) -> DbResult<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT EXISTS (

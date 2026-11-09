@@ -132,6 +132,16 @@ async fn run_registered_instance(
     crate::metrics::observe_gateway_latency(shard_manager.clone());
     let shutdown_data = client.data.clone();
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let _recording_notices = crate::recording_notice::spawn(
+        crate::recording_notice::NoticeSender {
+            pool: pool.to_owned(),
+            http: client.http.clone(),
+            cache: client.cache.clone(),
+            website: crate::config::website_url(),
+        },
+        runtime.clone(),
+        shutdown_rx.clone(),
+    );
 
     let discord = tokio::spawn(async move { client.start().await });
     let grpc = crate::grpc::spawn_server(custom.clone(), shutdown_rx.clone());

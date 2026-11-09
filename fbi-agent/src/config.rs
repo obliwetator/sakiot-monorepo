@@ -49,6 +49,18 @@ pub fn internal_secret() -> Option<String> {
         .filter(|secret| !secret.trim().is_empty())
 }
 
+/// The web app's public origin, for links in what the bot sends. The web
+/// server's allowed origin is that same value, and both services load it from
+/// the environment's shared file.
+pub fn website_url() -> Option<String> {
+    website_url_from(env::var("CORS_ALLOWED_ORIGIN").ok()?.as_str())
+}
+
+fn website_url_from(origin: &str) -> Option<String> {
+    let origin = origin.trim().trim_end_matches('/');
+    (origin.starts_with("https://") || origin.starts_with("http://")).then(|| origin.to_string())
+}
+
 /// The address other services dial to reach this instance's gRPC server, published to
 /// `bot_instances.grpc_address` so the web server can route a jam to whichever instance
 /// owns a guild's voice connection.
@@ -81,7 +93,17 @@ pub const SERVICE_NAME: &str = "fbi-agent";
 
 #[cfg(test)]
 mod tests {
-    use super::dial_addr_from_bind;
+    use super::{dial_addr_from_bind, website_url_from};
+
+    #[test]
+    fn website_url_is_a_clean_http_origin() {
+        assert_eq!(
+            website_url_from(" https://example.test/ ").as_deref(),
+            Some("https://example.test")
+        );
+        assert_eq!(website_url_from(""), None);
+        assert_eq!(website_url_from("example.test"), None);
+    }
 
     #[test]
     fn dialable_binds_pass_through() {

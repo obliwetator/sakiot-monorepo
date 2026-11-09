@@ -6,6 +6,7 @@ pub mod opt_outs;
 pub mod permission_rules;
 pub mod privacy;
 pub mod projections;
+pub mod recording_notices;
 pub mod recordings;
 pub mod runtime;
 pub mod stamps;

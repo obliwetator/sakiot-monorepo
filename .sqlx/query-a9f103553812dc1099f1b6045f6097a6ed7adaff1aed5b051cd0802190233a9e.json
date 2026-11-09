@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH due AS (\n             SELECT guild_id, user_id\n               FROM recording_notices\n              WHERE status = 'pending' AND next_attempt_at <= now()\n              ORDER BY next_attempt_at, guild_id, user_id\n              LIMIT 1\n                FOR UPDATE SKIP LOCKED\n           )\n           UPDATE recording_notices n\n              SET attempts = n.attempts + 1,\n                  next_attempt_at =\n                      now() + make_interval(mins => LEAST(power(2, n.attempts)::int, 60))\n             FROM due\n            WHERE n.guild_id = due.guild_id AND n.user_id = due.user_id\n           RETURNING n.guild_id AS \"guild_id!\",\n                     n.user_id AS \"user_id!\",\n                     n.channel_id AS \"channel_id!\",\n                     n.attempts AS \"attempts!\",\n                     COALESCE(\n                         (SELECT p.notice_delivery\n                            FROM guild_recording_policy p\n                           WHERE p.guild_id = n.guild_id),\n                         'dm'\n                     ) AS \"delivery!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "guild_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_notices",
+            "name": "guild_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_notices",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "channel_id!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "recording_notices",
+            "name": "channel_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "attempts!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "recording_notices",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "delivery!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "a9f103553812dc1099f1b6045f6097a6ed7adaff1aed5b051cd0802190233a9e"
+}
