@@ -44,6 +44,12 @@ chown root:sakiot /etc/sakiot/production.env /etc/sakiot/staging.env /etc/sakiot
 chmod 0640 /etc/sakiot/production.env /etc/sakiot/staging.env /etc/sakiot/rclone.conf
 ```
 
+The observability stack's B2 exporter keeps its own copy of all three keys in
+`b2-exporter/config.json`. When you replace a key, regenerate that file as the
+exporter's README describes and recreate the `b2-exporter` container before
+deleting the old key. Otherwise its scans fail with HTTP 401 and the
+`B2 storage scan incomplete` alert fires.
+
 ### Deletion and versions
 
 In B2, an S3 `DeleteObject` without a version id only adds a delete marker;
