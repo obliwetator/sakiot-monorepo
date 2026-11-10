@@ -16,7 +16,8 @@ exclude-dev = true
 [advisories]
 # Each entry is an advisory we cannot fix from here. Recheck them when the
 # named upstream crate releases, and delete the entry once it no longer
-# matches (cargo-deny warns about ignores that match nothing).
+# matches (cargo-deny warns about ignores that match nothing). The weekly
+# scripts/check-upstream-pins.sh flags each serenity and songbird release.
 ignore = [
     # ringbuf 0.4: double free when an element's Drop panics. songbird (0.6.1,
     # the latest, still requires ringbuf 0.4) only stores u8, which has no Drop.

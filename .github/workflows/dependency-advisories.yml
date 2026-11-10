@@ -6,6 +6,11 @@ name: Dependency advisories
 # dependency: update it, or add the advisory to deny.toml's ignore list with
 # the reason it cannot be fixed. GitHub emails the repository owner when a
 # scheduled run fails.
+#
+# The upstream-pins job fails when a crate behind that ignore list (serenity,
+# songbird) releases a version other than the one last reviewed. Those
+# advisories' Dependabot alerts are dismissed, so this is the reminder to try
+# the upgrade.
 
 on:
   schedule:
@@ -31,3 +36,11 @@ jobs:
 
       - name: Check advisories
         run: cargo deny check advisories
+
+  upstream-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for releases that may lift an ignored advisory
+        run: scripts/check-upstream-pins.sh
