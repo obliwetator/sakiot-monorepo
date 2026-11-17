@@ -56,6 +56,11 @@ while IFS= read -r path; do
       rust=true
       ops=true
       ;;
+    # The deploy engine's tests read the env examples.
+    ops/*.env.example)
+      rust=true
+      ops=true
+      ;;
     ops/*|sakiot-db/ops/*)
       ops=true
       ;;

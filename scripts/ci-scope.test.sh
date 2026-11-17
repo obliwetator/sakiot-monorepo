@@ -61,6 +61,11 @@ assert_scope \
   "ops/sakiot-dev/src/cli.rs"
 
 assert_scope \
+  "env examples feed the deploy engine's tests" \
+  true false false false true \
+  "ops/production.env.example"
+
+assert_scope \
   "mixed frontend and rust" \
   true false false true false \
   "sakiot-stage/src/index.tsx" \

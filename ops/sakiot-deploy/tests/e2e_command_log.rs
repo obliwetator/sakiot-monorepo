@@ -26,6 +26,8 @@ const SHA_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NOW_UNIX: i64 = 1_768_478_400;
 const STAMP: &str = "20260115T120000Z";
 const PORT: u16 = 40123;
+/// Every env example the scripted deploys read, and every env file's content.
+const ENV_EXAMPLE: &str = "VITE_API_URL=https://example.invalid/api/\n";
 
 #[derive(Default)]
 struct Events(Mutex<Vec<String>>);
@@ -207,11 +209,8 @@ impl World {
             "web-bin",
         )
         .unwrap();
-        fs::write(
-            &config.production_env_file,
-            "VITE_API_URL=https://example.invalid/api/\n",
-        )
-        .unwrap();
+        fs::write(&config.env_file, ENV_EXAMPLE).unwrap();
+        fs::write(&config.production_env_file, ENV_EXAMPLE).unwrap();
         World {
             _root: root,
             config,
@@ -279,6 +278,19 @@ fn git(repo: &str, rest: &str) -> String {
     format!("git -C {repo} {rest}")
 }
 
+/// The example the env check reads at `sha`, which the World's env files
+/// satisfy.
+fn example(repo: &str, sha: &str, target: &str) -> ScriptEntry {
+    example_with(repo, sha, target, ENV_EXAMPLE)
+}
+
+fn example_with(repo: &str, sha: &str, target: &str, content: &str) -> ScriptEntry {
+    ScriptEntry::ok_with(
+        git(repo, &format!("show {sha}:ops/{target}.env.example")),
+        content,
+    )
+}
+
 #[test]
 fn stage_happy_path_web_only() {
     let world = World::new();
@@ -299,6 +311,8 @@ fn stage_happy_path_web_only() {
             "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
         )),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
+        example(&repo, SHA_B, "staging"),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
             "web-server/src/main.rs\n",
@@ -407,6 +421,7 @@ fn release_happy_path_first_deploy_all_components() {
             format!("{SHA_B}\n"),
         ),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
         ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
         ScriptEntry::ok(git(
             &repo,
@@ -535,6 +550,7 @@ fn promoted_release_verifies_and_reuses_every_artifact() {
             format!("{SHA_B}\n"),
         ),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
         ScriptEntry::fail(git(&repo, &format!("worktree remove --force {worktree}"))),
         ScriptEntry::ok(git(
             &repo,
@@ -649,6 +665,7 @@ fn rollback_reuses_artifacts_without_building() {
             format!("{SHA_A}\n"),
         ),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_A}^{{commit}}"))),
+        example(&repo, SHA_A, "production"),
         ScriptEntry::ok_with(
             git(
                 &repo,
@@ -763,6 +780,8 @@ fn bot_readiness_failure_cancels_drain_and_keeps_state() {
             "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
         )),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
+        example(&repo, SHA_B, "staging"),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
             "fbi-agent/src/main.rs\n",
@@ -849,6 +868,8 @@ fn web_readiness_failure_restores_previous_symlink() {
             "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
         )),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
+        example(&repo, SHA_B, "staging"),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
             "web-server/src/main.rs\n",
@@ -919,6 +940,8 @@ fn recovery_after_bot_handoff_cancels_drain_with_actual_reason() {
             "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
         )),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
+        example(&repo, SHA_B, "staging"),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
             "fbi-agent/src/main.rs\nweb-server/src/main.rs\n",
@@ -1006,6 +1029,7 @@ fn rollback_crossing_migrations_is_rejected() {
             format!("{SHA_A}\n"),
         ),
         ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_A}^{{commit}}"))),
+        example(&repo, SHA_A, "production"),
         ScriptEntry::ok_with(
             git(
                 &repo,
@@ -1072,6 +1096,8 @@ fn stale_engine_warns_and_deploy_continues() {
             git(&repo, &format!("rev-parse {SHA_B}:ops/sakiot-deploy")),
             "2222222222222222222222222222222222222222\n",
         ),
+        example(&repo, SHA_B, "production"),
+        example(&repo, SHA_B, "staging"),
         ScriptEntry::ok_with(
             git(&repo, &format!("diff --name-only {SHA_A} {SHA_B}")),
             "web-server/src/main.rs\n",
@@ -1100,4 +1126,144 @@ fn stale_engine_warns_and_deploy_continues() {
         .unwrap();
     runner.assert_exhausted().unwrap();
     assert_eq!(world.state("current.sha").as_deref(), Some(SHA_B));
+}
+
+/// The release's example requires a setting the env file lacks, so the deploy
+/// stops before it creates a worktree, builds or touches a service.
+#[test]
+fn a_missing_setting_stops_the_deploy_before_anything_changes() {
+    let world = World::new();
+    let repo = world.repo();
+    world.write_state("current.sha", SHA_A);
+    world.write_state("current.tag", "main");
+    let staging_example = format!("{ENV_EXAMPLE}SAKIOT_NEW_SETTING=true\n# SAKIOT_OPTIONAL=1\n");
+
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
+        )),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example(&repo, SHA_B, "production"),
+        example_with(&repo, SHA_B, "staging", &staging_example),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    let error = world
+        .run(&["stage-ci", SHA_B], &runner, &admin, &web, &clock)
+        .unwrap_err();
+    runner.assert_exhausted().unwrap();
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "{} is missing SAKIOT_NEW_SETTING, which ops/staging.env.example requires at bbbbbbbbbbbb. \
+             Add it to the env file and run the deploy again; nothing was deployed",
+            world.config.env_file.display()
+        )
+    );
+    assert_eq!(fs::read_dir(&world.config.release_root).unwrap().count(), 0);
+    assert_eq!(world.state("current.sha").as_deref(), Some(SHA_A));
+    assert!(events.all().is_empty());
+}
+
+/// A staging deploy only warns about production's env file: the release that
+/// needs the setting is the one that refuses. A dry run checks too.
+#[test]
+fn a_staging_dry_run_checks_settings_and_production_only_warns() {
+    let world = World::new();
+    let repo = world.repo();
+    let production_example = format!("{ENV_EXAMPLE}SAKIOT_NEW_SETTING=true\n");
+
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/*",
+        )),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_B}^{{commit}}"))),
+        example_with(&repo, SHA_B, "production", &production_example),
+        example(&repo, SHA_B, "staging"),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    world
+        .run(
+            &["--dry-run", "stage", SHA_B],
+            &runner,
+            &admin,
+            &web,
+            &clock,
+        )
+        .unwrap();
+    runner.assert_exhausted().unwrap();
+    assert!(events.all().is_empty());
+}
+
+/// Putting back what ran before must not wait on tidying settings, so a
+/// rollback only warns about a missing one.
+#[test]
+fn a_rollback_proceeds_without_a_required_setting() {
+    let world = World::new();
+    let repo = world.repo();
+    fs::create_dir_all(world.config.state_dir.join("tags")).unwrap();
+    fs::write(
+        world.config.state_dir.join("tags/v1.0.0"),
+        format!("{SHA_A}\n"),
+    )
+    .unwrap();
+    let production_example = format!("{ENV_EXAMPLE}SAKIOT_OLD_SETTING=true\n");
+
+    let runner = ScriptedRunner::new(vec![
+        ScriptEntry::ok(git(
+            &repo,
+            "remote set-url origin https://example.invalid/sakiot.git",
+        )),
+        ScriptEntry::ok(git(
+            &repo,
+            "fetch --prune origin +refs/heads/*:refs/remotes/origin/* +refs/tags/v1.0.0:refs/tags/v1.0.0",
+        )),
+        ScriptEntry::ok_with(
+            git(&repo, "rev-list -n 1 refs/tags/v1.0.0"),
+            format!("{SHA_A}\n"),
+        ),
+        ScriptEntry::ok(git(&repo, &format!("cat-file -e {SHA_A}^{{commit}}"))),
+        example_with(&repo, SHA_A, "production", &production_example),
+    ]);
+    let events = Events::default();
+    let admin = MockAdmin::ready(&events);
+    let web = MockWeb {
+        events: &events,
+        healthy: true,
+    };
+    let clock = MockClock::new();
+
+    world
+        .run(
+            &["--dry-run", "rollback", "v1.0.0", SHA_A],
+            &runner,
+            &admin,
+            &web,
+            &clock,
+        )
+        .unwrap();
+    runner.assert_exhausted().unwrap();
 }

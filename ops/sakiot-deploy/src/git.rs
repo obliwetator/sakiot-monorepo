@@ -92,6 +92,16 @@ pub fn tree_oid(
     Ok(output.trim().to_string())
 }
 
+/// `git show <rev>:<path>`: a file's contents at `rev`.
+pub fn show_file(
+    runner: &dyn CommandRunner,
+    source_repo: &Path,
+    rev: &str,
+    path: &str,
+) -> Result<String> {
+    runner.run_capture(&git(source_repo).args(["show", &format!("{rev}:{path}")]))
+}
+
 /// `git diff --name-only <from> <to> [-- <pathspec>]`.
 pub fn diff_names(
     runner: &dyn CommandRunner,

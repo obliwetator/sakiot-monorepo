@@ -13,6 +13,7 @@ use crate::components::{
     Component, all_components, component_selected, components_for_paths, preview_components,
 };
 use crate::config::{Config, Mode, Request, Target};
+use crate::env_check;
 use crate::fsx;
 use crate::git;
 use crate::lock::DeployLock;
@@ -162,6 +163,9 @@ pub fn run(request: &Request, config: &Config, deps: &Deps) -> Result<()> {
     git::discard_ephemeral_credentials()?;
     git::require_commit(deps.runner, &source_repo, sha)?;
     warn_if_engine_stale(deps, &source_repo, sha);
+    // Before anything is built or changed, and before a dry run stops, so a
+    // dry run reports it too.
+    env_check::check(deps.runner, &source_repo, request, config)?;
 
     let tag_record = config.state_dir.join("tags").join(tag);
     if target == Target::Production {

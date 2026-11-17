@@ -222,14 +222,27 @@ break deploys. The installers stamp the `ops/sakiot-deploy` tree they built in
 newer engine changes prints a `WARNING:` and still runs on the installed
 engine; refresh it with `sudo ops/update-deploy-engine.sh`.
 
+Before it builds anything, every deploy compares the instance's env file with
+`ops/<target>.env.example` at the commit being deployed. Each setting the
+example has uncommented must be set, and not empty, or the deploy stops there
+with nothing deployed. A commented `# KEY=value` line is optional. A setting
+the example doesn't mention at all, which is a typo or a leftover, logs a
+`WARNING:`. Since the example is read at the commit, a commit that introduces
+a setting can't deploy until the server has it, so add it to the env files
+when you merge. A staging deploy also checks `production.env` against the
+production example and warns, so a setting the next release needs shows up on
+the push rather than at release. A rollback only warns.
+
 The `*-ci` verbs are reachable only after the CI job succeeds, and skip the VPS
 test pass. The bash suites for the out-of-band shims (`ops/tests/run.sh`:
 forced command, systemctl wrapper, frontend publish) run in CI and on the VPS
 through `update-deploy-engine.sh`.
 
 `sakiot-deploy --dry-run {release|rollback|stage} ...` (local only, not
-reachable over SSH) reports component selection and reuse, then stops before
-any build, migration or service change. Check an instance with
+reachable over SSH) runs the env file check, reports component selection and
+reuse, then stops before any build, migration or service change. A dry run of
+a release that already deployed stops at its tag record, after the env file
+check. Check an instance with
 `sudo -u sakiot /usr/local/lib/sakiot-deploy/bin/sakiot-deploy status {production|staging|preview <slot>}`.
 
 ## Staging

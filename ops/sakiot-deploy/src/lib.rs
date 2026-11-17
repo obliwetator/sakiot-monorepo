@@ -3,6 +3,7 @@ pub mod clock;
 pub mod components;
 pub mod config;
 pub mod deploy;
+pub mod env_check;
 pub mod fsx;
 pub mod git;
 pub mod lock;

@@ -338,13 +338,8 @@ fn check_env_file_is_plain(path: &Path) -> Result<()> {
             continue;
         }
         let assignment = trimmed.strip_prefix("export ").unwrap_or(trimmed);
-        let valid_key = assignment.split_once('=').is_some_and(|(key, _)| {
-            !key.is_empty()
-                && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                && !key.as_bytes()[0].is_ascii_digit()
-        });
         let shell_flavored = assignment.contains('$') || assignment.contains('`');
-        if !valid_key || shell_flavored {
+        if assignment_key(trimmed).is_none() || shell_flavored {
             bail!(
                 "env file {} line {} is not plain KEY=value; refusing to load it",
                 path.display(),
@@ -353,6 +348,17 @@ fn check_env_file_is_plain(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The key of a plain `KEY=value` line, after an optional `export `, or None
+/// when the line is not one.
+pub(crate) fn assignment_key(line: &str) -> Option<&str> {
+    let assignment = line.strip_prefix("export ").unwrap_or(line);
+    let (key, _) = assignment.split_once('=')?;
+    let valid = !key.is_empty()
+        && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !key.starts_with(|c: char| c.is_ascii_digit());
+    valid.then_some(key)
 }
 
 /// Preview slot names are DNS-safe subdomains: lowercase letters, digits and
