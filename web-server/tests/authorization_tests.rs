@@ -773,9 +773,7 @@ async fn recording_policy_and_deletion_require_live_manager_permission(
             .uri(&policy_uri)
             .insert_header(("Cookie", cookie.clone()))
             .insert_header(("X-CSRF-Token", CSRF))
-            .set_json(
-                json!({"retention_days":1,"excluded_channel_ids":[ALLOWED_CHANNEL_ID.to_string()]}),
-            )
+            .set_json(json!({"excluded_channel_ids":[ALLOWED_CHANNEL_ID.to_string()]}))
             .to_request(),
     )
     .await;

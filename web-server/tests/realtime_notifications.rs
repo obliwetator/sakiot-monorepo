@@ -256,6 +256,47 @@ async fn clips_stamps_opt_outs_and_settings_notify(pool: PgPool) -> TestResult {
     Ok(())
 }
 
+/// Voice Settings shows the excluded channels and where notices go, so a
+/// change to either refreshes it; a save that changes neither stays silent.
+#[sqlx::test(migrations = "../sakiot-db/migrations")]
+async fn the_recording_policy_notifies_when_what_it_shows_changes(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    sqlx::query("INSERT INTO guild_recording_policy (guild_id) VALUES ($1)")
+        .bind(GUILD)
+        .execute(&pool)
+        .await?;
+    let mut notifications = Notifications::listen(&pool).await?;
+    let settings = json!({
+        "v": 1, "k": "settings", "g": GUILD.to_string(), "r": "guild_recording_policy",
+    });
+
+    sqlx::query(
+        "UPDATE guild_recording_policy SET notice_delivery = 'channel' WHERE guild_id = $1",
+    )
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
+    assert_eq!(notifications.drain().await?, vec![settings.clone()]);
+
+    sqlx::query(
+        "UPDATE guild_recording_policy SET excluded_channel_ids = ARRAY[$2::bigint] WHERE guild_id = $1",
+    )
+    .bind(GUILD)
+    .bind(CHANNEL)
+    .execute(&pool)
+    .await?;
+    assert_eq!(notifications.drain().await?, vec![settings]);
+
+    sqlx::query(
+        "UPDATE guild_recording_policy SET updated_at = now(), updated_by = 20 WHERE guild_id = $1",
+    )
+    .bind(GUILD)
+    .execute(&pool)
+    .await?;
+    assert_eq!(notifications.drain().await?, Vec::<Value>::new());
+    Ok(())
+}
+
 #[sqlx::test(migrations = "../sakiot-db/migrations")]
 async fn listening_consent_reauthorizes_the_guild_and_tells_the_member(pool: PgPool) -> TestResult {
     seed(&pool).await?;
