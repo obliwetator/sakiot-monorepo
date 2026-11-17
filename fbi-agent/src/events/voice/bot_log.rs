@@ -29,11 +29,14 @@ use crate::event_handler::Handler;
 
 /// The audit log can trail the gateway, so it is read after each of these.
 const AUDIT_LOOKUP_DELAYS: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(5)];
-/// How old an entry may be and still explain what just happened. Discord
+/// How long before the bot saw a move or disconnect its entry may be. Discord
 /// merges a moderator's repeated moves or disconnects into their first entry,
 /// so a merged one can be older than the action. Past this, saying nobody
 /// is better than naming someone for an unrelated action.
-const AUDIT_WINDOW_SECONDS: i64 = 5 * 60;
+const MERGED_AUDIT_WINDOW_SECONDS: i64 = 5 * 60;
+/// The same for a deafen or undeafen. Discord never merges those, so the
+/// entry dates from the action itself, give or take the gateway's lag.
+const DEAFEN_AUDIT_WINDOW_SECONDS: i64 = 30;
 const AUDIT_PAGE_SIZE: u8 = 50;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,12 +143,8 @@ fn audit_action(event: OwnVoiceEvent) -> Action {
     })
 }
 
-/// Whether `entry`, one of the event's audit action, explains it.
-fn attribute_entry(
-    entry: &AuditLogEntry,
-    event: OwnVoiceEvent,
-    bot: UserId,
-) -> Option<Attribution> {
+/// Whether `entry`, a move or disconnect, explains `event`.
+fn attribute_move(entry: &AuditLogEntry, event: OwnVoiceEvent, bot: UserId) -> Option<Attribution> {
     let names_bot = entry.target_id.is_some_and(|id| id.get() == bot.get());
     let names_another = entry.target_id.is_some() && !names_bot;
     let by_target = |actor| {
@@ -155,20 +154,7 @@ fn attribute_entry(
             Attribution::Likely(actor)
         }
     };
-    let sets_deaf = |deaf| {
-        entry
-            .changes
-            .iter()
-            .flatten()
-            .any(|change| matches!(change, Change::Deaf { new, .. } if *new == Some(deaf)))
-    };
     match event {
-        OwnVoiceEvent::Deafened { .. } => {
-            (names_bot && sets_deaf(true)).then_some(Attribution::Exact(entry.user_id))
-        }
-        OwnVoiceEvent::Undeafened { .. } => {
-            (names_bot && sets_deaf(false)).then_some(Attribution::Exact(entry.user_id))
-        }
         OwnVoiceEvent::Moved { to, .. } => {
             let into_channel = entry
                 .options
@@ -177,26 +163,58 @@ fn attribute_entry(
             (into_channel && !names_another).then(|| by_target(entry.user_id))
         }
         OwnVoiceEvent::Disconnected { .. } => (!names_another).then(|| by_target(entry.user_id)),
-        OwnVoiceEvent::JoinedDeafened { .. } => None,
+        OwnVoiceEvent::Deafened { .. }
+        | OwnVoiceEvent::Undeafened { .. }
+        | OwnVoiceEvent::JoinedDeafened { .. } => None,
     }
 }
 
-/// Who `entries`, newest first, say caused `event`. The bot counts only for an
-/// undeafen, its one action here: clearing a leftover deafen.
+/// What `entry` set the bot's server deafen to, if it changed it.
+fn deafen_set_by(entry: &AuditLogEntry, bot: UserId) -> Option<bool> {
+    if entry.target_id.is_none_or(|id| id.get() != bot.get()) {
+        return None;
+    }
+    entry
+        .changes
+        .iter()
+        .flatten()
+        .find_map(|change| match change {
+            Change::Deaf { new, .. } => *new,
+            _ => None,
+        })
+}
+
+/// Who `entries`, newest first, say caused `event`, which the bot saw at
+/// `seen_at_seconds`.
 fn find_actor(
     entries: &[AuditLogEntry],
     event: OwnVoiceEvent,
     bot: UserId,
-    now_seconds: i64,
+    seen_at_seconds: i64,
 ) -> Option<Attribution> {
-    entries
-        .iter()
-        .filter(|entry| entry.user_id != bot || matches!(event, OwnVoiceEvent::Undeafened { .. }))
-        .filter(|entry| {
-            now_seconds.saturating_sub(entry.id.created_at().unix_timestamp())
-                <= AUDIT_WINDOW_SECONDS
+    let within = |window: i64| {
+        entries.iter().filter(move |entry| {
+            seen_at_seconds.saturating_sub(entry.id.created_at().unix_timestamp()) <= window
         })
-        .find_map(|entry| attribute_entry(entry, event, bot))
+    };
+    let deafened = match event {
+        OwnVoiceEvent::Deafened { .. } => true,
+        OwnVoiceEvent::Undeafened { .. } => false,
+        OwnVoiceEvent::JoinedDeafened { .. } => return None,
+        OwnVoiceEvent::Moved { .. } | OwnVoiceEvent::Disconnected { .. } => {
+            return within(MERGED_AUDIT_WINDOW_SECONDS)
+                .filter(|entry| entry.user_id != bot)
+                .find_map(|entry| attribute_move(entry, event, bot));
+        }
+    };
+    // Only the newest change to the bot's deafen can explain this one. An
+    // older entry is an earlier deafen, whose author did not do this one; a
+    // newest one the wrong way round means this one's entry hasn't arrived.
+    // The bot counts only for an undeafen: clearing a leftover deafen.
+    let (entry, set) = within(DEAFEN_AUDIT_WINDOW_SECONDS)
+        .find_map(|entry| deafen_set_by(entry, bot).map(|set| (entry, set)))?;
+    (set == deafened && (entry.user_id != bot || !deafened))
+        .then_some(Attribution::Exact(entry.user_id))
 }
 
 async fn attribute(
@@ -204,6 +222,7 @@ async fn attribute(
     guild_id: GuildId,
     event: OwnVoiceEvent,
     bot: UserId,
+    seen_at_seconds: i64,
 ) -> Attribution {
     for delay in AUDIT_LOOKUP_DELAYS {
         tokio::time::sleep(delay).await;
@@ -218,7 +237,7 @@ async fn attribute(
             .await
         {
             Ok(logs) => {
-                if let Some(found) = find_actor(&logs.entries, event, bot, Utc::now().timestamp()) {
+                if let Some(found) = find_actor(&logs.entries, event, bot, seen_at_seconds) {
                     return found;
                 }
             }
@@ -312,7 +331,7 @@ async fn handle(
         OwnVoiceEvent::Moved { from, to } => ("moved", from, Some(to)),
         OwnVoiceEvent::Disconnected { from } => ("disconnected", from, None),
     };
-    let attribution = attribute(ctx, guild_id, event, bot).await;
+    let attribution = attribute(ctx, guild_id, event, bot, occurred_at_ms.div_euclid(1000)).await;
     record(pool, guild_id, row, attribution, occurred_at_ms).await;
 }
 

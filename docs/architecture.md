@@ -589,10 +589,13 @@ who joins a deafened bot gets a span from their first moment
 (`web-server/src/audio/bot_deafen.rs`).
 
 Who did it comes from Discord's audit log, which needs the bot's **View Audit
-Log** permission. A deafen entry names the bot, so that answer is exact. Discord
-merges a moderator's repeated moves or disconnects into one entry and fires no
-event for the repeats, so those answers are only likely, and past five minutes
-the bot names nobody rather than guess.
+Log** permission. A deafen entry names the bot, so that answer is exact. Only
+the newest change to the bot's deafen, from the 30 seconds before the bot saw
+it, can explain one, so an earlier deafen's author is never named for a later
+one; until the right entry arrives the bot names nobody. Discord merges a
+moderator's repeated moves or disconnects into one entry and fires no event for
+the repeats, so those answers are only likely, and past five minutes the bot
+names nobody rather than guess.
 
 A server deafen outlives the voice session, and Discord refuses to change it
 for a member who isn't in voice. So the bot clears a leftover deafen when it

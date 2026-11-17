@@ -4,7 +4,8 @@ use serenity::model::id::{ChannelId, GuildId, UserId};
 use sqlx::PgPool;
 
 use super::{
-    AUDIT_WINDOW_SECONDS, Attribution, OwnVoice, OwnVoiceEvent, classify, find_actor, record,
+    Attribution, DEAFEN_AUDIT_WINDOW_SECONDS, MERGED_AUDIT_WINDOW_SECONDS, OwnVoice, OwnVoiceEvent,
+    classify, find_actor, record,
 };
 
 const BOT: UserId = UserId::new(500);
@@ -318,8 +319,60 @@ fn a_move_counts_only_into_the_channel_the_bot_landed_in() -> TestResult {
 #[test]
 fn an_entry_past_the_window_names_nobody() -> TestResult {
     let event = OwnVoiceEvent::Disconnected { from: GENERAL };
-    let fresh = [entry(AUDIT_WINDOW_SECONDS, json!({}))?];
-    let stale = [entry(AUDIT_WINDOW_SECONDS + 1, json!({}))?];
+    let fresh = [entry(MERGED_AUDIT_WINDOW_SECONDS, json!({}))?];
+    let stale = [entry(MERGED_AUDIT_WINDOW_SECONDS + 1, json!({}))?];
+    assert!(find_actor(&fresh, event, BOT, NOW_SECONDS).is_some());
+    assert_eq!(find_actor(&stale, event, BOT, NOW_SECONDS), None);
+    Ok(())
+}
+
+fn deafen_by(actor: UserId) -> serde_json::Value {
+    let mut value = deafen_of(BOT);
+    value["user_id"] = json!(actor.get().to_string());
+    value
+}
+
+/// Someone deafens the bot, someone else undeafens it, and a third person
+/// deafens it again before their entry reaches the audit log. The first
+/// deafen's entry must not name its author for the third.
+#[test]
+fn an_earlier_deafen_never_explains_a_later_one() -> TestResult {
+    let event = OwnVoiceEvent::Deafened { channel: GENERAL };
+    let first = || entry(20, deafen_by(MODERATOR));
+    let between = || entry(10, undeafen_by(UserId::new(601)));
+    assert_eq!(
+        find_actor(&[between()?, first()?], event, BOT, NOW_SECONDS),
+        None
+    );
+    let third = entry(1, deafen_by(UserId::new(602)))?;
+    assert_eq!(
+        find_actor(&[third, between()?, first()?], event, BOT, NOW_SECONDS),
+        Some(Attribution::Exact(UserId::new(602)))
+    );
+    Ok(())
+}
+
+#[test]
+fn deafens_of_other_members_are_passed_over() -> TestResult {
+    let entries = [
+        entry(1, deafen_of(UserId::new(700)))?,
+        entry(3, deafen_of(BOT))?,
+    ];
+    let event = OwnVoiceEvent::Deafened { channel: GENERAL };
+    assert_eq!(
+        find_actor(&entries, event, BOT, NOW_SECONDS),
+        Some(Attribution::Exact(MODERATOR))
+    );
+    Ok(())
+}
+
+/// Discord never merges deafen entries, so one older than a few moments
+/// belongs to another deafen.
+#[test]
+fn a_deafen_entry_past_its_window_names_nobody() -> TestResult {
+    let event = OwnVoiceEvent::Deafened { channel: GENERAL };
+    let fresh = [entry(DEAFEN_AUDIT_WINDOW_SECONDS, deafen_of(BOT))?];
+    let stale = [entry(DEAFEN_AUDIT_WINDOW_SECONDS + 1, deafen_of(BOT))?];
     assert!(find_actor(&fresh, event, BOT, NOW_SECONDS).is_some());
     assert_eq!(find_actor(&stale, event, BOT, NOW_SECONDS), None);
     Ok(())
