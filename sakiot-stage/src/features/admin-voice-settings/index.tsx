@@ -118,6 +118,9 @@ export function GuildVoiceSettingsPage() {
 			</h5>
 			<ScrollRegion fill aria-label="Voice settings">
 				<div className="px-4 pb-4 max-w-190 space-y-5">
+					{/* First: it answers why a recording went silent, which is what
+					    brings most people here. */}
+					<BotLogPanel guildId={guildId} />
 					<div className="rounded-md border border-ui-border bg-surface text-fg shadow-sm p-6">
 						<h6 className="font-medium tracking-[0.001em] text-xl mb-2">
 							Pending recording timeout
@@ -311,7 +314,6 @@ export function GuildVoiceSettingsPage() {
 						)}
 					</div>
 					<KeepAllowancesPanel guildId={guildId} />
-					<BotLogPanel guildId={guildId} />
 				</div>
 			</ScrollRegion>
 		</div>
