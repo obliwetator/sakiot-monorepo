@@ -220,6 +220,7 @@ mod tests {
             db_max_connections: 1,
             recording_permanent_delete_enabled: false,
             server_timing_header: false,
+            api_docs: false,
         }
     }
 

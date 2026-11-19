@@ -61,6 +61,7 @@ fn config() -> Config {
         db_max_connections: 5,
         recording_permanent_delete_enabled: false,
         server_timing_header: false,
+        api_docs: false,
     }
 }
 

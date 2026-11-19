@@ -3,10 +3,6 @@ use std::error::Error;
 use web_server::http_metrics::HttpMetrics;
 use web_server::telemetry::{init_stderr_logging, init_telemetry};
 
-use utoipa::OpenApi;
-use utoipa_scalar::{Scalar, Servable};
-use web_server::openapi::ApiDoc;
-
 use web_server::admin::bot_log::get_bot_log;
 use web_server::admin::cooldowns::{
     delete_user_override, get_guild_cooldown, list_user_overrides, set_guild_cooldown,
@@ -230,6 +226,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let host = cfg.host.clone();
     let port = cfg.port;
     let server_timing_header = cfg.server_timing_header;
+    let api_docs = cfg.api_docs;
     let cfg_data = web::Data::new(cfg);
     let discord_http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -372,11 +369,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(api_scope)
             .service(register_agent_grpc_endpoints)
             .service(get_agent_grpc_endpoints)
-            .service(Scalar::with_url("/scalar", ApiDoc::openapi()))
-            .route(
-                "/api-doc/openapi.json",
-                web::get().to(|| async { HttpResponse::Ok().json(ApiDoc::openapi()) }),
-            )
+            .configure(|service_config| {
+                if api_docs {
+                    web_server::openapi::configure(service_config);
+                }
+            })
             .default_service(web::route().to(not_found))
             // Wraps execute outermost-first on request (reverse registration order).
             // Request flow: SecurityHeaders -> Cors -> HttpMetrics -> AuthMiddleware -> handler

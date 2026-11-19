@@ -17,9 +17,12 @@ tests against them only off-peak, when nobody is using the bot (see
 
 ## OpenAPI
 
-The document is generated at compile time and served at
-`/api-doc/openapi.json`, with Scalar at `/scalar`. Export it without starting
-the service or connecting to a database:
+The document is generated at compile time. With `SAKIOT_API_DOCS=true`, which
+the local `.env.example` sets and deployed instances leave off, it is served at
+`/api-doc/openapi.json` with Scalar at `/scalar`. Scalar loads an unpinned
+script from jsDelivr, which would run on the same origin as the session
+cookies. Export the document without starting the service or connecting to a
+database:
 
 ```sh
 SQLX_OFFLINE=true cargo run --locked -p web-server --bin export_openapi

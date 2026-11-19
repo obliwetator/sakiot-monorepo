@@ -35,6 +35,8 @@ pub struct Config {
     pub recording_permanent_delete_enabled: bool,
     /// Return each request's timing breakdown as a `Server-Timing` header.
     pub server_timing_header: bool,
+    /// Serve the OpenAPI document and the Scalar viewer (`/scalar`).
+    pub api_docs: bool,
 }
 
 fn require(key: &'static str) -> Result<String, ConfigError> {
@@ -106,6 +108,7 @@ impl Config {
                 false,
             )?,
             server_timing_header: parse("SAKIOT_SERVER_TIMING_HEADER", false)?,
+            api_docs: parse("SAKIOT_API_DOCS", false)?,
         })
     }
 

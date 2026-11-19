@@ -3,6 +3,21 @@ use utoipa::{
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 
+/// Serves the document at `/api-doc/openapi.json` and the Scalar viewer at
+/// `/scalar`, only when `SAKIOT_API_DOCS` is on. Scalar loads an unpinned
+/// script from jsDelivr, which would run on the same origin as the session
+/// cookies. Type generation needs neither: `export_openapi` writes the document.
+pub fn configure(cfg: &mut actix_web::web::ServiceConfig) {
+    use actix_web::{HttpResponse, web};
+    use utoipa_scalar::{Scalar, Servable};
+
+    cfg.service(Scalar::with_url("/scalar", ApiDoc::openapi()))
+        .route(
+            "/api-doc/openapi.json",
+            web::get().to(|| async { HttpResponse::Ok().json(ApiDoc::openapi()) }),
+        );
+}
+
 #[derive(OpenApi)]
 #[openapi(
     info(

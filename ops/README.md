@@ -520,7 +520,8 @@ approaching the readiness threshold.
 The API sets CSP, HSTS, frame, MIME, referrer and permissions headers on every
 response, including errors, OAuth, media and CORS preflights. The OAuth
 callback uses a single-use script nonce, and Scalar's CDN exception is limited
-to `/scalar`. Static SPA responses get their headers from nginx (the preview
+to `/scalar`, which is served only with `SAKIOT_API_DOCS=true` (keep it off on
+deployed instances). Static SPA responses get their headers from nginx (the preview
 template shows the policy); never apply that CSP to `/api/`, where it would
 block the OAuth nonce script.
 
