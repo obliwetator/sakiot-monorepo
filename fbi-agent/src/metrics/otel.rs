@@ -287,11 +287,6 @@ fn register_event_counters(instruments: &Instruments) {
         u64::from(m.commands_executed.load(Relaxed))
     });
     instruments.counter(
-        "messages_received",
-        "Total regular messages received",
-        |m| u64::from(m.messages_received.load(Relaxed)),
-    );
-    instruments.counter(
         "voice_state_updates_received",
         "Total Discord voice state updates received",
         |m| m.voice_state_updates_received.load(Relaxed),

@@ -2,7 +2,6 @@ pub mod cache_ready;
 pub mod channels;
 pub mod guilds;
 pub mod interactions;
-pub mod messages;
 pub mod ogg_opus_writer;
 pub mod recording_writer;
 pub mod roles;

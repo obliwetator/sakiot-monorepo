@@ -56,8 +56,6 @@ pub struct BotMetrics {
     // Database health
     pub db_query_errors: AtomicU32,
     pub db_insert_failures: AtomicU32,
-    // Bot activity
-    pub messages_received: AtomicU32,
     // Process health (sampled every 15s)
     pub process_rss_bytes: AtomicU64,
     pub process_open_fds: AtomicU32,
@@ -344,7 +342,6 @@ impl Default for BotMetrics {
             voice_state_updates_received: AtomicU64::new(0),
             db_query_errors: AtomicU32::new(0),
             db_insert_failures: AtomicU32::new(0),
-            messages_received: AtomicU32::new(0),
             process_rss_bytes: AtomicU64::new(0),
             process_open_fds: AtomicU32::new(0),
             tokio_active_tasks: AtomicU32::new(0),

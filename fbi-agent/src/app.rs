@@ -451,6 +451,14 @@ async fn connect_database() -> AppResult<Pool<Postgres>> {
     Ok(pool)
 }
 
+/// Only what the handlers use: guilds, channels and roles, the member list
+/// (privileged; it is the roster that decides membership), and voice states.
+/// Audit logs come over HTTP. No message events: a recording bot has no
+/// reason to receive the guild's chat.
+const GATEWAY_INTENTS: GatewayIntents = GatewayIntents::GUILDS
+    .union(GatewayIntents::GUILD_MEMBERS)
+    .union(GatewayIntents::GUILD_VOICE_STATES);
+
 async fn build_discord_client(
     pool: &Pool<Postgres>,
     runtime: Arc<crate::runtime::RuntimeState>,
@@ -461,16 +469,13 @@ async fn build_discord_client(
     let songbird_config = Config::default().decode_mode(DecodeMode::Decode(
         crate::events::voice_receiver::decode_config(),
     ));
-    let intents = GatewayIntents::all();
-
-    Ok(Client::builder(discord_config.token, intents)
+    Ok(Client::builder(discord_config.token, GATEWAY_INTENTS)
         .event_handler(Handler {
             database: pool.clone(),
             jam_cooldown,
             runtime,
             projections,
         })
-        .intents(intents)
         .register_songbird_from_config(songbird_config)
         .application_id(ApplicationId::new(discord_config.application_id))
         .await?)
@@ -504,9 +509,10 @@ async fn process_metrics(client: &Client) -> AppResult<Arc<BotMetrics>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ObservedTaskExit, RuntimeTaskError, SupervisorDecision, TaskKind, classify_first_exit,
-        stop_task,
+        GATEWAY_INTENTS, ObservedTaskExit, RuntimeTaskError, SupervisorDecision, TaskKind,
+        classify_first_exit, stop_task,
     };
+    use serenity::all::GatewayIntents;
 
     #[test]
     fn graceful_drain_is_successful() {
@@ -574,5 +580,19 @@ mod tests {
     async fn task_exit_after_shutdown_race_is_expected() {
         let mut handle = tokio::spawn(async {});
         stop_task(&mut handle, false, TaskKind::Grpc).await;
+    }
+
+    /// The only privileged intent is the member list; chat and presences
+    /// stay out.
+    #[test]
+    fn gateway_intents_leave_out_chat_and_presences() {
+        let privileged = GatewayIntents::GUILD_MEMBERS
+            | GatewayIntents::GUILD_PRESENCES
+            | GatewayIntents::MESSAGE_CONTENT;
+        assert_eq!(GATEWAY_INTENTS & privileged, GatewayIntents::GUILD_MEMBERS);
+        assert!(
+            !GATEWAY_INTENTS
+                .intersects(GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES)
+        );
     }
 }

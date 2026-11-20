@@ -154,47 +154,6 @@ impl EventHandler for Handler {
         events::guilds::guild_update(self, ctx, old_data_if_available, new_but_incomplete).await;
     }
 
-    async fn message(&self, ctx: Context, msg: Message) {
-        events::messages::message(self, ctx, msg).await;
-    }
-
-    async fn message_delete(
-        &self,
-        ctx: Context,
-        channel_id: serenity::model::id::ChannelId,
-        deleted_message_id: serenity::model::id::MessageId,
-        guild_id: Option<serenity::model::id::GuildId>,
-    ) {
-        events::messages::message_delete(self, ctx, channel_id, deleted_message_id, guild_id).await;
-    }
-
-    async fn message_delete_bulk(
-        &self,
-        ctx: Context,
-        channel_id: serenity::model::id::ChannelId,
-        multiple_deleted_messages_ids: Vec<serenity::model::id::MessageId>,
-        guild_id: Option<serenity::model::id::GuildId>,
-    ) {
-        events::messages::message_delete_bulk(
-            self,
-            ctx,
-            channel_id,
-            multiple_deleted_messages_ids,
-            guild_id,
-        )
-        .await;
-    }
-
-    async fn message_update(
-        &self,
-        ctx: Context,
-        old_if_available: Option<Message>,
-        new: Option<Message>,
-        event: serenity::model::event::MessageUpdateEvent,
-    ) {
-        events::messages::message_update(self, ctx, old_if_available, new, event).await;
-    }
-
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
         if self.runtime.maintains_caches() {
