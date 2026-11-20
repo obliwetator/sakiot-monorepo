@@ -168,16 +168,7 @@ pub(crate) async fn run_recording_silence_job(
         .await?;
     tokio::fs::create_dir_all(&output_dir).await?;
     let temporary = output.with_extension(format!("{job_id}.{attempt_token}.tmp.ogg"));
-    let mut command = tokio::process::Command::new("ffmpeg");
-    command
-        .arg("-y")
-        .args(["-i", &source])
-        .args([
-            "-af",
-            "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB",
-        ])
-        .arg(&temporary);
-    if let Err(error) = crate::ffmpeg::run_ffmpeg(command).await {
+    if let Err(error) = crate::ffmpeg::run_ffmpeg(silence_command(&source, &temporary)).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         return Err(error);
     }
@@ -195,4 +186,64 @@ pub(crate) async fn run_recording_silence_job(
     let url = silence_free_url(guild_id, channel_id, year, month, file_name);
     crate::media_jobs::complete_publication(tx, job_id, attempt_token, &url, None).await?;
     Ok((Some(url), None))
+}
+
+/// Strips the silences from `source` into `output`. The codec is explicit:
+/// FFmpeg's Ogg muxer defaults to Vorbis, and the waveform decoder reads only
+/// Opus.
+fn silence_command(source: &str, output: &std::path::Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("ffmpeg");
+    command
+        .arg("-y")
+        .args(["-i", source])
+        .args([
+            "-af",
+            "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB",
+        ])
+        .args(["-c:a", "libopus", "-b:a", "96k"])
+        .arg(output);
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::silence_command;
+
+    fn ffmpeg_available() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// The silence-free waveform is decoded from this file, so it must stay
+    /// Opus.
+    #[tokio::test]
+    async fn silence_free_recording_decodes_as_opus() -> Result<(), Box<dyn std::error::Error>> {
+        if !ffmpeg_available() {
+            return Ok(());
+        }
+        let dir = tempfile::tempdir()?;
+        let source = dir.path().join("source.ogg");
+        // A tone with two silent seconds in the middle.
+        let generated = std::process::Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+            .args([
+                "-i",
+                "sine=frequency=440:duration=4,volume=enable='between(t,1,3)':volume=0",
+            ])
+            .args(["-c:a", "libopus"])
+            .arg(&source)
+            .status()?;
+        assert!(generated.success(), "ffmpeg must generate the fixture");
+        let output = dir.path().join("silence-free.ogg");
+
+        crate::ffmpeg::run_ffmpeg(silence_command(&source.to_string_lossy(), &output)).await?;
+
+        let frames = sakiot_peaks::decode::decode(std::fs::File::open(&output)?, |_| {})?;
+        assert!(!frames.is_empty());
+        Ok(())
+    }
 }
