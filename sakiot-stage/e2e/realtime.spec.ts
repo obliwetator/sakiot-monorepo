@@ -419,6 +419,134 @@ test("presence updates change who is in voice without refetching", async ({
 	expect(presenceLoads).toBe(loads);
 });
 
+test("a token renewal swaps sockets without refetching or losing a message", async ({
+	page,
+}) => {
+	const member = (user_id: string, name: string) => ({
+		user_id,
+		name,
+		is_bot: false,
+		self_mute: false,
+		self_deaf: false,
+		server_mute: false,
+		server_deaf: false,
+		streaming: false,
+		video: false,
+	});
+	let presenceLoads = 0;
+	let recordingLoads = 0;
+	let refreshes = 0;
+	// What the server knows, so a refetch would show the same members.
+	const inGeneral = [member("1", "Alice")];
+	await mockApi(page, async (path, route, json) => {
+		if (path === "/api/refresh" && route.request().method() === "POST") {
+			refreshes += 1;
+			await json({});
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}`) {
+			recordingLoads += 1;
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/live-stems`) {
+			await json([]);
+			return true;
+		}
+		if (path === `/api/current/${GUILD_ID}/voice-presence`) {
+			presenceLoads += 1;
+			await json({
+				available: true,
+				channels: [
+					{
+						channel_id: "100",
+						name: "General",
+						members: inGeneral,
+					},
+				],
+			});
+			return true;
+		}
+		return false;
+	});
+	const sockets: WebSocketRoute[] = [];
+	let firstClosed = false;
+	await page.routeWebSocket(SOCKET_URL, (ws) => {
+		sockets.push(ws);
+		const first = sockets.length === 1;
+		if (first) ws.onClose(() => (firstClosed = true));
+		const serverTime = Date.now();
+		ws.send(
+			JSON.stringify({
+				type: "ready",
+				v: 1,
+				user_id: "current-user",
+				server_time: serverTime,
+				// The first token is due for renewal (30 s ahead) in 3 s.
+				token_expires_at: serverTime + (first ? 33_000 : 15 * 60_000),
+			}),
+		);
+		ws.onMessage((raw) => {
+			const message = JSON.parse(String(raw)) as {
+				type: string;
+				guild_id?: string;
+			};
+			if (message.type !== "set_scope") return;
+			ws.send(
+				JSON.stringify({
+					type: "subscribed",
+					v: 1,
+					guild_id: message.guild_id,
+				}),
+			);
+			const old = sockets[0];
+			if (!first && old) {
+				// Sent on the old socket after the new one subscribed: it must
+				// still reach the page.
+				inGeneral.push(member("2", "Bob"));
+				old.send(
+					JSON.stringify({
+						type: "presence",
+						v: 1,
+						guild_id: GUILD_ID,
+						updates: [
+							{
+								user_id: "2",
+								channel: {
+									channel_id: "100",
+									channel_name: "General",
+									member: member("2", "Bob"),
+								},
+							},
+						],
+					}),
+				);
+			}
+		});
+	});
+
+	await page.goto(`/dashboard/${GUILD_ID}/audio`);
+	const browse = page.getByRole("button", { name: "Browse files" });
+	const inVoice = page.getByRole("heading", { name: "In voice" });
+	await expect(browse.or(inVoice).first()).toBeVisible();
+	if (await browse.isVisible()) await browse.click();
+	const general = page.getByRole("list", { name: "In General" });
+	await expect(general.getByText("Alice")).toBeVisible();
+	await expect.poll(() => sockets.length).toBe(1);
+	// `subscribed` reconciles once; wait for that refetch to settle.
+	await expect.poll(() => presenceLoads).toBeGreaterThanOrEqual(1);
+	await page.waitForLoadState("networkidle");
+	const presenceBefore = presenceLoads;
+	const recordingsBefore = recordingLoads;
+
+	await expect.poll(() => sockets.length).toBe(2);
+	await expect(general.getByText("Bob")).toBeVisible();
+	await expect.poll(() => firstClosed).toBe(true);
+	expect(refreshes).toBe(1);
+	expect(presenceLoads).toBe(presenceBefore);
+	expect(recordingLoads).toBe(recordingsBefore);
+});
+
 test("a guilds event refreshes the guild picker", async ({ page }) => {
 	let guildName = "Test Guild";
 	await mockApi(page, async (path, _route, json) => {

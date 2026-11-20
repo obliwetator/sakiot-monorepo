@@ -21,6 +21,11 @@ const STALE_CHECK_MS = 5_000;
 /** Renew the access token this long before it expires. */
 const RENEW_BEFORE_EXPIRY_MS = 30_000;
 const RENEW_RETRY_MS = 10_000;
+/**
+ * How long a renewed-away socket keeps delivering. Closing it at once would
+ * drop messages it had already received but not yet handed to the page.
+ */
+const RETIRE_GRACE_MS = 2_000;
 /** Consecutive failed connections before polling takes over. */
 const FALLBACK_AFTER_FAILURES = 3;
 const CLOSE_TOKEN_EXPIRED = 4001;
@@ -75,6 +80,9 @@ interface Connection {
 export class RealtimeCoordinator {
 	private primary: Connection | null = null;
 	private replacement: Connection | null = null;
+	/** The socket a renewal replaced, delivering until its grace ends. */
+	private retiring: Connection | null = null;
+	private retireTimer: ReturnType<typeof setTimeout> | undefined;
 	private scope: Scope | null = null;
 	private generation = 0;
 	private failures = 0;
@@ -108,11 +116,14 @@ export class RealtimeCoordinator {
 		clearTimeout(this.reconnectTimer);
 		clearTimeout(this.renewTimer);
 		clearInterval(this.staleTimer);
+		clearTimeout(this.retireTimer);
 		document.removeEventListener("visibilitychange", this.onVisibilityChange);
 		this.retire(this.primary);
 		this.retire(this.replacement);
+		this.retire(this.retiring);
 		this.primary = null;
 		this.replacement = null;
+		this.retiring = null;
 		setRealtimeStatus("off");
 	}
 
@@ -225,12 +236,16 @@ export class RealtimeCoordinator {
 				};
 				if (!sameScope(subscribedScope, this.scope)) return;
 				connection.subscribed = true;
+				// A renewal is seamless when the socket it replaces stayed
+				// subscribed to this scope until now: nothing was missed.
+				const seamless =
+					connection === this.replacement && this.primary?.subscribed === true;
 				if (connection === this.replacement) this.promote(connection);
 				if (connection === this.primary) {
 					this.status("live");
 					// Anything that changed before this subscription took
 					// effect, including across a reconnect, is refetched.
-					reconcileGuild(this.ctx, message.guild_id);
+					if (!seamless) reconcileGuild(this.ctx, message.guild_id);
 				}
 				return;
 			}
@@ -259,14 +274,28 @@ export class RealtimeCoordinator {
 		}
 	}
 
-	/** The renewed socket is subscribed: retire the old one. */
+	/**
+	 * The renewed socket is subscribed: the old one keeps delivering for a
+	 * grace period, then closes.
+	 */
 	private promote(connection: Connection): void {
 		const previous = this.primary;
 		this.primary = connection;
 		this.replacement = null;
-		this.retire(previous);
+		this.retireAfterGrace(previous);
 		this.scheduleRenewal(connection);
 		if (!this.scope) this.status("live");
+	}
+
+	private retireAfterGrace(connection: Connection | null): void {
+		if (!connection) return;
+		clearTimeout(this.retireTimer);
+		this.retire(this.retiring);
+		this.retiring = connection;
+		this.retireTimer = setTimeout(() => {
+			this.retire(connection);
+			if (this.retiring === connection) this.retiring = null;
+		}, RETIRE_GRACE_MS);
 	}
 
 	private onClose(connection: Connection, code: number): void {
