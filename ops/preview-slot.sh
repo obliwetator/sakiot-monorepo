@@ -19,7 +19,8 @@ set -euo pipefail
 #
 # Environment:
 #   CLOUDFLARE_API_TOKEN   Zone:DNS edit token (needed unless --no-dns);
-#                          defaults to the value in the shared preview.env
+#                          defaults to the value in the root-only
+#                          /etc/sakiot/preview-cloudflare.env
 #   PREVIEW_DOMAIN         default: preview.patrykstyla.com
 #   VPS_IP                 default: detected via api.ipify.org
 #   CERTBOT_EMAIL          override; default comes from the shared preview.env
@@ -53,12 +54,24 @@ STATE_ROOT="${SAKIOT_PREVIEW_STATE_ROOT:-}"
 SUBDOMAIN="${SLOT}.${DOMAIN}"
 [[ "$(id -u)" -eq 0 ]] || die "run as root"
 
-# The shared env file holds CLOUDFLARE_API_TOKEN and CERTBOT_EMAIL; fall back
-# to it when the variables were not passed on the command line.
-# Overridable so the teardown tests never read the host's real secrets.
+# The shared env file holds CERTBOT_EMAIL. Both paths are overridable so the
+# tests never read the host's real secrets.
 ENV_FILE="${SAKIOT_PREVIEW_ENV_FILE:-/etc/sakiot/preview.env}"
-if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && -f "$ENV_FILE" && -r "$ENV_FILE" ]]; then
-    CLOUDFLARE_API_TOKEN="$(sed -n 's/^CLOUDFLARE_API_TOKEN=//p' "$ENV_FILE" | head -n1)"
+# The Cloudflare token can edit every record in the zone, production's
+# included. It lives in its own root-only file: every preview web server loads
+# the shared env file into its environment, and runs unreviewed branch code.
+CLOUDFLARE_ENV_FILE="${CLOUDFLARE_ENV_FILE:-/etc/sakiot/preview-cloudflare.env}"
+if [[ -z "${CLOUDFLARE_API_TOKEN:-}" && -f "$CLOUDFLARE_ENV_FILE" && -r "$CLOUDFLARE_ENV_FILE" ]]; then
+    CLOUDFLARE_API_TOKEN="$(sed -n 's/^CLOUDFLARE_API_TOKEN=//p' "$CLOUDFLARE_ENV_FILE" | head -n1)"
+fi
+if [[ -f "$ENV_FILE" && -r "$ENV_FILE" ]] && grep -q '^CLOUDFLARE_API_TOKEN=' "$ENV_FILE"; then
+    move_token="move the CLOUDFLARE_API_TOKEN line from ${ENV_FILE} to ${CLOUDFLARE_ENV_FILE} (root:root 0600), then restart the preview web units"
+    # A teardown must still finish; refuse only to provision.
+    if [[ "$ACTION" = remove ]]; then
+        log "warning: ${move_token}"
+    else
+        die "${move_token}"
+    fi
 fi
 
 # Deterministic web port; must stay in sync with slot_port() in

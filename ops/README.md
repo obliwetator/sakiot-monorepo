@@ -327,11 +327,20 @@ ops/update-deploy-engine.sh
 # The shared env file, created only if absent:
 test -e /etc/sakiot/preview.env || install -o root -g sakiot -m 0640 ops/preview.env.example /etc/sakiot/preview.env
 $EDITOR /etc/sakiot/preview.env
+# The DNS token, readable by root only:
+install -o root -g root -m 0600 /dev/null /etc/sakiot/preview-cloudflare.env
+$EDITOR /etc/sakiot/preview-cloudflare.env   # CLOUDFLARE_API_TOKEN=...
 ```
 
-Set the shared credentials once: `CLOUDFLARE_API_TOKEN` for DNS records,
-`DEV_ACCOUNT_ID` and `DEV_LOGIN_SECRET`, `CERTBOT_EMAIL` for slot
-certificates, and the JWT, registry and database secrets. The Discord OAuth
+`CLOUDFLARE_API_TOKEN` (Zone:DNS edit) goes in
+`/etc/sakiot/preview-cloudflare.env`, never in `preview.env`: every preview web
+server loads `preview.env` into its environment, and that token can rewrite
+production's records too. `ops/preview-slot.sh` refuses to provision while
+`preview.env` still holds it.
+
+In `preview.env`, set the shared credentials once: `DEV_ACCOUNT_ID` and
+`DEV_LOGIN_SECRET`, `CERTBOT_EMAIL` for slot certificates, and the JWT,
+registry and database secrets. The Discord OAuth
 values only have to be non-empty. Everything host-specific (`VITE_API_URL`,
 CORS and opener origins) is derived per slot. The media archive is disabled in
 the example; enable `SAKIOT_MEDIA_ARCHIVE_ENABLED` when a branch needs it.
@@ -431,7 +440,15 @@ Staging and preview slots run code production has not shipped, and previews
 are reachable by anyone with the URL, so neither may reach production.
 
 - **Files.** The env files and the backup key stay `root:sakiot`; systemd
-  reads `EnvironmentFile=` as root, so runtime users never need them.
+  reads `EnvironmentFile=` as root, so runtime users never need them. A
+  unit's process still holds every value of its env file, so a file holds
+  only what that instance may know: the preview DNS token lives in the
+  root-only `preview-cloudflare.env`.
+- **Builds (not isolated yet).** Every deploy builds as `sakiot`, outside any
+  unit's sandbox, and staging and preview builds share
+  `/var/cache/sakiot/cargo-target` with production's. A branch's build
+  scripts, proc-macros and `bun install` can therefore read production's env
+  file and backup key, and plant artifacts in the shared target directory.
 - **Data and releases.** Each runtime user owns its data directory. The setgid
   bit keeps new files in its group, which `sakiot` joins to deploy and import
   fixtures, and every unit sets `UMask=0007`. Releases are reachable through

@@ -126,16 +126,19 @@ assert_slot_roots_removed() {
 preview_env="${temporary}/preview.env"
 printf '# deliberately without CLOUDFLARE_API_TOKEN\n' >"${preview_env}"
 default_purge_env="${temporary}/absent-purge.env"
+default_cloudflare_env="${temporary}/absent-cloudflare.env"
 
 run_remove() {
   local bin_dir="$1" token="$2" output="$3" purge="${4:-${default_purge_env}}"
+  local cloudflare="${5:-${default_cloudflare_env}}" env_file="${6:-${preview_env}}"
   seed_slot_roots
   set +e
   PATH="${bin_dir}:${PATH}" \
     CLOUDFLARE_API_TOKEN="${token}" \
     PREVIEW_DOMAIN="preview.example.test" \
     SAKIOT_PREVIEW_STATE_ROOT="${state_root}" \
-    SAKIOT_PREVIEW_ENV_FILE="${preview_env}" \
+    SAKIOT_PREVIEW_ENV_FILE="${env_file}" \
+    CLOUDFLARE_ENV_FILE="${cloudflare}" \
     B2_PURGE_ENV_FILE="${purge}" \
     "${script}" zz-ops-test --remove >"${output}" 2>&1
   local status=$?
@@ -238,5 +241,45 @@ if [[ ! -r "${unreadable_purge}" ]]; then
 else
   echo "note: running with file-permission bypass; skipping the unreadable-purge case"
 fi
+
+# 5. The token comes from the root-only Cloudflare env file.
+cloudflare_env="${temporary}/cloudflare.env"
+printf 'CLOUDFLARE_API_TOKEN=file-token\n' >"${cloudflare_env}"
+output="${temporary}/token-file.log"
+status="$(run_remove "${temporary}/bin-ok" "" "${output}" "" "${cloudflare_env}")"
+[[ "${status}" -eq 0 ]] \
+  || { echo "the Cloudflare env file's token was not used: $(cat "${output}")" >&2; exit 1; }
+grep -q "deleted DNS record zz-ops-test.preview.example.test" "${output}" \
+  || { echo "missing DNS deletion with the file token: $(cat "${output}")" >&2; exit 1; }
+
+# 6. The token must never sit in the shared preview.env, which every preview
+#    web server loads into its environment. Provisioning refuses; a teardown
+#    warns and finishes without using it.
+leaky_env="${temporary}/leaky-preview.env"
+printf 'CLOUDFLARE_API_TOKEN=leaked\n' >"${leaky_env}"
+output="${temporary}/leaky-remove.log"
+status="$(run_remove "${temporary}/bin-fail" "" "${output}" "" "" "${leaky_env}")"
+grep -q "warning: move the CLOUDFLARE_API_TOKEN line" "${output}" \
+  || { echo "a teardown must warn about the token in preview.env: $(cat "${output}")" >&2; exit 1; }
+grep -q "CLOUDFLARE_API_TOKEN is not set" "${output}" \
+  || { echo "a teardown must not use the token in preview.env: $(cat "${output}")" >&2; exit 1; }
+assert_cleanup_ran "${output}"
+output="${temporary}/leaky-create.log"
+set +e
+PATH="${temporary}/bin-ok:${PATH}" \
+  PREVIEW_DOMAIN="preview.example.test" \
+  SAKIOT_PREVIEW_STATE_ROOT="${state_root}" \
+  SAKIOT_PREVIEW_ENV_FILE="${leaky_env}" \
+  CLOUDFLARE_ENV_FILE="${cloudflare_env}" \
+  B2_PURGE_ENV_FILE="${default_purge_env}" \
+  "${script}" zz-ops-test >"${output}" 2>&1
+status=$?
+set -e
+[[ "${status}" -ne 0 ]] \
+  || { echo "provisioning must refuse a token in preview.env" >&2; exit 1; }
+grep -q "move the CLOUDFLARE_API_TOKEN line" "${output}" \
+  || { echo "missing refusal message: $(cat "${output}")" >&2; exit 1; }
+grep -q '^CLOUDFLARE_API_TOKEN=' "${repo_root}/ops/preview.env.example" \
+  && { echo "ops/preview.env.example must not set CLOUDFLARE_API_TOKEN" >&2; exit 1; }
 
 echo "preview slot removal: ok"
