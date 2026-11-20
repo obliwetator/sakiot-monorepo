@@ -2,7 +2,7 @@ import type { components } from "../../api/openapi";
 import type { EffectLimits } from "./effectLimits";
 import { serializeLimits } from "./effectLimits";
 import type { ClipEdit, SegmentEffects, TimelineSegment } from "./model";
-import { DEFAULT_EFFECTS, newSegmentId } from "./model";
+import { DEFAULT_EFFECTS, newGroupId, newSegmentId } from "./model";
 
 type ComposeClipBody = components["schemas"]["ComposeClipBody"];
 
@@ -89,8 +89,12 @@ export function deserializeEdit(data: unknown): ClipEdit | null {
 	const rawSegments = record.segments;
 	if (!Array.isArray(rawSegments)) return null;
 	const segments: TimelineSegment[] = [];
+	// Saved group ids are minted again, like segment ids: the counter starts
+	// over on every page load, so a kept "group-1" would fuse with the next
+	// merge or duplicate.
+	const groups = new Map<string, string>();
 	for (const raw of rawSegments) {
-		const segment = deserializeSegment(raw);
+		const segment = deserializeSegment(raw, groups);
 		if (!segment) return null;
 		segments.push(segment);
 	}
@@ -121,7 +125,10 @@ export function deserializeEdit(data: unknown): ClipEdit | null {
 	return { segments, tracks, mutedTracks, masterVolumeDb };
 }
 
-function deserializeSegment(raw: unknown): TimelineSegment | null {
+function deserializeSegment(
+	raw: unknown,
+	groups: Map<string, string>,
+): TimelineSegment | null {
 	if (typeof raw !== "object" || raw === null) return null;
 	const segment = raw as Record<string, unknown>;
 	if (
@@ -150,6 +157,11 @@ function deserializeSegment(raw: unknown): TimelineSegment | null {
 		if (typeof mergeGroup !== "string" || mergeGroup.length === 0) return null;
 	}
 	if (!effects) return null;
+	let group: string | undefined;
+	if (typeof mergeGroup === "string") {
+		group = groups.get(mergeGroup) ?? newGroupId();
+		groups.set(mergeGroup, group);
+	}
 	return {
 		id: newSegmentId(),
 		track,
@@ -159,7 +171,7 @@ function deserializeSegment(raw: unknown): TimelineSegment | null {
 		sourceOut,
 		timelineStart,
 		effects,
-		...(typeof mergeGroup === "string" ? { mergeGroup } : {}),
+		...(group ? { mergeGroup: group } : {}),
 	};
 }
 

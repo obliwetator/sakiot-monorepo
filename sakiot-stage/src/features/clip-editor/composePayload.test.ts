@@ -4,6 +4,7 @@ import {
 	type ClipEdit,
 	DEFAULT_EFFECTS,
 	makeSegment,
+	newGroupId,
 	type TimelineSegment,
 } from "./model";
 
@@ -315,13 +316,33 @@ describe("deserializeEdit", () => {
 	test("round-trips merged units so they re-import grouped", () => {
 		const first = segment("clip-1", 0, 0, 0, 4);
 		const second = segment("clip-2", 0, 4, 4, 8);
+		const third = segment("clip-3", 1, 0, 0, 4);
 		first.mergeGroup = "group-7";
 		second.mergeGroup = "group-7";
-		const restored = deserializeEdit(serializeEdit(edit(first, second)));
+		third.mergeGroup = "group-8";
+		const restored = deserializeEdit(serializeEdit(edit(first, second, third)));
 		expect(restored).not.toBeNull();
-		expect(restored?.segments[0]?.mergeGroup).toBe("group-7");
-		expect(restored?.segments[1]?.mergeGroup).toBe("group-7");
-		expect(restored?.segments[0]?.id).not.toBe(restored?.segments[1]?.id);
+		const [a, b, c] = restored?.segments ?? [];
+		expect(a?.mergeGroup).toBeDefined();
+		expect(b?.mergeGroup).toBe(a?.mergeGroup);
+		expect(c?.mergeGroup).toBeDefined();
+		expect(c?.mergeGroup).not.toBe(a?.mergeGroup);
+		expect(a?.id).not.toBe(b?.id);
+	});
+
+	test("restored groups never collide with groups minted later", () => {
+		// A draft saved in an earlier page load holds ids that load minted,
+		// which this load's counter hands out again: here, the next one.
+		const current = Number(newGroupId().slice("group-".length));
+		const upcoming = `group-${current + 1}`;
+		const first = segment("clip-1", 0, 0, 0, 4);
+		const second = segment("clip-2", 0, 4, 4, 8);
+		first.mergeGroup = upcoming;
+		second.mergeGroup = upcoming;
+		const restored = deserializeEdit(serializeEdit(edit(first, second)));
+		const restoredGroup = restored?.segments[0]?.mergeGroup;
+		expect(restoredGroup).toBeDefined();
+		expect(newGroupId()).not.toBe(restoredGroup);
 	});
 
 	test("compositions without the reverse flag deserialize forward", () => {
