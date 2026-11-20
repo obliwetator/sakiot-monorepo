@@ -74,6 +74,14 @@ while IFS= read -r path; do
     sakiot-stage/*)
       frontend=true
       ;;
+    # ci.yml defines every suite's job, so an edit to one must run it.
+    .github/workflows/ci.yml)
+      rust=true
+      dsp=true
+      api_contract=true
+      frontend=true
+      ops=true
+      ;;
     # The ops suite includes the workflow injection guard, which must run
     # whenever a workflow changes, and the Git hook tests.
     .github/workflows/*|.githooks/*)

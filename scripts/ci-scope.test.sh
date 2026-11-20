@@ -95,8 +95,13 @@ assert_scope \
 assert_scope \
   "workflows run the injection guard" \
   false false false false true \
-  ".github/workflows/ci.yml" \
+  ".github/workflows/deploy-staging.yml" \
   ".github/workflows/cache-cleanup.yml"
+
+assert_scope \
+  "ci.yml runs every suite its jobs define" \
+  true true true true true \
+  ".github/workflows/ci.yml"
 
 assert_scope \
   "other GitHub config only" \
